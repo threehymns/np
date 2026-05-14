@@ -27,6 +27,7 @@ export class AppState {
 	
 	documents = $state<DocumentSession[]>([]);
 	activeDocumentId = $state<string>('');
+	activeEditorView = $state<any>(undefined);
 
 	// Cursor/View state (could be moved to EditorContext later)
 	line = $state(1);

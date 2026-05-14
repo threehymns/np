@@ -7,8 +7,6 @@ export class DocumentSession {
 	untitledTitle = $state('Untitled');
 	
 	private savedContent = $state('');
-	private history = $state<string[]>(['']);
-	private historyIndex = $state(0);
 	private storage: Storage;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
@@ -16,7 +14,6 @@ export class DocumentSession {
 		this.content = initialContent;
 		this.savedContent = initialContent;
 		this.origin = origin;
-		this.history = [initialContent];
 		this.untitledTitle = untitledTitle;
 	}
 
@@ -26,42 +23,6 @@ export class DocumentSession {
 
 	get isModified() {
 		return this.content !== this.savedContent;
-	}
-
-	get canUndo() {
-		return this.historyIndex > 0;
-	}
-
-	get canRedo() {
-		return this.historyIndex < this.history.length - 1;
-	}
-
-	updateContent(newContent: string, recordHistory = true) {
-		if (newContent === this.content) return;
-		
-		this.content = newContent;
-		
-		if (recordHistory) {
-			// Basic debounced history would be better, but for now:
-			this.history = this.history.slice(0, this.historyIndex + 1);
-			this.history.push(newContent);
-			if (this.history.length > 100) this.history.shift();
-			else this.historyIndex++;
-		}
-	}
-
-	undo() {
-		if (this.canUndo) {
-			this.historyIndex--;
-			this.content = this.history[this.historyIndex];
-		}
-	}
-
-	redo() {
-		if (this.canRedo) {
-			this.historyIndex++;
-			this.content = this.history[this.historyIndex];
-		}
 	}
 
 	async save() {

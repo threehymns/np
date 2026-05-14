@@ -5,6 +5,8 @@
 	import favicon from "$lib/assets/favicon.png";
 
 	import { appState } from "$lib/state.svelte.js";
+	import { undo, redo, selectAll } from "@codemirror/commands";
+	import { openSearchPanel } from "@codemirror/search";
 
 	let { children } = $props();
 
@@ -23,18 +25,22 @@
 			e.preventDefault();
 			appState.newFile();
 		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-			e.preventDefault();
-			if (e.shiftKey) {
-				appState.activeDocument?.redo();
-			} else {
-				appState.activeDocument?.undo();
-			}
+	}
+
+	function execKey(key: string, shift = false) {
+		if (appState.activeEditorView) {
+			appState.activeEditorView.focus();
 		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
-			e.preventDefault();
-			appState.activeDocument?.redo();
-		}
+		const target = document.activeElement || document.body;
+		target.dispatchEvent(new KeyboardEvent('keydown', {
+			key,
+			code: `Key${key.toUpperCase()}`,
+			ctrlKey: true,
+			metaKey: true,
+			shiftKey: shift,
+			bubbles: true,
+			cancelable: true
+		}));
 	}
 </script>
 
@@ -61,53 +67,51 @@
 						Save <Menubar.Shortcut>⌘S</Menubar.Shortcut>
 					</Menubar.Item>
 					<Menubar.Item onclick={() => appState.saveFileAs()}>Save As...</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item>
-						Print... <Menubar.Shortcut>⌘P</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item>Exit</Menubar.Item>
 				</Menubar.Content>
 			</Menubar.Menu>
 			<Menubar.Menu>
 				<Menubar.Trigger>Edit</Menubar.Trigger>
 				<Menubar.Content>
-					<Menubar.Item disabled={!appState.activeDocument?.canUndo} onclick={() => appState.activeDocument?.undo()}>
+					<Menubar.Item onclick={() => appState.activeEditorView && undo(appState.activeEditorView)}>
 						Undo <Menubar.Shortcut>⌘Z</Menubar.Shortcut>
 					</Menubar.Item>
-					<Menubar.Item disabled={!appState.activeDocument?.canRedo} onclick={() => appState.activeDocument?.redo()}>
+					<Menubar.Item onclick={() => appState.activeEditorView && redo(appState.activeEditorView)}>
 						Redo <Menubar.Shortcut>⇧⌘Z</Menubar.Shortcut>
 					</Menubar.Item>
 					<Menubar.Separator />
-					<Menubar.Item>
+					<Menubar.Item onclick={() => { appState.activeEditorView?.focus(); document.execCommand('cut'); }}>
 						Cut <Menubar.Shortcut>⌘X</Menubar.Shortcut>
 					</Menubar.Item>
-					<Menubar.Item>
+					<Menubar.Item onclick={() => { appState.activeEditorView?.focus(); document.execCommand('copy'); }}>
 						Copy <Menubar.Shortcut>⌘C</Menubar.Shortcut>
 					</Menubar.Item>
-					<Menubar.Item>
+					<Menubar.Item onclick={async () => { 
+						appState.activeEditorView?.focus(); 
+						try {
+							const text = await navigator.clipboard.readText();
+							if (appState.activeEditorView) {
+								const view = appState.activeEditorView;
+								view.dispatch(view.state.replaceSelection(text));
+							}
+						} catch (e) {
+							document.execCommand('paste');
+						}
+					}}>
 						Paste <Menubar.Shortcut>⌘V</Menubar.Shortcut>
 					</Menubar.Item>
-					<Menubar.Item>Delete <Menubar.Shortcut>Del</Menubar.Shortcut></Menubar.Item>
 					<Menubar.Separator />
-					<Menubar.Sub>
-						<Menubar.SubTrigger>Find</Menubar.SubTrigger>
-						<Menubar.SubContent>
-							<Menubar.Item>Find... <Menubar.Shortcut>⌘F</Menubar.Shortcut></Menubar.Item>
-							<Menubar.Item>Find Next <Menubar.Shortcut>F3</Menubar.Shortcut></Menubar.Item>
-							<Menubar.Item>Find Previous <Menubar.Shortcut>⇧F3</Menubar.Shortcut></Menubar.Item>
-							<Menubar.Item>Replace... <Menubar.Shortcut>⌘H</Menubar.Shortcut></Menubar.Item>
-						</Menubar.SubContent>
-					</Menubar.Sub>
-					<Menubar.Separator />
-					<Menubar.Item>Select All <Menubar.Shortcut>⌘A</Menubar.Shortcut></Menubar.Item>
+					<Menubar.Item onclick={() => appState.activeEditorView && openSearchPanel(appState.activeEditorView)}>
+						Find... <Menubar.Shortcut>⌘F</Menubar.Shortcut>
+					</Menubar.Item>
+					<Menubar.Item onclick={() => appState.activeEditorView && selectAll(appState.activeEditorView)}>
+						Select All <Menubar.Shortcut>⌘A</Menubar.Shortcut>
+					</Menubar.Item>
 				</Menubar.Content>
 			</Menubar.Menu>
 			<Menubar.Menu>
 				<Menubar.Trigger>Format</Menubar.Trigger>
 				<Menubar.Content>
 					<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>Word Wrap</Menubar.CheckboxItem>
-					<Menubar.Item>Font...</Menubar.Item>
 				</Menubar.Content>
 			</Menubar.Menu>
 			<Menubar.Menu>
@@ -122,16 +126,6 @@
 						</Menubar.SubContent>
 					</Menubar.Sub>
 					<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
-					<Menubar.Separator />
-					<Menubar.Item>Toggle Fullscreen</Menubar.Item>
-				</Menubar.Content>
-			</Menubar.Menu>
-			<Menubar.Menu>
-				<Menubar.Trigger>Help</Menubar.Trigger>
-				<Menubar.Content>
-					<Menubar.Item>View Help</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item>About Notepad</Menubar.Item>
 				</Menubar.Content>
 			</Menubar.Menu>
 		</Menubar.Root>

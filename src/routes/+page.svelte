@@ -4,22 +4,17 @@
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { X } from "phosphor-svelte";
   import { flip } from 'svelte/animate';
-
-  function handleUpdate(e?: Event) {
-    const target = (e?.target || document.querySelector('textarea')) as HTMLTextAreaElement;
-    if (!target) return;
-    
-    const textBeforeCursor = target.value.substring(0, target.selectionStart);
-    const lines = textBeforeCursor.split('\n');
-    appState.line = lines.length;
-    appState.column = lines[lines.length - 1].length + 1;
-    
-    if (e?.type === 'input' && appState.activeDocument) {
-      appState.activeDocument.updateContent(target.value);
-    }
-  }
+  import Editor from '$lib/components/Editor.svelte';
+  import type { EditorView } from 'codemirror';
 
   let draggedIdx = $state<number | null>(null);
+  let editorViews = $state<Record<string, EditorView | undefined>>({});
+
+  $effect(() => {
+    appState.activeEditorView = editorViews[appState.activeDocumentId];
+  });
+
+  function handleUpdate(e?: Event) {}
 
   function handleDragStart(e: DragEvent, idx: number) {
     draggedIdx = idx;
@@ -90,16 +85,12 @@
   {:else}
     {#each appState.documents as doc (doc.id)}
       <Tabs.Content value={doc.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0">
-        <textarea
-          class="bg-background text-foreground h-full w-full resize-none p-4 font-mono focus:outline-none"
-          spellcheck="false"
+        <Editor 
+          bind:content={doc.content} 
+          bind:view={editorViews[doc.id]}
           style="font-size: {appState.prefs.zoom}%;"
-          wrap={appState.prefs.wordWrap ? 'soft' : 'off'}
-          value={doc.content}
-          oninput={handleUpdate}
-          onclick={handleUpdate}
-          onkeyup={handleUpdate}
-        ></textarea>
+          wrap={appState.prefs.wordWrap}
+        />
       </Tabs.Content>
     {/each}
   {/if}
