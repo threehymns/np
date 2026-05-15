@@ -57,6 +57,7 @@
 		"@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
 		"codemirror": "^6.0.2",
 		"codemirror-markdown-tables": "^1.0.0",
+		"mode-watcher": "^1.1.0",
 		"tree-sitter-markdown": "^0.7.1",
 		"tree-sitter-wasm-prebuilt": "^0.0.3",
 		"tree-sitter-wasms": "^0.1.13",

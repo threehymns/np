@@ -7,10 +7,25 @@
 	import { appState } from "$lib/state.svelte.js";
 	import { undo, redo, selectAll } from "@codemirror/commands";
 	import { openSearchPanel } from "@codemirror/search";
+	import SettingsModal from "$lib/components/SettingsModal.svelte";
+	import { ModeWatcher } from "mode-watcher";
 
 	let { children } = $props();
+	let settingsOpen = $state(false);
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.pendingCloseId));
+
+	$effect(() => {
+		const theme = appState.prefs.theme;
+		const body = document.body;
+
+		// Set theme data attribute
+		if (theme === 'default') {
+			body.removeAttribute('data-theme');
+		} else {
+			body.setAttribute('data-theme', theme);
+		}
+	});
 
 	function handleKeydown(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -24,6 +39,10 @@
 		if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
 			e.preventDefault();
 			appState.newFile();
+		}
+		if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+			e.preventDefault();
+			settingsOpen = true;
 		}
 	}
 
@@ -51,8 +70,10 @@
 	<title>{appState.activeDocument?.fileName || 'Untitled'}{appState.activeDocument?.isModified ? '*' : ''} - Notepad</title>
 </svelte:head>
 
-<div class="flex flex-col h-screen w-screen bg-background">
-	<div class="relative z-50">
+<ModeWatcher />
+
+<div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
+	<div class="relative z-50 shrink-0 border-b bg-background">
 		<Menubar.Root>
 			<Menubar.Menu>
 				<Menubar.Trigger>File</Menubar.Trigger>
@@ -106,6 +127,10 @@
 					<Menubar.Item onclick={() => appState.activeEditorView && selectAll(appState.activeEditorView)}>
 						Select All <Menubar.Shortcut>⌘A</Menubar.Shortcut>
 					</Menubar.Item>
+					<Menubar.Separator />
+					<Menubar.Item onclick={() => settingsOpen = true}>
+						Settings... <Menubar.Shortcut>⌘,</Menubar.Shortcut>
+					</Menubar.Item>
 				</Menubar.Content>
 			</Menubar.Menu>
 			<Menubar.Menu>
@@ -130,9 +155,13 @@
 			</Menubar.Menu>
 		</Menubar.Root>
 	</div>
-	<main class="flex-1 min-h-0 overflow-visible">{@render children()}</main>
+	
+	<main class="flex-1 min-h-0 overflow-auto relative z-0">
+		{@render children()}
+	</main>
+
 	{#if appState.prefs.statusBar}
-		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground tabular-nums">
+		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground tabular-nums bg-background z-50">
 			<div>{appState.activeDocument?.isModified ? 'Modified' : 'Saved'}</div>
 			<div class="flex gap-4">
 				<span>Characters: {appState.charCount}</span>
@@ -144,6 +173,8 @@
 		</footer>
 	{/if}
 </div>
+
+<SettingsModal bind:open={settingsOpen} />
 
 <AlertDialog.Root open={!!appState.pendingCloseId} onOpenChange={(open) => { if (!open) appState.pendingCloseId = null; }}>
 	<AlertDialog.Content>

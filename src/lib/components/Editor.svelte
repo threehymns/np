@@ -262,13 +262,20 @@
 			tag: [
 				t.typeName,
 				t.className,
-				t.number,
 				t.changed,
 				t.annotation,
 				t.modifier,
 				t.namespace,
 			],
 			color: "var(--code-type)",
+		},
+		{
+			tag: [t.number, t.bool, t.null, t.unit],
+			color: "var(--code-number)",
+		},
+		{
+			tag: [t.constant(t.name), t.literal],
+			color: "var(--code-constant)",
 		},
 		{
 			tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp],
@@ -1072,16 +1079,6 @@
 		/* Font Variables - Match Tailwind 4 font-mono stack */
 		--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
 			"Liberation Mono", "Courier New", monospace;
-
-		/* Code Highlighting Variables - Themeable */
-		--code-keyword: oklch(0.6 0.25 300); /* Purple-ish */
-		--code-variable: var(--foreground);
-		--code-function: oklch(0.7 0.2 200); /* Cyan-ish */
-		--code-constant: oklch(0.6 0.2 30); /* Orange-ish */
-		--code-type: oklch(0.8 0.1 120); /* Yellow-ish */
-		--code-operator: var(--primary);
-		--code-comment: var(--muted-foreground);
-		--code-string: oklch(0.7 0.15 150); /* Green-ish */
 
 		/* Table Support Variables */
 		--tbl-style-font-family: ui-sans-serif, system-ui, sans-serif;
