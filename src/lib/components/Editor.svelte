@@ -527,9 +527,14 @@
 						padding: "1.5rem",
 						color: "var(--foreground)",
 						caretColor: "var(--primary)",
+						width: "100%",
+						maxWidth: "var(--editor-max-width)",
+						margin: "0 auto",
 					},
 					".cm-scroller": {
 						lineHeight: "1.6",
+						display: "flex",
+						flexDirection: "column",
 					},
 					".cm-gutters": {
 						display: "none"
@@ -724,6 +729,9 @@
 		height: 100%;
 		overflow: hidden;
 		background: var(--background);
+
+		/* Editor Width */
+		--editor-max-width: 800px;
 
 		/* Font Variables - Match Tailwind 4 font-mono stack */
 		--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
