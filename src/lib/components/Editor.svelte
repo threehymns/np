@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { 
-		EditorView
-	} from 'codemirror';
-	import { 
-		Decoration, 
-		ViewPlugin, 
+	import { untrack } from "svelte";
+	import { EditorView } from "codemirror";
+	import {
+		Decoration,
+		ViewPlugin,
 		ViewUpdate,
 		WidgetType,
 		keymap,
@@ -13,36 +11,58 @@
 		dropCursor,
 		rectangularSelection,
 		crosshairCursor,
-		highlightActiveLine
-	} from '@codemirror/view';
-	import type { DecorationSet } from '@codemirror/view';
-	import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-	import { Table, GFM } from '@lezer/markdown';
-	import { EditorState, RangeSetBuilder, Compartment, Annotation } from '@codemirror/state';
-	import { 
-		syntaxHighlighting, 
+		highlightActiveLine,
+	} from "@codemirror/view";
+	import type { DecorationSet } from "@codemirror/view";
+	import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+	import { Table, GFM } from "@lezer/markdown";
+	import {
+		EditorState,
+		RangeSetBuilder,
+		Compartment,
+		Annotation,
+	} from "@codemirror/state";
+	import {
+		syntaxHighlighting,
 		HighlightStyle,
 		syntaxTree,
 		foldGutter,
 		indentOnInput,
 		bracketMatching,
-		LanguageDescription
-	} from '@codemirror/language';
-	import { tags as t } from '@lezer/highlight';
-	import { indentMore, indentLess, history, historyKeymap, defaultKeymap } from '@codemirror/commands';
-	import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-	import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-	import { languages } from '@codemirror/language-data';
-	import { svelte } from '@replit/codemirror-lang-svelte';
-	import { 
-		markdownTables, 
-		markdownTableAutocompleter, 
+		LanguageDescription,
+	} from "@codemirror/language";
+	import { tags as t } from "@lezer/highlight";
+	import {
+		indentMore,
+		indentLess,
+		history,
+		historyKeymap,
+		defaultKeymap,
+	} from "@codemirror/commands";
+	import {
+		closeBrackets,
+		closeBracketsKeymap,
+	} from "@codemirror/autocomplete";
+	import {
+		highlightSelectionMatches,
+		searchKeymap,
+	} from "@codemirror/search";
+	import { languages } from "@codemirror/language-data";
+	import { svelte } from "@replit/codemirror-lang-svelte";
+	import {
+		markdownTables,
+		markdownTableAutocompleter,
 		insertEmptyMarkdownTable,
 		TableTheme,
-		TableStyle
-	} from 'codemirror-markdown-tables';
+		TableStyle,
+	} from "codemirror-markdown-tables";
 
-	let { content = $bindable(), style = "", wrap = true, view = $bindable() } = $props();
+	let {
+		content = $bindable(),
+		style = "",
+		wrap = true,
+		view = $bindable(),
+	} = $props();
 
 	let editorEl = $state<HTMLDivElement>();
 	const wrapCompartment = new Compartment();
@@ -72,8 +92,8 @@
 	function renumberLists(view: EditorView) {
 		const { state } = view;
 		const doc = state.doc;
-		const changes: {from: number, to: number, insert: string}[] = [];
-		const stack: { indent: number, count: number }[] = [];
+		const changes: { from: number; to: number; insert: string }[] = [];
+		const stack: { indent: number; count: number }[] = [];
 
 		for (let i = 1; i <= doc.lines; i++) {
 			const line = doc.line(i);
@@ -84,11 +104,17 @@
 				const currentNum = parseInt(match[2]);
 
 				// Manage hierarchy stack
-				while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
+				while (
+					stack.length > 0 &&
+					stack[stack.length - 1].indent > indent
+				) {
 					stack.pop();
 				}
 
-				if (stack.length === 0 || stack[stack.length - 1].indent < indent) {
+				if (
+					stack.length === 0 ||
+					stack[stack.length - 1].indent < indent
+				) {
 					stack.push({ indent, count: 1 });
 				} else {
 					stack[stack.length - 1].count++;
@@ -105,7 +131,10 @@
 			} else {
 				// Non-list line resets stack for this level and deeper
 				const indent = line.text.match(/^\s*/)?.[0].length || 0;
-				while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+				while (
+					stack.length > 0 &&
+					stack[stack.length - 1].indent >= indent
+				) {
 					stack.pop();
 				}
 			}
@@ -120,17 +149,21 @@
 		const { state } = view;
 		const selection = state.selection.main;
 		const line = state.doc.lineAt(selection.from);
-		
+
 		// Only use smart indent if it looks like a list item
 		if (!/^(\s*)([*+-]|\d+\.)\s/.test(line.text)) {
 			return direction === "more" ? indentMore(view) : indentLess(view);
 		}
 
 		const range = getListBlockRange(state, selection.from);
-		const changes: {from: number, to: number, insert: string}[] = [];
+		const changes: { from: number; to: number; insert: string }[] = [];
 		const indentUnit = "  "; // We'll use 2 spaces as the default for now
 
-		for (let i = state.doc.lineAt(range.from).number; i <= state.doc.lineAt(range.to).number; i++) {
+		for (
+			let i = state.doc.lineAt(range.from).number;
+			i <= state.doc.lineAt(range.to).number;
+			i++
+		) {
 			const l = state.doc.line(i);
 			if (l.text.trim() === "") continue;
 
@@ -139,40 +172,108 @@
 			} else {
 				const match = l.text.match(/^(\s+)/);
 				if (match && match[1].length >= indentUnit.length) {
-					changes.push({ from: l.from, to: l.from + indentUnit.length, insert: "" });
+					changes.push({
+						from: l.from,
+						to: l.from + indentUnit.length,
+						insert: "",
+					});
 				}
 			}
 		}
 
 		if (changes.length > 0) {
-			view.dispatch({ 
+			view.dispatch({
 				changes,
 				// This keeps the cursor relative to the text
-				selection: { anchor: selection.from + (direction === "more" ? indentUnit.length : -indentUnit.length), head: selection.head + (direction === "more" ? indentUnit.length : -indentUnit.length) }
+				selection: {
+					anchor:
+						selection.from +
+						(direction === "more"
+							? indentUnit.length
+							: -indentUnit.length),
+					head:
+						selection.head +
+						(direction === "more"
+							? indentUnit.length
+							: -indentUnit.length),
+				},
 			});
 			setTimeout(() => renumberLists(view), 10);
 			return true;
 		}
-		
+
 		return false;
 	};
 
 	const markdownHighlight = HighlightStyle.define([
-		{ tag: t.heading1, fontSize: "2.25rem", fontWeight: "bold", lineHeight: "1.2", color: "var(--foreground)" },
-		{ tag: t.heading2, fontSize: "1.875rem", fontWeight: "bold", lineHeight: "1.2", color: "var(--foreground)" },
-		{ tag: t.heading3, fontSize: "1.5rem", fontWeight: "bold", lineHeight: "1.2", color: "var(--foreground)" },
+		{
+			tag: t.heading1,
+			fontSize: "2.25rem",
+			fontWeight: "bold",
+			lineHeight: "1.2",
+			color: "var(--foreground)",
+		},
+		{
+			tag: t.heading2,
+			fontSize: "1.875rem",
+			fontWeight: "bold",
+			lineHeight: "1.2",
+			color: "var(--foreground)",
+		},
+		{
+			tag: t.heading3,
+			fontSize: "1.5rem",
+			fontWeight: "bold",
+			lineHeight: "1.2",
+			color: "var(--foreground)",
+		},
 		{ tag: t.strong, fontWeight: "bold", color: "var(--foreground)" },
 		{ tag: t.emphasis, fontStyle: "italic" },
-		{ tag: t.link, color: "var(--primary)", textDecoration: "none", class: "cm-link" },
-		{ tag: t.monospace, fontFamily: "var(--font-mono)", backgroundColor: "var(--muted)", padding: "0.1em 0.3em", borderRadius: "3px" },
-		{ tag: [t.processingInstruction, t.meta, t.punctuation, t.separator], color: "var(--muted-foreground)", class: "md-marker" },
-		
+		{
+			tag: t.link,
+			color: "var(--primary)",
+			textDecoration: "none",
+			class: "cm-link",
+		},
+		{
+			tag: t.monospace,
+			fontFamily: "var(--font-mono)",
+			backgroundColor: "var(--muted)",
+			padding: "0.1em 0.3em",
+			borderRadius: "3px",
+		},
+		{
+			tag: [t.processingInstruction, t.meta, t.punctuation, t.separator],
+			color: "var(--muted-foreground)",
+			class: "md-marker",
+		},
+
 		// Code highlighting - Safely using basic tags
 		{ tag: t.keyword, color: "var(--code-keyword)", fontWeight: "600" },
-		{ tag: [t.name, t.variableName, t.macroName, t.attributeName], color: "var(--code-variable)" },
-		{ tag: [t.function(t.variableName), t.labelName, t.propertyName], color: "var(--code-function)" },
-		{ tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.namespace], color: "var(--code-type)" },
-		{ tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp], color: "var(--code-operator)" },
+		{
+			tag: [t.name, t.variableName, t.macroName, t.attributeName],
+			color: "var(--code-variable)",
+		},
+		{
+			tag: [t.function(t.variableName), t.labelName, t.propertyName],
+			color: "var(--code-function)",
+		},
+		{
+			tag: [
+				t.typeName,
+				t.className,
+				t.number,
+				t.changed,
+				t.annotation,
+				t.modifier,
+				t.namespace,
+			],
+			color: "var(--code-type)",
+		},
+		{
+			tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp],
+			color: "var(--code-operator)",
+		},
 		{ tag: [t.comment], color: "var(--code-comment)", fontStyle: "italic" },
 		{ tag: t.string, color: "var(--code-string)" },
 		{ tag: t.invalid, color: "var(--destructive)" },
@@ -184,7 +285,9 @@
 			super();
 			this.text = text;
 		}
-		eq(other: CopyButtonWidget) { return other.text === this.text; }
+		eq(other: CopyButtonWidget) {
+			return other.text === this.text;
+		}
 		toDOM() {
 			const btn = document.createElement("button");
 			btn.className = "cm-copy-button";
@@ -192,21 +295,25 @@
 			btn.title = "Copy code";
 			btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-icon"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
 							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="check-icon" style="display: none;"><polyline points="20 6 9 17 4 12"/></svg>`;
-			
+
 			btn.onclick = (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 				navigator.clipboard.writeText(this.text).then(() => {
-					const copyIcon = btn.querySelector('.copy-icon') as HTMLElement;
-					const checkIcon = btn.querySelector('.check-icon') as HTMLElement;
+					const copyIcon = btn.querySelector(
+						".copy-icon",
+					) as HTMLElement;
+					const checkIcon = btn.querySelector(
+						".check-icon",
+					) as HTMLElement;
 					if (copyIcon && checkIcon) {
-						copyIcon.style.display = 'none';
-						checkIcon.style.display = 'block';
-						btn.classList.add('copied');
+						copyIcon.style.display = "none";
+						checkIcon.style.display = "block";
+						btn.classList.add("copied");
 						setTimeout(() => {
-							copyIcon.style.display = 'block';
-							checkIcon.style.display = 'none';
-							btn.classList.remove('copied');
+							copyIcon.style.display = "block";
+							checkIcon.style.display = "none";
+							btn.classList.remove("copied");
 						}, 2000);
 					}
 				});
@@ -218,55 +325,99 @@
 	// Plugin to add classes to code block lines for background and font
 	class CodeBlockPlugin {
 		decorations: DecorationSet;
-		constructor(view: EditorView) { this.decorations = this.getDecorations(view); }
+		constructor(view: EditorView) {
+			this.decorations = this.getDecorations(view);
+		}
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged) this.decorations = this.getDecorations(update.view);
+			if (update.docChanged || update.viewportChanged)
+				this.decorations = this.getDecorations(update.view);
 		}
 		getDecorations(view: EditorView) {
 			const builder = new RangeSetBuilder<Decoration>();
 			for (let { from, to } of view.visibleRanges) {
 				syntaxTree(view.state).iterate({
-					from, to,
+					from,
+					to,
 					enter: (node) => {
 						if (node.name === "FencedCode") {
-							const fullText = view.state.doc.sliceString(node.from, node.to);
-							const linesArr = fullText.split('\n');
+							const fullText = view.state.doc.sliceString(
+								node.from,
+								node.to,
+							);
+							const linesArr = fullText.split("\n");
 							// Extract content between fences
-							const codeToCopy = linesArr.slice(1, -1).join('\n');
+							const codeToCopy = linesArr.slice(1, -1).join("\n");
 
-							const startLine = view.state.doc.lineAt(node.from).number;
-							const endLine = view.state.doc.lineAt(node.to).number;
+							const startLine = view.state.doc.lineAt(
+								node.from,
+							).number;
+							const endLine = view.state.doc.lineAt(
+								node.to,
+							).number;
 							for (let i = startLine; i <= endLine; i++) {
 								const line = view.state.doc.line(i);
 								let cls = "cm-fencedCode";
-								if (i === startLine) cls += " cm-fencedCode-top";
-								if (i === endLine) cls += " cm-fencedCode-bottom";
+								if (i === startLine)
+									cls += " cm-fencedCode-top";
+								if (i === endLine)
+									cls += " cm-fencedCode-bottom";
+								if (i > startLine && i < endLine)
+									cls += " cm-fencedCode-line";
 
 								// Line decoration must be added at line.from (start of line)
-								builder.add(line.from, line.from, Decoration.line({ class: cls }));
+								builder.add(
+									line.from,
+									line.from,
+									Decoration.line({ class: cls }),
+								);
 
 								if (i === startLine) {
 									// Widget decoration added at line.to (end of line), which is >= line.from
-									builder.add(line.to, line.to, Decoration.widget({
-										widget: new CopyButtonWidget(codeToCopy),
-										side: 1
-									}));
+									builder.add(
+										line.to,
+										line.to,
+										Decoration.widget({
+											widget: new CopyButtonWidget(
+												codeToCopy,
+											),
+											side: 1,
+										}),
+									);
 								}
 							}
 						}
-					}
+					},
 				});
 			}
 			return builder.finish();
 		}
 	}
-	const codeBlockPlugin = ViewPlugin.fromClass(CodeBlockPlugin, { decorations: v => v.decorations });
+	const codeBlockPlugin = ViewPlugin.fromClass(CodeBlockPlugin, {
+		decorations: (v) => v.decorations,
+	});
 
 	class BulletWidget extends WidgetType {
 		toDOM() {
 			let span = document.createElement("span");
 			span.textContent = "•";
 			span.className = "md-bullet";
+			return span;
+		}
+	}
+
+	class LanguageLabelWidget extends WidgetType {
+		lang: string;
+		constructor(lang: string) {
+			super();
+			this.lang = lang;
+		}
+		eq(other: LanguageLabelWidget) {
+			return other.lang === this.lang;
+		}
+		toDOM() {
+			const span = document.createElement("span");
+			span.className = "cm-language-label";
+			span.textContent = this.lang;
 			return span;
 		}
 	}
@@ -279,7 +430,12 @@
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged) {
+			if (
+				update.docChanged ||
+				update.selectionSet ||
+				update.viewportChanged ||
+				update.focusChanged
+			) {
 				this.decorations = this.getDecorations(update.view);
 			}
 		}
@@ -291,90 +447,215 @@
 
 			for (let { from, to } of view.visibleRanges) {
 				syntaxTree(view.state).iterate({
-					from, to,
+					from,
+					to,
 					enter: (node) => {
 						const type = node.name;
 
 						if (type === "FencedCode") {
-							return false; // Do not hide anything inside FencedCode
+							const startLine = view.state.doc.lineAt(node.from);
+							const hasFocus = view.hasFocus;
+
+							if (!(hasFocus && startLine.number === curLine)) {
+								// Find language
+								let lang = "";
+								node.node.cursor().iterate((c) => {
+									if (c.name === "CodeInfo") {
+										lang = view.state.doc
+											.sliceString(c.from, c.to)
+											.trim();
+										return false;
+									}
+								});
+
+								builder.add(
+									startLine.from,
+									startLine.to,
+									Decoration.replace({
+										widget: lang
+											? new LanguageLabelWidget(lang)
+											: undefined,
+									}),
+								);
+							}
+
+							const lastChild = node.node.lastChild;
+							if (
+								lastChild &&
+								lastChild.name === "CodeMark" &&
+								lastChild.from > startLine.to
+							) {
+								const endLine = view.state.doc.lineAt(
+									lastChild.from,
+								);
+								if (
+									endLine.number !== startLine.number &&
+									!(hasFocus && endLine.number === curLine)
+								) {
+									builder.add(
+										endLine.from,
+										endLine.to,
+										Decoration.replace({}),
+									);
+								}
+							}
+							return false; // Don't process children as markers
 						}
 
 						// Add a class to the entire link node when expanded for CSS targeting
 						if (type === "Link") {
-							const isExpanded = view.hasFocus && selection.from <= node.to && selection.to >= node.from;
+							const isExpanded =
+								view.hasFocus &&
+								selection.from <= node.to &&
+								selection.to >= node.from;
 							if (isExpanded) {
-								builder.add(node.from, node.to, Decoration.mark({ class: "cm-link-expanded" }));
+								builder.add(
+									node.from,
+									node.to,
+									Decoration.mark({
+										class: "cm-link-expanded",
+									}),
+								);
 							}
 						}
 
-						const isMarker = type.includes("Mark") || type.includes("Delimiter") || type === "HeaderMark" || type === "CodeMark" || type === "CodeInfo" || type === "URL";
-						
+						const isMarker =
+							type.includes("Mark") ||
+							type.includes("Delimiter") ||
+							type === "HeaderMark" ||
+							type === "CodeMark" ||
+							type === "CodeInfo" ||
+							type === "URL";
+
 						if (isMarker) {
-							const line = view.state.doc.lineAt(node.from).number;
+							const line = view.state.doc.lineAt(
+								node.from,
+							).number;
 							let shouldShow = view.hasFocus && line === curLine;
 
 							// Surgical hiding for inline markers: only show if cursor is inside the parent node
-							const inlineTypes = ["Emphasis", "StrongEmphasis", "InlineCode", "Link", "Image"];
+							const inlineTypes = [
+								"Emphasis",
+								"StrongEmphasis",
+								"InlineCode",
+								"Link",
+								"Image",
+							];
 							let parent = node.node.parent;
-							
+
 							// Special case for Link: Hide [ ] around label and (url) part
 							if (type === "LinkMark") {
 								let linkNode = parent;
-								while (linkNode && linkNode.name !== "Link" && linkNode.name !== "Document") {
+								while (
+									linkNode &&
+									linkNode.name !== "Link" &&
+									linkNode.name !== "Document"
+								) {
 									linkNode = linkNode.parent;
 								}
-								
+
 								if (linkNode && linkNode.name === "Link") {
-									shouldShow = view.hasFocus && selection.from <= linkNode.to && selection.to >= linkNode.from;
+									shouldShow =
+										view.hasFocus &&
+										selection.from <= linkNode.to &&
+										selection.to >= linkNode.from;
 								}
 							}
-							
+
 							// Handle URL inside markdown links - only hide if inside a Link node
 							if (type === "URL") {
 								let linkNode = parent;
-								while (linkNode && linkNode.name !== "Link" && linkNode.name !== "Document") {
+								while (
+									linkNode &&
+									linkNode.name !== "Link" &&
+									linkNode.name !== "Document"
+								) {
 									linkNode = linkNode.parent;
 								}
-								
+
 								// Only hide URL if it's inside a markdown Link; otherwise leave visible
 								if (!linkNode || linkNode.name !== "Link") {
 									shouldShow = true; // Don't hide standalone URLs
 								} else {
-									shouldShow = view.hasFocus && selection.from <= linkNode.to && selection.to >= linkNode.from;
+									shouldShow =
+										view.hasFocus &&
+										selection.from <= linkNode.to &&
+										selection.to >= linkNode.from;
 								}
-							} else if (parent && inlineTypes.includes(parent.name)) {
+							} else if (
+								parent &&
+								inlineTypes.includes(parent.name)
+							) {
 								// For other inline elements, only show if selection intersects the parent node
-								shouldShow = view.hasFocus && selection.from <= parent.to && selection.to >= parent.from;
+								shouldShow =
+									view.hasFocus &&
+									selection.from <= parent.to &&
+									selection.to >= parent.from;
 							}
 
 							if (!shouldShow) {
 								if (type === "ListMark") {
-									const text = view.state.doc.sliceString(node.from, node.to);
+									const text = view.state.doc.sliceString(
+										node.from,
+										node.to,
+									);
 									const isOrdered = /\d/.test(text);
 									if (isOrdered) {
-										builder.add(node.from, node.to, Decoration.mark({ class: "md-list-number" }));
+										builder.add(
+											node.from,
+											node.to,
+											Decoration.mark({
+												class: "md-list-number",
+											}),
+										);
 									} else {
-										builder.add(node.from, node.to, Decoration.replace({
-											widget: new BulletWidget()
-										}));
+										builder.add(
+											node.from,
+											node.to,
+											Decoration.replace({
+												widget: new BulletWidget(),
+											}),
+										);
 									}
 								} else if (type === "HeaderMark") {
 									let parentName = node.node.parent?.name;
-									if (parentName === "SetextHeading1" || parentName === "SetextHeading2") {
-										builder.add(node.from, node.to, Decoration.mark({ class: "md-faded" }));
+									if (
+										parentName === "SetextHeading1" ||
+										parentName === "SetextHeading2"
+									) {
+										builder.add(
+											node.from,
+											node.to,
+											Decoration.mark({
+												class: "md-faded",
+											}),
+										);
 									} else {
 										let to = node.to;
-										if (view.state.doc.sliceString(to, to + 1) === " ") {
+										if (
+											view.state.doc.sliceString(
+												to,
+												to + 1,
+											) === " "
+										) {
 											to++;
 										}
-										builder.add(node.from, to, Decoration.replace({}));
+										builder.add(
+											node.from,
+											to,
+											Decoration.replace({}),
+										);
 									}
 								} else {
-									builder.add(node.from, node.to, Decoration.replace({}));
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.replace({}),
+									);
 								}
 							}
 						}
-					}
+					},
 				});
 			}
 			return builder.finish();
@@ -383,7 +664,7 @@
 
 	// Obsidian-style: hide markers when not on active line
 	const hideMarkersPlugin = ViewPlugin.fromClass(HideMarkersPlugin, {
-		decorations: v => v.decorations
+		decorations: (v) => v.decorations,
 	});
 
 	$effect(() => {
@@ -405,27 +686,29 @@
 				crosshairCursor(),
 				highlightActiveLine(),
 				highlightSelectionMatches(),
-				markdown({ 
+				markdown({
 					codeLanguages: [
 						...languages,
 						LanguageDescription.of({
 							name: "svelte",
 							alias: ["sv", "svelte"],
-							load: async () => svelte()
-						})
+							load: async () => svelte(),
+						}),
 					],
-					extensions: [Table, GFM]
+					extensions: [Table, GFM],
 				}),
 				markdownLanguage.data.of({
-					autocomplete: markdownTableAutocompleter()
+					autocomplete: markdownTableAutocompleter(),
 				}),
 				markdownTables({
 					theme: {
 						light: TableTheme.light.with({
 							"--tbl-theme-row-background": "var(--background)",
 							"--tbl-theme-header-row-background": "var(--muted)",
-							"--tbl-theme-even-row-background": "var(--background)",
-							"--tbl-theme-odd-row-background": "var(--background)",
+							"--tbl-theme-even-row-background":
+								"var(--background)",
+							"--tbl-theme-odd-row-background":
+								"var(--background)",
 							"--tbl-theme-text-color": "var(--foreground)",
 							"--tbl-theme-menu-background": "var(--background)",
 							"--tbl-theme-menu-text-color": "var(--foreground)",
@@ -433,16 +716,22 @@
 							"--tbl-theme-border-hover-color": "var(--primary)",
 							"--tbl-theme-border-active-color": "var(--primary)",
 							"--tbl-theme-outline-color": "var(--primary)",
-							"--tbl-theme-select-all-focus-overlay": "color-mix(in srgb, var(--primary), transparent 80%)",
-							"--tbl-theme-select-all-blur-overlay": "color-mix(in srgb, var(--foreground), transparent 92%)",
-							"--tbl-theme-menu-hover-background": "var(--accent)",
-							"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)"
+							"--tbl-theme-select-all-focus-overlay":
+								"color-mix(in srgb, var(--primary), transparent 80%)",
+							"--tbl-theme-select-all-blur-overlay":
+								"color-mix(in srgb, var(--foreground), transparent 92%)",
+							"--tbl-theme-menu-hover-background":
+								"var(--accent)",
+							"--tbl-theme-menu-hover-text-color":
+								"var(--accent-foreground)",
 						}),
 						dark: TableTheme.dark.with({
 							"--tbl-theme-row-background": "var(--background)",
 							"--tbl-theme-header-row-background": "var(--muted)",
-							"--tbl-theme-even-row-background": "var(--background)",
-							"--tbl-theme-odd-row-background": "var(--background)",
+							"--tbl-theme-even-row-background":
+								"var(--background)",
+							"--tbl-theme-odd-row-background":
+								"var(--background)",
 							"--tbl-theme-text-color": "var(--foreground)",
 							"--tbl-theme-menu-background": "var(--background)",
 							"--tbl-theme-menu-text-color": "var(--foreground)",
@@ -450,42 +739,58 @@
 							"--tbl-theme-border-hover-color": "var(--primary)",
 							"--tbl-theme-border-active-color": "var(--primary)",
 							"--tbl-theme-outline-color": "var(--primary)",
-							"--tbl-theme-select-all-focus-overlay": "color-mix(in srgb, var(--primary), transparent 80%)",
-							"--tbl-theme-select-all-blur-overlay": "color-mix(in srgb, var(--foreground), transparent 92%)",
-							"--tbl-theme-menu-hover-background": "var(--accent)",
-							"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)"
-						})
+							"--tbl-theme-select-all-focus-overlay":
+								"color-mix(in srgb, var(--primary), transparent 80%)",
+							"--tbl-theme-select-all-blur-overlay":
+								"color-mix(in srgb, var(--foreground), transparent 92%)",
+							"--tbl-theme-menu-hover-background":
+								"var(--accent)",
+							"--tbl-theme-menu-hover-text-color":
+								"var(--accent-foreground)",
+						}),
 					},
 					style: TableStyle.default,
 					markdownConfig: {
-						extensions: [Table, GFM]
+						extensions: [Table, GFM],
 					},
 					extensions: [
 						keymap.of(defaultKeymap),
 						highlightActiveLine(),
 						hideMarkersPlugin,
-						syntaxHighlighting(markdownHighlight)
+						syntaxHighlighting(markdownHighlight),
 					],
-					globalKeyBindings: [...historyKeymap, ...searchKeymap]
+					globalKeyBindings: [...historyKeymap, ...searchKeymap],
 				}),
 				syntaxHighlighting(markdownHighlight),
 				hideMarkersPlugin,
 				codeBlockPlugin,
 				EditorView.domEventHandlers({
 					click: (event, view) => {
-						const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+						const pos = view.posAtCoords({
+							x: event.clientX,
+							y: event.clientY,
+						});
 						if (pos == null) return false;
-						
-						const node = syntaxTree(view.state).resolveInner(pos, -1);
+
+						const node = syntaxTree(view.state).resolveInner(
+							pos,
+							-1,
+						);
 						let linkNode: any = node;
-						while (linkNode && linkNode.name !== "Link" && linkNode.name !== "Document") {
+						while (
+							linkNode &&
+							linkNode.name !== "Link" &&
+							linkNode.name !== "Document"
+						) {
 							linkNode = linkNode.parent;
 						}
-						
+
 						if (linkNode && linkNode.name === "Link") {
 							// Only open if the link is not currently expanded (cursor not inside)
-							const isExpanded = view.hasFocus && 
-								view.state.selection.main.from >= linkNode.from && 
+							const isExpanded =
+								view.hasFocus &&
+								view.state.selection.main.from >=
+									linkNode.from &&
 								view.state.selection.main.to <= linkNode.to;
 
 							if (!isExpanded) {
@@ -493,19 +798,26 @@
 								let n = linkNode.node.firstChild;
 								while (n) {
 									if (n.name === "URL") {
-										url = view.state.doc.sliceString(n.from, n.to);
+										url = view.state.doc.sliceString(
+											n.from,
+											n.to,
+										);
 										break;
 									}
 									n = n.nextSibling;
 								}
-								
+
 								if (url) {
-									window.open(url, '_blank', 'noopener,noreferrer');
+									window.open(
+										url,
+										"_blank",
+										"noopener,noreferrer",
+									);
 								}
 							}
 						}
 						return false;
-					}
+					},
 				}),
 				keymap.of([
 					...closeBracketsKeymap,
@@ -514,7 +826,12 @@
 					...historyKeymap,
 					{ key: "Tab", run: smartIndent("more") },
 					{ key: "Shift-Tab", run: smartIndent("less") },
-					{ key: "Alt-Mod-t", run: insertEmptyMarkdownTable({ size: { rows: 2, cols: 2 } }) }
+					{
+						key: "Alt-Mod-t",
+						run: insertEmptyMarkdownTable({
+							size: { rows: 2, cols: 2 },
+						}),
+					},
 				]),
 				EditorView.theme({
 					"&": {
@@ -537,13 +854,13 @@
 						flexDirection: "column",
 					},
 					".cm-gutters": {
-						display: "none"
+						display: "none",
 					},
 					"&.cm-focused": {
-						outline: "none"
+						outline: "none",
 					},
 					".cm-activeLine": {
-						backgroundColor: "transparent"
+						backgroundColor: "transparent",
 					},
 					".cm-panels": {
 						backgroundColor: "transparent",
@@ -557,16 +874,19 @@
 					},
 					".cm-panel.cm-search": {
 						padding: "0.5rem",
-						backgroundColor: "color-mix(in srgb, var(--popover) 70%, transparent)",
+						backgroundColor:
+							"color-mix(in srgb, var(--popover) 70%, transparent)",
 						backdropFilter: "blur(24px) saturate(150%)",
 						color: "var(--popover-foreground)",
 						fontFamily: "ui-sans-serif, system-ui, sans-serif",
 					},
 					".cm-searchMatch": {
-						backgroundColor: "color-mix(in oklch, var(--primary) 30%, transparent)",
+						backgroundColor:
+							"color-mix(in oklch, var(--primary) 30%, transparent)",
 					},
 					".cm-searchMatch-selected": {
-						backgroundColor: "color-mix(in oklch, var(--primary) 60%, transparent)",
+						backgroundColor:
+							"color-mix(in oklch, var(--primary) 60%, transparent)",
 					},
 					".cm-textfield": {
 						backgroundColor: "var(--background)",
@@ -591,15 +911,16 @@
 						outline: "none",
 						userSelect: "none",
 						border: "1px solid var(--border)",
-						backgroundColor: "color-mix(in srgb, var(--input) 30%, transparent)",
+						backgroundColor:
+							"color-mix(in srgb, var(--input) 30%, transparent)",
 						color: "var(--foreground)",
 						backgroundImage: "none",
-						borderRadius: "0.375rem", /* rounded-md */
-						height: "1.75rem", /* h-7 */
-						padding: "0 0.5rem", /* px-2 */
-						fontSize: "0.75rem", /* text-xs */
-						lineHeight: "1.625", /* relaxed */
-						fontWeight: "500", /* font-medium */
+						borderRadius: "0.375rem" /* rounded-md */,
+						height: "1.75rem" /* h-7 */,
+						padding: "0 0.5rem" /* px-2 */,
+						fontSize: "0.75rem" /* text-xs */,
+						lineHeight: "1.625" /* relaxed */,
+						fontWeight: "500" /* font-medium */,
 						cursor: "pointer",
 						fontFamily: "inherit",
 						margin: "0 0.25rem",
@@ -607,7 +928,8 @@
 					},
 					".cm-button:focus-visible": {
 						borderColor: "var(--ring)",
-						boxShadow: "0 0 0 2px color-mix(in srgb, var(--ring) 30%, transparent)",
+						boxShadow:
+							"0 0 0 2px color-mix(in srgb, var(--ring) 30%, transparent)",
 					},
 					".cm-button:active:not([disabled])": {
 						transform: "translateY(1px)",
@@ -618,7 +940,8 @@
 						pointerEvents: "none",
 					},
 					".cm-button:hover": {
-						backgroundColor: "color-mix(in srgb, var(--input) 50%, transparent)",
+						backgroundColor:
+							"color-mix(in srgb, var(--input) 50%, transparent)",
 						color: "var(--foreground)",
 					},
 					".cm-panel.cm-search label": {
@@ -650,37 +973,44 @@
 						boxShadow: "inset 1em 1em var(--primary-foreground)",
 						backgroundColor: "var(--primary-foreground)",
 						transformOrigin: "center",
-						clipPath: "polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%)"
+						clipPath:
+							"polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%)",
 					},
 					".cm-panel.cm-search input[type=checkbox]:checked": {
 						backgroundColor: "var(--primary)",
 						borderColor: "var(--primary)",
 					},
-					".cm-panel.cm-search input[type=checkbox]:checked::before": {
-						transform: "scale(1)",
-					},
+					".cm-panel.cm-search input[type=checkbox]:checked::before":
+						{
+							transform: "scale(1)",
+						},
 					".cm-panel.cm-search [name=close]": {
 						color: "var(--muted-foreground)",
 						cursor: "pointer",
 					},
 					".cm-panel.cm-search [name=close]:hover": {
 						color: "var(--foreground)",
-					}
+					},
 				}),
 				EditorView.updateListener.of((update) => {
-					if (update.docChanged && !update.transactions.some(tr => tr.annotation(syncAnnotation))) {
+					if (
+						update.docChanged &&
+						!update.transactions.some((tr) =>
+							tr.annotation(syncAnnotation),
+						)
+					) {
 						const newContent = update.state.doc.toString();
 						if (newContent !== content) {
 							content = newContent;
 						}
 					}
-				})
-			]
+				}),
+			],
 		});
 
 		view = new EditorView({
 			state: startState,
-			parent: editorEl
+			parent: editorEl,
 		});
 
 		return () => {
@@ -693,7 +1023,9 @@
 	$effect(() => {
 		if (view) {
 			view.dispatch({
-				effects: wrapCompartment.reconfigure(wrap ? EditorView.lineWrapping : [])
+				effects: wrapCompartment.reconfigure(
+					wrap ? EditorView.lineWrapping : [],
+				),
 			});
 		}
 	});
@@ -706,8 +1038,12 @@
 				const currentDoc = view.state.doc.toString();
 				if (c !== currentDoc) {
 					view.dispatch({
-						changes: { from: 0, to: view.state.doc.length, insert: c },
-						annotations: syncAnnotation.of(true)
+						changes: {
+							from: 0,
+							to: view.state.doc.length,
+							insert: c,
+						},
+						annotations: syncAnnotation.of(true),
 					});
 				}
 			}
@@ -715,8 +1051,8 @@
 	});
 </script>
 
-<div 
-	bind:this={editorEl} 
+<div
+	bind:this={editorEl}
 	class="editor-wrapper {style}"
 	data-testid="editor-input"
 ></div>
@@ -734,17 +1070,18 @@
 		--editor-max-width: 800px;
 
 		/* Font Variables - Match Tailwind 4 font-mono stack */
-		--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+		--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+			"Liberation Mono", "Courier New", monospace;
 
 		/* Code Highlighting Variables - Themeable */
 		--code-keyword: oklch(0.6 0.25 300); /* Purple-ish */
 		--code-variable: var(--foreground);
 		--code-function: oklch(0.7 0.2 200); /* Cyan-ish */
-		--code-constant: oklch(0.6 0.2 30);  /* Orange-ish */
-		--code-type: oklch(0.8 0.1 120);     /* Yellow-ish */
+		--code-constant: oklch(0.6 0.2 30); /* Orange-ish */
+		--code-type: oklch(0.8 0.1 120); /* Yellow-ish */
 		--code-operator: var(--primary);
 		--code-comment: var(--muted-foreground);
-		--code-string: oklch(0.7 0.15 150);  /* Green-ish */
+		--code-string: oklch(0.7 0.15 150); /* Green-ish */
 
 		/* Table Support Variables */
 		--tbl-style-font-family: ui-sans-serif, system-ui, sans-serif;
@@ -776,7 +1113,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 	}
 
 	:global(.cm-fencedCode-top:hover .cm-copy-button),
@@ -793,7 +1130,11 @@
 	:global(.cm-copy-button.copied) {
 		color: var(--primary);
 		border-color: var(--primary);
-		background-color: color-mix(in srgb, var(--primary) 10%, var(--background));
+		background-color: color-mix(
+			in srgb,
+			var(--primary) 10%,
+			var(--background)
+		);
 	}
 
 	:global(.cm-editor) {
@@ -877,62 +1218,298 @@
 
 	/* Conditional rounding: remove cell and table corner radius if touching handle is hovered or active */
 	/* Only triggers on selection handles (header) or edge addition handles (table), not on insertion lines (border) */
-	
+
 	/* Top-Left Corner: First row/col selection handles inside first cell */
-	:global(.tbl-table-wrapper:has(.tbl-cell[data-row="0"][data-col="0"] .tbl-handle[data-type="header"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-cell[data-row="0"][data-col="0"] .tbl-handle[data-type="header"][data-active="true"]) .tbl-table),
-	:global(.tbl-table tr:first-child th:first-child:has(.tbl-handle[data-type="header"]:hover)),
-	:global(.tbl-table tr:first-child th:first-child:has(.tbl-handle[data-type="header"][data-active="true"])) {
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-cell[data-row="0"][data-col="0"]
+						.tbl-handle[data-type="header"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-cell[data-row="0"][data-col="0"]
+						.tbl-handle[data-type="header"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table
+				tr:first-child
+				th:first-child:has(.tbl-handle[data-type="header"]:hover)
+		),
+	:global(
+			.tbl-table
+				tr:first-child
+				th:first-child:has(
+					.tbl-handle[data-type="header"][data-active="true"]
+				)
+		) {
 		border-top-left-radius: 0 !important;
 	}
 
 	/* Top-Right Corner: Last col selection handle, right edge handle, or bottom-right corner handle */
-	:global(.tbl-table-wrapper:has(.tbl-table tr:first-child th:last-child .tbl-handle[data-type="header"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-table tr:first-child th:last-child .tbl-handle[data-type="header"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table),
-	:global(.tbl-table tr:first-child th:last-child:has(.tbl-handle[data-type="header"]:hover)),
-	:global(.tbl-table tr:first-child th:last-child:has(.tbl-handle[data-type="header"][data-active="true"])),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover) .tbl-table tr:first-child th:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"][data-active="true"]) .tbl-table tr:first-child th:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table tr:first-child th:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table tr:first-child th:last-child) {
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-table
+						tr:first-child
+						th:last-child
+						.tbl-handle[data-type="header"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-table
+						tr:first-child
+						th:last-child
+						.tbl-handle[data-type="header"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="right"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table
+				tr:first-child
+				th:last-child:has(.tbl-handle[data-type="header"]:hover)
+		),
+	:global(
+			.tbl-table
+				tr:first-child
+				th:last-child:has(
+					.tbl-handle[data-type="header"][data-active="true"]
+				)
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+				.tbl-table
+				tr:first-child
+				th:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="right"][data-active="true"]
+				)
+				.tbl-table
+				tr:first-child
+				th:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+				tr:first-child
+				th:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+				tr:first-child
+				th:last-child
+		) {
 		border-top-right-radius: 0 !important;
 	}
 
 	/* Bottom-Left Corner: Last row selection handle, bottom edge handle, or bottom-right corner handle */
-	:global(.tbl-table-wrapper:has(.tbl-table tr:last-child td:first-child .tbl-handle[data-type="header"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-table tr:last-child td:first-child .tbl-handle[data-type="header"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table),
-	:global(.tbl-table tr:last-child td:first-child:has(.tbl-handle[data-type="header"]:hover)),
-	:global(.tbl-table tr:last-child td:first-child:has(.tbl-handle[data-type="header"][data-active="true"])),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover) .tbl-table tr:last-child td:first-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"][data-active="true"]) .tbl-table tr:last-child td:first-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table tr:last-child td:first-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table tr:last-child td:first-child) {
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-table
+						tr:last-child
+						td:first-child
+						.tbl-handle[data-type="header"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-table
+						tr:last-child
+						td:first-child
+						.tbl-handle[data-type="header"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table
+				tr:last-child
+				td:first-child:has(.tbl-handle[data-type="header"]:hover)
+		),
+	:global(
+			.tbl-table
+				tr:last-child
+				td:first-child:has(
+					.tbl-handle[data-type="header"][data-active="true"]
+				)
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+				.tbl-table
+				tr:last-child
+				td:first-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom"][data-active="true"]
+				)
+				.tbl-table
+				tr:last-child
+				td:first-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+				tr:last-child
+				td:first-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+				tr:last-child
+				td:first-child
+		) {
 		border-bottom-left-radius: 0 !important;
 	}
 
 	/* Bottom-Right Corner: Right, Bottom, or Bottom-Right edge handles */
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"][data-active="true"]) .tbl-table),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table),
-	:global(.tbl-table tr:last-child td:last-child:has(.tbl-handle[data-type="header"]:hover)),
-	:global(.tbl-table tr:last-child td:last-child:has(.tbl-handle[data-type="header"][data-active="true"])),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover) .tbl-table tr:last-child td:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="right"][data-active="true"]) .tbl-table tr:last-child td:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover) .tbl-table tr:last-child td:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"][data-active="true"]) .tbl-table tr:last-child td:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"]:hover) .tbl-table tr:last-child td:last-child),
-	:global(.tbl-table-wrapper:has(.tbl-handle[data-location="bottom-right"][data-active="true"]) .tbl-table tr:last-child td:last-child) {
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="right"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+		),
+	:global(
+			.tbl-table
+				tr:last-child
+				td:last-child:has(.tbl-handle[data-type="header"]:hover)
+		),
+	:global(
+			.tbl-table
+				tr:last-child
+				td:last-child:has(
+					.tbl-handle[data-type="header"][data-active="true"]
+				)
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="right"][data-active="true"]
+				)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom"][data-active="true"]
+				)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"]:hover
+				)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		),
+	:global(
+			.tbl-table-wrapper:has(
+					.tbl-handle[data-location="bottom-right"][data-active="true"]
+				)
+				.tbl-table
+				tr:last-child
+				td:last-child
+		) {
 		border-bottom-right-radius: 0 !important;
 	}
 
@@ -1065,7 +1642,11 @@
 	:global(.tbl-cell-editor .cm-content ::selection),
 	:global(.tbl-cell[data-selected="true"]),
 	:global(.tbl-cell[data-selected="true"]::after) {
-		background-color: color-mix(in srgb, var(--primary), transparent 80%) !important;
+		background-color: color-mix(
+			in srgb,
+			var(--primary),
+			transparent 80%
+		) !important;
 	}
 
 	:global(.tbl-cell-editor .cm-content ::selection) {
@@ -1085,32 +1666,62 @@
 		border-bottom: 1px solid var(--border);
 	}
 
-	:global(.cm-fencedCode) {
+	:global(.cm-line.cm-fencedCode) {
+		position: relative;
 		background-color: var(--muted);
 		font-family: var(--font-mono) !important;
-		padding-left: 1.5rem;
+		padding-left: 2.2rem !important;
 		border-left: 1px solid var(--border);
 		border-right: 1px solid var(--border);
+	}
+
+	:global(.cm-line.cm-fencedCode.cm-activeLine) {
+		background-color: color-mix(
+			in srgb,
+			var(--primary) 8%,
+			var(--muted)
+		) !important;
 	}
 
 	:global(.cm-fencedCode *) {
 		font-family: var(--font-mono) !important;
 	}
 
-	:global(.cm-fencedCode-top) {
+	:global(.cm-line.cm-fencedCode-top) {
 		border-top: 1px solid var(--border);
 		border-top-left-radius: 8px;
 		border-top-right-radius: 8px;
-		margin-top: 0 !important;
-		padding-top: 0.8rem;
+		padding-top: 0.5rem !important;
+		padding-bottom: 0.5rem !important;
+		counter-reset: code-line;
 	}
 
-	:global(.cm-fencedCode-bottom) {
+	:global(.cm-line.cm-fencedCode-line) {
+		counter-increment: code-line;
+	}
+
+	:global(.cm-line.cm-fencedCode-line::before) {
+		content: counter(code-line);
+		position: absolute;
+		left: 0;
+		top: 50%;
+		transform: translateY(-50%);
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		width: 1.5rem;
+		font-size: 0.7rem;
+		color: var(--muted-foreground);
+		opacity: 0.4;
+		font-family: var(--font-mono);
+		user-select: none;
+	}
+
+	:global(.cm-line.cm-fencedCode-bottom) {
 		border-bottom: 1px solid var(--border);
 		border-bottom-left-radius: 8px;
 		border-bottom-right-radius: 8px;
-		margin-bottom: 0 !important;
-		padding-bottom: 0.8rem;
+		padding-top: 0 !important;
 	}
 
 	/* Show visible markers in focused editor on the active line slightly transparent */
@@ -1121,5 +1732,31 @@
 	/* Keep Setext header lines always slightly faded */
 	:global(.md-faded) {
 		opacity: 0.5 !important;
+	}
+
+	:global(.cm-language-label) {
+		position: absolute;
+		left: 0.6rem;
+		top: 50%;
+		transform: translateY(-50%);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		line-height: 1;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		color: var(--muted-foreground);
+		background-color: color-mix(
+			in srgb,
+			var(--muted-foreground) 10%,
+			transparent
+		);
+		padding: 0.15rem 0.4rem;
+		border-radius: 4px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		font-weight: 700;
+		user-select: none;
+		pointer-events: none;
 	}
 </style>
