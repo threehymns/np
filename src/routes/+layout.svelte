@@ -17,6 +17,7 @@
 
 	$effect(() => {
 		const theme = appState.prefs.theme;
+		const accent = appState.prefs.accentColor;
 		const body = document.body;
 
 		// Set theme data attribute
@@ -24,6 +25,13 @@
 			body.removeAttribute('data-theme');
 		} else {
 			body.setAttribute('data-theme', theme);
+		}
+
+		// Set accent data attribute
+		if (accent === 'default') {
+			body.removeAttribute('data-accent');
+		} else {
+			body.setAttribute('data-accent', accent);
 		}
 	});
 

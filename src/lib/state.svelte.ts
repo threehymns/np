@@ -16,6 +16,7 @@ export class Preferences {
 	encoding = $state('UTF-8');
 	theme = $state<Theme>('default');
 	appearanceMode = $state<AppearanceMode>('system');
+	accentColor = $state<string>('default');
 
 	constructor() {
 		this.load();
@@ -44,6 +45,7 @@ export class Preferences {
 				if (prefs.encoding !== undefined) this.encoding = prefs.encoding;
 				if (prefs.theme !== undefined) this.theme = prefs.theme;
 				if (prefs.appearanceMode !== undefined) this.appearanceMode = prefs.appearanceMode;
+				if (prefs.accentColor !== undefined) this.accentColor = prefs.accentColor;
 			} catch (e) {
 				console.error('Failed to load preferences', e);
 			}
@@ -63,7 +65,8 @@ export class Preferences {
 			lineEnding: this.lineEnding,
 			encoding: this.encoding,
 			theme: this.theme,
-			appearanceMode: this.appearanceMode
+			appearanceMode: this.appearanceMode,
+			accentColor: this.accentColor
 		};
 		window.localStorage.setItem('np-prefs-v2', JSON.stringify(prefs));
 		} catch (e) {

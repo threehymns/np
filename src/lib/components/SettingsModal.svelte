@@ -27,12 +27,12 @@
 		{ id: 'catppuccin-frappe', name: 'Catppuccin Frappé', colors: { bg: '#303446', fg: '#c6d0f5', primary: '#ca9ee6' } },
 		{ id: 'catppuccin-macchiato', name: 'Catppuccin Macchiato', colors: { bg: '#24273a', fg: '#cad3f5', primary: '#c6a0f6' } },
 		{ id: 'catppuccin-mocha', name: 'Catppuccin Mocha', colors: { bg: '#1e1e2e', fg: '#cdd6f4', primary: '#cba6f7' } },
-		{ id: 'gruvbox-dark-hard', name: 'Gruvbox Dark Hard', colors: { bg: '#1d2021', fg: '#ebdbb2', primary: '#fe8019' } },
-		{ id: 'gruvbox-dark-medium', name: 'Gruvbox Dark Medium', colors: { bg: '#282828', fg: '#ebdbb2', primary: '#fe8019' } },
-		{ id: 'gruvbox-dark-soft', name: 'Gruvbox Dark Soft', colors: { bg: '#32302f', fg: '#ebdbb2', primary: '#fe8019' } },
-		{ id: 'gruvbox-light-hard', name: 'Gruvbox Light Hard', colors: { bg: '#f9f5d7', fg: '#3c3836', primary: '#af3a03' } },
-		{ id: 'gruvbox-light-medium', name: 'Gruvbox Light Medium', colors: { bg: '#fbf1c7', fg: '#3c3836', primary: '#af3a03' } },
-		{ id: 'gruvbox-light-soft', name: 'Gruvbox Light Soft', colors: { bg: '#f2e5bc', fg: '#3c3836', primary: '#af3a03' } },
+		{ id: 'gruvbox-dark-hard', name: 'Gruvbox Dark Hard', colors: { bg: '#1d2021', fg: '#ebdbb2', primary: '#8ec07c' } },
+		{ id: 'gruvbox-dark-medium', name: 'Gruvbox Dark Medium', colors: { bg: '#282828', fg: '#ebdbb2', primary: '#8ec07c' } },
+		{ id: 'gruvbox-dark-soft', name: 'Gruvbox Dark Soft', colors: { bg: '#32302f', fg: '#ebdbb2', primary: '#8ec07c' } },
+		{ id: 'gruvbox-light-hard', name: 'Gruvbox Light Hard', colors: { bg: '#f9f5d7', fg: '#3c3836', primary: '#427b58' } },
+		{ id: 'gruvbox-light-medium', name: 'Gruvbox Light Medium', colors: { bg: '#fbf1c7', fg: '#3c3836', primary: '#427b58' } },
+		{ id: 'gruvbox-light-soft', name: 'Gruvbox Light Soft', colors: { bg: '#f2e5bc', fg: '#3c3836', primary: '#427b58' } },
 	];
 
 	const modes = [
@@ -45,6 +45,58 @@
 		{ id: 'appearance', name: 'Appearance', icon: Palette },
 		{ id: 'editor', name: 'Editor', icon: TextT },
 	];
+
+	const catppuccinAccents = [
+		{ id: 'rosewater', color: '#f5e0dc', name: 'Rosewater' },
+		{ id: 'flamingo', color: '#f2cdcd', name: 'Flamingo' },
+		{ id: 'pink', color: '#f5c2e7', name: 'Pink' },
+		{ id: 'mauve', color: '#cba6f7', name: 'Mauve' },
+		{ id: 'red', color: '#f38ba8', name: 'Red' },
+		{ id: 'maroon', color: '#eba0ac', name: 'Maroon' },
+		{ id: 'peach', color: '#fab387', name: 'Peach' },
+		{ id: 'yellow', color: '#f9e2af', name: 'Yellow' },
+		{ id: 'green', color: '#a6e3a1', name: 'Green' },
+		{ id: 'teal', color: '#94e2d5', name: 'Teal' },
+		{ id: 'sky', color: '#89dceb', name: 'Sky' },
+		{ id: 'sapphire', color: '#74c7ec', name: 'Sapphire' },
+		{ id: 'blue', color: '#89b4fa', name: 'Blue' },
+		{ id: 'lavender', color: '#b4befe', name: 'Lavender' }
+	];
+
+	const gruvboxAccents = [
+		{ id: 'red', color: '#fb4934', name: 'Red' },
+		{ id: 'green', color: '#b8bb26', name: 'Green' },
+		{ id: 'yellow', color: '#fabd2f', name: 'Yellow' },
+		{ id: 'blue', color: '#83a598', name: 'Blue' },
+		{ id: 'purple', color: '#d3869b', name: 'Purple' },
+		{ id: 'aqua', color: '#8ec07c', name: 'Aqua' },
+		{ id: 'orange', color: '#fe8019', name: 'Orange' }
+	];
+
+	const defaultAccents = [
+		{ id: 'default', color: '#000000', name: 'Default' },
+		{ id: 'blue', color: '#0070f3', name: 'Blue' },
+		{ id: 'red', color: '#e00000', name: 'Red' },
+		{ id: 'green', color: '#00703c', name: 'Green' },
+		{ id: 'orange', color: '#ff4d00', name: 'Orange' },
+		{ id: 'purple', color: '#7928ca', name: 'Purple' }
+	];
+
+	let currentAccents = $derived.by(() => {
+		if (appState.prefs.theme.startsWith('catppuccin')) return catppuccinAccents;
+		if (appState.prefs.theme.startsWith('gruvbox')) return gruvboxAccents;
+		return defaultAccents;
+	});
+
+	// Reset accent when theme family changes
+	let lastThemeFamily = $state('');
+	$effect(() => {
+		const family = appState.prefs.theme.split('-')[0];
+		if (lastThemeFamily && lastThemeFamily !== family) {
+			appState.prefs.accentColor = 'default';
+		}
+		lastThemeFamily = family;
+	});
 </script>
 
 <Dialog.Root bind:open>
@@ -103,6 +155,29 @@
 													<div class="h-1.5 w-1/2 rounded-full" style="background-color: {theme.colors.primary}"></div>
 												</div>
 												<span class="text-[10px] font-semibold text-center line-clamp-1">{theme.name}</span>
+											</Label>
+										{/each}
+									</RadioGroup.Root>
+								</div>
+
+								<Separator />
+
+								<div>
+									<h4 class="text-sm font-semibold mb-4 flex items-center gap-2">
+										<Palette size={16} /> Accent Color
+									</h4>
+									<RadioGroup.Root bind:value={appState.prefs.accentColor} class="flex flex-wrap gap-2">
+										{#each currentAccents as accent}
+											<Label
+												for={"accent-" + accent.id}
+												class={cn(
+													"flex items-center justify-center w-8 h-8 rounded-full border-2 border-transparent cursor-pointer transition-all hover:scale-110",
+													appState.prefs.accentColor === accent.id ? "border-foreground shadow-sm scale-110" : "opacity-80"
+												)}
+												style="background-color: {accent.color}"
+												title={accent.name}
+											>
+												<RadioGroup.Item value={accent.id} id={"accent-" + accent.id} class="sr-only" />
 											</Label>
 										{/each}
 									</RadioGroup.Root>
