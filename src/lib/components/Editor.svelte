@@ -178,6 +178,43 @@
 		{ tag: t.invalid, color: "var(--destructive)" },
 	]);
 
+	class CopyButtonWidget extends WidgetType {
+		text: string;
+		constructor(text: string) {
+			super();
+			this.text = text;
+		}
+		eq(other: CopyButtonWidget) { return other.text === this.text; }
+		toDOM() {
+			const btn = document.createElement("button");
+			btn.className = "cm-copy-button";
+			btn.setAttribute("aria-label", "Copy code");
+			btn.title = "Copy code";
+			btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-icon"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="check-icon" style="display: none;"><polyline points="20 6 9 17 4 12"/></svg>`;
+			
+			btn.onclick = (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				navigator.clipboard.writeText(this.text).then(() => {
+					const copyIcon = btn.querySelector('.copy-icon') as HTMLElement;
+					const checkIcon = btn.querySelector('.check-icon') as HTMLElement;
+					if (copyIcon && checkIcon) {
+						copyIcon.style.display = 'none';
+						checkIcon.style.display = 'block';
+						btn.classList.add('copied');
+						setTimeout(() => {
+							copyIcon.style.display = 'block';
+							checkIcon.style.display = 'none';
+							btn.classList.remove('copied');
+						}, 2000);
+					}
+				});
+			};
+			return btn;
+		}
+	}
+
 	// Plugin to add classes to code block lines for background and font
 	class CodeBlockPlugin {
 		decorations: DecorationSet;
@@ -192,6 +229,11 @@
 					from, to,
 					enter: (node) => {
 						if (node.name === "FencedCode") {
+							const fullText = view.state.doc.sliceString(node.from, node.to);
+							const linesArr = fullText.split('\n');
+							// Extract content between fences
+							const codeToCopy = linesArr.slice(1, -1).join('\n');
+
 							const startLine = view.state.doc.lineAt(node.from).number;
 							const endLine = view.state.doc.lineAt(node.to).number;
 							for (let i = startLine; i <= endLine; i++) {
@@ -199,7 +241,17 @@
 								let cls = "cm-fencedCode";
 								if (i === startLine) cls += " cm-fencedCode-top";
 								if (i === endLine) cls += " cm-fencedCode-bottom";
+
+								// Line decoration must be added at line.from (start of line)
 								builder.add(line.from, line.from, Decoration.line({ class: cls }));
+
+								if (i === startLine) {
+									// Widget decoration added at line.to (end of line), which is >= line.from
+									builder.add(line.to, line.to, Decoration.widget({
+										widget: new CopyButtonWidget(codeToCopy),
+										side: 1
+									}));
+								}
 							}
 						}
 					}
@@ -694,6 +746,46 @@
 		--tbl-theme-menu-background: var(--background);
 		--tbl-theme-menu-text-color: var(--foreground);
 		--tbl-theme-border-color: var(--border);
+	}
+
+	:global(.cm-fencedCode) {
+		position: relative;
+	}
+
+	:global(.cm-copy-button) {
+		position: absolute;
+		right: 1.5rem; /* Match editor padding */
+		top: 0.5rem;
+		z-index: 10;
+		opacity: 0;
+		transition: all 0.2s ease;
+		background-color: var(--background);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 5px;
+		color: var(--muted-foreground);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+	}
+
+	:global(.cm-fencedCode-top:hover .cm-copy-button),
+	:global(.cm-copy-button:hover) {
+		opacity: 1;
+	}
+
+	:global(.cm-copy-button:hover) {
+		background-color: var(--muted);
+		color: var(--foreground);
+		border-color: var(--muted-foreground);
+	}
+
+	:global(.cm-copy-button.copied) {
+		color: var(--primary);
+		border-color: var(--primary);
+		background-color: color-mix(in srgb, var(--primary) 10%, var(--background));
 	}
 
 	:global(.cm-editor) {
