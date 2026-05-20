@@ -10,6 +10,9 @@ export interface Storage {
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]>;
 	verifyPermission(handle: FileSystemHandle, readWrite?: boolean): Promise<boolean>;
+	createFile(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle>;
+	createDirectory(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle>;
+	deleteEntry(parent: FileSystemDirectoryHandle, name: string): Promise<void>;
 }
 
 export class FileStorage implements Storage {
@@ -84,5 +87,26 @@ export class FileStorage implements Storage {
 
 		// The user didn't grant permission, so return false.
 		return false;
+	}
+
+	async createFile(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle> {
+		return await parent.getFileHandle(name, { create: true });
+	}
+
+	async createDirectory(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
+		return await parent.getDirectoryHandle(name, { create: true });
+	}
+
+	async deleteEntry(parent: FileSystemDirectoryHandle, name: string): Promise<void> {
+		// removeEntry is supported in Chrome 86+
+		return await (parent as any).removeEntry(name, { recursive: true });
+	}
+
+	async renameEntry(handle: FileSystemHandle, newName: string): Promise<void> {
+		if ('move' in handle) {
+			return await (handle as any).move(newName);
+		} else {
+			throw new Error('Renaming is not supported in this browser.');
+		}
 	}
 }
