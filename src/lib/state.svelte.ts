@@ -36,3 +36,8 @@ export class AppState {
 }
 
 export const appState = new AppState();
+
+if (typeof window !== 'undefined') {
+	(window as any).appState = appState;
+}
+

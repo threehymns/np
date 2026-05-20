@@ -22,6 +22,8 @@ export class LocalStorageAdapter implements PreferenceStorage {
 	}
 }
 
+import { iconRegistry } from './editor/icons.svelte';
+
 export class Preferences {
 	wordWrap = $state(true);
 	statusBar = $state(true);
@@ -31,6 +33,8 @@ export class Preferences {
 	theme = $state<Theme>('default');
 	appearanceMode = $state<AppearanceMode>('system');
 	accentColor = $state<string>('default');
+	fileIconThemeId = $state<string>('phosphor');
+	productIconThemeId = $state<string>('phosphor');
 
 	private storage: PreferenceStorage;
 	private storageKey = 'np-prefs-v2';
@@ -43,6 +47,8 @@ export class Preferences {
 			$effect.root(() => {
 				$effect(() => {
 					this.save();
+					iconRegistry.activeFileThemeId = this.fileIconThemeId;
+					iconRegistry.activeProductThemeId = this.productIconThemeId;
 				});
 			});
 		}
@@ -61,6 +67,8 @@ export class Preferences {
 				if (prefs.theme !== undefined) this.theme = prefs.theme;
 				if (prefs.appearanceMode !== undefined) this.appearanceMode = prefs.appearanceMode;
 				if (prefs.accentColor !== undefined) this.accentColor = prefs.accentColor;
+				if (prefs.fileIconThemeId !== undefined) this.fileIconThemeId = prefs.fileIconThemeId;
+				if (prefs.productIconThemeId !== undefined) this.productIconThemeId = prefs.productIconThemeId;
 			}
 		} catch (e) {
 			console.error('Failed to load preferences', e);
@@ -77,7 +85,9 @@ export class Preferences {
 				encoding: this.encoding,
 				theme: this.theme,
 				appearanceMode: this.appearanceMode,
-				accentColor: this.accentColor
+				accentColor: this.accentColor,
+				fileIconThemeId: this.fileIconThemeId,
+				productIconThemeId: this.productIconThemeId
 			};
 			this.storage.setItem(this.storageKey, JSON.stringify(prefs));
 		} catch (e) {

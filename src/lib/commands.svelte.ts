@@ -250,7 +250,7 @@ export function registerCoreCommands() {
 						label: lang.name,
 						meta: isCurrent ? 'Configured Language' : undefined,
 						shortcut: `(${packageId})`,
-						icon: 'code',
+						icon: lang.name,
 						action: () => {
 							currentDoc.userLanguageOverride = lang.name;
 							appState.commandPalette.reset();
