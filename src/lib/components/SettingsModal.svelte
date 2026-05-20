@@ -8,6 +8,7 @@
 	import { setMode, resetMode } from "mode-watcher";
 	import { Palette, TextT, Gear } from "phosphor-svelte";
 	import { cn } from "$lib/utils.js";
+	import type { AppearanceMode } from "$lib/preferences.svelte";
 
 	let { open = $bindable(false) } = $props();
 
@@ -191,7 +192,7 @@
 										<RadioGroup.Root 
 											value={appState.prefs.appearanceMode} 
 											onValueChange={(v) => {
-												appState.prefs.appearanceMode = v as any;
+												appState.prefs.appearanceMode = v as AppearanceMode;
 												handleModeChange(v);
 											}}
 											class="flex gap-2"

@@ -5,6 +5,7 @@
 	import favicon from "$lib/assets/favicon.png";
 
 	import { appState } from "$lib/state.svelte.js";
+	import type { Theme, AppearanceMode } from "$lib/preferences.svelte";
 	import { undo, redo, selectAll } from "@codemirror/commands";
 	import { openSearchPanel } from "@codemirror/search";
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
