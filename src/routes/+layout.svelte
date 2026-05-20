@@ -67,7 +67,7 @@
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<div class="relative z-50 shrink-0 bg-background" class:border-b={appState.documents.length > 1}>
 		<Menubar.Root>
-			{#each ['File', 'Edit', 'Format', 'View'] as category}
+			{#each ['File', 'Edit', 'Format', 'View', 'Export'] as category}
 				<Menubar.Menu>
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>

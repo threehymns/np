@@ -20,6 +20,7 @@
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/vite": "^4.2.2",
+		"@types/marked": "^6.0.0",
 		"@types/node": "^25.9.1",
 		"@types/wicg-file-system-access": "^2023.10.7",
 		"bits-ui": "^2.16.3",
@@ -57,6 +58,7 @@
 		"@replit/codemirror-lang-svelte": "^6.0.0",
 		"codemirror": "^6.0.2",
 		"codemirror-markdown-tables": "^1.0.0",
+		"marked": "^18.0.4",
 		"mode-watcher": "^1.1.0"
 	}
 }

@@ -1,6 +1,7 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { appState } from "./state.svelte";
+import { transformer } from "./transformer";
 
 export interface Command {
 	id: string;
@@ -144,5 +145,49 @@ export function registerCoreCommands() {
 		shortcut: 'cmd+a',
 		action: () => appState.activeEditorView && selectAll(appState.activeEditorView),
 		isEnabled: () => !!appState.activeEditorView
+	});
+
+	commands.register({
+		id: 'transformer.copyHTML',
+		label: 'Copy as HTML',
+		category: 'Export',
+		action: async () => {
+			if (!appState.activeDocument) return;
+			const html = await transformer.transform(appState.activeDocument.content, 'html');
+			await navigator.clipboard.writeText(html);
+		}
+	});
+
+	commands.register({
+		id: 'transformer.exportHTML',
+		label: 'Export to HTML...',
+		category: 'Export',
+		action: async () => {
+			if (!appState.activeDocument) return;
+			const html = await transformer.transform(appState.activeDocument.content, 'html');
+			
+			if ('showSaveFilePicker' in window) {
+				try {
+					const handle = await window.showSaveFilePicker({
+						suggestedName: appState.activeDocument.fileName.replace(/\.md$/, '') + '.html',
+						types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
+					});
+					const writable = await handle.createWritable();
+					await writable.write(html);
+					await writable.close();
+				} catch (e) {
+					if ((e as Error).name !== 'AbortError') console.error(e);
+				}
+			} else {
+				// Fallback to data URI download
+				const blob = new Blob([html], { type: 'text/html' });
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
+				a.click();
+				URL.revokeObjectURL(url);
+			}
+		}
 	});
 }
