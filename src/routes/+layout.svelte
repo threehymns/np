@@ -165,6 +165,13 @@
 				<div class="h-3 w-px bg-border/50"></div>
 				<div class="flex gap-4">
 					<span>{appState.prefs.zoom}%</span>
+					<button 
+						type="button"
+						class="font-medium text-foreground/80 hover:text-foreground cursor-pointer transition-colors"
+						onclick={() => commands.execute('edit.changeLanguageMode')}
+					>
+						{appState.activeDocument?.language?.name ?? 'Plain Text'}
+					</button>
 					<span>{appState.prefs.lineEnding}</span>
 					<span>{appState.prefs.encoding}</span>
 				</div>

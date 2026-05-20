@@ -7,21 +7,34 @@ export const editorTheme = EditorView.theme({
 		backgroundColor: "transparent",
 	},
 	".cm-content": {
-		fontFamily: "ui-sans-serif, system-ui, sans-serif",
 		padding: "1.5rem",
 		color: "var(--foreground)",
 		caretColor: "var(--primary)",
 		width: "100%",
+	},
+	"&.is-markdown .cm-content": {
+		fontFamily: "ui-sans-serif, system-ui, sans-serif",
 		maxWidth: "var(--editor-max-width)",
 		margin: "0 auto",
 	},
+	"&.is-code .cm-content": {
+		fontFamily: "var(--font-mono)",
+		maxWidth: "none",
+		margin: "0",
+	},
 	".cm-scroller": {
 		lineHeight: "1.6",
-		display: "flex",
-		flexDirection: "column",
 	},
 	".cm-gutters": {
 		display: "none",
+	},
+	"&.is-code .cm-gutters": {
+		display: "flex",
+		backgroundColor: "transparent",
+		border: "none",
+		color: "var(--muted-foreground)",
+		fontFamily: "var(--font-mono)",
+		fontSize: "0.85rem",
 	},
 	"&.cm-focused": {
 		outline: "none",

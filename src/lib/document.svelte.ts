@@ -1,4 +1,5 @@
 import { type Storage, type FileOrigin } from './storage';
+import { LanguageSupport, allLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
@@ -34,6 +35,17 @@ export class DocumentSession {
 	get isModified() {
 		return this.content !== this.savedContent;
 	}
+
+	userLanguageOverride = $state<string | null>(null);
+
+	language = $derived.by(() => {
+		if (this.userLanguageOverride && this.userLanguageOverride !== "auto") {
+			const found = allLanguages.find(l => l.name === this.userLanguageOverride);
+			if (found) return found;
+			if (this.userLanguageOverride === "Plain Text") return null;
+		}
+		return LanguageSupport.getLanguageForFile(this.fileName);
+	});
 
 	charCount = $derived(this.content.length);
 

@@ -3,7 +3,7 @@
 	import { EditorView } from "codemirror";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
 	import { appState } from "$lib/state.svelte.js";
-	import { createEditorExtensions } from "$lib/editor";
+	import { createEditorExtensions, getLanguageExtensions, selectionState } from "$lib/editor";
 
 	import "$lib/editor/styles/editor.css";
 	import "$lib/editor/styles/markdown.css";
@@ -26,61 +26,74 @@
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
 	const wrapCompartment = new Compartment();
+	const languageCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
 	$effect(() => {
 		if (!editorEl) return;
 
-		const startState = EditorState.create({
-			doc: untrack(() => doc.content),
-			extensions: [
-				...createEditorExtensions({ wrapCompartment, wrap }),
-				EditorView.updateListener.of((update) => {
-					if (
-						update.docChanged &&
-						!update.transactions.some((tr) =>
-							tr.annotation(syncAnnotation),
-						)
-					) {
-						const newContent = update.state.doc.toString();
-						if (newContent !== doc.content) {
-							doc.content = newContent;
+		let isDestroyed = false;
+
+		getLanguageExtensions(untrack(() => doc.language)).then((initialExtensions) => {
+			if (isDestroyed || !editorEl) return;
+
+			const startState = EditorState.create({
+				doc: untrack(() => doc.content),
+				extensions: [
+					...createEditorExtensions({
+						wrapCompartment,
+						languageCompartment,
+						wrap,
+						initialLanguageExtensions: initialExtensions,
+					}),
+					EditorView.updateListener.of((update) => {
+						if (
+							update.docChanged &&
+							!update.transactions.some((tr) =>
+								tr.annotation(syncAnnotation),
+							)
+						) {
+							const newContent = update.state.doc.toString();
+							if (newContent !== doc.content) {
+								doc.content = newContent;
+							}
 						}
-					}
 
-					if (update.selectionSet || update.docChanged) {
-						const state = update.state;
-						const selection = state.selection.main;
-						const line = state.doc.lineAt(selection.head);
+						if (update.selectionSet || update.docChanged) {
+							const state = update.state;
+							const selection = state.selection.main;
+							const line = state.doc.lineAt(selection.head);
 
-						const lineNum = line.number;
-						const colNum = selection.head - line.from + 1;
+							const lineNum = line.number;
+							const colNum = selection.head - line.from + 1;
 
-						if (selection.empty) {
-							selectionState.update(lineNum, colNum, 0, 0);
-						} else {
-							const selectedText = state.doc.sliceString(
-								selection.from,
-								selection.to,
-							);
-							const charCount = selectedText.length;
-							const wordCount = selectedText
-								.trim()
-								.split(/\s+/)
-								.filter(Boolean).length;
-							selectionState.update(lineNum, colNum, charCount, wordCount);
+							if (selection.empty) {
+								selectionState.update(lineNum, colNum, 0, 0);
+							} else {
+								const selectedText = state.doc.sliceString(
+									selection.from,
+									selection.to,
+								);
+								const charCount = selectedText.length;
+								const wordCount = selectedText
+									.trim()
+									.split(/\s+/)
+									.filter(Boolean).length;
+								selectionState.update(lineNum, colNum, charCount, wordCount);
+							}
 						}
-					}
-				}),
-			],
-		});
+					}),
+				],
+			});
 
-		view = new EditorView({
-			state: startState,
-			parent: editorEl,
+			view = new EditorView({
+				state: startState,
+				parent: editorEl,
+			});
 		});
 
 		return () => {
+			isDestroyed = true;
 			view?.destroy();
 			view = undefined;
 		};
@@ -93,6 +106,20 @@
 				effects: wrapCompartment.reconfigure(
 					wrap ? EditorView.lineWrapping : [],
 				),
+			});
+		}
+	});
+
+	// Sync language
+	$effect(() => {
+		const lang = doc.language;
+		if (view) {
+			getLanguageExtensions(lang).then((extensions) => {
+				if (view) {
+					view.dispatch({
+						effects: languageCompartment.reconfigure(extensions),
+					});
+				}
 			});
 		}
 	});

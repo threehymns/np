@@ -3,12 +3,16 @@ import { Workspace } from './workspace.svelte';
 import { Preferences } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { selectionState } from './editor/selection.svelte';
+import { CommandPaletteState } from './components/commandPalette.svelte';
+import { iconRegistry } from './editor/icons.svelte';
 
 export class AppState {
 	prefs = new Preferences();
 	storage = new FileStorage();
 	workspace = new Workspace(this.storage);
 	selection = selectionState;
+	commandPalette = new CommandPaletteState();
+	icons = iconRegistry;
 	
 	activeEditorView = $state<any>(undefined);
 

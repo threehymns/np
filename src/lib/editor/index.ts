@@ -6,8 +6,9 @@ import {
 	crosshairCursor,
 	highlightActiveLine,
 	keymap,
+	lineNumbers,
 } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import {
 	indentOnInput,
 	bracketMatching,
@@ -21,7 +22,6 @@ import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { Table, GFM } from "@lezer/markdown";
 import { languages } from "@codemirror/language-data";
-import { svelte } from "@replit/codemirror-lang-svelte";
 import {
 	markdownTables,
 	markdownTableAutocompleter,
@@ -30,6 +30,7 @@ import {
 	TableStyle,
 } from "codemirror-markdown-tables";
 
+import { allLanguages } from "./language.svelte";
 import { markdownHighlight } from "./extensions/highlight";
 import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
@@ -39,14 +40,102 @@ import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 
+export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
+	if (!langDesc) return [];
+
+	const lang = await langDesc.load();
+	
+	if (langDesc.name === "Markdown") {
+		return [
+			lang,
+			markdown({
+				codeLanguages: allLanguages,
+				extensions: [Table, GFM],
+			}),
+			markdownLanguage.data.of({
+				autocomplete: markdownTableAutocompleter(),
+			}),
+			markdownTables({
+				theme: markdownTableTheme,
+				style: TableStyle.default,
+				markdownConfig: {
+					extensions: [Table, GFM],
+				},
+				extensions: [
+					keymap.of(defaultKeymap),
+					highlightActiveLine(),
+					hideMarkersPlugin,
+					syntaxHighlighting(markdownHighlight),
+				],
+				globalKeyBindings: [...historyKeymap, ...searchKeymap],
+			}),
+			hideMarkersPlugin,
+			codeBlockPlugin,
+			blockquotePlugin,
+			horizontalRulePlugin,
+			EditorView.editorAttributes.of({ class: "is-markdown" }),
+		];
+	}
+
+	return [
+		lang,
+		lineNumbers(),
+		EditorView.editorAttributes.of({ class: "is-code" }),
+	];
+}
+
+const markdownTableTheme = {
+	light: TableTheme.light.with({
+		"--tbl-theme-row-background": "var(--background)",
+		"--tbl-theme-header-row-background": "var(--muted)",
+		"--tbl-theme-even-row-background": "var(--background)",
+		"--tbl-theme-odd-row-background": "var(--background)",
+		"--tbl-theme-text-color": "var(--foreground)",
+		"--tbl-theme-menu-background": "var(--background)",
+		"--tbl-theme-menu-text-color": "var(--foreground)",
+		"--tbl-theme-border-color": "var(--border)",
+		"--tbl-theme-border-hover-color": "var(--primary)",
+		"--tbl-theme-border-active-color": "var(--primary)",
+		"--tbl-theme-outline-color": "var(--primary)",
+		"--tbl-theme-select-all-focus-overlay":
+			"color-mix(in srgb, var(--primary), transparent 80%)",
+		"--tbl-theme-select-all-blur-overlay":
+			"color-mix(in srgb, var(--foreground), transparent 92%)",
+		"--tbl-theme-menu-hover-background": "var(--accent)",
+		"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)",
+	}),
+	dark: TableTheme.dark.with({
+		"--tbl-theme-row-background": "var(--background)",
+		"--tbl-theme-header-row-background": "var(--muted)",
+		"--tbl-theme-even-row-background": "var(--background)",
+		"--tbl-theme-odd-row-background": "var(--background)",
+		"--tbl-theme-text-color": "var(--foreground)",
+		"--tbl-theme-menu-background": "var(--background)",
+		"--tbl-theme-menu-text-color": "var(--foreground)",
+		"--tbl-theme-border-color": "var(--border)",
+		"--tbl-theme-border-hover-color": "var(--primary)",
+		"--tbl-theme-border-active-color": "var(--primary)",
+		"--tbl-theme-outline-color": "var(--primary)",
+		"--tbl-theme-select-all-focus-overlay":
+			"color-mix(in srgb, var(--primary), transparent 80%)",
+		"--tbl-theme-select-all-blur-overlay":
+			"color-mix(in srgb, var(--foreground), transparent 92%)",
+		"--tbl-theme-menu-hover-background": "var(--accent)",
+		"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)",
+	}),
+};
+
 export function createEditorExtensions(options: {
-	wrapCompartment: any;
+	wrapCompartment: Compartment;
+	languageCompartment: Compartment;
 	wrap: boolean;
+	initialLanguageExtensions: any[];
 }) {
-	const { wrapCompartment, wrap } = options;
+	const { wrapCompartment, languageCompartment, wrap, initialLanguageExtensions } = options;
 
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
+		languageCompartment.of(initialLanguageExtensions),
 		highlightSpecialChars(),
 		history(),
 		foldGutter(),
@@ -59,78 +148,7 @@ export function createEditorExtensions(options: {
 		crosshairCursor(),
 		highlightActiveLine(),
 		highlightSelectionMatches(),
-		markdown({
-			codeLanguages: [
-				...languages,
-				LanguageDescription.of({
-					name: "svelte",
-					alias: ["sv", "svelte"],
-					load: async () => svelte(),
-				}),
-			],
-			extensions: [Table, GFM],
-		}),
-		markdownLanguage.data.of({
-			autocomplete: markdownTableAutocompleter(),
-		}),
-		markdownTables({
-			theme: {
-				light: TableTheme.light.with({
-					"--tbl-theme-row-background": "var(--background)",
-					"--tbl-theme-header-row-background": "var(--muted)",
-					"--tbl-theme-even-row-background": "var(--background)",
-					"--tbl-theme-odd-row-background": "var(--background)",
-					"--tbl-theme-text-color": "var(--foreground)",
-					"--tbl-theme-menu-background": "var(--background)",
-					"--tbl-theme-menu-text-color": "var(--foreground)",
-					"--tbl-theme-border-color": "var(--border)",
-					"--tbl-theme-border-hover-color": "var(--primary)",
-					"--tbl-theme-border-active-color": "var(--primary)",
-					"--tbl-theme-outline-color": "var(--primary)",
-					"--tbl-theme-select-all-focus-overlay":
-						"color-mix(in srgb, var(--primary), transparent 80%)",
-					"--tbl-theme-select-all-blur-overlay":
-						"color-mix(in srgb, var(--foreground), transparent 92%)",
-					"--tbl-theme-menu-hover-background": "var(--accent)",
-					"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)",
-				}),
-				dark: TableTheme.dark.with({
-					"--tbl-theme-row-background": "var(--background)",
-					"--tbl-theme-header-row-background": "var(--muted)",
-					"--tbl-theme-even-row-background": "var(--background)",
-					"--tbl-theme-odd-row-background": "var(--background)",
-					"--tbl-theme-text-color": "var(--foreground)",
-					"--tbl-theme-menu-background": "var(--background)",
-					"--tbl-theme-menu-text-color": "var(--foreground)",
-					"--tbl-theme-border-color": "var(--border)",
-					"--tbl-theme-border-hover-color": "var(--primary)",
-					"--tbl-theme-border-active-color": "var(--primary)",
-					"--tbl-theme-outline-color": "var(--primary)",
-					"--tbl-theme-select-all-focus-overlay":
-						"color-mix(in srgb, var(--primary), transparent 80%)",
-					"--tbl-theme-select-all-blur-overlay":
-						"color-mix(in srgb, var(--foreground), transparent 92%)",
-					"--tbl-theme-menu-hover-background": "var(--accent)",
-					"--tbl-theme-menu-hover-text-color": "var(--accent-foreground)",
-				}),
-			},
-			style: TableStyle.default,
-			markdownConfig: {
-				extensions: [Table, GFM],
-			},
-			extensions: [
-				keymap.of(defaultKeymap),
-				highlightActiveLine(),
-				hideMarkersPlugin,
-				syntaxHighlighting(markdownHighlight),
-			],
-			globalKeyBindings: [...historyKeymap, ...searchKeymap],
-		}),
 		syntaxHighlighting(markdownHighlight),
-		hideMarkersPlugin,
-		codeBlockPlugin,
-		blockquotePlugin,
-		horizontalRulePlugin,
 		linkHandlers,
 		editorTheme,
 		keymap.of([
@@ -158,3 +176,5 @@ export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/theme";
+export * from "./language.svelte";
+export * from "./selection.svelte";

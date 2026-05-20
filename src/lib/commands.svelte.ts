@@ -2,6 +2,7 @@ import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { appState } from "./state.svelte";
 import { transformer } from "./transformer";
+import { allLanguages } from "./editor/language.svelte";
 
 export interface Command {
 	id: string;
@@ -78,7 +79,7 @@ export function registerCoreCommands() {
 		label: 'New',
 		category: 'File',
 		shortcut: 'cmd+n',
-		action: () => appState.newFile()
+		action: () => { appState.newFile(); }
 	});
 
 	commands.register({
@@ -86,7 +87,7 @@ export function registerCoreCommands() {
 		label: 'Open...',
 		category: 'File',
 		shortcut: 'cmd+o',
-		action: () => appState.openFile()
+		action: () => { appState.openFile(); }
 	});
 
 	commands.register({
@@ -188,6 +189,80 @@ export function registerCoreCommands() {
 				a.click();
 				URL.revokeObjectURL(url);
 			}
+		}
+	});
+
+	commands.register({
+		id: 'edit.changeLanguageMode',
+		label: 'Change Language Mode',
+		category: 'Edit',
+		shortcut: 'cmd+k m', // VS Code style: Cmd+K M (though we'll trigger from Cmd+P/Menu)
+		action: () => {
+			if (!appState.activeDocument) return;
+			const currentDoc = appState.activeDocument;
+			
+			const langItems = [
+				{
+					id: 'auto',
+					label: 'Auto Detect',
+					meta: currentDoc.userLanguageOverride === null ? 'Configured Language' : undefined,
+					icon: 'language',
+					action: () => {
+						currentDoc.userLanguageOverride = null;
+						appState.commandPalette.reset();
+					}
+				},
+				{
+					id: 'text',
+					label: 'Plain Text',
+					meta: currentDoc.userLanguageOverride === 'Plain Text' ? 'Configured Language' : undefined,
+					icon: 'file',
+					action: () => {
+						currentDoc.userLanguageOverride = 'Plain Text';
+						appState.commandPalette.reset();
+					}
+				},
+				...allLanguages.map(lang => {
+					const isCurrent = currentDoc.userLanguageOverride === lang.name || 
+						(currentDoc.userLanguageOverride === null && currentDoc.language?.name === lang.name);
+					
+					let packageId = '';
+					const nameMap: Record<string, string> = {
+						"C++": "@codemirror/lang-cpp",
+						"HTML": "@codemirror/lang-html",
+						"Java": "@codemirror/lang-java",
+						"JavaScript": "@codemirror/lang-javascript",
+						"TypeScript": "@codemirror/lang-javascript",
+						"JSX": "@codemirror/lang-javascript",
+						"TSX": "@codemirror/lang-javascript",
+						"JSON": "@codemirror/lang-json",
+						"Markdown": "@codemirror/lang-markdown",
+						"Python": "@codemirror/lang-python",
+						"Rust": "@codemirror/lang-rust",
+						"SQL": "@codemirror/lang-sql",
+						"Svelte": "@replit/codemirror-lang-svelte",
+						"CSS": "@codemirror/lang-css",
+					};
+					packageId = nameMap[lang.name] || `@codemirror/lang-${lang.name.toLowerCase()}`;
+
+					return {
+						id: lang.name,
+						label: lang.name,
+						meta: isCurrent ? 'Configured Language' : undefined,
+						shortcut: `(${packageId})`,
+						icon: 'code',
+						action: () => {
+							currentDoc.userLanguageOverride = lang.name;
+							appState.commandPalette.reset();
+						}
+					};
+				})
+			];
+
+			appState.commandPalette.openWith({
+				placeholder: 'Select Language Mode...',
+				items: langItems
+			});
 		}
 	});
 }

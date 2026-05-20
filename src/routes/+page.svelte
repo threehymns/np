@@ -51,7 +51,7 @@
 <div class="flex h-full w-full overflow-hidden">
   {#if appState.workspace.rootHandle}
     <aside class="w-64 shrink-0 border-r bg-muted/20 flex flex-col overflow-auto py-2">
-      <FileExplorer rootHandle={appState.workspace.rootHandle} />
+      <FileExplorer />
     </aside>
   {/if}
 
