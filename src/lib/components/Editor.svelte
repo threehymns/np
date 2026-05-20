@@ -1756,4 +1756,8 @@
 		user-select: none;
 		pointer-events: none;
 	}
+	/* Hide markers in static table cells */
+	:global(.tbl-cell-view .md-marker) {
+		display: none !important;
+	}
 </style>
