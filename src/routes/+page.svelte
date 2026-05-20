@@ -35,7 +35,7 @@
     const docs = [...appState.documents];
     const [movedDoc] = docs.splice(fromIdx, 1);
     docs.splice(toIdx, 0, movedDoc);
-    appState.documents = docs;
+    appState.workspace.reorderDocuments(docs);
   }
 
   function handleDragEnd() {

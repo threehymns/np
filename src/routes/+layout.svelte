@@ -13,7 +13,7 @@
 	let { children } = $props();
 	let settingsOpen = $state(false);
 
-	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.pendingCloseId));
+	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
 	$effect(() => {
 		const theme = appState.prefs.theme;
@@ -200,7 +200,7 @@
 
 <SettingsModal bind:open={settingsOpen} />
 
-<AlertDialog.Root open={!!appState.pendingCloseId} onOpenChange={(open) => { if (!open) appState.pendingCloseId = null; }}>
+<AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>
 	<AlertDialog.Content>
 		<AlertDialog.Header>
 			<AlertDialog.Title>Do you want to save changes to {pendingDoc?.fileName}?</AlertDialog.Title>
@@ -210,10 +210,10 @@
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.pendingCloseId!, false)} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, false)} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
 				Don't Save
 			</AlertDialog.Action>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.pendingCloseId!, true)}>
+			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, true)}>
 				Save
 			</AlertDialog.Action>
 		</AlertDialog.Footer>
