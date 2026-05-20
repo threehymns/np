@@ -1,0 +1,270 @@
+import {
+	Decoration,
+	ViewPlugin,
+	ViewUpdate,
+	EditorView,
+} from "@codemirror/view";
+import type { DecorationSet } from "@codemirror/view";
+import { RangeSetBuilder } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
+import { BulletWidget } from "../widgets/BulletWidget";
+import { LanguageLabelWidget } from "../widgets/LanguageLabelWidget";
+
+class HideMarkersPlugin {
+	decorations: DecorationSet;
+
+	constructor(view: EditorView) {
+		this.decorations = this.getDecorations(view);
+	}
+
+	update(update: ViewUpdate) {
+		if (
+			update.docChanged ||
+			update.selectionSet ||
+			update.viewportChanged ||
+			update.focusChanged
+		) {
+			this.decorations = this.getDecorations(update.view);
+		}
+	}
+
+	getDecorations(view: EditorView) {
+		const builder = new RangeSetBuilder<Decoration>();
+		const selection = view.state.selection.main;
+		const curLine = view.state.doc.lineAt(selection.from).number;
+
+		for (let { from, to } of view.visibleRanges) {
+			syntaxTree(view.state).iterate({
+				from,
+				to,
+				enter: (node) => {
+					const type = node.name;
+
+					if (type === "FencedCode") {
+						const startLine = view.state.doc.lineAt(node.from);
+						const hasFocus = view.hasFocus;
+
+						if (!(hasFocus && startLine.number === curLine)) {
+							// Find language
+							let lang = "";
+							node.node.cursor().iterate((c) => {
+								if (c.name === "CodeInfo") {
+									lang = view.state.doc
+										.sliceString(c.from, c.to)
+										.trim();
+									return false;
+								}
+							});
+
+							builder.add(
+								startLine.from,
+								startLine.to,
+								Decoration.replace({
+									widget: lang
+										? new LanguageLabelWidget(lang)
+										: undefined,
+								}),
+							);
+						}
+
+						const lastChild = node.node.lastChild;
+						if (
+							lastChild &&
+							lastChild.name === "CodeMark" &&
+							lastChild.from > startLine.to
+						) {
+							const endLine = view.state.doc.lineAt(
+								lastChild.from,
+							);
+							if (
+								endLine.number !== startLine.number &&
+								!(hasFocus && endLine.number === curLine)
+							) {
+								builder.add(
+									endLine.from,
+									endLine.to,
+									Decoration.replace({}),
+								);
+							}
+						}
+						return false; // Don't process children as markers
+					}
+
+					// Add a class to the entire link node when expanded for CSS targeting
+					if (type === "Link") {
+						const isExpanded =
+							view.hasFocus &&
+							selection.from <= node.to &&
+							selection.to >= node.from;
+						if (isExpanded) {
+							builder.add(
+								node.from,
+								node.to,
+								Decoration.mark({
+									class: "cm-link-expanded",
+								}),
+							);
+						}
+					}
+
+					const isMarker =
+						type.includes("Mark") ||
+						type.includes("Delimiter") ||
+						type === "HeaderMark" ||
+						type === "CodeMark" ||
+						type === "CodeInfo" ||
+						type === "URL";
+
+					if (isMarker) {
+						const line = view.state.doc.lineAt(
+							node.from,
+						).number;
+						let shouldShow = view.hasFocus && line === curLine;
+
+						// Surgical hiding for inline markers: only show if cursor is inside the parent node
+						const inlineTypes = [
+							"Emphasis",
+							"StrongEmphasis",
+							"InlineCode",
+							"Link",
+							"Image",
+						];
+						let parent = node.node.parent;
+
+						// Special case for Link: Hide [ ] around label and (url) part
+						if (type === "LinkMark") {
+							let linkNode = parent;
+							while (
+								linkNode &&
+								linkNode.name !== "Link" &&
+								linkNode.name !== "Document"
+							) {
+								linkNode = linkNode.parent;
+							}
+
+							if (linkNode && linkNode.name === "Link") {
+								shouldShow =
+									view.hasFocus &&
+									selection.from <= linkNode.to &&
+									selection.to >= linkNode.from;
+							}
+						}
+
+						// Handle URL inside markdown links - only hide if inside a Link node
+						if (type === "URL") {
+							let linkNode = parent;
+							while (
+								linkNode &&
+								linkNode.name !== "Link" &&
+								linkNode.name !== "Document"
+							) {
+								linkNode = linkNode.parent;
+							}
+
+							// Only hide URL if it's inside a markdown Link; otherwise leave visible
+							if (!linkNode || linkNode.name !== "Link") {
+								shouldShow = true; // Don't hide standalone URLs
+							} else {
+								shouldShow =
+									view.hasFocus &&
+									selection.from <= linkNode.to &&
+									selection.to >= linkNode.from;
+							}
+						} else if (
+							parent &&
+							inlineTypes.includes(parent.name)
+						) {
+							// For other inline elements, only show if selection intersects the parent node
+							shouldShow =
+								view.hasFocus &&
+								selection.from <= parent.to &&
+								selection.to >= parent.from;
+						}
+
+						if (!shouldShow) {
+							if (type === "ListMark") {
+								const text = view.state.doc.sliceString(
+									node.from,
+									node.to,
+								);
+								const isOrdered = /\d/.test(text);
+								if (isOrdered) {
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.mark({
+											class: "md-list-number",
+										}),
+									);
+								} else {
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.replace({
+											widget: new BulletWidget(),
+										}),
+									);
+								}
+							} else if (type === "HeaderMark") {
+								let parentName = node.node.parent?.name;
+								if (
+									parentName === "SetextHeading1" ||
+									parentName === "SetextHeading2"
+								) {
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.mark({
+											class: "md-faded",
+										}),
+									);
+								} else {
+									let to = node.to;
+									if (
+										view.state.doc.sliceString(
+											to,
+											to + 1,
+										) === " "
+									) {
+										to++;
+									}
+									builder.add(
+										node.from,
+										to,
+										Decoration.replace({}),
+									);
+								}
+							} else if (type === "QuoteMark") {
+								let to = node.to;
+								if (
+									view.state.doc.sliceString(
+										to,
+										to + 1,
+									) === " "
+								) {
+									to++;
+								}
+								builder.add(
+									node.from,
+									to,
+									Decoration.replace({}),
+								);
+							} else {
+								builder.add(
+									node.from,
+									node.to,
+									Decoration.replace({}),
+								);
+							}
+						}
+					}
+				},
+			});
+		}
+		return builder.finish();
+	}
+}
+
+export const hideMarkersPlugin = ViewPlugin.fromClass(HideMarkersPlugin, {
+	decorations: (v) => v.decorations,
+});

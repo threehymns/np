@@ -1,0 +1,204 @@
+.cm-fencedCode {
+	position: relative;
+}
+
+.cm-copy-button {
+	position: absolute;
+	right: 1.5rem; /* Match editor padding */
+	top: 0.5rem;
+	z-index: 10;
+	opacity: 0;
+	transition: all 0.2s ease;
+	background-color: var(--background);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 5px;
+	color: var(--muted-foreground);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.cm-fencedCode-top:hover .cm-copy-button,
+.cm-copy-button:hover {
+	opacity: 1;
+}
+
+.cm-copy-button:hover {
+	background-color: var(--muted);
+	color: var(--foreground);
+	border-color: var(--muted-foreground);
+}
+
+.cm-copy-button.copied {
+	color: var(--primary);
+	border-color: var(--primary);
+	background-color: color-mix(
+		in srgb,
+		var(--primary) 10%,
+		var(--background)
+	);
+}
+
+.cm-content .cm-link {
+	cursor: pointer;
+	color: var(--code-operator) !important;
+}
+
+.alt-pressed .cm-content .cm-link {
+	cursor: text !important;
+}
+
+.cm-content .cm-link:hover {
+	text-decoration: underline !important;
+}
+
+/* Disable pointer and hover underline when link is expanded for editing */
+.cm-content .cm-link-expanded .cm-link,
+.cm-content .cm-link.cm-link-expanded {
+	cursor: text !important;
+	text-decoration: none !important;
+}
+
+.md-bullet {
+	color: var(--primary);
+	font-weight: bold;
+	margin-right: 0.2rem;
+}
+
+.md-list-number {
+	color: var(--primary);
+	font-weight: 500;
+}
+
+.cm-blockquote {
+	border-left: 3px solid var(--primary);
+	padding-left: 1.5rem;
+	margin-left: 0.2rem;
+	color: var(--muted-foreground);
+	font-style: italic;
+}
+
+.cm-hr-line {
+	line-height: 0 !important;
+}
+
+.cm-hr-line .cm-widgetBuffer {
+	display: none !important;
+}
+
+.cm-horizontal-rule-wrapper {
+	width: 100%;
+	height: 1.6em; /* This will provide the actual line height */
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.cm-horizontal-rule-inner {
+	border-top: 1px solid var(--border);
+	width: 100%;
+	height: 0;
+}
+
+.cm-horizontal-rule-active {
+	color: var(--primary);
+	font-weight: bold;
+	opacity: 0.5;
+}
+
+.cm-line.cm-fencedCode {
+	position: relative;
+	background-color: var(--muted);
+	font-family: var(--font-mono) !important;
+	padding-left: 2.2rem !important;
+	border-left: 1px solid var(--border);
+	border-right: 1px solid var(--border);
+}
+
+.cm-line.cm-fencedCode.cm-activeLine {
+	background-color: color-mix(
+		in srgb,
+		var(--primary) 8%,
+		var(--muted)
+	) !important;
+}
+
+.cm-fencedCode * {
+	font-family: var(--font-mono) !important;
+}
+
+.cm-line.cm-fencedCode-top {
+	border-top: 1px solid var(--border);
+	border-top-left-radius: 8px;
+	border-top-right-radius: 8px;
+	padding-top: 0.5rem !important;
+	padding-bottom: 0.5rem !important;
+	counter-reset: code-line;
+}
+
+.cm-line.cm-fencedCode-line {
+	counter-increment: code-line;
+}
+
+.cm-line.cm-fencedCode-line::before {
+	content: counter(code-line);
+	position: absolute;
+	left: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	width: 1.5rem;
+	font-size: 0.7rem;
+	color: var(--muted-foreground);
+	opacity: 0.4;
+	font-family: var(--font-mono);
+	user-select: none;
+}
+
+.cm-line.cm-fencedCode-bottom {
+	border-bottom: 1px solid var(--border);
+	border-bottom-left-radius: 8px;
+	border-bottom-right-radius: 8px;
+	padding-top: 0 !important;
+}
+
+/* Show visible markers in focused editor on the active line slightly transparent */
+.cm-activeLine .md-marker {
+	opacity: 0.5 !important;
+}
+
+/* Keep Setext header lines always slightly faded */
+.md-faded {
+	opacity: 0.5 !important;
+}
+
+.cm-language-label {
+	position: absolute;
+	left: 0.6rem;
+	top: 50%;
+	transform: translateY(-50%);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	color: var(--muted-foreground);
+	background-color: color-mix(
+		in srgb,
+		var(--muted-foreground) 10%,
+		transparent
+	);
+	padding: 0.15rem 0.4rem;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	font-weight: 700;
+	user-select: none;
+	pointer-events: none;
+}

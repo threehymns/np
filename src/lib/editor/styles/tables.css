@@ -1,0 +1,409 @@
+/* Tables */
+.tbl-table {
+	border-radius: 8px;
+	border: 1px solid var(--border) !important;
+	border-collapse: separate !important;
+	border-spacing: 0 !important;
+	overflow: hidden;
+}
+
+.cm-content .cm-tableCell,
+.cm-content .tbl-cell {
+	font-family: var(--font-mono) !important;
+	padding: 0 0.5rem;
+	background-color: var(--background) !important;
+	border-color: var(--border) !important;
+}
+
+.cm-content .cm-tableHeader,
+.cm-content .tbl-header-cell {
+	font-weight: bold;
+	color: var(--primary);
+	background-color: var(--muted) !important;
+	border-color: var(--border) !important;
+}
+
+/* Round corner cells specifically to match the table rounding */
+.tbl-table tr:first-child th:first-child {
+	border-top-left-radius: 7px;
+}
+.tbl-table tr:first-child th:last-child {
+	border-top-right-radius: 7px;
+}
+.tbl-table tr:last-child td:first-child {
+	border-bottom-left-radius: 7px;
+}
+.tbl-table tr:last-child td:last-child {
+	border-bottom-right-radius: 7px;
+}
+
+/* Conditional rounding: remove cell and table corner radius if touching handle is hovered or active */
+/* Only triggers on selection handles (header) or edge addition handles (table), not on insertion lines (border) */
+
+/* Top-Left Corner: First row/col selection handles inside first cell */
+.tbl-table-wrapper:has(
+		.tbl-cell[data-row="0"][data-col="0"]
+			.tbl-handle[data-type="header"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-cell[data-row="0"][data-col="0"]
+			.tbl-handle[data-type="header"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table
+	tr:first-child
+	th:first-child:has(.tbl-handle[data-type="header"]:hover),
+.tbl-table
+	tr:first-child
+	th:first-child:has(
+		.tbl-handle[data-type="header"][data-active="true"]
+	) {
+	border-top-left-radius: 0 !important;
+}
+
+/* Top-Right Corner: Last col selection handle, right edge handle, or bottom-right corner handle */
+.tbl-table-wrapper:has(
+		.tbl-table
+			tr:first-child
+			th:last-child
+			.tbl-handle[data-type="header"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-table
+			tr:first-child
+			th:last-child
+			.tbl-handle[data-type="header"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="right"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table
+	tr:first-child
+	th:last-child:has(.tbl-handle[data-type="header"]:hover),
+.tbl-table
+	tr:first-child
+	th:last-child:has(
+		.tbl-handle[data-type="header"][data-active="true"]
+	),
+.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+	.tbl-table
+	tr:first-child
+	th:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="right"][data-active="true"]
+	)
+	.tbl-table
+	tr:first-child
+	th:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table
+	tr:first-child
+	th:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table
+	tr:first-child
+	th:last-child {
+	border-top-right-radius: 0 !important;
+}
+
+/* Bottom-Left Corner: Last row selection handle, bottom edge handle, or bottom-right corner handle */
+.tbl-table-wrapper:has(
+		.tbl-table
+			tr:last-child
+			td:first-child
+			.tbl-handle[data-type="header"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-table
+			tr:last-child
+			td:first-child
+			.tbl-handle[data-type="header"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table
+	tr:last-child
+	td:first-child:has(.tbl-handle[data-type="header"]:hover),
+.tbl-table
+	tr:last-child
+	td:first-child:has(
+		.tbl-handle[data-type="header"][data-active="true"]
+	),
+.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+	.tbl-table
+	tr:last-child
+	td:first-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom"][data-active="true"]
+	)
+	.tbl-table
+	tr:last-child
+	td:first-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table
+	tr:last-child
+	td:first-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table
+	tr:last-child
+	td:first-child {
+	border-bottom-left-radius: 0 !important;
+}
+
+/* Bottom-Right Corner: Right, Bottom, or Bottom-Right edge handles */
+.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+	.tbl-table,
+.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="right"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table,
+.tbl-table
+	tr:last-child
+	td:last-child:has(.tbl-handle[data-type="header"]:hover),
+.tbl-table
+	tr:last-child
+	td:last-child:has(
+		.tbl-handle[data-type="header"][data-active="true"]
+	),
+.tbl-table-wrapper:has(.tbl-handle[data-location="right"]:hover)
+	.tbl-table
+	tr:last-child
+	td:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="right"][data-active="true"]
+	)
+	.tbl-table
+	tr:last-child
+	td:last-child,
+.tbl-table-wrapper:has(.tbl-handle[data-location="bottom"]:hover)
+	.tbl-table
+	tr:last-child
+	td:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom"][data-active="true"]
+	)
+	.tbl-table
+	tr:last-child
+	td:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"]:hover
+	)
+	.tbl-table
+	tr:last-child
+	td:last-child,
+.tbl-table-wrapper:has(
+		.tbl-handle[data-location="bottom-right"][data-active="true"]
+	)
+	.tbl-table
+	tr:last-child
+	td:last-child {
+	border-bottom-right-radius: 0 !important;
+}
+
+/* Table Handles */
+.tbl-handle {
+	color: var(--muted-foreground) !important;
+	border-radius: 0 !important;
+}
+.tbl-handle[data-hover],
+.tbl-handle[data-active] {
+	color: var(--primary) !important;
+}
+.tbl-handle[data-type="border"] {
+	background-color: transparent !important;
+}
+.tbl-handle[data-type="border"][data-hover],
+.tbl-handle[data-type="border"][data-active] {
+	background-color: var(--primary) !important;
+}
+
+/* Row Headers (Left) - round outer left corners */
+.tbl-handle[data-type="header"][data-location="row"] {
+	border-top-left-radius: 4px !important;
+	border-bottom-left-radius: 4px !important;
+}
+
+/* Column Headers (Top) - round outer top corners */
+.tbl-handle[data-type="header"][data-location="col"] {
+	border-top-left-radius: 4px !important;
+	border-top-right-radius: 4px !important;
+}
+
+.tbl-handle[data-type="header"]:hover,
+.tbl-handle[data-type="header"][data-active] {
+	background-color: var(--accent) !important;
+	color: var(--primary) !important;
+}
+.tbl-handle[data-type="header"][data-active] {
+	background-color: var(--primary) !important;
+	color: var(--primary-foreground) !important;
+	border-color: var(--primary) !important;
+}
+
+.tbl-handle[data-type="header"][data-active] .tbl-handle-grip {
+	color: var(--primary-foreground) !important;
+}
+
+/* Table Edge Handles (Right/Bottom) */
+.tbl-handle[data-type="table"] {
+	background-color: var(--muted) !important;
+	color: var(--muted-foreground) !important;
+	border: 1px solid var(--border) !important;
+}
+
+/* Right Edge Handle - round outer right corners */
+.tbl-handle[data-type="table"][data-location="right"] {
+	border-top-right-radius: 4px !important;
+	border-bottom-right-radius: 4px !important;
+	border-left: none !important;
+}
+
+/* Bottom Edge Handle - round outer bottom corners */
+.tbl-handle[data-type="table"][data-location="bottom"] {
+	border-bottom-left-radius: 4px !important;
+	border-bottom-right-radius: 4px !important;
+	border-top: none !important;
+}
+
+/* Bottom-Right Corner Handle - round only the very corner */
+.tbl-handle[data-type="table"][data-location="bottom-right"] {
+	border-bottom-right-radius: 4px !important;
+}
+
+.tbl-handle[data-type="table"][data-hover],
+.tbl-handle[data-type="table"][data-active] {
+	background-color: var(--accent) !important;
+	color: var(--primary) !important;
+	border-color: var(--border) !important;
+}
+.tbl-handle[data-type="table"][data-location="right"] {
+	border-left: none !important;
+}
+.tbl-handle[data-type="table"][data-location="bottom"] {
+	border-top: none !important;
+}
+.tbl-handle-grip {
+	color: var(--primary) !important;
+}
+.tbl-handle-grip circle {
+	fill: currentColor !important;
+}
+
+/* Table Menus */
+.tbl-menu {
+	background-color: var(--background) !important;
+	border: 1px solid var(--border) !important;
+	color: var(--foreground) !important;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+	border-radius: 8px !important;
+	padding: 4px 0 !important;
+}
+
+.tbl-menu-item {
+	color: var(--foreground) !important;
+	padding: 6px 12px !important;
+	margin: 0 4px !important;
+	border-radius: 4px !important;
+}
+
+.tbl-menu-item:hover,
+.tbl-menu-item:active {
+	background-color: var(--accent) !important;
+	color: var(--accent-foreground) !important;
+}
+
+.tbl-menu-item::after {
+	display: none !important; /* Remove library's default hover overlay to use our own */
+}
+
+.tbl-menu-separator {
+	background-color: var(--border) !important;
+	margin: 4px 0 !important;
+}
+
+.tbl-menu-item-icon {
+	color: var(--primary) !important;
+}
+
+/* Table Cell Selection */
+.tbl-cell-editor .cm-content ::selection,
+.tbl-cell[data-selected="true"],
+.tbl-cell[data-selected="true"]::after {
+	background-color: color-mix(
+		in srgb,
+		var(--primary),
+		transparent 80%
+	) !important;
+}
+
+.tbl-cell-editor .cm-content ::selection {
+	background-color: var(--primary) !important;
+	color: var(--primary-foreground) !important;
+}
+
+/* Force outline/focus colors */
+.tbl-cell[data-outline*="top"]::after,
+.tbl-cell[data-outline*="right"]::after,
+.tbl-cell[data-outline*="bottom"]::after,
+.tbl-cell[data-outline*="left"]::after {
+	border-color: var(--primary) !important;
+}
+
+.cm-content .cm-tableRow {
+	border-bottom: 1px solid var(--border);
+}
+
+/* Hide markers in static table cells */
+.tbl-cell-view .md-marker {
+	display: none !important;
+}

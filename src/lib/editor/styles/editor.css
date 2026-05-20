@@ -1,0 +1,38 @@
+.editor-wrapper {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+	background: var(--background);
+
+	/* Editor Width */
+	--editor-max-width: 800px;
+
+	/* Font Variables - Match Tailwind 4 font-mono stack */
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", "Courier New", monospace;
+
+	/* Table Support Variables */
+	--tbl-style-font-family: ui-sans-serif, system-ui, sans-serif;
+	--tbl-style-font-size: 1.05rem;
+	--tbl-theme-row-background: var(--background);
+	--tbl-theme-text-color: var(--foreground);
+	--tbl-theme-menu-background: var(--background);
+	--tbl-theme-menu-text-color: var(--foreground);
+	--tbl-theme-border-color: var(--border);
+}
+
+.cm-editor {
+	height: 100%;
+}
+
+.cm-content ::selection {
+	background-color: var(--primary);
+	color: var(--primary-foreground);
+}
+
+.cm-cursor {
+	border-left: 2px solid var(--primary) !important;
+	margin-left: -1px;
+}
