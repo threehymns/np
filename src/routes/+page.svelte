@@ -95,7 +95,7 @@
     {#each appState.documents as doc (doc.id)}
       <Tabs.Content value={doc.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0">
         <Editor 
-          bind:content={doc.content} 
+          doc={doc} 
           bind:view={editorViews[doc.id]}
           style="font-size: {appState.prefs.zoom}%;"
           wrap={appState.prefs.wordWrap}

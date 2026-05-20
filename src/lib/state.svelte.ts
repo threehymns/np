@@ -1,4 +1,5 @@
-import { FileSystemStorage } from './storage';
+import { FileStorage } from './storage';
+import { saveHandles, loadHandles, saveActiveId, loadActiveId } from './persistence';
 import { DocumentSession } from './document.svelte';
 
 export type Theme = 
@@ -89,7 +90,7 @@ export class Preferences {
 
 export class AppState {
 	prefs = new Preferences();
-	storage = new FileSystemStorage();
+	storage = new FileStorage();
 	
 	documents = $state<DocumentSession[]>([]);
 	activeDocumentId = $state<string>('');
@@ -109,6 +110,63 @@ export class AppState {
 		const initialDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
 		this.documents = [initialDoc];
 		this.activeDocumentId = initialDoc.id;
+
+		if (typeof window !== 'undefined') {
+			this.restoreSession();
+
+			$effect.root(() => {
+				$effect(() => {
+					// Persist open files (handles)
+					const handles = this.documents
+						.map(doc => doc.origin?.handle)
+						.filter((h): h is FileSystemFileHandle => !!h);
+					saveHandles(handles);
+				});
+
+				$effect(() => {
+					// Persist active document ID
+					saveActiveId(this.activeDocumentId);
+				});
+			});
+		}
+	}
+
+	async restoreSession() {
+		try {
+			const handles = await loadHandles();
+			const activeId = await loadActiveId();
+
+			if (handles.length > 0) {
+				const restoredDocs: DocumentSession[] = [];
+				for (const handle of handles) {
+					const origin = { handle, name: handle.name };
+					let content = '';
+					
+					// Try to read content if permission is already granted
+					if (await handle.queryPermission() === 'granted') {
+						try {
+							content = await this.storage.readFile(origin);
+						} catch (e) {
+							console.error(`Failed to read restored file ${handle.name}`, e);
+						}
+					}
+					
+					const doc = new DocumentSession(this.storage, content, origin);
+					restoredDocs.push(doc);
+				}
+
+				if (restoredDocs.length > 0) {
+					this.documents = restoredDocs;
+					if (activeId && restoredDocs.some(d => d.id === activeId)) {
+						this.activeDocumentId = activeId;
+					} else {
+						this.activeDocumentId = restoredDocs[0].id;
+					}
+				}
+			}
+		} catch (e) {
+			console.error('Failed to restore session', e);
+		}
 	}
 
 	get activeDocument() {

@@ -9,12 +9,19 @@
 	import "$lib/editor/styles/markdown.css";
 	import "$lib/editor/styles/tables.css";
 
+	import { DocumentSession } from "$lib/document.svelte";
+
 	let {
-		content = $bindable(),
+		doc,
 		style = "",
 		wrap = true,
 		view = $bindable(),
-	} = $props();
+	} = $props<{
+		doc: DocumentSession;
+		style?: string;
+		wrap?: boolean;
+		view?: EditorView;
+	}>();
 
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
@@ -25,7 +32,7 @@
 		if (!editorEl) return;
 
 		const startState = EditorState.create({
-			doc: untrack(() => content),
+			doc: untrack(() => doc.content),
 			extensions: [
 				...createEditorExtensions({ wrapCompartment, wrap }),
 				EditorView.updateListener.of((update) => {
@@ -36,8 +43,8 @@
 						)
 					) {
 						const newContent = update.state.doc.toString();
-						if (newContent !== content) {
-							content = newContent;
+						if (newContent !== doc.content) {
+							doc.content = newContent;
 						}
 					}
 
@@ -92,7 +99,7 @@
 
 	// Sync content from outside (e.g. file open)
 	$effect(() => {
-		const c = content; // Track content
+		const c = doc.content; // Track content
 		untrack(() => {
 			if (view) {
 				const currentDoc = view.state.doc.toString();
@@ -126,4 +133,48 @@
 	class="editor-wrapper {style}"
 	class:alt-pressed={altPressed}
 	data-testid="editor-input"
-></div>
+>
+	{#if doc.permissionState !== 'granted'}
+		<div class="permission-overlay">
+			<div class="permission-card">
+				<p class="text-sm font-medium mb-4">Restore access to this file to start editing.</p>
+				<button 
+					class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+					onclick={() => doc.requestPermission()}
+				>
+					Grant Access
+				</button>
+			</div>
+		</div>
+	{/if}
+</div>
+
+<style>
+	.editor-wrapper {
+		position: relative;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.permission-overlay {
+		position: absolute;
+		inset: 0;
+		background: hsl(var(--background) / 0.8);
+		backdrop-filter: blur(4px);
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.permission-card {
+		background: hsl(var(--background));
+		padding: 2rem;
+		border-radius: 0.75rem;
+		border: 1px solid hsl(var(--border));
+		box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+		text-align: center;
+		max-width: 320px;
+	}
+</style>
