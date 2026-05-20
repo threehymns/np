@@ -1,21 +1,20 @@
 import { FileStorage } from './storage';
 import { Workspace } from './workspace.svelte';
 import { Preferences } from './preferences.svelte';
+import { registerCoreCommands } from './commands.svelte';
+import { selectionState } from './editor/selection.svelte';
 
 export class AppState {
 	prefs = new Preferences();
 	storage = new FileStorage();
 	workspace = new Workspace(this.storage);
+	selection = selectionState;
 	
 	activeEditorView = $state<any>(undefined);
 
-	// Cursor/View state (could be moved to EditorContext later)
-	line = $state(1);
-	column = $state(1);
-	selectionCharCount = $state(0);
-	selectionWordCount = $state(0);
-
-	constructor() {}
+	constructor() {
+		registerCoreCommands();
+	}
 
 	// Convenience accessors
 	get documents() { return this.workspace.documents; }

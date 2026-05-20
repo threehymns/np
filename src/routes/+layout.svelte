@@ -5,9 +5,8 @@
 	import favicon from "$lib/assets/favicon.png";
 
 	import { appState } from "$lib/state.svelte.js";
+	import { commands } from "$lib/commands.svelte";
 	import type { Theme, AppearanceMode } from "$lib/preferences.svelte";
-	import { undo, redo, selectAll } from "@codemirror/commands";
-	import { openSearchPanel } from "@codemirror/search";
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
 	import { ModeWatcher } from "mode-watcher";
 
@@ -37,38 +36,22 @@
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
-		if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-			e.preventDefault();
-			appState.saveFile();
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
-			e.preventDefault();
-			appState.openFile();
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
-			e.preventDefault();
-			appState.newFile();
-		}
+		if (commands.handleKeydown(e)) return;
+
 		if ((e.metaKey || e.ctrlKey) && e.key === ',') {
 			e.preventDefault();
 			settingsOpen = true;
 		}
 	}
 
-	function execKey(key: string, shift = false) {
-		if (appState.activeEditorView) {
-			appState.activeEditorView.focus();
-		}
-		const target = document.activeElement || document.body;
-		target.dispatchEvent(new KeyboardEvent('keydown', {
-			key,
-			code: `Key${key.toUpperCase()}`,
-			ctrlKey: true,
-			metaKey: true,
-			shiftKey: shift,
-			bubbles: true,
-			cancelable: true
-		}));
+	function formatShortcut(shortcut?: string) {
+		if (!shortcut) return '';
+		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+		return shortcut
+			.replace('cmd', isMac ? '⌘' : 'Ctrl')
+			.replace('shift', '⇧')
+			.replace('alt', '⌥')
+			.toUpperCase();
 	}
 </script>
 
@@ -84,84 +67,45 @@
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<div class="relative z-50 shrink-0 bg-background" class:border-b={appState.documents.length > 1}>
 		<Menubar.Root>
-			<Menubar.Menu>
-				<Menubar.Trigger>File</Menubar.Trigger>
-				<Menubar.Content>
-					<Menubar.Item onclick={() => appState.newFile()}>
-						New <Menubar.Shortcut>⌘N</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => appState.openFile()}>
-						Open... <Menubar.Shortcut>⌘O</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => appState.saveFile()}>
-						Save <Menubar.Shortcut>⌘S</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => appState.saveFileAs()}>Save As...</Menubar.Item>
-				</Menubar.Content>
-			</Menubar.Menu>
-			<Menubar.Menu>
-				<Menubar.Trigger>Edit</Menubar.Trigger>
-				<Menubar.Content>
-					<Menubar.Item onclick={() => appState.activeEditorView && undo(appState.activeEditorView)}>
-						Undo <Menubar.Shortcut>⌘Z</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => appState.activeEditorView && redo(appState.activeEditorView)}>
-						Redo <Menubar.Shortcut>⇧⌘Z</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item onclick={() => { appState.activeEditorView?.focus(); document.execCommand('cut'); }}>
-						Cut <Menubar.Shortcut>⌘X</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => { appState.activeEditorView?.focus(); document.execCommand('copy'); }}>
-						Copy <Menubar.Shortcut>⌘C</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={async () => { 
-						appState.activeEditorView?.focus(); 
-						try {
-							const text = await navigator.clipboard.readText();
-							if (appState.activeEditorView) {
-								const view = appState.activeEditorView;
-								view.dispatch(view.state.replaceSelection(text));
-							}
-						} catch (e) {
-							document.execCommand('paste');
-						}
-					}}>
-						Paste <Menubar.Shortcut>⌘V</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item onclick={() => appState.activeEditorView && openSearchPanel(appState.activeEditorView)}>
-						Find... <Menubar.Shortcut>⌘F</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Item onclick={() => appState.activeEditorView && selectAll(appState.activeEditorView)}>
-						Select All <Menubar.Shortcut>⌘A</Menubar.Shortcut>
-					</Menubar.Item>
-					<Menubar.Separator />
-					<Menubar.Item onclick={() => settingsOpen = true}>
-						Settings... <Menubar.Shortcut>⌘,</Menubar.Shortcut>
-					</Menubar.Item>
-				</Menubar.Content>
-			</Menubar.Menu>
-			<Menubar.Menu>
-				<Menubar.Trigger>Format</Menubar.Trigger>
-				<Menubar.Content>
-					<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>Word Wrap</Menubar.CheckboxItem>
-				</Menubar.Content>
-			</Menubar.Menu>
-			<Menubar.Menu>
-				<Menubar.Trigger>View</Menubar.Trigger>
-				<Menubar.Content>
-					<Menubar.Sub>
-						<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
-						<Menubar.SubContent>
-							<Menubar.Item onclick={() => appState.prefs.zoomIn()}>Zoom In <Menubar.Shortcut>⌘+</Menubar.Shortcut></Menubar.Item>
-							<Menubar.Item onclick={() => appState.prefs.zoomOut()}>Zoom Out <Menubar.Shortcut>⌘-</Menubar.Shortcut></Menubar.Item>
-							<Menubar.Item onclick={() => appState.prefs.resetZoom()}>Restore Default Zoom <Menubar.Shortcut>⌘0</Menubar.Shortcut></Menubar.Item>
-						</Menubar.SubContent>
-					</Menubar.Sub>
-					<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
-				</Menubar.Content>
-			</Menubar.Menu>
+			{#each ['File', 'Edit', 'Format', 'View'] as category}
+				<Menubar.Menu>
+					<Menubar.Trigger>{category}</Menubar.Trigger>
+					<Menubar.Content>
+						{#if category === 'Format'}
+							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>Word Wrap</Menubar.CheckboxItem>
+						{:else if category === 'View'}
+							<Menubar.Sub>
+								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
+								<Menubar.SubContent>
+									<Menubar.Item onclick={() => appState.prefs.zoomIn()}>Zoom In <Menubar.Shortcut>⌘+</Menubar.Shortcut></Menubar.Item>
+									<Menubar.Item onclick={() => appState.prefs.zoomOut()}>Zoom Out <Menubar.Shortcut>⌘-</Menubar.Shortcut></Menubar.Item>
+									<Menubar.Item onclick={() => appState.prefs.resetZoom()}>Restore Default Zoom <Menubar.Shortcut>⌘0</Menubar.Shortcut></Menubar.Item>
+								</Menubar.SubContent>
+							</Menubar.Sub>
+							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
+						{:else}
+							{#each commands.getByCategory(category) as command}
+								<Menubar.Item 
+									onclick={() => command.action()}
+									disabled={command.isEnabled && !command.isEnabled()}
+								>
+									{command.label}
+									{#if command.shortcut}
+										<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+									{/if}
+								</Menubar.Item>
+							{/each}
+						{/if}
+
+						{#if category === 'Edit'}
+							<Menubar.Separator />
+							<Menubar.Item onclick={() => settingsOpen = true}>
+								Settings... <Menubar.Shortcut>{formatShortcut('cmd+,')}</Menubar.Shortcut>
+							</Menubar.Item>
+						{/if}
+					</Menubar.Content>
+				</Menubar.Menu>
+			{/each}
 		</Menubar.Root>
 	</div>
 	
@@ -176,17 +120,17 @@
 					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
 					<span>{appState.activeDocument?.charCount ?? 0} chars</span>
 				</div>
-				{#if appState.selectionCharCount > 0}
+				{#if appState.selection.charCount > 0}
 					<div class="h-3 w-px bg-border/50"></div>
 					<div class="flex gap-3 text-primary animate-in fade-in slide-in-from-left-2 duration-300">
-						<span class="font-medium">{appState.selectionWordCount} selected words</span>
-						<span class="font-medium">{appState.selectionCharCount} selected chars</span>
+						<span class="font-medium">{appState.selection.wordCount} selected words</span>
+						<span class="font-medium">{appState.selection.charCount} selected chars</span>
 					</div>
 				{/if}
 			</div>
 			<div class="flex items-center gap-4 opacity-80">
 				<div class="flex gap-4">
-					<span>Ln {appState.line}, Col {appState.column}</span>
+					<span>Ln {appState.selection.line}, Col {appState.selection.column}</span>
 				</div>
 				<div class="h-3 w-px bg-border/50"></div>
 				<div class="flex gap-4">

@@ -53,22 +53,22 @@
 						const selection = state.selection.main;
 						const line = state.doc.lineAt(selection.head);
 
-						appState.line = line.number;
-						appState.column = selection.head - line.from + 1;
+						const lineNum = line.number;
+						const colNum = selection.head - line.from + 1;
 
 						if (selection.empty) {
-							appState.selectionCharCount = 0;
-							appState.selectionWordCount = 0;
+							selectionState.update(lineNum, colNum, 0, 0);
 						} else {
 							const selectedText = state.doc.sliceString(
 								selection.from,
 								selection.to,
 							);
-							appState.selectionCharCount = selectedText.length;
-							appState.selectionWordCount = selectedText
+							const charCount = selectedText.length;
+							const wordCount = selectedText
 								.trim()
 								.split(/\s+/)
 								.filter(Boolean).length;
+							selectionState.update(lineNum, colNum, charCount, wordCount);
 						}
 					}
 				}),

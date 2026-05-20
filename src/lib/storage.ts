@@ -5,9 +5,11 @@ export interface FileOrigin {
 
 export interface Storage {
 	pickFile(): Promise<FileOrigin | null>;
+	pickDirectory(): Promise<FileSystemDirectoryHandle | null>;
 	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
 	readFile(origin: FileOrigin): Promise<string>;
-	verifyPermission(handle: FileSystemFileHandle, readWrite?: boolean): Promise<boolean>;
+	readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]>;
+	verifyPermission(handle: FileSystemHandle, readWrite?: boolean): Promise<boolean>;
 }
 
 export class FileStorage implements Storage {
@@ -18,6 +20,15 @@ export class FileStorage implements Storage {
 				multiple: false
 			});
 			return { handle, name: handle.name };
+		} catch (e) {
+			if ((e as Error).name === 'AbortError') return null;
+			throw e;
+		}
+	}
+
+	async pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
+		try {
+			return await window.showDirectoryPicker();
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return null;
 			throw e;
@@ -47,7 +58,15 @@ export class FileStorage implements Storage {
 		return await file.text();
 	}
 
-	async verifyPermission(handle: FileSystemFileHandle, readWrite = false): Promise<boolean> {
+	async readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]> {
+		const entries: FileSystemHandle[] = [];
+		for await (const entry of handle.values()) {
+			entries.push(entry);
+		}
+		return entries;
+	}
+
+	async verifyPermission(handle: FileSystemHandle, readWrite = false): Promise<boolean> {
 		const options: FileSystemHandlePermissionDescriptor = {};
 		if (readWrite) {
 			options.mode = 'readwrite';

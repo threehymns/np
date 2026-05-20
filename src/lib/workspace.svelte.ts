@@ -6,6 +6,7 @@ export class Workspace {
 	documents = $state<DocumentSession[]>([]);
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
+	rootHandle = $state<FileSystemDirectoryHandle | null>(null);
 	
 	private storage: Storage;
 	private untitledCounter = 0;
@@ -52,8 +53,11 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openFile() {
-		const origin = await this.storage.pickFile();
+	async openFile(specificHandle?: FileSystemFileHandle) {
+		const origin = specificHandle 
+			? { handle: specificHandle, name: specificHandle.name }
+			: await this.storage.pickFile();
+		
 		if (!origin) return;
 
 		// Check if already open
@@ -68,6 +72,12 @@ export class Workspace {
 		this.documents.push(newDoc);
 		this.activeDocumentId = newDoc.id;
 		return newDoc;
+	}
+
+	async openDirectory() {
+		const handle = await this.storage.pickDirectory();
+		if (!handle) return;
+		this.rootHandle = handle;
 	}
 
 	closeDocument(id: string) {
