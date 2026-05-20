@@ -7,7 +7,7 @@
   import Editor from '$lib/components/Editor.svelte';
   import type { EditorView } from 'codemirror';
 
-  let draggedIdx = $state<number | null>(null);
+  let draggedId = $state<string | null>(null);
   let editorViews = $state<Record<string, EditorView | undefined>>({});
 
   $effect(() => {
@@ -16,27 +16,30 @@
 
   function handleUpdate(e?: Event) {}
 
-  function handleDragStart(e: DragEvent, idx: number) {
-    draggedIdx = idx;
+  function handleDragStart(e: DragEvent, id: string) {
+    draggedId = id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.dropEffect = 'move';
     }
   }
 
-  function handleDragOver(e: DragEvent, idx: number) {
-    e.preventDefault();
-    if (draggedIdx === null || draggedIdx === idx) return;
+  function handleDragEnter(targetId: string) {
+    if (!draggedId || draggedId === targetId) return;
+
+    const fromIdx = appState.documents.findIndex(d => d.id === draggedId);
+    const toIdx = appState.documents.findIndex(d => d.id === targetId);
+    
+    if (fromIdx === -1 || toIdx === -1) return;
 
     const docs = [...appState.documents];
-    const [movedDoc] = docs.splice(draggedIdx, 1);
-    docs.splice(idx, 0, movedDoc);
+    const [movedDoc] = docs.splice(fromIdx, 1);
+    docs.splice(toIdx, 0, movedDoc);
     appState.documents = docs;
-    draggedIdx = idx;
   }
 
   function handleDragEnd() {
-    draggedIdx = null;
+    draggedId = null;
   }
 
   onMount(() => {
@@ -46,32 +49,38 @@
 
 <Tabs.Root bind:value={appState.activeDocumentId} class="flex h-full w-full flex-col">
   {#if appState.documents.length > 1}
-    <Tabs.List class="bg-muted/50 justify-start rounded-none border-b px-2 py-0 h-9 gap-1 w-full overflow-x-auto overflow-y-hidden no-scrollbar">
-      {#each appState.documents as doc, i (doc.id)}
+    <Tabs.List class="bg-muted/50 justify-start rounded-none border-b px-2 h-10 items-end gap-1 w-full overflow-visible no-scrollbar">
+      {#each appState.documents as doc (doc.id)}
         <div 
-          animate:flip={{ duration: 200 }}
-          class="group relative flex items-center h-full shrink-0 {draggedIdx === i ? 'opacity-50' : ''}"
+          animate:flip={{ duration: 150 }}
+          class="group relative flex items-center h-full shrink-0 {draggedId === doc.id ? 'opacity-20' : ''}"
           draggable="true"
-          ondragstart={(e) => handleDragStart(e, i)}
-          ondragover={(e) => handleDragOver(e, i)}
+          ondragstart={(e) => handleDragStart(e, doc.id)}
+          ondragover={(e) => e.preventDefault()}
+          ondragenter={() => handleDragEnter(doc.id)}
           ondragend={handleDragEnd}
           role="listitem"
         >
           <Tabs.Trigger
             value={doc.id}
-            class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50"
+            class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset"
           >
-            {doc.fileName}{doc.isModified ? '*' : ''}
+            {doc.fileName}
           </Tabs.Trigger>
           <button
             onclick={(e) => {
               e.stopPropagation();
               appState.closeDocument(doc.id);
             }}
-            class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
+            class="group/close absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted transition-opacity focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none {doc.isModified ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
             title="Close tab"
           >
-            <X size={10} />
+            {#if doc.isModified}
+              <div class="w-1.5 h-1.5 rounded-full bg-foreground/40 group-hover:hidden group-focus-visible/close:hidden m-0.5"></div>
+              <X size={10} class="hidden group-hover:block group-focus-visible/close:block" />
+            {:else}
+              <X size={10} />
+            {/if}
           </button>
         </div>
       {/each}

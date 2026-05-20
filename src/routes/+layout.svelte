@@ -81,7 +81,7 @@
 <ModeWatcher />
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
-	<div class="relative z-50 shrink-0 border-b bg-background">
+	<div class="relative z-50 shrink-0 bg-background" class:border-b={appState.documents.length > 1}>
 		<Menubar.Root>
 			<Menubar.Menu>
 				<Menubar.Trigger>File</Menubar.Trigger>
@@ -171,11 +171,6 @@
 	{#if appState.prefs.statusBar}
 		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
 			<div class="flex items-center gap-4">
-				<div class="flex items-center gap-2">
-					<div class="w-1.5 h-1.5 rounded-full {appState.activeDocument?.isModified ? 'bg-orange-500/80 shadow-[0_0_8px_rgba(249,115,22,0.4)]' : 'bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.4)]'} transition-all duration-300"></div>
-					<span class="font-medium">{appState.activeDocument?.isModified ? 'Modified' : 'Saved'}</span>
-				</div>
-				<div class="h-3 w-px bg-border/50"></div>
 				<div class="flex gap-3 opacity-80">
 					<span>{appState.wordCount} words</span>
 					<span>{appState.charCount} chars</span>
