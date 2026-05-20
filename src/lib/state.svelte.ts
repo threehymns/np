@@ -98,6 +98,8 @@ export class AppState {
 	// Cursor/View state (could be moved to EditorContext later)
 	line = $state(1);
 	column = $state(1);
+	selectionCharCount = $state(0);
+	selectionWordCount = $state(0);
 
 	pendingCloseId = $state<string | null>(null);
 	private untitledCounter = 0;
@@ -115,6 +117,11 @@ export class AppState {
 
 	get charCount() {
 		return this.activeDocument?.content.length ?? 0;
+	}
+
+	get wordCount() {
+		const content = this.activeDocument?.content || '';
+		return content.trim().split(/\s+/).filter(Boolean).length;
 	}
 
 	async newFile() {

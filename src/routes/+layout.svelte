@@ -169,14 +169,35 @@
 	</main>
 
 	{#if appState.prefs.statusBar}
-		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground tabular-nums bg-background z-50">
-			<div>{appState.activeDocument?.isModified ? 'Modified' : 'Saved'}</div>
-			<div class="flex gap-4">
-				<span>Characters: {appState.charCount}</span>
-				<span>Ln {appState.line}, Col {appState.column}</span>
-				<span>{appState.prefs.zoom}%</span>
-				<span>{appState.prefs.lineEnding}</span>
-				<span>{appState.prefs.encoding}</span>
+		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
+			<div class="flex items-center gap-4">
+				<div class="flex items-center gap-2">
+					<div class="w-1.5 h-1.5 rounded-full {appState.activeDocument?.isModified ? 'bg-orange-500/80 shadow-[0_0_8px_rgba(249,115,22,0.4)]' : 'bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.4)]'} transition-all duration-300"></div>
+					<span class="font-medium">{appState.activeDocument?.isModified ? 'Modified' : 'Saved'}</span>
+				</div>
+				<div class="h-3 w-px bg-border/50"></div>
+				<div class="flex gap-3 opacity-80">
+					<span>{appState.wordCount} words</span>
+					<span>{appState.charCount} chars</span>
+				</div>
+				{#if appState.selectionCharCount > 0}
+					<div class="h-3 w-px bg-border/50"></div>
+					<div class="flex gap-3 text-primary animate-in fade-in slide-in-from-left-2 duration-300">
+						<span class="font-medium">{appState.selectionWordCount} selected words</span>
+						<span class="font-medium">{appState.selectionCharCount} selected chars</span>
+					</div>
+				{/if}
+			</div>
+			<div class="flex items-center gap-4 opacity-80">
+				<div class="flex gap-4">
+					<span>Ln {appState.line}, Col {appState.column}</span>
+				</div>
+				<div class="h-3 w-px bg-border/50"></div>
+				<div class="flex gap-4">
+					<span>{appState.prefs.zoom}%</span>
+					<span>{appState.prefs.lineEnding}</span>
+					<span>{appState.prefs.encoding}</span>
+				</div>
 			</div>
 		</footer>
 	{/if}

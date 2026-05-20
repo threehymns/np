@@ -49,6 +49,7 @@
 	} from "@codemirror/search";
 	import { languages } from "@codemirror/language-data";
 	import { svelte } from "@replit/codemirror-lang-svelte";
+	import { appState } from "$lib/state.svelte.js";
 	import {
 		markdownTables,
 		markdownTableAutocompleter,
@@ -1250,6 +1251,24 @@
 						const newContent = update.state.doc.toString();
 						if (newContent !== content) {
 							content = newContent;
+						}
+					}
+
+					if (update.selectionSet || update.docChanged) {
+						const state = update.state;
+						const selection = state.selection.main;
+						const line = state.doc.lineAt(selection.head);
+						
+						appState.line = line.number;
+						appState.column = selection.head - line.from + 1;
+
+						if (selection.empty) {
+							appState.selectionCharCount = 0;
+							appState.selectionWordCount = 0;
+						} else {
+							const selectedText = state.doc.sliceString(selection.from, selection.to);
+							appState.selectionCharCount = selectedText.length;
+							appState.selectionWordCount = selectedText.trim().split(/\s+/).filter(Boolean).length;
 						}
 					}
 				}),
