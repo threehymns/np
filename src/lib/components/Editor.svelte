@@ -65,6 +65,7 @@
 	} = $props();
 
 	let editorEl = $state<HTMLDivElement>();
+	let altPressed = $state(false);
 	const wrapCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
@@ -231,8 +232,8 @@
 		{ tag: t.emphasis, fontStyle: "italic" },
 		{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 		{
-			tag: t.link,
-			color: "var(--primary)",
+			tag: [t.link, t.labelName],
+			color: "var(--code-operator)",
 			textDecoration: "none",
 			class: "cm-link",
 		},
@@ -735,6 +736,8 @@
 	$effect(() => {
 		if (!editorEl) return;
 
+		let wasExpandedBeforeMousedown = false;
+
 		const startState = EditorState.create({
 			doc: untrack(() => content),
 			extensions: [
@@ -831,6 +834,53 @@
 				codeBlockPlugin,
 				blockquotePlugin,
 				EditorView.domEventHandlers({
+					mousedown: (event, view) => {
+						// We still need preventDefault to stop cursor move on collapsed links
+						const pos = view.posAtCoords({
+							x: event.clientX,
+							y: event.clientY,
+						});
+						if (pos == null) return;
+
+						const node = syntaxTree(view.state).resolveInner(
+							pos,
+							-1,
+						);
+
+						let curr: any = node;
+						let isLink = false;
+						let isMarkerOrURL = false;
+						while (curr && curr.name !== "Document") {
+							if (curr.name === "Link") {
+								isLink = true;
+								break;
+							}
+							if (
+								curr.name === "LinkMark" ||
+								curr.name === "URL"
+							) {
+								isMarkerOrURL = true;
+							}
+							curr = curr.parent;
+						}
+
+						if (isLink && !isMarkerOrURL && !event.altKey) {
+							// Check if the link is currently expanded in the DOM
+							const target = event.target as HTMLElement;
+							const isExpanded =
+								target.classList.contains(
+									"cm-link-expanded",
+								) || target.closest(".cm-link-expanded");
+
+							if (!isExpanded) {
+								event.preventDefault();
+								event.stopPropagation();
+								view.focus();
+								return true;
+							}
+						}
+						return false;
+					},
 					click: (event, view) => {
 						const pos = view.posAtCoords({
 							x: event.clientX,
@@ -842,43 +892,76 @@
 							pos,
 							-1,
 						);
-						let linkNode: any = node;
-						while (
-							linkNode &&
-							linkNode.name !== "Link" &&
-							linkNode.name !== "Document"
-						) {
-							linkNode = linkNode.parent;
+
+						let curr: any = node;
+						let isLink = false;
+						let isMarkerOrURL = false;
+						while (curr && curr.name !== "Document") {
+							if (curr.name === "Link") {
+								isLink = true;
+								break;
+							}
+							if (
+								curr.name === "LinkMark" ||
+								curr.name === "URL"
+							) {
+								isMarkerOrURL = true;
+							}
+							curr = curr.parent;
 						}
 
-						if (linkNode && linkNode.name === "Link") {
-							// Only open if the link is not currently expanded (cursor not inside)
+						let isLabel = isLink && !isMarkerOrURL && !event.altKey;
+
+						if (!isLabel) {
+							const target = event.target as HTMLElement;
+							if (
+								target.classList.contains("cm-link") ||
+								target.closest(".cm-link")
+							) {
+								isLabel = true;
+							}
+						}
+
+						if (isLabel) {
+							const target = event.target as HTMLElement;
 							const isExpanded =
-								view.hasFocus &&
-								view.state.selection.main.from >=
-									linkNode.from &&
-								view.state.selection.main.to <= linkNode.to;
+								target.classList.contains(
+									"cm-link-expanded",
+								) || target.closest(".cm-link-expanded");
 
 							if (!isExpanded) {
-								let url = "";
-								let n = linkNode.node.firstChild;
-								while (n) {
-									if (n.name === "URL") {
-										url = view.state.doc.sliceString(
-											n.from,
-											n.to,
-										);
-										break;
-									}
-									n = n.nextSibling;
+								let linkNode: any = node;
+								while (
+									linkNode &&
+									linkNode.name !== "Link" &&
+									linkNode.name !== "Document"
+								) {
+									linkNode = linkNode.parent;
 								}
 
-								if (url) {
-									window.open(
-										url,
-										"_blank",
-										"noopener,noreferrer",
-									);
+								if (linkNode && linkNode.name === "Link") {
+									let url = "";
+									const cursor = linkNode.node.cursor();
+									if (cursor.firstChild()) {
+										do {
+											if (cursor.name === "URL") {
+												url = view.state.doc.sliceString(
+													cursor.from,
+													cursor.to,
+												);
+												break;
+											}
+										} while (cursor.nextSibling());
+									}
+
+									if (url) {
+										window.open(
+											url,
+											"_blank",
+											"noopener,noreferrer",
+										);
+										return true;
+									}
 								}
 							}
 						}
@@ -1117,9 +1200,20 @@
 	});
 </script>
 
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key === "Alt") altPressed = true;
+	}}
+	onkeyup={(e) => {
+		if (e.key === "Alt") altPressed = false;
+	}}
+	onblur={() => (altPressed = false)}
+/>
+
 <div
 	bind:this={editorEl}
 	class="editor-wrapper {style}"
+	class:alt-pressed={altPressed}
 	data-testid="editor-input"
 ></div>
 
@@ -1204,6 +1298,11 @@
 
 	:global(.cm-content .cm-link) {
 		cursor: pointer;
+		color: var(--code-operator) !important;
+	}
+
+	.alt-pressed :global(.cm-content .cm-link) {
+		cursor: text !important;
 	}
 
 	:global(.cm-content .cm-link:hover) {
