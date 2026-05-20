@@ -1,4 +1,4 @@
-import { File, FileCode, FileText, Code, Globe, Database, Gear } from "phosphor-svelte";
+import { File, FileCode, FileText, Code, Globe, Database, Gear, Folder, FolderOpen } from "phosphor-svelte";
 import type { IconPackManifest } from "./icons/default-themes";
 
 export interface IconProvider {
@@ -7,19 +7,36 @@ export interface IconProvider {
 	getIconByLanguage?(lang: string): any | null;
 	getDefaultIcon?(): any | null;
 
+	getFolderIcon?(name: string): any | null;
+	getFolderExpandedIcon?(name: string): any | null;
+
 	getLanguageIcon(name: string): any | null;
 	getFileIcon(filename: string): any | null;
+	setFlavor?(flavor: string | null): void;
 }
 
 export class ManifestIconProvider implements IconProvider {
+	private currentFlavor: string | null = null;
+
 	constructor(public manifest: IconPackManifest) {}
+
+	setFlavor(flavor: string | null) {
+		this.currentFlavor = flavor;
+	}
+
+	private getBaseUrl(): string {
+		if (this.manifest.id === 'catppuccin' && this.currentFlavor) {
+			return `${this.manifest.baseUrl}${this.currentFlavor}/`;
+		}
+		return this.manifest.baseUrl;
+	}
 
 	getIconByExactName(name: string): string | null {
 		const lowerFilename = name.toLowerCase();
 		if (this.manifest.fileNames) {
 			for (const [key, value] of Object.entries(this.manifest.fileNames)) {
 				if (key.toLowerCase() === lowerFilename) {
-					return `${this.manifest.baseUrl}${value}`;
+					return `${this.getBaseUrl()}${value}`;
 				}
 			}
 		}
@@ -31,7 +48,7 @@ export class ManifestIconProvider implements IconProvider {
 		if (this.manifest.fileExtensions) {
 			for (const [key, value] of Object.entries(this.manifest.fileExtensions)) {
 				if (key.toLowerCase() === extension) {
-					return `${this.manifest.baseUrl}${value}`;
+					return `${this.getBaseUrl()}${value}`;
 				}
 			}
 		}
@@ -43,7 +60,7 @@ export class ManifestIconProvider implements IconProvider {
 		if (this.manifest.languageIds) {
 			for (const [key, value] of Object.entries(this.manifest.languageIds)) {
 				if (key.toLowerCase() === lowerName) {
-					return `${this.manifest.baseUrl}${value}`;
+					return `${this.getBaseUrl()}${value}`;
 				}
 			}
 		}
@@ -52,9 +69,39 @@ export class ManifestIconProvider implements IconProvider {
 
 	getDefaultIcon(): string | null {
 		if (this.manifest.defaultIcon) {
-			return `${this.manifest.baseUrl}${this.manifest.defaultIcon}`;
+			return `${this.getBaseUrl()}${this.manifest.defaultIcon}`;
 		}
 		return null;
+	}
+
+	getFolderIcon(name: string): string | null {
+		const lowerName = name.toLowerCase();
+		if (this.manifest.folderNames) {
+			for (const [key, value] of Object.entries(this.manifest.folderNames)) {
+				if (key.toLowerCase() === lowerName) {
+					return `${this.getBaseUrl()}${value}`;
+				}
+			}
+		}
+		if (this.manifest.folder) {
+			return `${this.getBaseUrl()}${this.manifest.folder}`;
+		}
+		return null;
+	}
+
+	getFolderExpandedIcon(name: string): string | null {
+		const lowerName = name.toLowerCase();
+		if (this.manifest.folderNamesExpanded) {
+			for (const [key, value] of Object.entries(this.manifest.folderNamesExpanded)) {
+				if (key.toLowerCase() === lowerName) {
+					return `${this.getBaseUrl()}${value}`;
+				}
+			}
+		}
+		if (this.manifest.folderExpanded) {
+			return `${this.getBaseUrl()}${this.manifest.folderExpanded}`;
+		}
+		return this.getFolderIcon(name);
 	}
 
 	getLanguageIcon(name: string): string | null {
@@ -102,6 +149,14 @@ class PhosphorIconProvider implements IconProvider {
 		return File;
 	}
 
+	getFolderIcon(name: string): any | null {
+		return Folder;
+	}
+
+	getFolderExpandedIcon(name: string): any | null {
+		return FolderOpen;
+	}
+
 	getLanguageIcon(name: string): any | null {
 		return this.getIconByLanguage(name);
 	}
@@ -129,6 +184,17 @@ export class IconRegistry {
 		this.registerFileTheme('vscode', new ManifestIconProvider(vscodeIconsManifest));
 		this.registerFileTheme('material', new ManifestIconProvider(materialIconsManifest));
 		this.registerFileTheme('catppuccin', new ManifestIconProvider(catppuccinIconsManifest));
+	}
+
+	updateCatppuccinFlavor(theme: string) {
+		const catppuccinProvider = this.fileThemes['catppuccin'] as ManifestIconProvider;
+		if (catppuccinProvider && catppuccinProvider.setFlavor) {
+			if (theme === 'catppuccin-latte') catppuccinProvider.setFlavor('latte');
+			else if (theme === 'catppuccin-frappe') catppuccinProvider.setFlavor('frappe');
+			else if (theme === 'catppuccin-macchiato') catppuccinProvider.setFlavor('macchiato');
+			else if (theme === 'catppuccin-mocha') catppuccinProvider.setFlavor('mocha');
+			else catppuccinProvider.setFlavor('mocha'); // Default
+		}
 	}
 
 	registerFileTheme(id: string, provider: IconProvider) {
@@ -208,7 +274,24 @@ export class IconRegistry {
 	getFileIcon(filename: string): any {
 		return this.resolveFileIcon(filename);
 	}
+
+	getFolderIcon(name: string): any {
+		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		if (provider.getFolderIcon) {
+			const icon = provider.getFolderIcon(name);
+			if (icon) return icon;
+		}
+		return this.fileThemes['phosphor'].getFolderIcon ? this.fileThemes['phosphor'].getFolderIcon(name) : Folder;
+	}
+
+	getFolderExpandedIcon(name: string): any {
+		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		if (provider.getFolderExpandedIcon) {
+			const icon = provider.getFolderExpandedIcon(name);
+			if (icon) return icon;
+		}
+		return this.fileThemes['phosphor'].getFolderExpandedIcon ? this.fileThemes['phosphor'].getFolderExpandedIcon(name) : FolderOpen;
+	}
 }
 
 export const iconRegistry = new IconRegistry();
-
