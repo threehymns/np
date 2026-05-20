@@ -229,6 +229,7 @@
 		},
 		{ tag: t.strong, fontWeight: "bold", color: "var(--foreground)" },
 		{ tag: t.emphasis, fontStyle: "italic" },
+		{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 		{
 			tag: t.link,
 			color: "var(--primary)",
@@ -400,6 +401,48 @@
 		}
 	}
 	const codeBlockPlugin = ViewPlugin.fromClass(CodeBlockPlugin, {
+		decorations: (v) => v.decorations,
+	});
+	
+	class BlockquotePlugin {
+		decorations: DecorationSet;
+		constructor(view: EditorView) {
+			this.decorations = this.getDecorations(view);
+		}
+		update(update: ViewUpdate) {
+			if (update.docChanged || update.viewportChanged)
+				this.decorations = this.getDecorations(update.view);
+		}
+		getDecorations(view: EditorView) {
+			const builder = new RangeSetBuilder<Decoration>();
+			for (let { from, to } of view.visibleRanges) {
+				syntaxTree(view.state).iterate({
+					from,
+					to,
+					enter: (node) => {
+						if (node.name === "Blockquote") {
+							const startLine = view.state.doc.lineAt(
+								node.from,
+							).number;
+							const endLine = view.state.doc.lineAt(
+								node.to,
+							).number;
+							for (let i = startLine; i <= endLine; i++) {
+								const line = view.state.doc.line(i);
+								builder.add(
+									line.from,
+									line.from,
+									Decoration.line({ class: "cm-blockquote" }),
+								);
+							}
+						}
+					},
+				});
+			}
+			return builder.finish();
+		}
+	}
+	const blockquotePlugin = ViewPlugin.fromClass(BlockquotePlugin, {
 		decorations: (v) => v.decorations,
 	});
 
@@ -653,6 +696,21 @@
 											Decoration.replace({}),
 										);
 									}
+								} else if (type === "QuoteMark") {
+									let to = node.to;
+									if (
+										view.state.doc.sliceString(
+											to,
+											to + 1,
+										) === " "
+									) {
+										to++;
+									}
+									builder.add(
+										node.from,
+										to,
+										Decoration.replace({}),
+									);
 								} else {
 									builder.add(
 										node.from,
@@ -771,6 +829,7 @@
 				syntaxHighlighting(markdownHighlight),
 				hideMarkersPlugin,
 				codeBlockPlugin,
+				blockquotePlugin,
 				EditorView.domEventHandlers({
 					click: (event, view) => {
 						const pos = view.posAtCoords({
@@ -1172,6 +1231,14 @@
 	:global(.md-list-number) {
 		color: var(--primary);
 		font-weight: 500;
+	}
+
+	:global(.cm-blockquote) {
+		border-left: 3px solid var(--primary);
+		padding-left: 1.5rem;
+		margin-left: 0.2rem;
+		color: var(--muted-foreground);
+		font-style: italic;
 	}
 
 	/* Tables */
