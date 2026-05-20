@@ -67,11 +67,40 @@
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<div class="relative z-50 shrink-0 bg-background" class:border-b={appState.documents.length > 1}>
 		<Menubar.Root>
-			{#each ['File', 'Edit', 'Format', 'View', 'Export'] as category}
+			{#each ['File', 'Edit', 'Format', 'View'] as category}
 				<Menubar.Menu>
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>
-						{#if category === 'Format'}
+						{#if category === 'File'}
+							{#each commands.getByCategory('File') as command}
+								<Menubar.Item 
+									onclick={() => command.action()}
+									disabled={command.isEnabled && !command.isEnabled()}
+								>
+									{command.label}
+									{#if command.shortcut}
+										<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+									{/if}
+								</Menubar.Item>
+							{/each}
+							<Menubar.Separator />
+							<Menubar.Sub>
+								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
+								<Menubar.SubContent>
+									{#each commands.getByCategory('Export') as command}
+										<Menubar.Item 
+											onclick={() => command.action()}
+											disabled={command.isEnabled && !command.isEnabled()}
+										>
+											{command.label}
+											{#if command.shortcut}
+												<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+											{/if}
+										</Menubar.Item>
+									{/each}
+								</Menubar.SubContent>
+							</Menubar.Sub>
+						{:else if category === 'Format'}
 							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>Word Wrap</Menubar.CheckboxItem>
 						{:else if category === 'View'}
 							<Menubar.Sub>
