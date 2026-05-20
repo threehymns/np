@@ -9,8 +9,7 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"postinstall": "mkdir -p static/wasm && cp node_modules/web-tree-sitter/web-tree-sitter.wasm static/wasm/tree-sitter.wasm && cp node_modules/@tree-sitter-grammars/tree-sitter-markdown/tree-sitter-markdown/tree-sitter-markdown.wasm static/wasm/tree-sitter-markdown.wasm && cp node_modules/@tree-sitter-grammars/tree-sitter-markdown/tree-sitter-markdown-inline/tree-sitter-markdown_inline.wasm static/wasm/tree-sitter-markdown-inline.wasm"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
 	"devDependencies": {
 		"@fontsource-variable/figtree": "^5.2.10",
@@ -56,13 +55,8 @@
 		"@lezer/common": "^1.5.2",
 		"@lezer/highlight": "^1.2.3",
 		"@replit/codemirror-lang-svelte": "^6.0.0",
-		"@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
 		"codemirror": "^6.0.2",
 		"codemirror-markdown-tables": "^1.0.0",
-		"mode-watcher": "^1.1.0",
-		"tree-sitter-markdown": "^0.7.1",
-		"tree-sitter-wasm-prebuilt": "^0.0.3",
-		"tree-sitter-wasms": "^0.1.13",
-		"web-tree-sitter": "^0.26.8"
+		"mode-watcher": "^1.1.0"
 	}
 }

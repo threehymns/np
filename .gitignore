@@ -25,4 +25,3 @@ vite.config.ts.timestamp-*
 # Temporary and tool-specific files
 scratch/
 .antigravitycli/
-/static/wasm/
