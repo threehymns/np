@@ -447,6 +447,104 @@
 		decorations: (v) => v.decorations,
 	});
 
+	class HorizontalRuleWidget extends WidgetType {
+		view: EditorView;
+		from: number;
+		to: number;
+		constructor(view: EditorView, from: number, to: number) {
+			super();
+			this.view = view;
+			this.from = from;
+			this.to = to;
+		}
+		toDOM() {
+			const wrapper = document.createElement("div");
+			wrapper.className = "cm-horizontal-rule-wrapper";
+			const hr = document.createElement("div");
+			hr.className = "cm-horizontal-rule-inner";
+			wrapper.appendChild(hr);
+
+			wrapper.onclick = (e) => {
+				e.preventDefault();
+				this.view.focus();
+				this.view.dispatch({
+					selection: { anchor: this.from, head: this.to },
+					scrollIntoView: true,
+				});
+			};
+
+			return wrapper;
+		}
+	}
+
+	class HorizontalRulePlugin {
+		decorations: DecorationSet;
+		constructor(view: EditorView) {
+			this.decorations = this.getDecorations(view);
+		}
+		update(update: ViewUpdate) {
+			if (
+				update.docChanged ||
+				update.viewportChanged ||
+				update.selectionSet ||
+				update.focusChanged
+			)
+				this.decorations = this.getDecorations(update.view);
+		}
+		getDecorations(view: EditorView) {
+			const builder = new RangeSetBuilder<Decoration>();
+			const selection = view.state.selection.main;
+			const curLine = view.state.doc.lineAt(selection.from).number;
+
+			for (let { from, to } of view.visibleRanges) {
+				syntaxTree(view.state).iterate({
+					from,
+					to,
+					enter: (node) => {
+						if (node.name === "HorizontalRule") {
+							const line = view.state.doc.lineAt(node.from);
+							const isLineActive =
+								view.hasFocus && line.number === curLine;
+
+							if (!isLineActive) {
+								builder.add(
+									line.from,
+									line.from,
+									Decoration.line({
+										class: "cm-hr-line",
+									}),
+								);
+								builder.add(
+									line.from,
+									line.to,
+									Decoration.replace({
+										widget: new HorizontalRuleWidget(
+											view,
+											line.from,
+											line.to,
+										),
+									}),
+								);
+							} else {
+								builder.add(
+									line.from,
+									line.from,
+									Decoration.line({
+										class: "cm-horizontal-rule-active",
+									}),
+								);
+							}
+						}
+					},
+				});
+			}
+			return builder.finish();
+		}
+	}
+	const horizontalRulePlugin = ViewPlugin.fromClass(HorizontalRulePlugin, {
+		decorations: (v) => v.decorations,
+	});
+
 	class BulletWidget extends WidgetType {
 		toDOM() {
 			let span = document.createElement("span");
@@ -833,6 +931,7 @@
 				hideMarkersPlugin,
 				codeBlockPlugin,
 				blockquotePlugin,
+				horizontalRulePlugin,
 				EditorView.domEventHandlers({
 					mousedown: (event, view) => {
 						// We still need preventDefault to stop cursor move on collapsed links
@@ -1338,6 +1437,34 @@
 		margin-left: 0.2rem;
 		color: var(--muted-foreground);
 		font-style: italic;
+	}
+
+	:global(.cm-hr-line) {
+		line-height: 0 !important;
+	}
+
+	:global(.cm-hr-line .cm-widgetBuffer) {
+		display: none !important;
+	}
+
+	:global(.cm-horizontal-rule-wrapper) {
+		width: 100%;
+		height: 1.6em; /* This will provide the actual line height */
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	:global(.cm-horizontal-rule-inner) {
+		border-top: 1px solid var(--border);
+		width: 100%;
+		height: 0;
+	}
+
+	:global(.cm-horizontal-rule-active) {
+		color: var(--primary);
+		font-weight: bold;
+		opacity: 0.5;
 	}
 
 	/* Tables */
