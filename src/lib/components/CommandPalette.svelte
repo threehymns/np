@@ -3,6 +3,7 @@
 	import * as Command from "$lib/components/ui/command";
 	import { appState } from "$lib/state.svelte";
 	import { ArrowLeft } from "phosphor-svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let inputValue = $state("");
 
@@ -90,10 +91,11 @@
 				>
 					<div class="flex items-center gap-2.5 w-full">
 						{#if item.icon}
-							{@const IconComponent = typeof item.icon === 'string' ? appState.icons.getLanguageIcon(item.icon) : item.icon}
-							{#if IconComponent}
-								<IconComponent class="h-4 w-4 shrink-0 {item.iconClass || 'text-muted-foreground'}" />
-							{/if}
+							{@const iconValue = typeof item.icon === 'string' ? appState.icons.getLanguageIcon(item.icon) : item.icon}
+							<Icon 
+								icon={iconValue} 
+								class="h-4 w-4 shrink-0 {item.iconClass || 'text-muted-foreground'}" 
+							/>
 						{/if}
 						<span class="font-medium text-sm flex-1">{item.label}</span>
 						{#if item.meta}

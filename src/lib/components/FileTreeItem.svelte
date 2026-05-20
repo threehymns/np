@@ -5,6 +5,7 @@
 	import { cn } from "$lib/utils";
 	import * as ContextMenu from "$lib/components/ui/context-menu";
 	import { tick } from "svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let { node, depth = 0 } = $props<{ node: TreeNode; depth: number }>();
 	let isRenaming = $state(false);
@@ -100,7 +101,7 @@
 					{/if}
 				{:else}
 					<div class="size-3"></div>
-					<File class="size-4 opacity-60" />
+					<Icon icon={appState.icons.getFileIcon(node.name)} class="size-4 opacity-90" />
 				{/if}
 				
 				{#if isRenaming}

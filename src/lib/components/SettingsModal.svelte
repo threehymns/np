@@ -111,7 +111,7 @@
 				</div>
 				
 				<nav class="flex flex-col gap-1">
-					{#each categories as cat}
+					{#each categories as cat (cat.id)}
 						<button
 							onclick={() => activeCategory = cat.id}
 							class={cn(
@@ -144,7 +144,7 @@
 										<Palette size={16} /> Theme
 									</h4>
 									<RadioGroup.Root bind:value={appState.prefs.theme} class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-										{#each themes as theme}
+										{#each themes as theme (theme.id)}
 											<Label
 												for={"theme-" + theme.id}
 												class="flex flex-col items-center justify-between rounded-xl border-2 border-muted bg-card p-3 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary transition-all cursor-pointer shadow-sm"
@@ -159,16 +159,16 @@
 											</Label>
 										{/each}
 									</RadioGroup.Root>
-								</div>
+									</div>
 
-								<Separator />
+									<Separator />
 
-								<div>
+									<div>
 									<h4 class="text-sm font-semibold mb-4 flex items-center gap-2">
 										<Palette size={16} /> Accent Color
 									</h4>
 									<RadioGroup.Root bind:value={appState.prefs.accentColor} class="flex flex-wrap gap-2">
-										{#each currentAccents as accent}
+										{#each currentAccents as accent (accent.id)}
 											<Label
 												for={"accent-" + accent.id}
 												class={cn(
@@ -182,11 +182,11 @@
 											</Label>
 										{/each}
 									</RadioGroup.Root>
-								</div>
+									</div>
 
-								<Separator />
+									<Separator />
 
-								<div class="grid grid-cols-2 gap-8">
+									<div class="grid grid-cols-2 gap-8">
 									<div class="space-y-4">
 										<h4 class="text-sm font-semibold flex items-center gap-2">Mode</h4>
 										<RadioGroup.Root 
@@ -197,7 +197,7 @@
 											}}
 											class="flex gap-2"
 										>
-											{#each modes as mode}
+											{#each modes as mode (mode.id)}
 												<Label
 													for={"mode-" + mode.id}
 													class="flex-1 flex flex-col items-center justify-center rounded-lg border-2 border-muted bg-card p-3 hover:bg-accent cursor-pointer transition-all [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:bg-primary/5"
@@ -208,7 +208,6 @@
 											{/each}
 										</RadioGroup.Root>
 									</div>
-
 									<div class="space-y-4">
 										<h4 class="text-sm font-semibold flex items-center gap-2">Interface</h4>
 										<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50">
@@ -218,6 +217,46 @@
 											</div>
 											<Switch bind:checked={appState.prefs.statusBar} />
 										</div>
+									</div>
+								</div>
+
+								<Separator />
+
+								<div class="grid grid-cols-2 gap-8">
+									<div class="space-y-4">
+										<h4 class="text-sm font-semibold flex items-center gap-2">File Icon Theme</h4>
+										<RadioGroup.Root 
+											bind:value={appState.prefs.fileIconThemeId}
+											class="flex flex-col gap-2"
+										>
+											{#each appState.icons.getFileThemes() as theme (theme.id)}
+												<Label
+													for={"file-icon-" + theme.id}
+													class="flex items-center justify-between p-3 rounded-lg border-2 border-muted bg-card hover:bg-accent cursor-pointer transition-all [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:bg-primary/5"
+												>
+													<RadioGroup.Item value={theme.id} id={"file-icon-" + theme.id} class="sr-only" />
+													<span class="text-xs font-medium">{theme.name}</span>
+												</Label>
+											{/each}
+										</RadioGroup.Root>
+									</div>
+
+									<div class="space-y-4">
+										<h4 class="text-sm font-semibold flex items-center gap-2">Product Icon Theme</h4>
+										<RadioGroup.Root 
+											bind:value={appState.prefs.productIconThemeId}
+											class="flex flex-col gap-2"
+										>
+											{#each appState.icons.getProductThemes() as theme (theme.id)}
+												<Label
+													for={"product-icon-" + theme.id}
+													class="flex items-center justify-between p-3 rounded-lg border-2 border-muted bg-card hover:bg-accent cursor-pointer transition-all [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:bg-primary/5"
+												>
+													<RadioGroup.Item value={theme.id} id={"product-icon-" + theme.id} class="sr-only" />
+													<span class="text-xs font-medium">{theme.name}</span>
+												</Label>
+											{/each}
+										</RadioGroup.Root>
 									</div>
 								</div>
 							</div>
