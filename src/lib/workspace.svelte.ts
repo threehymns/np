@@ -1,5 +1,6 @@
 import { DocumentSession } from './document.svelte';
 import type { Storage } from './storage';
+import { ProjectTree } from './project/tree.svelte';
 import { saveHandles, loadHandles, saveActiveId, loadActiveId } from './persistence';
 
 export class Workspace {
@@ -7,6 +8,7 @@ export class Workspace {
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	rootHandle = $state<FileSystemDirectoryHandle | null>(null);
+	projectTree = new ProjectTree();
 	
 	private storage: Storage;
 	private untitledCounter = 0;
@@ -78,6 +80,7 @@ export class Workspace {
 		const handle = await this.storage.pickDirectory();
 		if (!handle) return;
 		this.rootHandle = handle;
+		await this.projectTree.scan(handle);
 	}
 
 	closeDocument(id: string) {
