@@ -25,7 +25,7 @@ class CommandRegistry {
 	}
 
 	getAll() {
-		return this.commands;
+		return Array.from(this.commands.values());
 	}
 
 	getByCategory(category: string) {

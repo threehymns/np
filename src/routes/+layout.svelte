@@ -8,6 +8,7 @@
 	import { commands } from "$lib/commands.svelte";
 	import type { Theme, AppearanceMode } from "$lib/preferences.svelte";
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
+	import CommandPalette from "$lib/components/CommandPalette.svelte";
 	import { ModeWatcher } from "mode-watcher";
 
 	let { children } = $props();
@@ -172,6 +173,7 @@
 	{/if}
 </div>
 
+<CommandPalette />
 <SettingsModal bind:open={settingsOpen} />
 
 <AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>
