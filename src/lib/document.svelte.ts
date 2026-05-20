@@ -25,8 +25,15 @@ export class DocumentSession {
 		return this.content !== this.savedContent;
 	}
 
-	async save() {
-		const newOrigin = await this.storage.saveFile(this.content, this.origin ?? undefined);
+	charCount = $derived(this.content.length);
+
+	wordCount = $derived(
+		this.content.trim().split(/\s+/).filter(Boolean).length
+	);
+
+	async save(options: { forceNewOrigin?: boolean } = {}) {
+		const targetOrigin = options.forceNewOrigin ? undefined : (this.origin ?? undefined);
+		const newOrigin = await this.storage.saveFile(this.content, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
 			this.savedContent = this.content;

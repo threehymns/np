@@ -172,8 +172,8 @@
 		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
 			<div class="flex items-center gap-4">
 				<div class="flex gap-3 opacity-80">
-					<span>{appState.wordCount} words</span>
-					<span>{appState.charCount} chars</span>
+					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
+					<span>{appState.activeDocument?.charCount ?? 0} chars</span>
 				</div>
 				{#if appState.selectionCharCount > 0}
 					<div class="h-3 w-px bg-border/50"></div>

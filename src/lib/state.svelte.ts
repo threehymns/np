@@ -115,15 +115,6 @@ export class AppState {
 		return this.documents.find((doc) => doc.id === this.activeDocumentId);
 	}
 
-	get charCount() {
-		return this.activeDocument?.content.length ?? 0;
-	}
-
-	get wordCount() {
-		const content = this.activeDocument?.content || '';
-		return content.trim().split(/\s+/).filter(Boolean).length;
-	}
-
 	async newFile() {
 		this.untitledCounter++;
 		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
@@ -146,19 +137,7 @@ export class AppState {
 	}
 
 	async saveFileAs() {
-		// DocumentSession.save() handles "Save As" if no origin, 
-		// but we might want a forced "Save As" flow.
-		const doc = this.activeDocument;
-		if (!doc) return;
-		
-		const newOrigin = await this.storage.saveFile(doc.content);
-		if (newOrigin) {
-			doc.origin = newOrigin;
-			// We can't reach into private savedContent, so maybe save() 
-			// should accept an optional forceNewOrigin flag.
-			// For now, let's keep it simple.
-			await doc.save();
-		}
+		await this.activeDocument?.save({ forceNewOrigin: true });
 	}
 
 	closeDocument(id: string) {
