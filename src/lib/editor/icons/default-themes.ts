@@ -7,6 +7,10 @@ export interface IconPackManifest {
 	fileExtensions?: Record<string, string>;
 	languageIds?: Record<string, string>;
 	defaultIcon?: string;
+	folder?: string;
+	folderExpanded?: string;
+	folderNames?: Record<string, string>;
+	folderNamesExpanded?: Record<string, string>;
 }
 
 export const vscodeIconsManifest: IconPackManifest = {
@@ -15,6 +19,20 @@ export const vscodeIconsManifest: IconPackManifest = {
 	type: 'file',
 	baseUrl: 'https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons@v2.18.0/icons/',
 	defaultIcon: 'default_file.svg',
+	folder: 'default_folder.svg',
+	folderExpanded: 'default_folder_opened.svg',
+	folderNames: {
+		'src': 'folder_type_src.svg',
+		'tests': 'folder_type_test.svg',
+		'lib': 'folder_type_lib.svg',
+		'components': 'folder_type_component.svg'
+	},
+	folderNamesExpanded: {
+		'src': 'folder_type_src_opened.svg',
+		'tests': 'folder_type_test_opened.svg',
+		'lib': 'folder_type_lib_opened.svg',
+		'components': 'folder_type_component_opened.svg'
+	},
 	fileNames: {
 		'package.json': 'file_type_npm.svg',
 		'tsconfig.json': 'file_type_tsconfig.svg',
@@ -71,6 +89,20 @@ export const materialIconsManifest: IconPackManifest = {
 	type: 'file',
 	baseUrl: 'https://cdn.jsdelivr.net/gh/material-extensions/vscode-material-icon-theme@v5.17.0/icons/',
 	defaultIcon: 'file.svg',
+	folder: 'folder.svg',
+	folderExpanded: 'folder-open.svg',
+	folderNames: {
+		'src': 'folder-src.svg',
+		'tests': 'folder-test.svg',
+		'lib': 'folder-lib.svg',
+		'components': 'folder-components.svg'
+	},
+	folderNamesExpanded: {
+		'src': 'folder-src-open.svg',
+		'tests': 'folder-test-open.svg',
+		'lib': 'folder-lib-open.svg',
+		'components': 'folder-components-open.svg'
+	},
 	fileNames: {
 		'package.json': 'npm.svg',
 		'tsconfig.json': 'tsconfig.svg',
@@ -126,20 +158,34 @@ export const catppuccinIconsManifest: IconPackManifest = {
 	name: 'Catppuccin Icons',
 	type: 'file',
 	baseUrl: 'https://cdn.jsdelivr.net/gh/catppuccin/vscode-icons@v1.26.0/icons/',
-	defaultIcon: 'file.svg',
+	defaultIcon: '_file.svg',
+	folder: '_folder.svg',
+	folderExpanded: '_folder_open.svg',
+	folderNames: {
+		'src': 'folder_src.svg',
+		'tests': 'folder_test.svg',
+		'lib': 'folder_lib.svg',
+		'components': 'folder_components.svg'
+	},
+	folderNamesExpanded: {
+		'src': 'folder_src_open.svg',
+		'tests': 'folder_test_open.svg',
+		'lib': 'folder_lib_open.svg',
+		'components': 'folder_components_open.svg'
+	},
 	fileNames: {
-		'package.json': 'npm.svg',
-		'tsconfig.json': 'tsconfig.svg',
+		'package.json': 'package-json.svg',
+		'tsconfig.json': 'typescript-config.svg',
 		'vite.config.ts': 'vite.svg',
-		'svelte.config.js': 'svelte.svg',
-		'bun.lock': 'bun.svg',
-		'bun.lockb': 'bun.svg'
+		'svelte.config.js': 'svelte-config.svg',
+		'bun.lock': 'bun-lock.svg',
+		'bun.lockb': 'bun-lock.svg'
 	},
 	fileExtensions: {
 		'ts': 'typescript.svg',
 		'js': 'javascript.svg',
-		'tsx': 'react_ts.svg',
-		'jsx': 'react.svg',
+		'tsx': 'typescript-react.svg',
+		'jsx': 'javascript-react.svg',
 		'svelte': 'svelte.svg',
 		'html': 'html.svg',
 		'css': 'css.svg',

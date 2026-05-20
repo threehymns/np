@@ -93,15 +93,15 @@
 			>
 				{#if node.kind === 'directory'}
 					{#if node.isExpanded}
-						<CaretDown class="size-3 opacity-60" />
-						<Folder class="size-4 text-primary opacity-80" />
+						<CaretDown class="size-3 opacity-60 shrink-0" />
+						<Icon icon={appState.icons.getFolderExpandedIcon(node.name)} class="size-4 opacity-90 shrink-0" />
 					{:else}
-						<CaretRight class="size-3 opacity-60" />
-						<Folder class="size-4 opacity-60" />
+						<CaretRight class="size-3 opacity-60 shrink-0" />
+						<Icon icon={appState.icons.getFolderIcon(node.name)} class="size-4 opacity-90 shrink-0" />
 					{/if}
 				{:else}
-					<div class="size-3"></div>
-					<Icon icon={appState.icons.getFileIcon(node.name)} class="size-4 opacity-90" />
+					<div class="size-3 shrink-0"></div>
+					<Icon icon={appState.icons.getFileIcon(node.name)} class="size-4 opacity-90 shrink-0" />
 				{/if}
 				
 				{#if isRenaming}

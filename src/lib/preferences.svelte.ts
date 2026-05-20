@@ -49,6 +49,7 @@ export class Preferences {
 					this.save();
 					iconRegistry.activeFileThemeId = this.fileIconThemeId;
 					iconRegistry.activeProductThemeId = this.productIconThemeId;
+					iconRegistry.updateCatppuccinFlavor(this.theme);
 				});
 			});
 		}
