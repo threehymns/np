@@ -2,6 +2,36 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Icon Loading Error Handling', () => {
 	test.beforeEach(async ({ page }) => {
+		try {
+			const session = await page.context().newCDPSession(page);
+			await session.send('Network.setCacheDisabled', { cacheDisabled: true });
+		} catch (e) {
+			console.warn('Could not disable cache via CDP:', e);
+		}
+
+		// Force no-cache headers on all SVG requests to prevent browser caching during the test
+		await page.route('**/*.svg', async (route) => {
+			try {
+				const response = await route.fetch();
+				await route.fulfill({
+					response,
+					headers: {
+						...response.headers(),
+						'cache-control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+						'pragma': 'no-cache',
+						'expires': '0'
+					}
+				});
+			} catch (e) {
+				// If the request fails or is already intercepted/aborted, do nothing
+				if (!page.isClosed()) {
+					try {
+						await route.continue();
+					} catch (err) {}
+				}
+			}
+		});
+
 		await page.goto('/');
 		await expect(page.locator('.cm-content')).toBeVisible();
 	});

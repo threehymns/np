@@ -1,20 +1,7 @@
 import { File, FileCode, FileText, Code, Globe, Database, Gear, Folder, FolderOpen } from "phosphor-svelte";
 import type { ZedIconTheme, ResolvedZedTheme, ZedThemeVariant } from "./icons/zed-format";
 import { resolveZedTheme } from "./icons/zed-format";
-
-export interface IconProvider {
-	getIconByExactName?(name: string): any | null;
-	getIconByExtension?(ext: string): any | null;
-	getIconByLanguage?(lang: string): any | null;
-	getDefaultIcon?(): any | null;
-
-	getFolderIcon?(name: string): any | null;
-	getFolderExpandedIcon?(name: string): any | null;
-
-	getLanguageIcon(name: string): any | null;
-	getFileIcon(filename: string): any | null;
-	setAppearance?(appearance: 'light' | 'dark'): void;
-}
+import type { ResolvedIcon, FileIconProvider, ProductIconProvider, IconQuery } from "./icons-types";
 
 const COMMON_EXTENSION_FALLBACKS: Record<string, string> = {
 	ts: 'typescript',
@@ -50,7 +37,11 @@ const COMMON_LANGUAGE_FALLBACKS: Record<string, string> = {
 	'git': 'git',
 };
 
-export class ManifestIconProvider implements IconProvider {
+const DIRECTORY_ALIASES: Record<string, string[]> = {
+	'static': ['assets', 'asset', 'resource', 'resources'],
+};
+
+export class ManifestIconProvider implements FileIconProvider {
 	private currentAppearance: 'light' | 'dark' = 'dark';
 	private resolved: ResolvedZedTheme;
 	private allVariants: ZedThemeVariant[];
@@ -78,60 +69,6 @@ export class ManifestIconProvider implements IconProvider {
 		}
 	}
 
-	getIconByExactName(name: string): string | null {
-		const lowerFilename = name.toLowerCase();
-		const iconKey = this.resolved.fileStems[lowerFilename];
-		if (iconKey) {
-			return this.resolved.fileIcons[iconKey] || null;
-		}
-		return null;
-	}
-
-	getIconByExtension(ext: string): string | null {
-		const extension = ext.toLowerCase();
-		const iconKey = this.resolved.fileSuffixes[extension]
-			?? COMMON_EXTENSION_FALLBACKS[extension];
-		if (iconKey) {
-			return this.resolved.fileIcons[iconKey] || null;
-		}
-		return null;
-	}
-
-	getIconByLanguage(lang: string): string | null {
-		const lowerName = lang.toLowerCase();
-		const iconKey = COMMON_LANGUAGE_FALLBACKS[lowerName] ?? lowerName;
-		const icon = this.resolved.fileIcons[iconKey];
-		if (icon) return icon;
-		return null;
-	}
-
-	getDefaultIcon(): string | null {
-		return this.resolved.fileIcons['file'] || null;
-	}
-
-	getFolderIcon(name: string): string | null {
-		const lowerName = name.toLowerCase();
-		const specific = this.resolved.namedDirectories[lowerName];
-		if (specific) return specific.collapsed;
-		return this.resolved.directoryCollapsed;
-	}
-
-	getFolderExpandedIcon(name: string): string | null {
-		const lowerName = name.toLowerCase();
-		const specific = this.resolved.namedDirectories[lowerName];
-		if (specific) return specific.expanded;
-		return this.resolved.directoryExpanded || this.resolved.directoryCollapsed;
-	}
-
-	getLanguageIcon(name: string): string | null {
-		return this.getIconByLanguage(name);
-	}
-
-	getFileIcon(filename: string): string | null {
-		const ext = filename.split(".").pop()?.toLowerCase() || '';
-		return this.getIconByExactName(filename) || this.getIconByExtension(ext) || this.getDefaultIcon();
-	}
-
 	get name(): string {
 		return this.themeName;
 	}
@@ -139,28 +76,191 @@ export class ManifestIconProvider implements IconProvider {
 	get id(): string {
 		return this.themeId;
 	}
+
+	resolveFileIcon(filename: string, context?: { language?: string }): ResolvedIcon | null {
+		const lowerName = filename.toLowerCase();
+
+		// 1. Exact match against file_stems
+		let stemKey = this.resolved.fileStems[lowerName];
+		if (stemKey) {
+			const url = this.resolved.fileIcons[stemKey];
+			if (url) return { type: 'url', value: url };
+		}
+
+		// 2. Hidden files: strip leading dot if it is a hidden file and check stems
+		if (filename.startsWith('.') && filename.length > 1) {
+			const strippedDot = lowerName.slice(1);
+			stemKey = this.resolved.fileStems[strippedDot];
+			if (stemKey) {
+				const url = this.resolved.fileIcons[stemKey];
+				if (url) return { type: 'url', value: url };
+			}
+		}
+
+		// 3. Suffix / Multi-extension resolution via split-once loop on '.'
+		const parts = lowerName.split('.');
+		for (let i = 1; i < parts.length; i++) {
+			const suffix = parts.slice(i).join('.');
+			const suffixKey = this.resolved.fileSuffixes[suffix]
+				?? COMMON_EXTENSION_FALLBACKS[suffix];
+			if (suffixKey) {
+				const url = this.resolved.fileIcons[suffixKey];
+				if (url) return { type: 'url', value: url };
+			}
+		}
+
+		// 4. Standard extension check
+		const ext = parts.pop() || '';
+		const extKey = this.resolved.fileSuffixes[ext] ?? COMMON_EXTENSION_FALLBACKS[ext];
+		if (extKey) {
+			const url = this.resolved.fileIcons[extKey];
+			if (url) return { type: 'url', value: url };
+		}
+
+		// 5. Language Mode fallback check
+		if (context?.language) {
+			const lowerLang = context.language.toLowerCase();
+			const langKey = COMMON_LANGUAGE_FALLBACKS[lowerLang] ?? lowerLang;
+
+			// Define candidates to check for the file icon key in the theme
+			const candidates = [
+				langKey,
+				`_f_${langKey}`
+			];
+
+			// Translate language ID to its canonical extension key as a backup
+			const langExtMap: Record<string, string> = {
+				'javascript': 'js',
+				'typescript': 'ts',
+				'markdown': 'md',
+				'python': 'py',
+				'rust': 'rs',
+				'ruby': 'rb',
+				'react': 'jsx',
+			};
+
+			const ext = langExtMap[lowerLang];
+			if (ext) {
+				candidates.push(ext);
+				candidates.push(`_f_${ext}`);
+			}
+
+			for (const cand of candidates) {
+				const url = this.resolved.fileIcons[cand];
+				if (url) return { type: 'url', value: url };
+			}
+		}
+
+		return null;
+	}
+
+	resolveFolderIcon(folderName: string, options?: { expanded?: boolean }): ResolvedIcon | null {
+		const lowerName = folderName.toLowerCase();
+
+		// 1. Try exact match
+		let specific = this.resolved.namedDirectories[lowerName];
+		if (specific) {
+			const url = options?.expanded ? specific.expanded : specific.collapsed;
+			if (url) return { type: 'url', value: url };
+		}
+
+		// 2. Try stripping leading dot
+		if (lowerName.startsWith('.') && lowerName.length > 1) {
+			const stripped = lowerName.slice(1);
+			specific = this.resolved.namedDirectories[stripped];
+			if (specific) {
+				const url = options?.expanded ? specific.expanded : specific.collapsed;
+				if (url) return { type: 'url', value: url };
+			}
+		}
+
+		// 3. Try folder aliases
+		const aliases = DIRECTORY_ALIASES[lowerName];
+		if (aliases) {
+			for (const alias of aliases) {
+				specific = this.resolved.namedDirectories[alias];
+				if (specific) {
+					const url = options?.expanded ? specific.expanded : specific.collapsed;
+					if (url) return { type: 'url', value: url };
+				}
+			}
+		}
+
+		return null;
+	}
+
+	getDefaultFileIcon(): ResolvedIcon | null {
+		const url = this.resolved.fileIcons['file']
+			?? this.resolved.fileIcons['default']
+			?? this.resolved.fileIcons['fallback'];
+		return url ? { type: 'url', value: url } : null;
+	}
+
+	getDefaultFolderIcon(options?: { expanded?: boolean }): ResolvedIcon | null {
+		const url = options?.expanded
+			? (this.resolved.directoryExpanded || this.resolved.directoryCollapsed)
+			: this.resolved.directoryCollapsed;
+		return url ? { type: 'url', value: url } : null;
+	}
+
+	// Legacy compatibility methods for Playwright tests
+	getFileIcon(filename: string): string | null {
+		const resolved = this.resolveFileIcon(filename) ?? this.getDefaultFileIcon();
+		return resolved?.type === 'url' ? resolved.value : null;
+	}
+
+	getFolderIcon(name: string): string | null {
+		const resolved = this.resolveFolderIcon(name, { expanded: false });
+		if (resolved?.type === 'url') return resolved.value;
+		const def = this.getDefaultFolderIcon({ expanded: false });
+		return def?.type === 'url' ? def.value : null;
+	}
 }
 
 if (typeof window !== 'undefined') {
 	(window as any).ManifestIconProvider = ManifestIconProvider;
 }
 
-class PhosphorIconProvider implements IconProvider {
-	getIconByExactName(name: string): any | null {
+class PhosphorIconProvider implements FileIconProvider, ProductIconProvider {
+	readonly id = 'phosphor';
+	readonly name = 'Phosphor';
+
+	resolveFileIcon(filename: string, context?: { language?: string }): ResolvedIcon | null {
+		const ext = filename.split(".").pop()?.toLowerCase() || '';
+		let comp = this.getComponentByExtension(ext);
+		if (!comp && context?.language) {
+			comp = this.getComponentByLanguage(context.language);
+		}
+		return comp ? { type: 'component', value: comp } : null;
+	}
+
+	resolveFolderIcon(folderName: string, options?: { expanded?: boolean }): ResolvedIcon | null {
+		return { type: 'component', value: options?.expanded ? FolderOpen : Folder };
+	}
+
+	getDefaultFileIcon(): ResolvedIcon | null {
+		return { type: 'component', value: File };
+	}
+
+	getDefaultFolderIcon(options?: { expanded?: boolean }): ResolvedIcon | null {
+		return { type: 'component', value: options?.expanded ? FolderOpen : Folder };
+	}
+
+	resolveProductIcon(iconName: string): ResolvedIcon | null {
+		const comp = this.getComponentByLanguage(iconName);
+		return comp ? { type: 'component', value: comp } : null;
+	}
+
+	private getComponentByExtension(ext: string): any | null {
+		if (["md", "txt", "rtf"].includes(ext)) return FileText;
+		if (["js", "ts", "jsx", "tsx", "py", "rs", "go", "cpp", "c", "java", "rb"].includes(ext)) return Code;
+		if (["html", "css", "svelte", "svg"].includes(ext)) return Globe;
+		if (["json", "yaml", "yml", "toml"].includes(ext)) return Gear;
+		if (["sql", "db"].includes(ext)) return Database;
 		return null;
 	}
 
-	getIconByExtension(ext: string): any | null {
-		const extension = ext.toLowerCase();
-		if (["md", "txt", "rtf"].includes(extension)) return FileText;
-		if (["js", "ts", "jsx", "tsx", "py", "rs", "go", "cpp", "c", "java", "rb"].includes(extension)) return Code;
-		if (["html", "css", "svelte", "svg"].includes(extension)) return Globe;
-		if (["json", "yaml", "yml", "toml"].includes(extension)) return Gear;
-		if (["sql", "db"].includes(extension)) return Database;
-		return null;
-	}
-
-	getIconByLanguage(lang: string): any | null {
+	private getComponentByLanguage(lang: string): any | null {
 		const lowerName = lang.toLowerCase();
 		if (lowerName === "language" || lowerName === "auto") return Globe;
 		if (lowerName.includes("markdown")) return FileText;
@@ -170,35 +270,6 @@ class PhosphorIconProvider implements IconProvider {
 		if (lowerName.includes("json") || lowerName.includes("yaml") || lowerName.includes("toml") || lowerName.includes("ini")) return Gear;
 		if (lowerName.includes("plain text") || lowerName.includes("text")) return FileText;
 		return FileCode;
-	}
-
-	getDefaultIcon(): any | null {
-		return File;
-	}
-
-	getFolderIcon(name: string): any | null {
-		return Folder;
-	}
-
-	getFolderExpandedIcon(name: string): any | null {
-		return FolderOpen;
-	}
-
-	getLanguageIcon(name: string): any | null {
-		return this.getIconByLanguage(name);
-	}
-
-	getFileIcon(filename: string): any | null {
-		const ext = filename.split(".").pop()?.toLowerCase() || '';
-		return this.getIconByExtension(ext) || this.getDefaultIcon();
-	}
-
-	get name(): string {
-		return 'Phosphor';
-	}
-
-	get id(): string {
-		return 'phosphor';
 	}
 }
 
@@ -211,28 +282,34 @@ export interface ThemeInfo {
 export class IconRegistry {
 	activeFileThemeId = $state<string>('phosphor');
 	activeProductThemeId = $state<string>('phosphor');
+	currentAppearance = $state<'light' | 'dark'>('dark');
 
-	private fileThemes = $state<Record<string, IconProvider>>({
+	private fileThemes = $state<Record<string, FileIconProvider>>({
 		'phosphor': new PhosphorIconProvider()
 	});
-	private productThemes = $state<Record<string, IconProvider>>({
+	private productThemes = $state<Record<string, ProductIconProvider>>({
 		'phosphor': new PhosphorIconProvider()
 	});
 
-	constructor() {
-	}
+	constructor() {}
 
 	async initialize() {
 		const { builtinFileThemes, fetchZedTheme } = await import("./icons/builtin-themes");
 
-		for (const config of builtinFileThemes) {
-			const themeUrl = `https://cdn.jsdelivr.net/gh/${config.repoUrl.replace('https://github.com/', '')}/${config.themePath}`;
-			const theme = await fetchZedTheme(themeUrl);
-			if (!theme) continue;
-
-			const provider = new ManifestIconProvider(config.id, config.name, theme, config.iconBaseUrl);
-			this.registerFileTheme(config.id, provider);
-		}
+		await Promise.all(
+			builtinFileThemes.map(async (config) => {
+				try {
+					const themeUrl = `https://cdn.jsdelivr.net/gh/${config.repoUrl.replace('https://github.com/', '')}/${config.themePath}`;
+					const theme = await fetchZedTheme(themeUrl);
+					if (theme) {
+						const provider = new ManifestIconProvider(config.id, config.name, theme, config.iconBaseUrl);
+						this.registerFileTheme(config.id, provider);
+					}
+				} catch (e) {
+					console.warn(`Failed to load builtin theme ${config.id}:`, e);
+				}
+			})
+		);
 
 		const installed = this.loadInstalledThemes();
 		for (const installedTheme of installed) {
@@ -275,18 +352,18 @@ export class IconRegistry {
 		}
 	}
 
-	registerFileTheme(id: string, provider: IconProvider) {
+	registerFileTheme(id: string, provider: FileIconProvider) {
 		this.fileThemes[id] = provider;
 	}
 
-	registerProductTheme(id: string, provider: IconProvider) {
+	registerProductTheme(id: string, provider: ProductIconProvider) {
 		this.productThemes[id] = provider;
 	}
 
 	getFileThemes(): ThemeInfo[] {
 		return Object.keys(this.fileThemes).map(id => ({
 			id,
-			name: (this.fileThemes[id] as any).name || id,
+			name: this.fileThemes[id].name || id,
 			source: id === 'phosphor' || id === 'material' || id === 'catppuccin' || id === 'vscode' ? 'builtin' : 'installed'
 		}));
 	}
@@ -294,56 +371,124 @@ export class IconRegistry {
 	getProductThemes(): ThemeInfo[] {
 		return Object.keys(this.productThemes).map(id => ({
 			id,
-			name: (this.productThemes[id] as any).name || id,
+			name: this.productThemes[id].name || id,
 			source: id === 'phosphor' ? 'builtin' : 'installed'
 		}));
 	}
 
-	resolveFileIcon(filename: string, languageModeName?: string): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-
-		if (provider.getIconByExactName) {
-			const icon = provider.getIconByExactName(filename);
-			if (icon) return icon;
+	setAppearance(appearance: 'light' | 'dark') {
+		this.currentAppearance = appearance;
+		for (const provider of Object.values(this.fileThemes)) {
+			if (provider.setAppearance) {
+				provider.setAppearance(appearance);
+			}
 		}
-
-		const extension = filename.split('.').pop()?.toLowerCase() || '';
-		if (extension && provider.getIconByExtension) {
-			const icon = provider.getIconByExtension(extension);
-			if (icon) return icon;
+		for (const provider of Object.values(this.productThemes)) {
+			if (provider.setAppearance) {
+				provider.setAppearance(appearance);
+			}
 		}
+	}
 
-		if (languageModeName && provider.getIconByLanguage) {
-			const icon = provider.getIconByLanguage(languageModeName);
-			if (icon) return icon;
-		}
-
-		if (provider.getDefaultIcon) {
-			const icon = provider.getDefaultIcon();
-			if (icon) return icon;
-		}
-
+	resolveFileIconChain(filename: string, context?: { language?: string }): ResolvedIcon[] {
+		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
 		const phosphor = this.fileThemes['phosphor'];
-		return phosphor.getDefaultIcon ? phosphor.getDefaultIcon() : null;
+
+		const chain: ResolvedIcon[] = [];
+
+		const activeIcon = activeProvider.resolveFileIcon(filename, context);
+		if (activeIcon) {
+			chain.push(activeIcon);
+		}
+
+		const activeDefault = activeProvider.getDefaultFileIcon();
+		if (activeDefault) {
+			chain.push(activeDefault);
+		}
+
+		if (activeProvider.id !== 'phosphor') {
+			const phosphorIcon = phosphor.resolveFileIcon(filename, context);
+			if (phosphorIcon) {
+				chain.push(phosphorIcon);
+			}
+		}
+
+		const phosphorDefault = phosphor.getDefaultFileIcon();
+		if (phosphorDefault) {
+			chain.push(phosphorDefault);
+		}
+
+		return chain;
+	}
+
+	resolveFolderIconChain(foldername: string, options?: { expanded?: boolean }): ResolvedIcon[] {
+		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const phosphor = this.fileThemes['phosphor'];
+
+		const chain: ResolvedIcon[] = [];
+
+		const activeIcon = activeProvider.resolveFolderIcon(foldername, options);
+		if (activeIcon) {
+			chain.push(activeIcon);
+		}
+
+		const activeDefault = activeProvider.getDefaultFolderIcon(options);
+		if (activeDefault) {
+			chain.push(activeDefault);
+		}
+
+		if (activeProvider.id !== 'phosphor') {
+			const phosphorIcon = phosphor.resolveFolderIcon(foldername, options);
+			if (phosphorIcon) {
+				chain.push(phosphorIcon);
+			}
+		}
+
+		const phosphorDefault = phosphor.getDefaultFolderIcon(options);
+		if (phosphorDefault) {
+			chain.push(phosphorDefault);
+		}
+
+		return chain;
+	}
+
+	resolveProductIconChain(iconName: string): ResolvedIcon[] {
+		const activeProvider = this.productThemes[this.activeProductThemeId] || this.productThemes['phosphor'];
+		const phosphor = this.productThemes['phosphor'];
+
+		const chain: ResolvedIcon[] = [];
+
+		const activeIcon = activeProvider.resolveProductIcon(iconName);
+		if (activeIcon) {
+			chain.push(activeIcon);
+		}
+
+		if (activeProvider.id !== 'phosphor') {
+			const phosphorIcon = phosphor.resolveProductIcon(iconName);
+			if (phosphorIcon) {
+				chain.push(phosphorIcon);
+			}
+		}
+
+		return chain;
+	}
+
+	resolveFileIcon(filename: string, languageModeName?: string): any {
+		const chain = this.resolveFileIconChain(filename, { language: languageModeName });
+		const first = chain[0];
+		if (!first || first.type === 'empty') return null;
+		return first.value;
 	}
 
 	resolveProductIcon(iconName: string): any {
-		const provider = this.productThemes[this.activeProductThemeId] || this.productThemes['phosphor'];
-		if (provider.getIconByExactName) {
-			const icon = provider.getIconByExactName(iconName);
-			if (icon) return icon;
-		}
-		const phosphor = this.productThemes['phosphor'];
-		return phosphor.getLanguageIcon(iconName);
+		const chain = this.resolveProductIconChain(iconName);
+		const first = chain[0];
+		if (!first || first.type === 'empty') return null;
+		return first.value;
 	}
 
 	getLanguageIcon(name: string): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		if (provider.getIconByLanguage) {
-			const icon = provider.getIconByLanguage(name);
-			if (icon) return icon;
-		}
-		return this.fileThemes['phosphor'].getLanguageIcon(name);
+		return this.resolveFileIcon('', name);
 	}
 
 	getFileIcon(filename: string): any {
@@ -351,44 +496,38 @@ export class IconRegistry {
 	}
 
 	getFolderIcon(name: string): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		if (provider.getFolderIcon) {
-			const icon = provider.getFolderIcon(name);
-			if (icon) return icon;
-		}
-		if (provider.getFolderIcon) {
-			const defaultFolder = provider.getFolderIcon('');
-			if (defaultFolder) return defaultFolder;
-		}
-		return this.fileThemes['phosphor'].getFolderIcon ? this.fileThemes['phosphor'].getFolderIcon(name) : Folder;
+		const chain = this.resolveFolderIconChain(name, { expanded: false });
+		const first = chain[0];
+		if (!first || first.type === 'empty') return Folder;
+		return first.value;
 	}
 
 	getFolderExpandedIcon(name: string): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		if (provider.getFolderExpandedIcon) {
-			const icon = provider.getFolderExpandedIcon(name);
-			if (icon) return icon;
-		}
-		if (provider.getFolderExpandedIcon) {
-			const defaultFolderExpanded = provider.getFolderExpandedIcon('');
-			if (defaultFolderExpanded) return defaultFolderExpanded;
-		}
-		return this.fileThemes['phosphor'].getFolderExpandedIcon ? this.fileThemes['phosphor'].getFolderExpandedIcon(name) : FolderOpen;
+		const chain = this.resolveFolderIconChain(name, { expanded: true });
+		const first = chain[0];
+		if (!first || first.type === 'empty') return FolderOpen;
+		return first.value;
 	}
 
 	getThemeDefaultFileIcon(): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		return provider.getDefaultIcon ? provider.getDefaultIcon() : File;
+		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const first = activeProvider.getDefaultFileIcon();
+		if (!first || first.type === 'empty') return File;
+		return first.value;
 	}
 
 	getThemeDefaultFolderIcon(): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		return provider.getFolderIcon ? provider.getFolderIcon('') : Folder;
+		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const first = activeProvider.getDefaultFolderIcon({ expanded: false });
+		if (!first || first.type === 'empty') return Folder;
+		return first.value;
 	}
 
 	getThemeDefaultFolderExpandedIcon(): any {
-		const provider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
-		return provider.getFolderExpandedIcon ? provider.getFolderExpandedIcon('') : FolderOpen;
+		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const first = activeProvider.getDefaultFolderIcon({ expanded: true });
+		if (!first || first.type === 'empty') return FolderOpen;
+		return first.value;
 	}
 
 	async installThemeFromGitHub(repoUrl: string): Promise<{ id: string; name: string } | null> {

@@ -33,8 +33,26 @@ export class Preferences {
 	theme = $state<Theme>('default');
 	appearanceMode = $state<AppearanceMode>('system');
 	accentColor = $state<string>('default');
-	fileIconThemeId = $state<string>('phosphor');
-	productIconThemeId = $state<string>('phosphor');
+	private _fileIconThemeId = $state<string>('phosphor');
+	private _productIconThemeId = $state<string>('phosphor');
+
+	get fileIconThemeId() {
+		return this._fileIconThemeId;
+	}
+	set fileIconThemeId(val: string) {
+		this._fileIconThemeId = val;
+		iconRegistry.activeFileThemeId = val;
+		this.save();
+	}
+
+	get productIconThemeId() {
+		return this._productIconThemeId;
+	}
+	set productIconThemeId(val: string) {
+		this._productIconThemeId = val;
+		iconRegistry.activeProductThemeId = val;
+		this.save();
+	}
 
 	private storage: PreferenceStorage;
 	private storageKey = 'np-prefs-v2';
@@ -47,8 +65,6 @@ export class Preferences {
 			$effect.root(() => {
 				$effect(() => {
 					this.save();
-					iconRegistry.activeFileThemeId = this.fileIconThemeId;
-					iconRegistry.activeProductThemeId = this.productIconThemeId;
 				});
 			});
 		}

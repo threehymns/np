@@ -131,6 +131,68 @@ export function registerCoreCommands() {
 	});
 
 	commands.register({
+		id: 'edit.cut',
+		label: 'Cut',
+		category: 'Edit',
+		shortcut: 'cmd+x',
+		action: async () => {
+			if (appState.activeEditorView) {
+				const view = appState.activeEditorView;
+				view.focus();
+				const { from, to } = view.state.selection.main;
+				if (from !== to) {
+					const text = view.state.doc.sliceString(from, to);
+					await navigator.clipboard.writeText(text);
+					view.dispatch({
+						changes: { from, to, insert: "" },
+						selection: { anchor: from }
+					});
+				}
+			}
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	commands.register({
+		id: 'edit.copy',
+		label: 'Copy',
+		category: 'Edit',
+		shortcut: 'cmd+c',
+		action: async () => {
+			if (appState.activeEditorView) {
+				const view = appState.activeEditorView;
+				view.focus();
+				const { from, to } = view.state.selection.main;
+				if (from !== to) {
+					const text = view.state.doc.sliceString(from, to);
+					await navigator.clipboard.writeText(text);
+				}
+			}
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	commands.register({
+		id: 'edit.paste',
+		label: 'Paste',
+		category: 'Edit',
+		shortcut: 'cmd+v',
+		action: async () => {
+			if (appState.activeEditorView) {
+				const view = appState.activeEditorView;
+				view.focus();
+				try {
+					const text = await navigator.clipboard.readText();
+					view.dispatch(view.state.replaceSelection(text));
+				} catch (err) {
+					console.error("Failed to read clipboard:", err);
+				}
+			}
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	commands.register({
 		id: 'edit.find',
 		label: 'Find...',
 		category: 'Edit',

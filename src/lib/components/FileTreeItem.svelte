@@ -95,16 +95,18 @@
 					{#if node.isExpanded}
 						<CaretDown class="size-3 opacity-60 shrink-0" />
 						<Icon 
-							icon={appState.icons.getFolderExpandedIcon(node.name)} 
-							themeFallback={appState.icons.getThemeDefaultFolderExpandedIcon()}
+							resource={node.name}
+							type="folder"
+							folderOpen={true}
 							phosphorFallback={FolderOpen} 
 							class="size-4 opacity-90 shrink-0" 
 						/>
 					{:else}
 						<CaretRight class="size-3 opacity-60 shrink-0" />
 						<Icon 
-							icon={appState.icons.getFolderIcon(node.name)} 
-							themeFallback={appState.icons.getThemeDefaultFolderIcon()}
+							resource={node.name}
+							type="folder"
+							folderOpen={false}
 							phosphorFallback={Folder} 
 							class="size-4 opacity-90 shrink-0" 
 						/>
@@ -112,8 +114,8 @@
 				{:else}
 					<div class="size-3 shrink-0"></div>
 					<Icon 
-						icon={appState.icons.getFileIcon(node.name)} 
-						themeFallback={appState.icons.getThemeDefaultFileIcon()}
+						resource={node.name}
+						type="file"
 						phosphorFallback={File} 
 						class="size-4 opacity-90 shrink-0" 
 					/>

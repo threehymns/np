@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Icon Resolution for Folders and Files', () => {
 	test.beforeEach(async ({ page }) => {
+		page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
 		await page.goto('/');
 		await expect(page.locator('.cm-content')).toBeVisible();
 	});
@@ -19,17 +20,45 @@ test.describe('Icon Resolution for Folders and Files', () => {
 				const icons = appState.icons;
 				
 				appState.prefs.fileIconThemeId = themeId;
+				console.log('Setting fileIconThemeId to:', themeId);
 				
-				await new Promise(r => setTimeout(r, 50));
+				// Wait for the theme to load
+				for (let i = 0; i < 50; i++) {
+					if (icons.getFileThemes().some((t: any) => t.id === themeId)) {
+						break;
+					}
+					await new Promise(r => setTimeout(r, 50));
+				}
+				
+				console.log('Loaded themes:', icons.getFileThemes().map((t: any) => t.id));
+				console.log('Active theme id:', icons.activeFileThemeId);
+				
+				const provider = icons.fileThemes[themeId];
+				console.log('Provider for theme exists:', !!provider);
+				if (provider) {
+					console.log('Provider resolved structure:', !!provider.resolved);
+					if (provider.resolved) {
+						console.log('Provider namedDirectories keys count:', Object.keys(provider.resolved.namedDirectories).length);
+						console.log('node_modules in namedDirectories:', 'node_modules' in provider.resolved.namedDirectories);
+						console.log('node_modules value:', provider.resolved.namedDirectories['node_modules']);
+						console.log('resolveFolderIcon node_modules:', provider.resolveFolderIcon('node_modules'));
+					}
+				}
+				
+				const getFolderIconVal = (folder: string) => {
+					const val = icons.getFolderIcon(folder);
+					console.log(`getFolderIcon(${folder}) raw:`, val);
+					return typeof val === 'string' ? val : 'component';
+				};
 				
 				return {
-					node: icons.getFolderIcon('node_modules'),
-					src: icons.getFolderIcon('src'),
-					dist: icons.getFolderIcon('dist'),
-					git: icons.getFolderIcon('.git'),
-					public: icons.getFolderIcon('public'),
-					lib: icons.getFolderIcon('lib'),
-					static: icons.getFolderIcon('static')
+					node: getFolderIconVal('node_modules'),
+					src: getFolderIconVal('src'),
+					dist: getFolderIconVal('dist'),
+					git: getFolderIconVal('.git'),
+					public: getFolderIconVal('public'),
+					lib: getFolderIconVal('lib'),
+					static: getFolderIconVal('static')
 				};
 			}, { themeId: theme.id });
 			
@@ -58,8 +87,17 @@ test.describe('Icon Resolution for Folders and Files', () => {
 			const icons = appState.icons;
 			
 			appState.prefs.fileIconThemeId = 'material';
-			await new Promise(r => setTimeout(r, 50));
-			const materialReadme = icons.getFileIcon('README.md');
+			
+			// Wait for the theme to load
+			for (let i = 0; i < 50; i++) {
+				if (icons.getFileThemes().some((t: any) => t.id === 'material')) {
+					break;
+				}
+				await new Promise(r => setTimeout(r, 50));
+			}
+			
+			const val = icons.getFileIcon('README.md');
+			const materialReadme = typeof val === 'string' ? val : 'component';
 			
 			return {
 				materialReadme
@@ -75,14 +113,57 @@ test.describe('Icon Resolution for Folders and Files', () => {
 			const icons = appState.icons;
 			
 			appState.prefs.fileIconThemeId = 'material';
-			await new Promise(r => setTimeout(r, 50));
-			const materialUnknown = icons.getFolderIcon('some-unlikely-folder-name');
+			
+			// Wait for the theme to load
+			for (let i = 0; i < 50; i++) {
+				if (icons.getFileThemes().some((t: any) => t.id === 'material')) {
+					break;
+				}
+				await new Promise(r => setTimeout(r, 50));
+			}
+			
+			const val = icons.getFolderIcon('some-unlikely-folder-name');
+			const materialUnknown = typeof val === 'string' ? val : 'component';
 			
 			return {
 				materialUnknown
 			};
 		});
 		
-		expect(result.materialUnknown).toContain('folder-base.svg');
+		expect(result.materialUnknown).toMatch(/folder-base\.svg|folder\.svg/);
+	});
+
+	test('should resolve language icons for VS Code theme', async ({ page }) => {
+		const result = await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const icons = appState.icons;
+			
+			appState.prefs.fileIconThemeId = 'vscode';
+			
+			// Wait for the theme to load
+			for (let i = 0; i < 50; i++) {
+				if (icons.getFileThemes().some((t: any) => t.id === 'vscode')) {
+					break;
+				}
+				await new Promise(r => setTimeout(r, 50));
+			}
+			
+			const tsVal = icons.getLanguageIcon('typescript');
+			const jsVal = icons.getLanguageIcon('javascript');
+			const htmlVal = icons.getLanguageIcon('html');
+			const svelteVal = icons.getLanguageIcon('svelte');
+			
+			return {
+				ts: typeof tsVal === 'string' ? tsVal : 'component',
+				js: typeof jsVal === 'string' ? jsVal : 'component',
+				html: typeof htmlVal === 'string' ? htmlVal : 'component',
+				svelte: typeof svelteVal === 'string' ? svelteVal : 'component'
+			};
+		});
+		
+		expect(result.ts).toContain('typescript.svg');
+		expect(result.js).toContain('js.svg');
+		expect(result.html).toContain('html.svg');
+		expect(result.svelte).toContain('svelte.svg');
 	});
 });

@@ -75,8 +75,8 @@
               class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5"
             >
               <Icon 
-                icon={appState.icons.getFileIcon(doc.fileName)} 
-                themeFallback={appState.icons.getThemeDefaultFileIcon()}
+                resource={doc.fileName}
+                type="file"
                 class="size-3.5 opacity-90" 
               />
               {doc.fileName}
