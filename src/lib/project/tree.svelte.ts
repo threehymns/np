@@ -1,4 +1,6 @@
 import { appState } from '../state.svelte';
+import { saveExpandedPaths, loadExpandedPaths } from '../persistence';
+import { SvelteSet } from 'svelte/reactivity';
 
 export interface TreeNode {
 	name: string;
@@ -80,6 +82,34 @@ export class ProjectTree {
 	private gitignore: GitIgnoreMatcher | null = null;
 	private searchResults = $state<TreeNode[]>([]);
 	private searchAbortController: AbortController | null = null;
+	private expandedPaths = new SvelteSet<string>();
+	private initPromise: Promise<void> | null = null;
+	private isRestoring = $state(false);
+
+	constructor() {
+		if (typeof window !== 'undefined') {
+			this.isRestoring = true;
+			this.initPromise = this.loadExpansionState().finally(() => {
+				this.isRestoring = false;
+			});
+			
+			$effect.root(() => {
+				$effect(() => {
+					if (this.isRestoring) return;
+					// Persist expanded paths
+					const paths = Array.from(this.expandedPaths);
+					saveExpandedPaths(paths);
+				});
+			});
+		}
+	}
+
+	private async loadExpansionState() {
+		const paths = await loadExpandedPaths();
+		for (const path of paths) {
+			this.expandedPaths.add(path);
+		}
+	}
 
 	filteredNodes = $derived.by(() => {
 		if (!this.searchQuery) return this.nodes;
@@ -226,6 +256,7 @@ export class ProjectTree {
 	}
 
 	async scan(rootHandle: FileSystemDirectoryHandle) {
+		if (this.initPromise) await this.initPromise;
 		this.isScanning = true;
 		try {
 			// Load .gitignore if it exists
@@ -252,14 +283,20 @@ export class ProjectTree {
 			if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
 			if (this.gitignore?.ignores(entryPath)) continue;
 
+			const isExpanded = this.expandedPaths.has(entryPath);
 			const node: TreeNode = {
 				name: entry.name,
 				kind: entry.kind as 'file' | 'directory',
 				handle: entry,
 				parentHandle: handle,
-				isExpanded: false,
+				isExpanded,
 				children: entry.kind === 'directory' ? [] : undefined
 			};
+
+			if (isExpanded && node.kind === 'directory') {
+				node.children = await this.buildLevel(entry as FileSystemDirectoryHandle, entryPath);
+			}
+
 			nodes.push(node);
 		}
 
@@ -271,10 +308,15 @@ export class ProjectTree {
 
 	async toggleExpand(node: TreeNode) {
 		node.isExpanded = !node.isExpanded;
-		if (node.isExpanded && node.kind === 'directory' && node.children?.length === 0) {
-			// We need to calculate the path for gitignore
-			const path = await this.getNodePath(node);
-			node.children = await this.buildLevel(node.handle as FileSystemDirectoryHandle, path);
+		const path = await this.getNodePath(node);
+		
+		if (node.isExpanded) {
+			this.expandedPaths.add(path);
+			if (node.kind === 'directory' && node.children?.length === 0) {
+				node.children = await this.buildLevel(node.handle as FileSystemDirectoryHandle, path);
+			}
+		} else {
+			this.expandedPaths.delete(path);
 		}
 	}
 

@@ -61,11 +61,15 @@ export class Preferences {
 
 	constructor(storage: PreferenceStorage = new LocalStorageAdapter()) {
 		this.storage = storage;
-		this.load();
 		
 		if (typeof window !== 'undefined') {
 			$effect.root(() => {
+				let initialized = false;
 				$effect(() => {
+					if (!initialized) {
+						this.load();
+						initialized = true;
+					}
 					this.save();
 				});
 			});

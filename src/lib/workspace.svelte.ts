@@ -1,17 +1,20 @@
 import { DocumentSession } from './document.svelte';
 import type { Storage } from './storage';
 import { ProjectTree } from './project/tree.svelte';
-import { saveHandles, loadHandles, saveActiveId, loadActiveId } from './persistence';
+import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
-	rootHandle = $state<FileSystemDirectoryHandle | null>(null);
+	rootHandle = $state.raw<FileSystemDirectoryHandle | null>(null);
+	recentFolders = $state.raw<FileSystemDirectoryHandle[]>([]);
 	projectTree = new ProjectTree();
+	hasRootPermission = $state(false);
 	
 	private storage: Storage;
 	private untitledCounter = 0;
+	private isRestoring = $state(false);
 
 	constructor(storage: Storage) {
 		this.storage = storage;
@@ -24,16 +27,31 @@ export class Workspace {
 
 			$effect.root(() => {
 				$effect(() => {
+					if (this.isRestoring) return;
 					// Persist open files (handles)
 					const handles = this.documents
 						.map(doc => doc.origin?.handle)
 						.filter((h): h is FileSystemFileHandle => !!h);
+					
 					saveHandles(handles);
 				});
 
 				$effect(() => {
+					if (this.isRestoring) return;
 					// Persist active document ID
 					saveActiveId(this.activeDocumentId);
+				});
+
+				$effect(() => {
+					if (this.isRestoring) return;
+					// Persist root folder
+					saveRootHandle(this.rootHandle);
+				});
+
+				$effect(() => {
+					if (this.isRestoring) return;
+					// Persist recent folders
+					saveRecentFolders(this.recentFolders);
 				});
 			});
 		}
@@ -76,11 +94,49 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openDirectory() {
-		const handle = await this.storage.pickDirectory();
+	async openDirectory(specificHandle?: FileSystemDirectoryHandle) {
+		const handle = specificHandle || await this.storage.pickDirectory();
 		if (!handle) return;
+		
+		// Verify permission if it's a specific handle (e.g. from recents)
+		if (specificHandle) {
+			const granted = await this.storage.verifyPermission(handle, true);
+			if (!granted) return;
+		}
+
 		this.rootHandle = handle;
+		this.hasRootPermission = true;
+		
+		// Add to recent folders
+		let existingIndex = -1;
+		for (let i = 0; i < this.recentFolders.length; i++) {
+			try {
+				if (await handle.isSameEntry(this.recentFolders[i])) {
+					existingIndex = i;
+					break;
+				}
+			} catch (e) {
+				// Ignore errors comparing handles
+			}
+		}
+
+		const newRecent = [...this.recentFolders];
+		if (existingIndex !== -1) {
+			newRecent.splice(existingIndex, 1);
+		}
+		this.recentFolders = [handle, ...newRecent].slice(0, 10);
+
 		await this.projectTree.scan(handle);
+	}
+
+	async requestRootPermission() {
+		if (!this.rootHandle) return false;
+		const granted = await this.storage.verifyPermission(this.rootHandle, true);
+		if (granted) {
+			this.hasRootPermission = true;
+			await this.projectTree.scan(this.rootHandle);
+		}
+		return granted;
 	}
 
 	closeDocument(id: string) {
@@ -127,9 +183,25 @@ export class Workspace {
 	}
 
 	private async restoreSession() {
+		this.isRestoring = true;
 		try {
 			const handles = await loadHandles();
 			const activeId = await loadActiveId();
+			const rootHandle = await loadRootHandle();
+			const recentFolders = await loadRecentFolders();
+			
+			// Set recent folders first so they are available
+			this.recentFolders = recentFolders;
+
+			if (rootHandle) {
+				this.rootHandle = rootHandle;
+				if (await rootHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
+					this.hasRootPermission = true;
+					await this.projectTree.scan(rootHandle);
+				} else {
+					this.hasRootPermission = false;
+				}
+			}
 
 			if (handles.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
@@ -160,6 +232,8 @@ export class Workspace {
 			}
 		} catch (e) {
 			console.error('Failed to restore session', e);
+		} finally {
+			this.isRestoring = false;
 		}
 	}
 }

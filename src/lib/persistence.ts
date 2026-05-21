@@ -42,6 +42,72 @@ export async function loadHandles(): Promise<FileSystemFileHandle[]> {
 	});
 }
 
+export async function saveRootHandle(handle: FileSystemDirectoryHandle | null): Promise<void> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readwrite');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.put(handle, 'root-folder');
+		request.onsuccess = () => resolve();
+		request.onerror = () => reject(request.error);
+	});
+}
+
+export async function loadRootHandle(): Promise<FileSystemDirectoryHandle | null> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readonly');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.get('root-folder');
+		request.onsuccess = () => resolve(request.result || null);
+		request.onerror = () => reject(request.error);
+	});
+}
+
+export async function saveRecentFolders(handles: FileSystemDirectoryHandle[]): Promise<void> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readwrite');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.put(handles, 'recent-folders');
+		request.onsuccess = () => resolve();
+		request.onerror = () => reject(request.error);
+	});
+}
+
+export async function loadRecentFolders(): Promise<FileSystemDirectoryHandle[]> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readonly');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.get('recent-folders');
+		request.onsuccess = () => resolve(request.result || []);
+		request.onerror = () => reject(request.error);
+	});
+}
+
+export async function saveExpandedPaths(paths: string[]): Promise<void> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readwrite');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.put(paths, 'expanded-paths');
+		request.onsuccess = () => resolve();
+		request.onerror = () => reject(request.error);
+	});
+}
+
+export async function loadExpandedPaths(): Promise<string[]> {
+	const db = await openDB();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(STORE_NAME, 'readonly');
+		const store = transaction.objectStore(STORE_NAME);
+		const request = store.get('expanded-paths');
+		request.onsuccess = () => resolve(request.result || []);
+		request.onerror = () => reject(request.error);
+	});
+}
+
 export async function saveActiveId(id: string): Promise<void> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {

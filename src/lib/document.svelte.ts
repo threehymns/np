@@ -6,7 +6,7 @@ export type PermissionState = 'granted' | 'prompt' | 'denied';
 export class DocumentSession {
 	id = crypto.randomUUID();
 	content = $state('');
-	origin = $state<FileOrigin | null>(null);
+	origin = $state.raw<FileOrigin | null>(null);
 	untitledTitle = $state('Untitled');
 	permissionState = $state<PermissionState>('granted');
 	

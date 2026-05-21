@@ -2,14 +2,16 @@
 	import { Command as CommandPrimitive } from "bits-ui";
 	import { cn } from "$lib/utils.js";
 	import * as InputGroup from "$lib/components/ui/input-group/index.js";
-	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
+	import FunnelIcon from 'phosphor-svelte/lib/Funnel';
+	import type { Component } from "svelte";
 
 	let {
 		ref = $bindable(null),
 		class: className,
 		value = $bindable(""),
+		icon: Icon = FunnelIcon,
 		...restProps
-	}: CommandPrimitive.InputProps = $props();
+	}: CommandPrimitive.InputProps & { icon?: Component } = $props();
 </script>
 
 <div data-slot="command-input-wrapper" class="p-1 pb-0">
@@ -28,7 +30,7 @@
 			{/snippet}
 		</CommandPrimitive.Input>
 		<InputGroup.Addon>
-			<MagnifyingGlassIcon class="size-3.5 shrink-0 opacity-50" />
+			<Icon class="size-3.5 shrink-0 opacity-50" />
 		</InputGroup.Addon>
 	</InputGroup.Root>
 </div>
