@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { appState } from "$lib/state.svelte";
 	import type { TreeNode } from "$lib/project/tree.svelte";
-	import { File, Folder, CaretRight, CaretDown, Plus, FolderPlus, Trash, PencilSimple } from "phosphor-svelte";
+	import { File, Folder, FolderOpen, CaretRight, CaretDown, Plus, FolderPlus, Trash, PencilSimple } from "phosphor-svelte";
 	import { cn } from "$lib/utils";
 	import * as ContextMenu from "$lib/components/ui/context-menu";
 	import { tick } from "svelte";
@@ -94,14 +94,29 @@
 				{#if node.kind === 'directory'}
 					{#if node.isExpanded}
 						<CaretDown class="size-3 opacity-60 shrink-0" />
-						<Icon icon={appState.icons.getFolderExpandedIcon(node.name)} class="size-4 opacity-90 shrink-0" />
+						<Icon 
+							icon={appState.icons.getFolderExpandedIcon(node.name)} 
+							themeFallback={appState.icons.getThemeDefaultFolderExpandedIcon()}
+							phosphorFallback={FolderOpen} 
+							class="size-4 opacity-90 shrink-0" 
+						/>
 					{:else}
 						<CaretRight class="size-3 opacity-60 shrink-0" />
-						<Icon icon={appState.icons.getFolderIcon(node.name)} class="size-4 opacity-90 shrink-0" />
+						<Icon 
+							icon={appState.icons.getFolderIcon(node.name)} 
+							themeFallback={appState.icons.getThemeDefaultFolderIcon()}
+							phosphorFallback={Folder} 
+							class="size-4 opacity-90 shrink-0" 
+						/>
 					{/if}
 				{:else}
 					<div class="size-3 shrink-0"></div>
-					<Icon icon={appState.icons.getFileIcon(node.name)} class="size-4 opacity-90 shrink-0" />
+					<Icon 
+						icon={appState.icons.getFileIcon(node.name)} 
+						themeFallback={appState.icons.getThemeDefaultFileIcon()}
+						phosphorFallback={File} 
+						class="size-4 opacity-90 shrink-0" 
+					/>
 				{/if}
 				
 				{#if isRenaming}

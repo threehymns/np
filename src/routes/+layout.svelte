@@ -10,11 +10,16 @@
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
 	import CommandPalette from "$lib/components/CommandPalette.svelte";
 	import { ModeWatcher } from "mode-watcher";
+	import { onMount } from "svelte";
 
 	let { children } = $props();
 	let settingsOpen = $state(false);
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
+
+	onMount(async () => {
+		await appState.init();
+	});
 
 	$effect(() => {
 		const theme = appState.prefs.theme;

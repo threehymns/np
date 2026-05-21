@@ -28,6 +28,7 @@ A searchable dialog interface allowing the user to search and run registered act
 ## Extension Ecosystem
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
 - **UI Icon Pack (Product Icon Theme)**: A collection of icons representing application UI actions, controls, and navigation elements (e.g., Phosphor, Codicons).
-- **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., vscode-icons, Material, Catppuccin).
-- **Icon Pack Manifest**: A JSON configuration file defining the mappings and source CDN/asset base URLs for an icon pack, allowing themes to be loaded dynamically without hardcoding them in the core editor.
+- **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., Catppuccin, Material, VS Code Icons).
+- **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
+- **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
 

@@ -4,35 +4,37 @@ test.describe('Icon Registry and Manifest Provider', () => {
 	test.beforeEach(async ({ page }) => {
 		page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
 		await page.goto('/');
-		// Wait for app to mount
 		await expect(page.locator('.cm-content')).toBeVisible();
 	});
 
 	test('should resolve file icon using ManifestIconProvider', async ({ page }) => {
 		const result = await page.evaluate(() => {
-			const manifest = {
-				id: 'mock-theme',
+			const theme = {
 				name: 'Mock Theme',
-				type: 'file' as const,
-				baseUrl: 'https://cdn.example.com/icons/',
-				fileNames: {
-					'package.json': 'npm.svg'
-				},
-				fileExtensions: {
-					'ts': 'typescript.svg',
-					'svelte': 'svelte.svg'
-				},
-				languageIds: {
-					'svelte': 'svelte.svg'
-				},
-				defaultIcon: 'file.svg'
+				themes: [{
+					name: 'Mock Theme',
+					appearance: 'dark' as const,
+					file_stems: {
+						'package.json': 'npm'
+					},
+					file_suffixes: {
+						'ts': 'typescript',
+						'svelte': 'svelte'
+					},
+					file_icons: {
+						npm: { path: 'npm.svg' },
+						typescript: { path: 'typescript.svg' },
+						svelte: { path: 'svelte.svg' },
+						file: { path: 'file.svg' }
+					}
+				}]
 			};
 			
 			if (typeof (window as any).ManifestIconProvider === 'undefined') {
 				throw new Error('ManifestIconProvider is not defined.');
 			}
 			
-			const provider = new (window as any).ManifestIconProvider(manifest);
+			const provider = new (window as any).ManifestIconProvider('mock-theme', 'Mock Theme', theme, 'https://cdn.example.com/icons/');
 			return {
 				packageJson: provider.getFileIcon('package.json'),
 				typescriptTs: provider.getFileIcon('test.ts'),
@@ -49,47 +51,49 @@ test.describe('Icon Registry and Manifest Provider', () => {
 
 	test('should resolve file icons with priorities', async ({ page }) => {
 		const result = await page.evaluate(() => {
-			const manifest = {
-				id: 'priority-theme',
+			const theme = {
 				name: 'Priority Theme',
-				type: 'file' as const,
-				baseUrl: 'https://cdn.example.com/icons/',
-				fileNames: {
-					'package.json': 'npm-exact.svg',
-					'svelte.config.js': 'svelte-config.svg'
-				},
-				fileExtensions: {
-					'json': 'json-ext.svg',
-					'js': 'js-ext.svg'
-				},
-				languageIds: {
-					'javascript': 'js-lang.svg'
-				},
-				defaultIcon: 'fallback.svg'
+				themes: [{
+					name: 'Priority Theme',
+					appearance: 'dark' as const,
+					file_stems: {
+						'package.json': 'npm-exact',
+						'svelte.config.js': 'svelte-config'
+					},
+					file_suffixes: {
+						'json': 'json-ext',
+						'js': 'js-ext'
+					},
+					file_icons: {
+						'npm-exact': { path: 'npm-exact.svg' },
+						'svelte-config': { path: 'svelte-config.svg' },
+						'json-ext': { path: 'json-ext.svg' },
+						'js-ext': { path: 'js-ext.svg' },
+						'js-lang': { path: 'js-lang.svg' },
+						'fallback': { path: 'fallback.svg' }
+					}
+				}]
 			};
 			
 			const registry = (window as any).appState.icons;
-			const provider = new (window as any).ManifestIconProvider(manifest);
+			const provider = new (window as any).ManifestIconProvider('priority-theme', 'Priority Theme', theme, 'https://cdn.example.com/icons/');
 			
 			if (typeof registry.registerFileTheme === 'undefined') {
 				throw new Error('registerFileTheme is not defined.');
 			}
 			
-			// Register our provider as active
-			registry.registerFileTheme(manifest.id, provider);
-			registry.activeFileThemeId = manifest.id;
+			registry.registerFileTheme('priority-theme', provider);
+			registry.activeFileThemeId = 'priority-theme';
 			
 			return {
 				exactMatch: registry.resolveFileIcon('package.json', 'JSON'),
 				extensionMatch: registry.resolveFileIcon('tsconfig.json', 'JSON'),
-				languageMatch: registry.resolveFileIcon('main', 'JavaScript'),
 				defaultMatch: registry.resolveFileIcon('README', 'Markdown')
 			};
 		});
 		
 		expect(result.exactMatch).toBe('https://cdn.example.com/icons/npm-exact.svg');
 		expect(result.extensionMatch).toBe('https://cdn.example.com/icons/json-ext.svg');
-		expect(result.languageMatch).toBe('https://cdn.example.com/icons/js-lang.svg');
 		expect(result.defaultMatch).toBe('https://cdn.example.com/icons/fallback.svg');
 	});
 });

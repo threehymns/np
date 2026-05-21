@@ -20,6 +20,10 @@ export class AppState {
 		registerCoreCommands();
 	}
 
+	async init() {
+		await this.prefs.initializeIcons();
+	}
+
 	// Convenience accessors
 	get documents() { return this.workspace.documents; }
 	get activeDocument() { return this.workspace.activeDocument; }
