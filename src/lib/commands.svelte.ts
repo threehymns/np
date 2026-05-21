@@ -327,4 +327,14 @@ export function registerCoreCommands() {
 			});
 		}
 	});
+
+	commands.register({
+		id: 'view.toggleSidebar',
+		label: 'Toggle Sidebar',
+		category: 'View',
+		shortcut: 'cmd+\\',
+		action: () => {
+			appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible;
+		}
+	});
 }

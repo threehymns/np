@@ -347,9 +347,7 @@
 	--sidebar-foreground: #ebdbb2;
 	--sidebar-primary: var(--acc-val, #8ec07c);
 	--sidebar-primary-foreground: #282828;
-	--sidebar-accent: #3c3836;
 	--sidebar-accent-foreground: #ebdbb2;
-	--sidebar-border: #3c3836;
 	--sidebar-ring: #fe8019;
 	--code-keyword: #fb4934;
 	--code-variable: #ebdbb2;
@@ -375,21 +373,27 @@
 	--background: #1d2021;
 	--card: #1d2021;
 	--popover: #1d2021;
-	--sidebar: #1d2021;
+	--sidebar: #151718;
+	--sidebar-accent: #1d2021;
+	--sidebar-border: #1d2021;
 }
 
 [data-theme="gruvbox-dark-medium"] {
 	--background: #282828;
 	--card: #282828;
 	--popover: #282828;
-	--sidebar: #282828;
+	--sidebar: #1d2021;
+	--sidebar-accent: #282828;
+	--sidebar-border: #282828;
 }
 
 [data-theme="gruvbox-dark-soft"] {
 	--background: #32302f;
 	--card: #32302f;
 	--popover: #32302f;
-	--sidebar: #32302f;
+	--sidebar: #282828;
+	--sidebar-accent: #32302f;
+	--sidebar-border: #32302f;
 }
 
 /* Gruvbox Light Variants */
@@ -440,21 +444,21 @@
 	--background: #f9f5d7;
 	--card: #f9f5d7;
 	--popover: #f9f5d7;
-	--sidebar: #f9f5d7;
+	--sidebar: #f2e5bc;
 }
 
 [data-theme="gruvbox-light-medium"] {
 	--background: #fbf1c7;
 	--card: #fbf1c7;
 	--popover: #fbf1c7;
-	--sidebar: #fbf1c7;
+	--sidebar: #f2e5bc;
 }
 
 [data-theme="gruvbox-light-soft"] {
 	--background: #f2e5bc;
 	--card: #f2e5bc;
 	--popover: #f2e5bc;
-	--sidebar: #f2e5bc;
+	--sidebar: #ebdbb2;
 }
 
 @theme inline {

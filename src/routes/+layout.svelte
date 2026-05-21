@@ -3,6 +3,9 @@
 	import * as Menubar from "$lib/components/ui/menubar/index.js";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
 	import favicon from "$lib/assets/favicon.png";
+	import { X, Sidebar } from "phosphor-svelte";
+	import { Button } from "$lib/components/ui/button";
+	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 
 	import { appState } from "$lib/state.svelte.js";
 	import { commands } from "$lib/commands.svelte";
@@ -71,14 +74,14 @@
 <ModeWatcher />
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
-	<div class="relative z-50 shrink-0 bg-background" class:border-b={appState.documents.length > 1}>
-		<Menubar.Root>
-			{#each ['File', 'Edit', 'Format', 'View'] as category}
+	<div class="relative z-50 shrink-0 bg-background flex items-center justify-between px-2 pr-4" class:border-b={appState.documents.length > 1}>
+		<Menubar.Root class="border-none bg-transparent p-0">
+			{#each ['File', 'Edit', 'Format', 'View'] as category (category)}
 				<Menubar.Menu>
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>
 						{#if category === 'File'}
-							{#each commands.getByCategory('File') as command}
+							{#each commands.getByCategory('File') as command (command.id)}
 								<Menubar.Item 
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
@@ -93,7 +96,7 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each commands.getByCategory('Export') as command}
+									{#each commands.getByCategory('Export') as command (command.id)}
 										<Menubar.Item 
 											onclick={() => command.action()}
 											disabled={command.isEnabled && !command.isEnabled()}
@@ -118,8 +121,12 @@
 								</Menubar.SubContent>
 							</Menubar.Sub>
 							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
+							<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
+								Sidebar
+								<Menubar.Shortcut>{formatShortcut('cmd+\\')}</Menubar.Shortcut>
+							</Menubar.CheckboxItem>
 						{:else}
-							{#each commands.getByCategory(category) as command}
+							{#each commands.getByCategory(category) as command (command.id)}
 								<Menubar.Item 
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
@@ -149,8 +156,22 @@
 	</main>
 
 	{#if appState.prefs.statusBar}
-		<footer class="flex shrink-0 items-center justify-between border-t px-4 py-1 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
-			<div class="flex items-center gap-4">
+		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
+			<div class="flex items-center gap-3">
+				<Tooltip.Provider delayDuration={400}>
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<Button variant="ghost" size="icon-xs" {...props} onclick={() => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible} class={appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : ''}>
+									<Sidebar class="size-3.5" />
+								</Button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
+							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({formatShortcut('cmd+\\')})</span>
+						</Tooltip.Content>
+					</Tooltip.Root>
+				</Tooltip.Provider>
 				<div class="flex gap-3 opacity-80">
 					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
 					<span>{appState.activeDocument?.charCount ?? 0} chars</span>

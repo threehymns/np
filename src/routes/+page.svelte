@@ -47,14 +47,53 @@
   onMount(() => {
     handleUpdate();
   });
+
+  let isDragging = $state(false);
+
+  function startResize(e: MouseEvent) {
+    e.preventDefault();
+    isDragging = true;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      if (!isDragging) return;
+      const newWidth = Math.max(150, Math.min(600, moveEvent.clientX));
+      appState.prefs.sidebarWidth = newWidth;
+    }
+
+    function onMouseUp() {
+      isDragging = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    }
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }
 </script>
 
-<div class="flex h-full w-full overflow-hidden">
-  {#if appState.workspace.rootHandle}
-    <aside class="w-64 shrink-0 border-r bg-muted/20 flex flex-col overflow-auto py-2">
+<div class="flex h-full w-full overflow-hidden" class:select-none={isDragging}>
+  <aside 
+    class="relative shrink-0 bg-sidebar flex flex-col overflow-hidden"
+    class:border-r={appState.prefs.sidebarVisible}
+    class:transition-[width]={!isDragging}
+    class:duration-300={!isDragging}
+    class:ease-in-out={!isDragging}
+    style="width: {appState.prefs.sidebarVisible ? appState.prefs.sidebarWidth : 0}px;"
+    inert={!appState.prefs.sidebarVisible}
+  >
+    <div style="width: {appState.prefs.sidebarWidth}px;" class="h-full flex flex-col shrink-0">
       <FileExplorer />
-    </aside>
-  {/if}
+    </div>
+    
+    <!-- Resize Handle -->
+    <button 
+      type="button"
+      aria-label="Resize Sidebar"
+      tabindex="-1"
+      onmousedown={startResize}
+      class="absolute top-0 right-0 w-1.5 -mr-[3px] h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors z-50 select-none outline-none border-none p-0 bg-transparent"
+    ></button>
+  </aside>
 
   <Tabs.Root bind:value={appState.activeDocumentId} class="flex h-full flex-1 flex-col min-w-0">
     {#if appState.documents.length > 1}

@@ -33,6 +33,8 @@ export class Preferences {
 	theme = $state<Theme>('default');
 	appearanceMode = $state<AppearanceMode>('system');
 	accentColor = $state<string>('default');
+	sidebarVisible = $state(true);
+	sidebarWidth = $state(256);
 	private _fileIconThemeId = $state<string>('phosphor');
 	private _productIconThemeId = $state<string>('phosphor');
 
@@ -87,6 +89,8 @@ export class Preferences {
 				if (prefs.theme !== undefined) this.theme = prefs.theme;
 				if (prefs.appearanceMode !== undefined) this.appearanceMode = prefs.appearanceMode;
 				if (prefs.accentColor !== undefined) this.accentColor = prefs.accentColor;
+				if (prefs.sidebarVisible !== undefined) this.sidebarVisible = prefs.sidebarVisible;
+				if (prefs.sidebarWidth !== undefined) this.sidebarWidth = prefs.sidebarWidth;
 				if (prefs.fileIconThemeId !== undefined) this.fileIconThemeId = prefs.fileIconThemeId;
 				if (prefs.productIconThemeId !== undefined) this.productIconThemeId = prefs.productIconThemeId;
 			}
@@ -106,6 +110,8 @@ export class Preferences {
 				theme: this.theme,
 				appearanceMode: this.appearanceMode,
 				accentColor: this.accentColor,
+				sidebarVisible: this.sidebarVisible,
+				sidebarWidth: this.sidebarWidth,
 				fileIconThemeId: this.fileIconThemeId,
 				productIconThemeId: this.productIconThemeId
 			};
