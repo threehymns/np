@@ -1,4 +1,4 @@
-import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './storage';
+import { type Storage, type FileOrigin } from './storage';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 import type { Workspace } from './workspace.svelte';
 
@@ -30,14 +30,9 @@ export class DocumentSession {
 				if (hasRoot) {
 					this.permissionState = 'granted';
 				} else {
-					const handle = await browserHandleRegistry.resolve(toURI(origin));
-					if (handle) {
-						handle.queryPermission().then(state => {
-							this.permissionState = state === 'granted' ? 'granted' : 'prompt';
-						});
-					} else {
-						this.permissionState = 'prompt';
-					}
+					this.storage.queryPermission(origin, true).then(state => {
+						this.permissionState = state;
+					});
 				}
 			});
 		}
@@ -100,12 +95,7 @@ export class DocumentSession {
 			this.permissionState = 'granted';
 			return true;
 		}
-		const handle = await browserHandleRegistry.resolve(toURI(this.origin));
-		if (!handle) {
-			this.permissionState = 'denied';
-			return false;
-		}
-		const granted = await this.storage.verifyPermission(handle, true);
+		const granted = await this.storage.verifyPermission(this.origin, true);
 		this.permissionState = granted ? 'granted' : 'denied';
 		if (granted && !this.content && this.savedContent === '') {
 			await this.loadContent();

@@ -1,13 +1,13 @@
 import { appState } from '../state.svelte';
 import { saveExpandedPaths, loadExpandedPaths } from '../persistence';
 import { SvelteSet } from 'svelte/reactivity';
-import { browserHandleRegistry, toURI } from '../storage';
+import { browserHandleRegistry, toURI, type FileOrigin } from '../storage';
 
 export interface TreeNode {
 	name: string;
 	kind: 'file' | 'directory';
-	handle: FileSystemFileHandle | FileSystemDirectoryHandle;
-	parentHandle?: FileSystemDirectoryHandle;
+	origin: FileOrigin;
+	parentOrigin?: FileOrigin;
 	children?: TreeNode[];
 	isExpanded: boolean;
 }
@@ -15,8 +15,8 @@ export interface TreeNode {
 export interface VisualNode {
 	name: string;
 	kind: 'file' | 'directory';
-	handle: FileSystemFileHandle | FileSystemDirectoryHandle;
-	parentHandle?: FileSystemDirectoryHandle;
+	origin: FileOrigin;
+	parentOrigin?: FileOrigin;
 	children?: VisualNode[];
 	isExpanded: boolean;
 	originalNode: TreeNode;
@@ -155,8 +155,8 @@ export class ProjectTree {
 					const visualNode: VisualNode = {
 						name: pathNames.join('/'),
 						kind: 'directory',
-						handle: current.handle,
-						parentHandle: node.parentHandle,
+						origin: current.origin,
+						parentOrigin: node.parentOrigin,
 						isExpanded: current.isExpanded,
 						children: [],
 						originalNode: node,
@@ -173,8 +173,8 @@ export class ProjectTree {
 					return {
 						name: node.name,
 						kind: node.kind,
-						handle: node.handle,
-						parentHandle: node.parentHandle,
+						origin: node.origin,
+						parentOrigin: node.parentOrigin,
 						isExpanded: node.isExpanded,
 						children: undefined,
 						originalNode: node,
@@ -215,7 +215,7 @@ export class ProjectTree {
 	});
 
 	private async performSearch(query: string) {
-		if (!appState.workspace.rootHandle) return;
+		if (!appState.workspace.rootOrigin) return;
 		
 		if (this.searchAbortController) {
 			this.searchAbortController.abort();
@@ -225,12 +225,13 @@ export class ProjectTree {
 
 		const q = query.toLowerCase();
 
-		const search = async (handle: FileSystemDirectoryHandle, path = ""): Promise<TreeNode[] | null> => {
+		const search = async (origin: FileOrigin, path = ""): Promise<TreeNode[] | null> => {
 			if (signal.aborted) return null;
 			const matchedChildren: TreeNode[] = [];
 			
 			try {
-				for await (const entry of handle.values()) {
+				const entries = await appState.workspace.storage.readDirectory(origin);
+				for (const entry of entries) {
 					if (signal.aborted) return null;
 
 					const entryPath = path ? `${path}/${entry.name}` : entry.name;
@@ -242,7 +243,7 @@ export class ProjectTree {
 
 					let childrenMatch: TreeNode[] | null = null;
 					if (entry.kind === 'directory') {
-						childrenMatch = await search(entry as FileSystemDirectoryHandle, entryPath);
+						childrenMatch = await search(entry.origin, entryPath);
 					}
 
 					const nameMatch = entry.name.toLowerCase().includes(q);
@@ -250,9 +251,9 @@ export class ProjectTree {
 					if (nameMatch || (childrenMatch && childrenMatch.length > 0)) {
 						matchedChildren.push({
 							name: entry.name,
-							kind: entry.kind as 'file' | 'directory',
-							handle: entry,
-							parentHandle: handle,
+							kind: entry.kind,
+							origin: entry.origin,
+							parentOrigin: origin,
 							isExpanded: true,
 							children: childrenMatch || (entry.kind === 'directory' ? [] : undefined)
 						});
@@ -268,14 +269,14 @@ export class ProjectTree {
 			}) : null;
 		};
 
-		const found = await search(appState.workspace.rootHandle);
+		const found = await search(appState.workspace.rootOrigin);
 		if (!signal.aborted) {
 			this.searchResults = found || [];
 			this.isSearching = false;
 		}
 	}
 
-	async scan(rootHandle: FileSystemDirectoryHandle) {
+	async scan(rootOrigin: FileOrigin) {
 		if (!appState.workspace.hasRootPermission) {
 			return;
 		}
@@ -286,15 +287,18 @@ export class ProjectTree {
 		try {
 			// Load .gitignore if it exists
 			try {
-				const fileHandle = await rootHandle.getFileHandle('.gitignore');
-				const file = await fileHandle.getFile();
-				const content = await file.text();
+				const gitignoreOrigin: FileOrigin = {
+					scheme: rootOrigin.scheme,
+					path: rootOrigin.path ? `${rootOrigin.path}/.gitignore` : '.gitignore',
+					name: '.gitignore'
+				};
+				const content = await appState.workspace.storage.readFile(gitignoreOrigin);
 				this.gitignore = new GitIgnoreMatcher(content);
 			} catch (e) {
 				this.gitignore = null;
 			}
 
-			this.nodes = await this.buildLevel(rootHandle);
+			this.nodes = await this.buildLevel(rootOrigin);
 		} catch (e) {
 			console.error('[Tree] Scan failed', e);
 		} finally {
@@ -302,11 +306,12 @@ export class ProjectTree {
 		}
 	}
 
-	private async buildLevel(handle: FileSystemDirectoryHandle, path = ""): Promise<TreeNode[]> {
+	private async buildLevel(origin: FileOrigin, path = ""): Promise<TreeNode[]> {
 		const nodes: TreeNode[] = [];
 		try {
 			let i = 0;
-			for await (const entry of handle.values()) {
+			const entries = await appState.workspace.storage.readDirectory(origin);
+			for (const entry of entries) {
 				// Yield every 50 items to keep UI responsive
 				if (++i % 50 === 0) {
 					await new Promise(resolve => setTimeout(resolve, 0));
@@ -322,15 +327,15 @@ export class ProjectTree {
 				const isExpanded = this.expandedPaths.has(entryPath);
 				const node: TreeNode = {
 					name: entry.name,
-					kind: entry.kind as 'file' | 'directory',
-					handle: entry,
-					parentHandle: handle,
+					kind: entry.kind,
+					origin: entry.origin,
+					parentOrigin: origin,
 					isExpanded,
 					children: entry.kind === 'directory' ? [] : undefined
 				};
 
 				if (isExpanded && node.kind === 'directory') {
-					node.children = await this.buildLevel(entry as FileSystemDirectoryHandle, entryPath);
+					node.children = await this.buildLevel(entry.origin, entryPath);
 				}
 
 				nodes.push(node);
@@ -352,7 +357,7 @@ export class ProjectTree {
 		if (node.isExpanded) {
 			this.expandedPaths.add(path);
 			if (node.kind === 'directory' && node.children?.length === 0) {
-				node.children = await this.buildLevel(node.handle as FileSystemDirectoryHandle, path);
+				node.children = await this.buildLevel(node.origin, path);
 			}
 		} else {
 			this.expandedPaths.delete(path);
@@ -360,67 +365,50 @@ export class ProjectTree {
 	}
 
 	private async getNodePath(node: TreeNode): Promise<string> {
-		if (!appState.workspace.rootHandle) return node.name;
-		try {
-			const path = await appState.workspace.rootHandle.resolve(node.handle);
-			return path ? path.join('/') : node.name;
-		} catch (e) {
-			console.warn('[Tree] Failed to resolve path for node:', node.name, e);
-			return node.name;
+		if (!appState.workspace.rootOrigin) return node.name;
+		const rootOrigin = appState.workspace.rootOrigin;
+		if (node.origin.path === rootOrigin.path) return '';
+		if (node.origin.path.startsWith(rootOrigin.path + '/')) {
+			return node.origin.path.slice(rootOrigin.path.length + 1);
+		}
+		return node.name;
+	}
+
+	async createFile(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
+		await appState.workspace.storage.createFile(parentOrigin, name);
+		if (parentNode) {
+			parentNode.children = await this.buildLevel(parentOrigin);
+			parentNode.isExpanded = true;
+		} else {
+			await this.scan(appState.workspace.rootOrigin!);
 		}
 	}
 
-	async createFile(parentHandle: FileSystemDirectoryHandle, name: string, parentNode?: TreeNode) {
-		await (appState.workspace as any).storage.createFile(parentHandle, name);
+	async createDirectory(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
+		await appState.workspace.storage.createDirectory(parentOrigin, name);
 		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentHandle);
+			parentNode.children = await this.buildLevel(parentOrigin);
 			parentNode.isExpanded = true;
 		} else {
-			await this.scan(appState.workspace.rootHandle!);
-		}
-	}
-
-	async createDirectory(parentHandle: FileSystemDirectoryHandle, name: string, parentNode?: TreeNode) {
-		await (appState.workspace as any).storage.createDirectory(parentHandle, name);
-		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentHandle);
-			parentNode.isExpanded = true;
-		} else {
-			await this.scan(appState.workspace.rootHandle!);
+			await this.scan(appState.workspace.rootOrigin!);
 		}
 	}
 
 	async deleteEntry(node: TreeNode) {
-		if (!node.parentHandle) return;
-		await (appState.workspace as any).storage.deleteEntry(node.parentHandle, node.name);
-		await this.scan(appState.workspace.rootHandle!);
+		await appState.workspace.storage.deleteEntry(node.origin);
+		await this.scan(appState.workspace.rootOrigin!);
 	}
 
 	async renameEntry(node: TreeNode, newName: string) {
-		await (appState.workspace as any).storage.renameEntry(node.handle, newName);
+		const newOrigin = await appState.workspace.storage.renameEntry(node.origin, newName);
 		
-		// Update any open documents that match this handle
+		// Update any open documents that match this origin
 		for (const doc of appState.documents) {
-			if (doc.origin) {
-				const resolved = await browserHandleRegistry.resolve(toURI(doc.origin));
-				if (resolved) {
-					let isSame = false;
-					try {
-						isSame = await resolved.isSameEntry(node.handle);
-					} catch {}
-					if (isSame) {
-						const lastSlash = doc.origin.path.lastIndexOf('/');
-						const newPath = lastSlash !== -1 
-							? doc.origin.path.substring(0, lastSlash + 1) + newName 
-							: newName;
-						const newOrigin = { ...doc.origin, path: newPath, name: newName };
-						doc.origin = newOrigin;
-						await browserHandleRegistry.register(toURI(newOrigin), node.handle);
-					}
-				}
+			if (doc.origin && toURI(doc.origin) === toURI(node.origin)) {
+				doc.origin = newOrigin;
 			}
 		}
 
-		await this.scan(appState.workspace.rootHandle!);
+		await this.scan(appState.workspace.rootOrigin!);
 	}
 }

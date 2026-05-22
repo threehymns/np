@@ -7,6 +7,7 @@
 	import { tick } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import FileTreeItem from "./FileTreeItem.svelte";
+	import { toURI } from "$lib/storage";
 
 	let { visualNode } = $props<{ visualNode: VisualNode }>();
 	let isRenaming = $state(false);
@@ -22,25 +23,25 @@
 				visualNode.leafNode.isExpanded = visualNode.originalNode.isExpanded;
 			}
 		} else {
-			await appState.workspace.openFile(visualNode.handle as FileSystemFileHandle);
+			await appState.workspace.openFile(visualNode.origin);
 		}
 	}
 
 	async function createNewFile() {
 		const name = prompt("Enter file name (e.g. notes.md)");
 		if (!name) return;
-		const parent = visualNode.kind === 'directory' ? visualNode.handle : visualNode.parentHandle;
-		if (parent instanceof FileSystemDirectoryHandle) {
-			await appState.workspace.projectTree.createFile(parent, name, visualNode.kind === 'directory' ? visualNode.leafNode : undefined);
+		const parentOrigin = visualNode.kind === 'directory' ? visualNode.origin : visualNode.parentOrigin;
+		if (parentOrigin) {
+			await appState.workspace.projectTree.createFile(parentOrigin, name, visualNode.kind === 'directory' ? visualNode.leafNode : undefined);
 		}
 	}
 
 	async function createNewFolder() {
 		const name = prompt("Enter folder name");
 		if (!name) return;
-		const parent = visualNode.kind === 'directory' ? visualNode.handle : visualNode.parentHandle;
-		if (parent instanceof FileSystemDirectoryHandle) {
-			await appState.workspace.projectTree.createDirectory(parent, name, visualNode.kind === 'directory' ? visualNode.leafNode : undefined);
+		const parentOrigin = visualNode.kind === 'directory' ? visualNode.origin : visualNode.parentOrigin;
+		if (parentOrigin) {
+			await appState.workspace.projectTree.createDirectory(parentOrigin, name, visualNode.kind === 'directory' ? visualNode.leafNode : undefined);
 		}
 	}
 
@@ -91,7 +92,7 @@
 			<button
 				class={cn(
 					"flex items-center w-[calc(100%-8px)] mx-1 gap-2 px-2 py-1 text-[11px] rounded transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring text-left",
-					visualNode.kind === 'file' && appState.activeDocument?.origin?.handle === visualNode.handle && "bg-sidebar-accent text-sidebar-accent-foreground font-medium",
+					visualNode.kind === 'file' && appState.activeDocument?.origin && toURI(appState.activeDocument.origin) === toURI(visualNode.origin) && "bg-sidebar-accent text-sidebar-accent-foreground font-medium",
 					isRenaming && "bg-sidebar-accent"
 				)}
 				style="padding-left: {8 + visualNode.depth * 12}px"
@@ -158,7 +159,7 @@
 
 {#if visualNode.kind === 'directory' && visualNode.isExpanded && visualNode.children}
 	<div class="flex flex-col">
-		{#each visualNode.children as child (child.handle)}
+		{#each visualNode.children as child (toURI(child.origin))}
 			<FileTreeItem visualNode={child} />
 		{/each}
 	</div>

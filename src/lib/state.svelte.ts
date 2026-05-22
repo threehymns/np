@@ -1,5 +1,5 @@
 import './polyfills';
-import { FileStorage } from './storage';
+import { MultiSchemeStorage } from './storage';
 import { Workspace } from './workspace.svelte';
 import { Preferences } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
@@ -9,7 +9,7 @@ import { iconRegistry } from './editor/icons.svelte';
 
 export class AppState {
 	prefs = new Preferences();
-	storage = new FileStorage();
+	storage = new MultiSchemeStorage();
 	workspace = new Workspace(this.storage);
 	selection = selectionState;
 	commandPalette = new CommandPaletteState();

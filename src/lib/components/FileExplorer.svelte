@@ -9,7 +9,7 @@
 	import * as Popover from "$lib/components/ui/popover";
 	import BranchSafetyModal from "./BranchSafetyModal.svelte";
 	import type { RepositorySafetyReport } from "$lib/project/repository.svelte";
-	import type { FileOrigin } from "$lib/storage";
+	import { toURI, type FileOrigin } from "$lib/storage";
 	import { slide } from "svelte/transition";
 	import { cn } from "$lib/utils";
 	import { tick, onMount } from "svelte";
@@ -35,11 +35,11 @@
 	}
 
 	async function refresh() {
-		if (appState.workspace.rootHandle) {
+		if (appState.workspace.rootOrigin) {
 			if (appState.workspace.repository) {
 				await appState.workspace.repository.refresh();
 			}
-			await appState.workspace.projectTree.scan(appState.workspace.rootHandle);
+			await appState.workspace.projectTree.scan(appState.workspace.rootOrigin);
 		}
 	}
 
@@ -280,7 +280,7 @@
 				
 				<div class="space-y-0.5">
 					{#if appState.workspace.hasRootPermission}
-						{#each appState.workspace.projectTree.visualNodes as visualNode (visualNode.handle)}
+						{#each appState.workspace.projectTree.visualNodes as visualNode (toURI(visualNode.origin))}
 							<FileTreeItem {visualNode} />
 						{/each}
 					{:else}

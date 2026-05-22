@@ -145,19 +145,44 @@ export class BrowserHandleRegistry {
 
 export const browserHandleRegistry = new BrowserHandleRegistry();
 
+export interface StorageEntry {
+	name: string;
+	kind: 'file' | 'directory';
+	origin: FileOrigin;
+}
+
+export interface StorageProvider {
+	scheme: string;
+	pickFile(): Promise<FileOrigin | null>;
+	pickDirectory(): Promise<FileOrigin | null>;
+	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
+	readFile(origin: FileOrigin): Promise<string>;
+	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
+	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
+	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<'granted' | 'prompt' | 'denied'>;
+	createFile(parent: FileOrigin, name: string): Promise<FileOrigin>;
+	createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin>;
+	deleteEntry(origin: FileOrigin): Promise<void>;
+	renameEntry(origin: FileOrigin, newName: string): Promise<FileOrigin>;
+}
+
 export interface Storage {
 	pickFile(): Promise<FileOrigin | null>;
 	pickDirectory(): Promise<FileOrigin | null>;
 	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
 	readFile(origin: FileOrigin): Promise<string>;
-	readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]>;
-	verifyPermission(handle: FileSystemHandle, readWrite?: boolean): Promise<boolean>;
-	createFile(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle>;
-	createDirectory(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle>;
-	deleteEntry(parent: FileSystemDirectoryHandle, name: string): Promise<void>;
+	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
+	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
+	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<'granted' | 'prompt' | 'denied'>;
+	createFile(parent: FileOrigin, name: string): Promise<FileOrigin>;
+	createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin>;
+	deleteEntry(origin: FileOrigin): Promise<void>;
+	renameEntry(origin: FileOrigin, newName: string): Promise<FileOrigin>;
 }
 
-export class FileStorage implements Storage {
+export class BrowserStorage implements StorageProvider {
+	scheme = 'browser';
+
 	async pickFile(): Promise<FileOrigin | null> {
 		try {
 			const [handle] = await window.showOpenFilePicker({
@@ -228,15 +253,35 @@ export class FileStorage implements Storage {
 		return await file.text();
 	}
 
-	async readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]> {
-		const entries: FileSystemHandle[] = [];
-		for await (const entry of handle.values()) {
-			entries.push(entry);
+	async readDirectory(origin: FileOrigin): Promise<StorageEntry[]> {
+		const uri = toURI(origin);
+		const resolved = await browserHandleRegistry.resolve(uri);
+		if (!resolved || resolved.kind !== 'directory') {
+			throw new Error(`Could not resolve directory handle for URI: ${uri}`);
+		}
+		const dirHandle = resolved as FileSystemDirectoryHandle;
+		const entries: StorageEntry[] = [];
+		for await (const entry of dirHandle.values()) {
+			const entryOrigin: FileOrigin = {
+				scheme: origin.scheme,
+				path: origin.path ? `${origin.path}/${entry.name}` : entry.name,
+				name: entry.name
+			};
+			await browserHandleRegistry.register(toURI(entryOrigin), entry);
+			entries.push({
+				name: entry.name,
+				kind: entry.kind,
+				origin: entryOrigin
+			});
 		}
 		return entries;
 	}
 
-	async verifyPermission(handle: FileSystemHandle, readWrite = false): Promise<boolean> {
+	async verifyPermission(origin: FileOrigin, readWrite = false): Promise<boolean> {
+		const uri = toURI(origin);
+		const handle = await browserHandleRegistry.resolve(uri);
+		if (!handle) return false;
+
 		const options: FileSystemHandlePermissionDescriptor = {};
 		if (readWrite) {
 			options.mode = 'readwrite';
@@ -253,23 +298,167 @@ export class FileStorage implements Storage {
 		return false;
 	}
 
-	async createFile(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemFileHandle> {
-		return await parent.getFileHandle(name, { create: true });
+	async queryPermission(origin: FileOrigin, readWrite = false): Promise<'granted' | 'prompt' | 'denied'> {
+		const uri = toURI(origin);
+		const handle = await browserHandleRegistry.resolve(uri);
+		if (!handle) return 'prompt';
+
+		const options: FileSystemHandlePermissionDescriptor = {};
+		if (readWrite) {
+			options.mode = 'readwrite';
+		}
+		const state = await handle.queryPermission(options);
+		return state === 'granted' ? 'granted' : state === 'prompt' ? 'prompt' : 'denied';
 	}
 
-	async createDirectory(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
-		return await parent.getDirectoryHandle(name, { create: true });
+	async createFile(parent: FileOrigin, name: string): Promise<FileOrigin> {
+		const uri = toURI(parent);
+		const resolved = await browserHandleRegistry.resolve(uri);
+		if (!resolved || resolved.kind !== 'directory') {
+			throw new Error(`Could not resolve directory handle for URI: ${uri}`);
+		}
+		const parentHandle = resolved as FileSystemDirectoryHandle;
+		const handle = await parentHandle.getFileHandle(name, { create: true });
+		const origin: FileOrigin = {
+			scheme: parent.scheme,
+			path: parent.path ? `${parent.path}/${name}` : name,
+			name
+		};
+		await browserHandleRegistry.register(toURI(origin), handle);
+		return origin;
 	}
 
-	async deleteEntry(parent: FileSystemDirectoryHandle, name: string): Promise<void> {
-		return await (parent as any).removeEntry(name, { recursive: true });
+	async createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin> {
+		const uri = toURI(parent);
+		const resolved = await browserHandleRegistry.resolve(uri);
+		if (!resolved || resolved.kind !== 'directory') {
+			throw new Error(`Could not resolve directory handle for URI: ${uri}`);
+		}
+		const parentHandle = resolved as FileSystemDirectoryHandle;
+		const handle = await parentHandle.getDirectoryHandle(name, { create: true });
+		const origin: FileOrigin = {
+			scheme: parent.scheme,
+			path: parent.path ? `${parent.path}/${name}` : name,
+			name
+		};
+		await browserHandleRegistry.register(toURI(origin), handle);
+		return origin;
 	}
 
-	async renameEntry(handle: FileSystemHandle, newName: string): Promise<void> {
-		if ('move' in handle) {
-			return await (handle as any).move(newName);
+	async deleteEntry(origin: FileOrigin): Promise<void> {
+		const pathParts = origin.path.split('/').filter(Boolean);
+		if (pathParts.length === 0) {
+			throw new Error(`Cannot delete root directory: ${origin.path}`);
+		}
+		const name = pathParts.pop()!;
+		const parentPath = pathParts.join('/');
+		const parentOrigin: FileOrigin = {
+			scheme: origin.scheme,
+			path: parentPath,
+			name: parentPath.split('/').pop() || ''
+		};
+		const parentUri = toURI(parentOrigin);
+		const parentResolved = await browserHandleRegistry.resolve(parentUri);
+		if (!parentResolved || parentResolved.kind !== 'directory') {
+			throw new Error(`Could not resolve parent directory handle for URI: ${parentUri}`);
+		}
+		await (parentResolved as FileSystemDirectoryHandle).removeEntry(name, { recursive: true });
+	}
+
+	async renameEntry(origin: FileOrigin, newName: string): Promise<FileOrigin> {
+		const uri = toURI(origin);
+		const resolved = await browserHandleRegistry.resolve(uri);
+		if (!resolved) {
+			throw new Error(`Could not resolve handle for URI: ${uri}`);
+		}
+		if ('move' in resolved) {
+			await (resolved as any).move(newName);
+			const pathParts = origin.path.split('/').filter(Boolean);
+			pathParts.pop();
+			pathParts.push(newName);
+			const newPath = pathParts.join('/');
+			const newOrigin: FileOrigin = {
+				scheme: origin.scheme,
+				path: newPath,
+				name: newName
+			};
+			await browserHandleRegistry.register(toURI(newOrigin), resolved);
+			return newOrigin;
 		} else {
 			throw new Error('Renaming is not supported in this browser.');
 		}
 	}
 }
+
+// Deprecated alias for backward compatibility
+export const FileStorage = BrowserStorage;
+
+export class MultiSchemeStorage implements Storage {
+	private providers = new Map<string, StorageProvider>();
+
+	constructor(private defaultScheme = 'browser') {
+		this.registerProvider('browser', new BrowserStorage());
+	}
+
+	registerProvider(scheme: string, provider: StorageProvider) {
+		this.providers.set(scheme, provider);
+	}
+
+	private getProvider(scheme: string): StorageProvider {
+		const provider = this.providers.get(scheme);
+		if (!provider) {
+			throw new Error(`No storage provider registered for scheme: ${scheme}`);
+		}
+		return provider;
+	}
+
+	async pickFile(): Promise<FileOrigin | null> {
+		return await this.getProvider(this.defaultScheme).pickFile();
+	}
+
+	async pickDirectory(): Promise<FileOrigin | null> {
+		return await this.getProvider(this.defaultScheme).pickDirectory();
+	}
+
+	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
+		const scheme = existingOrigin?.scheme ?? this.defaultScheme;
+		return await this.getProvider(scheme).saveFile(content, existingOrigin);
+	}
+
+	async readFile(origin: FileOrigin): Promise<string> {
+		return await this.getProvider(origin.scheme).readFile(origin);
+	}
+
+	async readDirectory(origin: FileOrigin): Promise<StorageEntry[]> {
+		return await this.getProvider(origin.scheme).readDirectory(origin);
+	}
+
+	async verifyPermission(origin: FileOrigin, readWrite = false): Promise<boolean> {
+		return await this.getProvider(origin.scheme).verifyPermission(origin, readWrite);
+	}
+
+	async queryPermission(origin: FileOrigin, readWrite = false): Promise<'granted' | 'prompt' | 'denied'> {
+		return await this.getProvider(origin.scheme).queryPermission(origin, readWrite);
+	}
+
+	async createFile(parent: FileOrigin, name: string): Promise<FileOrigin> {
+		return await this.getProvider(parent.scheme).createFile(parent, name);
+	}
+
+	async createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin> {
+		return await this.getProvider(parent.scheme).createDirectory(parent, name);
+	}
+
+	async deleteEntry(origin: FileOrigin): Promise<void> {
+		return await this.getProvider(origin.scheme).deleteEntry(origin);
+	}
+
+	async renameEntry(origin: FileOrigin, newName: string): Promise<FileOrigin> {
+		return await this.getProvider(origin.scheme).renameEntry(origin, newName);
+	}
+}
+
+if (typeof window !== 'undefined') {
+	(window as any).browserHandleRegistry = browserHandleRegistry;
+}
+

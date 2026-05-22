@@ -170,6 +170,9 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				await repository.refresh();
 
 				// Expose workspace details
+				const origin = { scheme: 'browser', path: root.name, name: root.name };
+				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
+				appState.workspace.rootOrigin = origin;
 				appState.workspace.rootHandle = root;
 				appState.workspace.hasRootPermission = true;
 				appState.workspace.repository = repository;
