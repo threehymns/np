@@ -26,10 +26,15 @@ The orchestrator of multiple open Documents, managing tabs, focus, and the activ
 A searchable dialog interface allowing the user to search and run registered actions across the application.
 - **Nested Palette (Sub-Commandbar)**: A temporary state of the Command Palette displaying a specific list of options (e.g. available languages) instead of the top-level commands, support back navigation via Backspace or a back button.
 
+## Architecture
+- **Monorepo**: A workspace managed by Bun containing isolated packages for core logic, UI, and platform-specific applications.
+- **Core**: The headless business logic (`@np/core`) containing state management, document models, and the `Workspace` orchestrator. Entirely platform-agnostic and free of DOM or Node globals.
+- **UI Shell**: The platform-agnostic presentation layer (`@np/ui`) containing Svelte components (Editor, FileExplorer) that consume the Core via Context injection.
+- **Platform App**: A concrete application target (`apps/web`, `apps/desktop`) that instantiates the Core, injects platform-specific adapters (Storage, VCS), and mounts the UI Shell via an `<AppShell>` component.
+
 ## Extension Ecosystem
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
 - **UI Icon Pack (Product Icon Theme)**: A collection of icons representing application UI actions, controls, and navigation elements (e.g., Phosphor, Codicons).
 - **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., Catppuccin, Material, VS Code Icons).
 - **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
 - **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
-
