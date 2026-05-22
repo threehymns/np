@@ -1,6 +1,7 @@
 import { appState } from '../state.svelte';
 import { saveExpandedPaths, loadExpandedPaths } from '../persistence';
 import { SvelteSet } from 'svelte/reactivity';
+import { browserHandleRegistry, toURI } from '../storage';
 
 export interface TreeNode {
 	name: string;
@@ -400,8 +401,23 @@ export class ProjectTree {
 		
 		// Update any open documents that match this handle
 		for (const doc of appState.documents) {
-			if (doc.origin?.handle === node.handle) {
-				doc.origin = { ...doc.origin, name: newName };
+			if (doc.origin) {
+				const resolved = await browserHandleRegistry.resolve(toURI(doc.origin));
+				if (resolved) {
+					let isSame = false;
+					try {
+						isSame = await resolved.isSameEntry(node.handle);
+					} catch {}
+					if (isSame) {
+						const lastSlash = doc.origin.path.lastIndexOf('/');
+						const newPath = lastSlash !== -1 
+							? doc.origin.path.substring(0, lastSlash + 1) + newName 
+							: newName;
+						const newOrigin = { ...doc.origin, path: newPath, name: newName };
+						doc.origin = newOrigin;
+						await browserHandleRegistry.register(toURI(newOrigin), node.handle);
+					}
+				}
 			}
 		}
 

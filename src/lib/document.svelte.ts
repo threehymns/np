@@ -1,4 +1,4 @@
-import { type Storage, type FileOrigin } from './storage';
+import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './storage';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 import type { Workspace } from './workspace.svelte';
 
@@ -26,13 +26,18 @@ export class DocumentSession {
 
 		if (origin) {
 			// Check initial permission state
-			this.hasRootPermissionForFile().then(hasRoot => {
+			this.hasRootPermissionForFile().then(async hasRoot => {
 				if (hasRoot) {
 					this.permissionState = 'granted';
 				} else {
-					origin.handle.queryPermission().then(state => {
-						this.permissionState = state === 'granted' ? 'granted' : 'prompt';
-					});
+					const handle = await browserHandleRegistry.resolve(toURI(origin));
+					if (handle) {
+						handle.queryPermission().then(state => {
+							this.permissionState = state === 'granted' ? 'granted' : 'prompt';
+						});
+					} else {
+						this.permissionState = 'prompt';
+					}
 				}
 			});
 		}
@@ -79,15 +84,14 @@ export class DocumentSession {
 	}
 
 	async hasRootPermissionForFile(): Promise<boolean> {
-		if (!this.workspace || !this.workspace.rootHandle || !this.workspace.hasRootPermission || !this.origin) {
+		if (!this.workspace || !this.workspace.rootOrigin || !this.workspace.hasRootPermission || !this.origin) {
 			return false;
 		}
-		try {
-			const relativePath = await this.workspace.rootHandle.resolve(this.origin.handle);
-			return relativePath !== null;
-		} catch (e) {
+		const rootOrigin = this.workspace.rootOrigin;
+		if (this.origin.scheme !== rootOrigin.scheme) {
 			return false;
 		}
+		return this.origin.path === rootOrigin.path || this.origin.path.startsWith(rootOrigin.path + '/');
 	}
 
 	async requestPermission() {
@@ -96,7 +100,12 @@ export class DocumentSession {
 			this.permissionState = 'granted';
 			return true;
 		}
-		const granted = await this.storage.verifyPermission(this.origin.handle, true);
+		const handle = await browserHandleRegistry.resolve(toURI(this.origin));
+		if (!handle) {
+			this.permissionState = 'denied';
+			return false;
+		}
+		const granted = await this.storage.verifyPermission(handle, true);
 		this.permissionState = granted ? 'granted' : 'denied';
 		if (granted && !this.content && this.savedContent === '') {
 			await this.loadContent();

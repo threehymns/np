@@ -9,6 +9,7 @@
 	import * as Popover from "$lib/components/ui/popover";
 	import BranchSafetyModal from "./BranchSafetyModal.svelte";
 	import type { RepositorySafetyReport } from "$lib/project/repository.svelte";
+	import type { FileOrigin } from "$lib/storage";
 	import { slide } from "svelte/transition";
 	import { cn } from "$lib/utils";
 	import { tick, onMount } from "svelte";
@@ -53,7 +54,7 @@
 		});
 	}
 
-	async function selectFolder(handle: FileSystemDirectoryHandle) {
+	async function selectFolder(handle: FileOrigin | FileSystemDirectoryHandle) {
 		await appState.workspace.openDirectory(handle);
 		closeAndFocusTrigger();
 	}

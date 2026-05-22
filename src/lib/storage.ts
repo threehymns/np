@@ -1,11 +1,153 @@
+import { openDB } from './persistence';
+
 export interface FileOrigin {
-	handle: FileSystemFileHandle;
+	scheme: string;
+	path: string;
 	name: string;
 }
 
+export function toURI(origin: FileOrigin): string {
+	if (origin.scheme === 'file') {
+		return `file://${origin.path.startsWith('/') ? '' : '/'}${origin.path}`;
+	}
+	return `${origin.scheme}://${origin.path}`;
+}
+
+export function parseURI(uriString: string): FileOrigin {
+	const idx = uriString.indexOf('://');
+	if (idx === -1) {
+		throw new Error(`Invalid URI: ${uriString}`);
+	}
+	const scheme = uriString.slice(0, idx);
+	const rest = uriString.slice(idx + 3);
+	let path = rest;
+	if (scheme === 'file' && !path.startsWith('/')) {
+		path = '/' + path;
+	}
+	const name = path.split('/').pop() || '';
+	return { scheme, path, name };
+}
+
+export class BrowserHandleRegistry {
+	private memRegistry = new Map<string, FileSystemHandle>();
+
+	async register(uri: string, handle: FileSystemHandle): Promise<void> {
+		this.memRegistry.set(uri, handle);
+		
+		if (typeof indexedDB === 'undefined') return;
+
+		const db = await openDB();
+		return new Promise((resolve, reject) => {
+			try {
+				const transaction = db.transaction('registry', 'readwrite');
+				const store = transaction.objectStore('registry');
+				const request = store.put(handle, uri);
+				request.onsuccess = () => resolve();
+				request.onerror = () => {
+					if (request.error && request.error.name === 'DataCloneError') {
+						resolve();
+					} else {
+						reject(request.error);
+					}
+				};
+			} catch (e: any) {
+				if (e.name === 'DataCloneError') {
+					resolve();
+				} else {
+					reject(e);
+				}
+			}
+		});
+	}
+
+	async loadAll(): Promise<void> {
+		if (typeof indexedDB === 'undefined') return;
+
+		const db = await openDB();
+		return new Promise((resolve, reject) => {
+			const transaction = db.transaction('registry', 'readonly');
+			const store = transaction.objectStore('registry');
+			
+			const request = store.openCursor();
+			request.onsuccess = (event) => {
+				const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result;
+				if (cursor) {
+					this.memRegistry.set(cursor.key as string, cursor.value);
+					cursor.continue();
+				} else {
+					resolve();
+				}
+			};
+			request.onerror = () => reject(request.error);
+		});
+	}
+
+	async get(uri: string): Promise<FileSystemHandle | null> {
+		if (this.memRegistry.has(uri)) {
+			return this.memRegistry.get(uri)!;
+		}
+
+		if (typeof indexedDB === 'undefined') return null;
+
+		const db = await openDB();
+		return new Promise((resolve, reject) => {
+			const transaction = db.transaction('registry', 'readonly');
+			const store = transaction.objectStore('registry');
+			const request = store.get(uri);
+			request.onsuccess = () => {
+				const handle = request.result || null;
+				if (handle) {
+					this.memRegistry.set(uri, handle);
+				}
+				resolve(handle);
+			};
+			request.onerror = () => reject(request.error);
+		});
+	}
+
+	async resolve(uri: string): Promise<FileSystemHandle | null> {
+		let handle = await this.get(uri);
+		if (handle) return handle;
+
+		const parsed = parseURI(uri);
+		const pathParts = parsed.path.split('/').filter(Boolean);
+
+		for (let i = pathParts.length - 1; i >= 1; i--) {
+			const parentPath = pathParts.slice(0, i).join('/');
+			const parentUri = `${parsed.scheme}://${parentPath}`;
+			const parentHandle = await this.get(parentUri);
+			if (parentHandle && parentHandle.kind === 'directory') {
+				const remainingParts = pathParts.slice(i);
+				try {
+					let current: FileSystemDirectoryHandle = parentHandle as FileSystemDirectoryHandle;
+					for (let j = 0; j < remainingParts.length; j++) {
+						const part = remainingParts[j];
+						const isLast = j === remainingParts.length - 1;
+						if (isLast) {
+							try {
+								return await current.getFileHandle(part);
+							} catch {
+								return await current.getDirectoryHandle(part);
+							}
+						} else {
+							current = await current.getDirectoryHandle(part);
+						}
+					}
+				} catch (e) {
+					console.warn(`Failed to resolve descendant path ${remainingParts.join('/')} from parent ${parentUri}`, e);
+				}
+			}
+		}
+
+		return null;
+	}
+}
+
+export const browserHandleRegistry = new BrowserHandleRegistry();
+
 export interface Storage {
 	pickFile(): Promise<FileOrigin | null>;
-	pickDirectory(): Promise<FileSystemDirectoryHandle | null>;
+	pickDirectory(): Promise<FileOrigin | null>;
 	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(handle: FileSystemDirectoryHandle): Promise<FileSystemHandle[]>;
@@ -22,16 +164,23 @@ export class FileStorage implements Storage {
 				types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'], 'text/plain': ['.txt'] } }],
 				multiple: false
 			});
-			return { handle, name: handle.name };
+			const path = handle.name;
+			const origin: FileOrigin = { scheme: 'browser', path, name: handle.name };
+			await browserHandleRegistry.register(toURI(origin), handle);
+			return origin;
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return null;
 			throw e;
 		}
 	}
 
-	async pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
+	async pickDirectory(): Promise<FileOrigin | null> {
 		try {
-			return await window.showDirectoryPicker();
+			const handle = await window.showDirectoryPicker();
+			const path = handle.name;
+			const origin: FileOrigin = { scheme: 'browser', path, name: handle.name };
+			await browserHandleRegistry.register(toURI(origin), handle);
+			return origin;
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return null;
 			throw e;
@@ -40,16 +189,29 @@ export class FileStorage implements Storage {
 
 	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
 		try {
-			const handle = existingOrigin?.handle ?? await window.showSaveFilePicker({
-				suggestedName: 'untitled.md',
-				types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'], 'text/plain': ['.txt'] } }]
-			});
+			let handle: FileSystemFileHandle;
+			if (existingOrigin) {
+				const uri = toURI(existingOrigin);
+				const resolved = await browserHandleRegistry.resolve(uri);
+				if (!resolved || resolved.kind !== 'file') {
+					throw new Error(`Could not resolve file handle for URI: ${uri}`);
+				}
+				handle = resolved as FileSystemFileHandle;
+			} else {
+				handle = await window.showSaveFilePicker({
+					suggestedName: 'untitled.md',
+					types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'], 'text/plain': ['.txt'] } }]
+				});
+			}
 			
 			const writable = await handle.createWritable();
 			await writable.write(content);
 			await writable.close();
 			
-			return { handle, name: handle.name };
+			const path = existingOrigin?.path ?? handle.name;
+			const origin: FileOrigin = { scheme: 'browser', path, name: handle.name };
+			await browserHandleRegistry.register(toURI(origin), handle);
+			return origin;
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return null;
 			throw e;
@@ -57,7 +219,12 @@ export class FileStorage implements Storage {
 	}
 
 	async readFile(origin: FileOrigin): Promise<string> {
-		const file = await origin.handle.getFile();
+		const uri = toURI(origin);
+		const resolved = await browserHandleRegistry.resolve(uri);
+		if (!resolved || resolved.kind !== 'file') {
+			throw new Error(`Could not resolve file handle for URI: ${uri}`);
+		}
+		const file = await (resolved as FileSystemFileHandle).getFile();
 		return await file.text();
 	}
 
@@ -75,17 +242,14 @@ export class FileStorage implements Storage {
 			options.mode = 'readwrite';
 		}
 
-		// Check if permission was already granted. If so, return true.
 		if ((await handle.queryPermission(options)) === 'granted') {
 			return true;
 		}
 
-		// Request permission. If the user grants permission, return true.
 		if ((await handle.requestPermission(options)) === 'granted') {
 			return true;
 		}
 
-		// The user didn't grant permission, so return false.
 		return false;
 	}
 
@@ -98,7 +262,6 @@ export class FileStorage implements Storage {
 	}
 
 	async deleteEntry(parent: FileSystemDirectoryHandle, name: string): Promise<void> {
-		// removeEntry is supported in Chrome 86+
 		return await (parent as any).removeEntry(name, { recursive: true });
 	}
 

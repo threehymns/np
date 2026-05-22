@@ -1,5 +1,5 @@
 import { DocumentSession } from './document.svelte';
-import type { Storage } from './storage';
+import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
@@ -9,8 +9,9 @@ export class Workspace {
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	rootHandle = $state.raw<FileSystemDirectoryHandle | null>(null);
+	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
-	recentFolders = $state<FileSystemDirectoryHandle[]>([]);
+	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree();
 	hasRootPermission = $state(false);
 	
@@ -27,12 +28,12 @@ export class Workspace {
 			$effect.root(() => {
 				$effect(() => {
 					if (this.isRestoring) return;
-					// Persist open files (handles)
-					const handles = this.documents
-						.map(doc => doc.origin?.handle)
-						.filter((h): h is FileSystemFileHandle => !!h);
+					// Persist open files (origins)
+					const origins = this.documents
+						.map(doc => doc.origin ? $state.snapshot(doc.origin) : null)
+						.filter((o): o is FileOrigin => !!o);
 					
-					saveHandles(handles);
+					saveHandles(origins);
 				});
 
 				$effect(() => {
@@ -44,7 +45,7 @@ export class Workspace {
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist root folder
-					saveRootHandle(this.rootHandle);
+					saveRootHandle(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
 				});
 
 				$effect(() => {
@@ -80,15 +81,48 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openFile(specificHandle?: FileSystemFileHandle) {
-		const origin = specificHandle 
-			? { handle: specificHandle, name: specificHandle.name }
-			: await this.storage.pickFile();
-		
-		if (!origin) return;
+	async openFile(specificHandleOrOrigin?: FileSystemFileHandle | FileOrigin) {
+		let origin: FileOrigin | null = null;
+		let handle: FileSystemFileHandle | null = null;
+
+		if (specificHandleOrOrigin) {
+			if ('kind' in specificHandleOrOrigin) {
+				handle = specificHandleOrOrigin;
+				let path = handle.name;
+				if (this.rootHandle && this.rootOrigin) {
+					try {
+						const parts = await this.rootHandle.resolve(handle);
+						if (parts) {
+							path = `${this.rootOrigin.path}/${parts.join('/')}`;
+						}
+					} catch (e) {
+						// Ignored
+					}
+				}
+				origin = { scheme: this.rootOrigin?.scheme ?? 'browser', path, name: handle.name };
+				await browserHandleRegistry.register(toURI(origin), handle);
+			} else {
+				origin = specificHandleOrOrigin;
+				const resolved = await browserHandleRegistry.resolve(toURI(origin));
+				if (resolved && resolved.kind === 'file') {
+					handle = resolved as FileSystemFileHandle;
+				}
+			}
+		} else {
+			origin = await this.storage.pickFile();
+			if (origin) {
+				const resolved = await browserHandleRegistry.resolve(toURI(origin));
+				if (resolved && resolved.kind === 'file') {
+					handle = resolved as FileSystemFileHandle;
+				}
+			}
+		}
+
+		if (!origin || !handle) return;
 
 		// Check if already open
-		const existing = this.documents.find(d => d.origin?.handle === origin.handle);
+		const targetUri = toURI(origin);
+		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
 		if (existing) {
 			this.activeDocumentId = existing.id;
 			return;
@@ -101,39 +135,47 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openDirectory(specificHandle?: FileSystemDirectoryHandle) {
-		const handle = specificHandle || await this.storage.pickDirectory();
-		if (!handle) return;
-		
-		// Verify permission if it's a specific handle (e.g. from recents)
-		if (specificHandle) {
-			const granted = await this.storage.verifyPermission(handle, true);
-			if (!granted) return;
+	async openDirectory(specificHandleOrOrigin?: FileSystemDirectoryHandle | FileOrigin) {
+		let origin: FileOrigin | null = null;
+		let handle: FileSystemDirectoryHandle | null = null;
+
+		if (specificHandleOrOrigin) {
+			if ('kind' in specificHandleOrOrigin) {
+				handle = specificHandleOrOrigin;
+				origin = { scheme: 'browser', path: handle.name, name: handle.name };
+				await browserHandleRegistry.register(toURI(origin), handle);
+			} else {
+				origin = specificHandleOrOrigin;
+				const resolved = await browserHandleRegistry.resolve(toURI(origin));
+				if (resolved && resolved.kind === 'directory') {
+					handle = resolved as FileSystemDirectoryHandle;
+				}
+			}
+		} else {
+			origin = await this.storage.pickDirectory();
+			if (origin) {
+				const resolved = await browserHandleRegistry.resolve(toURI(origin));
+				if (resolved && resolved.kind === 'directory') {
+					handle = resolved as FileSystemDirectoryHandle;
+				}
+			}
 		}
 
+		if (!handle || !origin) return;
+		
+		// Verify permission
+		const granted = await this.storage.verifyPermission(handle, true);
+		if (!granted) return;
+
 		this.rootHandle = handle;
+		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 		this.repository = new Repository(handle);
 		await this.repository.refresh();
 		
 		// Add to recent folders
-		let existingIndex = -1;
-		for (let i = 0; i < this.recentFolders.length; i++) {
-			try {
-				if (await handle.isSameEntry(this.recentFolders[i])) {
-					existingIndex = i;
-					break;
-				}
-			} catch (e) {
-				// Ignore errors comparing handles
-			}
-		}
-
-		const newRecent = [...this.recentFolders];
-		if (existingIndex !== -1) {
-			newRecent.splice(existingIndex, 1);
-		}
-		this.recentFolders = [handle, ...newRecent].slice(0, 10);
+		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
+		this.recentFolders = [origin, ...newRecent].slice(0, 10);
 
 		await this.projectTree.scan(handle);
 
@@ -232,10 +274,21 @@ export class Workspace {
 			this.documents
 				.filter(doc => doc.isModified)
 				.map(async doc => {
-					if (doc.origin && this.rootHandle) {
+					if (doc.origin && this.rootOrigin) {
+						if (doc.origin.scheme === this.rootOrigin.scheme) {
+							if (doc.origin.path.startsWith(this.rootOrigin.path + '/')) {
+								return doc.origin.path.slice(this.rootOrigin.path.length + 1);
+							} else if (doc.origin.path === this.rootOrigin.path) {
+								return '';
+							}
+						}
+						// Safe fallback
 						try {
-							const parts = await this.rootHandle.resolve(doc.origin.handle);
-							if (parts) return parts.join('/');
+							const handle = await browserHandleRegistry.resolve(toURI(doc.origin));
+							if (handle && this.rootHandle) {
+								const parts = await this.rootHandle.resolve(handle);
+								if (parts) return parts.join('/');
+							}
 						} catch {}
 					}
 					return doc.fileName;
@@ -273,63 +326,71 @@ export class Workspace {
 	private async restoreSession() {
 		this.isRestoring = true;
 		try {
-			const [handles, activeId, rootHandle, recentFolders] = await Promise.all([
+			await browserHandleRegistry.loadAll();
+
+			const [origins, activeId, rootOrigin, recentFolders] = await Promise.all([
 				loadHandles(),
 				loadActiveId(),
 				loadRootHandle(),
 				loadRecentFolders()
 			]);
 			
-			this.recentFolders = recentFolders;
+			this.recentFolders = recentFolders || [];
 
-			if (rootHandle) {
-				try {
-					const permission = await rootHandle.queryPermission({ mode: 'readwrite' });
-					
-					if (permission === 'granted') {
-						// Permission is already granted. We can initialize repository and tree immediately.
-						try {
-							await rootHandle.getDirectoryHandle('.git');
-							this.rootHandle = rootHandle;
-							this.hasRootPermission = true;
-							this.repository = new Repository(rootHandle);
-							await this.repository.refresh();
-							await this.projectTree.scan(rootHandle);
-						} catch (e: any) {
-							if (e.name === 'NotFoundError') {
-								// Not a git repo, basic access is fine.
-								this.rootHandle = rootHandle;
+			if (rootOrigin) {
+				this.rootOrigin = rootOrigin;
+
+				const rootHandle = await browserHandleRegistry.resolve(toURI(rootOrigin));
+				if (rootHandle && rootHandle.kind === 'directory') {
+					try {
+						const dirHandle = rootHandle as FileSystemDirectoryHandle;
+						const permission = await dirHandle.queryPermission({ mode: 'readwrite' });
+						
+						if (permission === 'granted') {
+							// Permission is already granted. We can initialize repository and tree immediately.
+							try {
+								await dirHandle.getDirectoryHandle('.git');
+								this.rootHandle = dirHandle;
 								this.hasRootPermission = true;
-								this.repository = null;
-								await this.projectTree.scan(rootHandle);
-							} else {
-								this.rootHandle = rootHandle;
-								this.hasRootPermission = false;
+								this.repository = new Repository(dirHandle);
+								await this.repository.refresh();
+								await this.projectTree.scan(dirHandle);
+							} catch (e: any) {
+								if (e.name === 'NotFoundError') {
+									// Not a git repo, basic access is fine.
+									this.rootHandle = dirHandle;
+									this.hasRootPermission = true;
+									this.repository = null;
+									await this.projectTree.scan(dirHandle);
+								} else {
+									this.rootHandle = dirHandle;
+									this.hasRootPermission = false;
+								}
 							}
+						} else {
+							this.rootHandle = dirHandle;
+							this.hasRootPermission = false;
 						}
-					} else {
-						this.rootHandle = rootHandle;
+					} catch (e) {
+						console.warn('[Workspace] Handle appears to be stale or invalid:', e);
+						this.rootHandle = null;
 						this.hasRootPermission = false;
 					}
-				} catch (e) {
-					console.warn('[Workspace] Handle appears to be stale or invalid:', e);
-					this.rootHandle = null;
-					this.hasRootPermission = false;
 				}
 			}
 
-			if (handles.length > 0) {
+			if (origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
-				for (const handle of handles) {
-					const origin = { handle, name: handle.name };
+				for (const origin of origins) {
 					let content = '';
 					
 					try {
-						if (await handle.queryPermission() === 'granted') {
+						const handle = await browserHandleRegistry.resolve(toURI(origin));
+						if (handle && await handle.queryPermission() === 'granted') {
 							content = await this.storage.readFile(origin);
 						}
 					} catch (e) {
-						console.warn(`[Workspace] Failed to read restored file ${handle.name}`, e);
+						console.warn(`[Workspace] Failed to read restored file ${origin.name}`, e);
 					}
 					
 					const doc = new DocumentSession(this.storage, content, origin, undefined, this);

@@ -1,14 +1,15 @@
+import type { FileOrigin } from './storage';
+
 /**
  * Simple IndexedDB wrapper for persisting FileSystemHandles.
  */
 
 const DB_NAME = 'np-storage';
 const STORE_NAME = 'handles';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
-
-function openDB(): Promise<IDBDatabase> {
+export function openDB(): Promise<IDBDatabase> {
 	if (dbPromise) return dbPromise;
 
 	dbPromise = new Promise((resolve, reject) => {
@@ -18,6 +19,9 @@ function openDB(): Promise<IDBDatabase> {
 			if (!db.objectStoreNames.contains(STORE_NAME)) {
 				db.createObjectStore(STORE_NAME);
 			}
+			if (!db.objectStoreNames.contains('registry')) {
+				db.createObjectStore('registry');
+			}
 		};
 		request.onsuccess = () => resolve(request.result);
 		request.onerror = () => {
@@ -25,21 +29,22 @@ function openDB(): Promise<IDBDatabase> {
 			reject(request.error);
 		};
 	});
+
 	return dbPromise;
 }
 
-export async function saveHandles(handles: FileSystemFileHandle[]): Promise<void> {
+export async function saveHandles(origins: FileOrigin[]): Promise<void> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(handles, 'open-files');
+		const request = store.put(origins, 'open-files');
 		request.onsuccess = () => resolve();
 		request.onerror = () => reject(request.error);
 	});
 }
 
-export async function loadHandles(): Promise<FileSystemFileHandle[]> {
+export async function loadHandles(): Promise<FileOrigin[]> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readonly');
@@ -50,18 +55,18 @@ export async function loadHandles(): Promise<FileSystemFileHandle[]> {
 	});
 }
 
-export async function saveRootHandle(handle: FileSystemDirectoryHandle | null): Promise<void> {
+export async function saveRootHandle(origin: FileOrigin | null): Promise<void> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(handle, 'root-folder');
+		const request = store.put(origin, 'root-folder');
 		request.onsuccess = () => resolve();
 		request.onerror = () => reject(request.error);
 	});
 }
 
-export async function loadRootHandle(): Promise<FileSystemDirectoryHandle | null> {
+export async function loadRootHandle(): Promise<FileOrigin | null> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readonly');
@@ -72,18 +77,18 @@ export async function loadRootHandle(): Promise<FileSystemDirectoryHandle | null
 	});
 }
 
-export async function saveRecentFolders(handles: FileSystemDirectoryHandle[]): Promise<void> {
+export async function saveRecentFolders(origins: FileOrigin[]): Promise<void> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(handles, 'recent-folders');
+		const request = store.put(origins, 'recent-folders');
 		request.onsuccess = () => resolve();
 		request.onerror = () => reject(request.error);
 	});
 }
 
-export async function loadRecentFolders(): Promise<FileSystemDirectoryHandle[]> {
+export async function loadRecentFolders(): Promise<FileOrigin[]> {
 	const db = await openDB();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readonly');
