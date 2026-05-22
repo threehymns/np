@@ -1,0 +1,3 @@
+@import "@np/ui/layout.css";
+@source "../../../../packages/ui/src/**/*.{svelte,ts,js}";
+@source "../**/*.svelte";

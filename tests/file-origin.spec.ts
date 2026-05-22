@@ -5,10 +5,11 @@ test.describe('FileOrigin & Registry Tests', () => {
   test('toURI and parseURI round-tripping for browser and file schemes', async ({ page }) => {
     await mockIconThemes(page);
     await page.goto('/');
+    await page.waitForFunction(() => typeof (window as any).toURI === 'function');
 
     const roundtripResult = await page.evaluate(async () => {
       // @ts-ignore
-      const { toURI, parseURI } = await import('/src/lib/storage.ts');
+      const { toURI, parseURI } = window;
 
       const cases = [
         { scheme: 'browser', path: 'my-project/file.md', name: 'file.md' },
@@ -44,10 +45,11 @@ test.describe('FileOrigin & Registry Tests', () => {
   test('browserHandleRegistry stores and resolves handles correctly', async ({ page }) => {
     await mockIconThemes(page);
     await page.goto('/');
+    await page.waitForFunction(() => typeof (window as any).browserHandleRegistry !== 'undefined');
 
     const registryResult = await page.evaluate(async () => {
       // @ts-ignore
-      const { browserHandleRegistry, toURI } = await import('/src/lib/storage.ts');
+      const { browserHandleRegistry, toURI } = window;
 
       // Create dummy/mock handles for testing
       const mockFileHandle = {
