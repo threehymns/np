@@ -1,144 +1,62 @@
 import type { FileOrigin } from './storage';
 
-/**
- * Simple IndexedDB wrapper for persisting FileSystemHandles.
- */
-
-const DB_NAME = 'np-storage';
-const STORE_NAME = 'handles';
-const DB_VERSION = 2;
-
-let dbPromise: Promise<IDBDatabase> | null = null;
-export function openDB(): Promise<IDBDatabase> {
-	if (dbPromise) return dbPromise;
-
-	dbPromise = new Promise((resolve, reject) => {
-		const request = indexedDB.open(DB_NAME, DB_VERSION);
-		request.onupgradeneeded = () => {
-			const db = request.result;
-			if (!db.objectStoreNames.contains(STORE_NAME)) {
-				db.createObjectStore(STORE_NAME);
-			}
-			if (!db.objectStoreNames.contains('registry')) {
-				db.createObjectStore('registry');
-			}
-		};
-		request.onsuccess = () => resolve(request.result);
-		request.onerror = () => {
-			dbPromise = null;
-			reject(request.error);
-		};
-	});
-
-	return dbPromise;
+export interface WorkspacePersistence {
+	saveOpenFiles(origins: FileOrigin[]): Promise<void>;
+	loadOpenFiles(): Promise<FileOrigin[]>;
+	saveRootFolder(origin: FileOrigin | null): Promise<void>;
+	loadRootFolder(): Promise<FileOrigin | null>;
+	saveRecentFolders(origins: FileOrigin[]): Promise<void>;
+	loadRecentFolders(): Promise<FileOrigin[]>;
+	saveExpandedPaths(paths: string[]): Promise<void>;
+	loadExpandedPaths(): Promise<string[]>;
+	saveActiveDocumentId(id: string): Promise<void>;
+	loadActiveDocumentId(): Promise<string | null>;
 }
 
-export async function saveHandles(origins: FileOrigin[]): Promise<void> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(origins, 'open-files');
-		request.onsuccess = () => resolve();
-		request.onerror = () => reject(request.error);
-	});
-}
+export class MemoryWorkspacePersistence implements WorkspacePersistence {
+	private openFiles: FileOrigin[] = [];
+	private rootFolder: FileOrigin | null = null;
+	private recentFolders: FileOrigin[] = [];
+	private expandedPaths: string[] = [];
+	private activeDocumentId: string | null = null;
 
-export async function loadHandles(): Promise<FileOrigin[]> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readonly');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.get('open-files');
-		request.onsuccess = () => resolve(request.result || []);
-		request.onerror = () => reject(request.error);
-	});
-}
+	async saveOpenFiles(origins: FileOrigin[]): Promise<void> {
+		this.openFiles = origins;
+	}
 
-export async function saveRootHandle(origin: FileOrigin | null): Promise<void> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(origin, 'root-folder');
-		request.onsuccess = () => resolve();
-		request.onerror = () => reject(request.error);
-	});
-}
+	async loadOpenFiles(): Promise<FileOrigin[]> {
+		return this.openFiles;
+	}
 
-export async function loadRootHandle(): Promise<FileOrigin | null> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readonly');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.get('root-folder');
-		request.onsuccess = () => resolve(request.result || null);
-		request.onerror = () => reject(request.error);
-	});
-}
+	async saveRootFolder(origin: FileOrigin | null): Promise<void> {
+		this.rootFolder = origin;
+	}
 
-export async function saveRecentFolders(origins: FileOrigin[]): Promise<void> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(origins, 'recent-folders');
-		request.onsuccess = () => resolve();
-		request.onerror = () => reject(request.error);
-	});
-}
+	async loadRootFolder(): Promise<FileOrigin | null> {
+		return this.rootFolder;
+	}
 
-export async function loadRecentFolders(): Promise<FileOrigin[]> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readonly');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.get('recent-folders');
-		request.onsuccess = () => resolve(request.result || []);
-		request.onerror = () => reject(request.error);
-	});
-}
+	async saveRecentFolders(origins: FileOrigin[]): Promise<void> {
+		this.recentFolders = origins;
+	}
 
-export async function saveExpandedPaths(paths: string[]): Promise<void> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(paths, 'expanded-paths');
-		request.onsuccess = () => resolve();
-		request.onerror = () => reject(request.error);
-	});
-}
+	async loadRecentFolders(): Promise<FileOrigin[]> {
+		return this.recentFolders;
+	}
 
-export async function loadExpandedPaths(): Promise<string[]> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readonly');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.get('expanded-paths');
-		request.onsuccess = () => resolve(request.result || []);
-		request.onerror = () => reject(request.error);
-	});
-}
+	async saveExpandedPaths(paths: string[]): Promise<void> {
+		this.expandedPaths = paths;
+	}
 
-export async function saveActiveId(id: string): Promise<void> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.put(id, 'active-id');
-		request.onsuccess = () => resolve();
-		request.onerror = () => reject(request.error);
-	});
-}
+	async loadExpandedPaths(): Promise<string[]> {
+		return this.expandedPaths;
+	}
 
-export async function loadActiveId(): Promise<string | null> {
-	const db = await openDB();
-	return new Promise((resolve, reject) => {
-		const transaction = db.transaction(STORE_NAME, 'readonly');
-		const store = transaction.objectStore(STORE_NAME);
-		const request = store.get('active-id');
-		request.onsuccess = () => resolve(request.result || null);
-		request.onerror = () => reject(request.error);
-	});
+	async saveActiveDocumentId(id: string): Promise<void> {
+		this.activeDocumentId = id;
+	}
+
+	async loadActiveDocumentId(): Promise<string | null> {
+		return this.activeDocumentId;
+	}
 }

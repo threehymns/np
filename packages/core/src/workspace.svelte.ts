@@ -1,15 +1,14 @@
 import { DocumentSession } from './document.svelte';
-import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './storage';
+import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
-import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
+import type { WorkspacePersistence } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
-	rootHandle = $state.raw<FileSystemDirectoryHandle | null>(null);
 	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
 	recentFolders = $state<FileOrigin[]>([]);
@@ -17,18 +16,31 @@ export class Workspace {
 	hasRootPermission = $state(false);
 	
 	storage: Storage;
-	vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter;
+	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
+	persistence: WorkspacePersistence;
 	private untitledCounter = 0;
 	private isRestoring = $state(false);
 
-	constructor(storage: Storage, vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter) {
+	constructor(
+		storage: Storage,
+		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
+		persistence: WorkspacePersistence
+	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
+		this.persistence = persistence;
 		
 		if (typeof window !== 'undefined') {
 			this.restoreSession();
 
 			$effect.root(() => {
+				$effect(() => {
+					const activeDoc = this.activeDocument;
+					if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
+						activeDoc.loadContent();
+					}
+				});
+
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist open files (origins)
@@ -36,25 +48,25 @@ export class Workspace {
 						.map(doc => doc.origin ? $state.snapshot(doc.origin) : null)
 						.filter((o): o is FileOrigin => !!o);
 					
-					saveHandles(origins);
+					this.persistence.saveOpenFiles(origins);
 				});
 
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist active document ID
-					saveActiveId(this.activeDocumentId);
+					this.persistence.saveActiveDocumentId(this.activeDocumentId);
 				});
 
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist root folder
-					saveRootHandle(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
+					this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
 				});
 
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist recent folders
-					saveRecentFolders($state.snapshot(this.recentFolders));
+					this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
 				});
 			});
 		}
@@ -84,28 +96,11 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openFile(specificHandleOrOrigin?: FileSystemFileHandle | FileOrigin) {
+	async openFile(specificOrigin?: FileOrigin) {
 		let origin: FileOrigin | null = null;
 
-		if (specificHandleOrOrigin) {
-			if ('kind' in specificHandleOrOrigin) {
-				const handle = specificHandleOrOrigin as FileSystemFileHandle;
-				let path = handle.name;
-				if (this.rootHandle && this.rootOrigin) {
-					try {
-						const parts = await this.rootHandle.resolve(handle);
-						if (parts) {
-							path = `${this.rootOrigin.path}/${parts.join('/')}`;
-						}
-					} catch (e) {
-						// Ignored
-					}
-				}
-				origin = { scheme: this.rootOrigin?.scheme ?? 'browser', path, name: handle.name };
-				await browserHandleRegistry.register(toURI(origin), handle);
-			} else {
-				origin = specificHandleOrOrigin as FileOrigin;
-			}
+		if (specificOrigin) {
+			origin = specificOrigin;
 		} else {
 			origin = await this.storage.pickFile();
 		}
@@ -127,17 +122,11 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openDirectory(specificHandleOrOrigin?: FileSystemDirectoryHandle | FileOrigin) {
+	async openDirectory(specificOrigin?: FileOrigin) {
 		let origin: FileOrigin | null = null;
 
-		if (specificHandleOrOrigin) {
-			if ('kind' in specificHandleOrOrigin) {
-				const handle = specificHandleOrOrigin as FileSystemDirectoryHandle;
-				origin = { scheme: 'browser', path: handle.name, name: handle.name };
-				await browserHandleRegistry.register(toURI(origin), handle);
-			} else {
-				origin = specificHandleOrOrigin as FileOrigin;
-			}
+		if (specificOrigin) {
+			origin = specificOrigin;
 		} else {
 			origin = await this.storage.pickDirectory();
 		}
@@ -151,15 +140,8 @@ export class Workspace {
 		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 
-		const rootHandle = await browserHandleRegistry.resolve(toURI(origin));
-		if (rootHandle && rootHandle.kind === 'directory') {
-			this.rootHandle = rootHandle as FileSystemDirectoryHandle;
-			this.repository = new Repository(this.rootHandle, this.vcsFactory);
-			await this.repository.refresh();
-		} else {
-			this.rootHandle = null;
-			this.repository = null;
-		}
+		this.repository = new Repository(origin, this.vcsFactory);
+		await this.repository.refresh();
 		
 		// Add to recent folders
 		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
@@ -186,23 +168,16 @@ export class Workspace {
 			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
 
-			const rootHandle = await browserHandleRegistry.resolve(toURI(this.rootOrigin));
-			if (rootHandle && rootHandle.kind === 'directory') {
-				this.rootHandle = rootHandle as FileSystemDirectoryHandle;
-				this.repository = new Repository(this.rootHandle, this.vcsFactory);
-				
-				// Fresh start for the adapter
-				const adapter = (this.repository as any).adapter;
-				if (adapter && typeof adapter.reset === 'function') {
-					adapter.reset();
-				}
-				
-				const success = await this.repository.refresh();
-				console.log('[Workspace] Repository initialized after permission:', success);
-			} else {
-				this.rootHandle = null;
-				this.repository = null;
+			this.repository = new Repository(this.rootOrigin, this.vcsFactory);
+			
+			// Fresh start for the adapter
+			const adapter = (this.repository as any).adapter;
+			if (adapter && typeof adapter.reset === 'function') {
+				adapter.reset();
 			}
+			
+			const success = await this.repository.refresh();
+			console.log('[Workspace] Repository initialized after permission:', success);
 			
 			await this.projectTree.scan(this.rootOrigin);
 
@@ -278,14 +253,6 @@ export class Workspace {
 								return '';
 							}
 						}
-						// Safe fallback
-						try {
-							const handle = await browserHandleRegistry.resolve(toURI(doc.origin));
-							if (handle && this.rootHandle) {
-								const parts = await this.rootHandle.resolve(handle);
-								if (parts) return parts.join('/');
-							}
-						} catch {}
 					}
 					return doc.fileName;
 				})
@@ -326,13 +293,11 @@ export class Workspace {
 	private async restoreSession() {
 		this.isRestoring = true;
 		try {
-			await browserHandleRegistry.loadAll();
-
 			const [origins, activeId, rootOrigin, recentFolders] = await Promise.all([
-				loadHandles(),
-				loadActiveId(),
-				loadRootHandle(),
-				loadRecentFolders()
+				this.persistence.loadOpenFiles(),
+				this.persistence.loadActiveDocumentId(),
+				this.persistence.loadRootFolder(),
+				this.persistence.loadRecentFolders()
 			]);
 			
 			this.recentFolders = recentFolders || [];
@@ -345,24 +310,11 @@ export class Workspace {
 				if (permission === 'granted') {
 					// Permission is already granted. We can initialize repository and tree immediately.
 					this.hasRootPermission = true;
-					const rootHandle = await browserHandleRegistry.resolve(toURI(rootOrigin));
-					if (rootHandle && rootHandle.kind === 'directory') {
-						const dirHandle = rootHandle as FileSystemDirectoryHandle;
-						try {
-							await dirHandle.getDirectoryHandle('.git');
-							this.rootHandle = dirHandle;
-							this.repository = new Repository(dirHandle, this.vcsFactory);
-							await this.repository.refresh();
-						} catch (e: any) {
-							if (e.name === 'NotFoundError') {
-								// Not a git repo, basic access is fine.
-								this.rootHandle = dirHandle;
-								this.repository = null;
-							} else {
-								this.rootHandle = dirHandle;
-								this.hasRootPermission = false;
-							}
-						}
+					try {
+						this.repository = new Repository(rootOrigin, this.vcsFactory);
+						await this.repository.refresh();
+					} catch (e: any) {
+						console.error('[Workspace] Failed to refresh repo during restore:', e);
 					}
 					await this.projectTree.scan(rootOrigin);
 				} else {
@@ -371,22 +323,9 @@ export class Workspace {
 			}
 
 			if (origins.length > 0) {
-				const restoredDocs: DocumentSession[] = [];
-				for (const origin of origins) {
-					let content = '';
-					
-					try {
-						const permission = await this.storage.queryPermission(origin, true);
-						if (permission === 'granted') {
-							content = await this.storage.readFile(origin);
-						}
-					} catch (e) {
-						console.warn(`[Workspace] Failed to read restored file ${origin.name}`, e);
-					}
-					
-					const doc = new DocumentSession(this.storage, content, origin, undefined, this);
-					restoredDocs.push(doc);
-				}
+				const restoredDocs: DocumentSession[] = origins.map(origin => 
+					new DocumentSession(this.storage, '', origin, undefined, this)
+				);
 
 				if (restoredDocs.length > 0) {
 					this.documents = restoredDocs;

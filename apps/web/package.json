@@ -29,6 +29,7 @@
 	},
 	"dependencies": {
 		"@np/core": "workspace:*",
+		"@np/adapters-browser": "workspace:*",
 		"@np/ui": "workspace:*",
 		"codemirror": "^6.0.2"
 	}

@@ -1,5 +1,5 @@
 import './polyfills';
-import type { Storage } from './storage';
+import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
@@ -8,10 +8,12 @@ import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
 import { getContext } from 'svelte';
+import { type WorkspacePersistence, MemoryWorkspacePersistence } from './persistence';
 
 export interface AppStateOptions {
 	storage: Storage;
-	vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter;
+	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
+	persistence?: WorkspacePersistence;
 	prefsStorage?: PreferenceStorage;
 }
 
@@ -29,7 +31,8 @@ export class AppState {
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
 		this.prefs = new Preferences(options.prefsStorage);
-		this.workspace = new Workspace(this.storage, options.vcsFactory);
+		const persistence = options.persistence ?? new MemoryWorkspacePersistence();
+		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
 		registerCoreCommands(this);
 	}
 

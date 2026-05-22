@@ -1,7 +1,6 @@
 import type { Workspace } from '../workspace.svelte';
-import { saveExpandedPaths, loadExpandedPaths } from '../persistence';
 import { SvelteSet } from 'svelte/reactivity';
-import { browserHandleRegistry, toURI, type FileOrigin } from '../storage';
+import { toURI, type FileOrigin } from '../storage';
 
 export interface TreeNode {
 	name: string;
@@ -102,7 +101,7 @@ export class ProjectTree {
 					const paths = Array.from(this.expandedPaths)
 						.filter(p => !p.includes('node_modules') && !p.includes('.svelte-kit') && !p.includes('.git'))
 						.slice(0, 500);
-					saveExpandedPaths(paths);
+					this.workspace.persistence.saveExpandedPaths(paths);
 				});
 			});
 		}
@@ -112,7 +111,7 @@ export class ProjectTree {
 		try {
 			// Add a safety timeout of 2 seconds
 			const paths = await Promise.race([
-				loadExpandedPaths(),
+				this.workspace.persistence.loadExpandedPaths(),
 				new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Timeout loading expansion state')), 2000))
 			]);
 			
@@ -295,8 +294,12 @@ export class ProjectTree {
 				};
 				const content = await this.workspace.storage.readFile(gitignoreOrigin);
 				this.gitignore = new GitIgnoreMatcher(content);
-			} catch (e) {
+			} catch (e: any) {
+				// Handle missing gitignore silently
 				this.gitignore = null;
+				if (e.name !== 'NotFoundError' && e.code !== 'ENOENT') {
+					console.warn('[Tree] Error reading .gitignore:', e);
+				}
 			}
 
 			this.nodes = await this.buildLevel(rootOrigin);

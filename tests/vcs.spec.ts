@@ -142,7 +142,9 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				if (!RepositoryClass) throw new Error('Repository constructor not found');
 
 				const root = new MockDirectoryHandle('test-project');
-				const repository = new RepositoryClass(root as any, appState.workspace.vcsFactory);
+				const origin = { scheme: 'browser', path: root.name, name: root.name };
+				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
+				const repository = new RepositoryClass(origin, appState.workspace.vcsFactory);
 				const adapter = repository.adapter;
 
 				// Create dummy .git folder to allow adapter to initialize its fs
@@ -170,8 +172,6 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				await repository.refresh();
 
 				// Expose workspace details
-				const origin = { scheme: 'browser', path: root.name, name: root.name };
-				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
 				appState.workspace.rootOrigin = origin;
 				appState.workspace.rootHandle = root;
 				appState.workspace.hasRootPermission = true;
@@ -394,8 +394,12 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 			});
 
 			// 2. Open this file in the workspace
-			const handle = await appState.workspace.rootHandle.getFileHandle('file-to-delete.md');
-			await appState.workspace.openFile(handle);
+			const fileOrigin = {
+				scheme: 'browser',
+				path: 'test-project/file-to-delete.md',
+				name: 'file-to-delete.md'
+			};
+			await appState.workspace.openFile(fileOrigin);
 
 			// 3. Verify it is in the documents list
 			const docsBefore = appState.workspace.documents.map((d: any) => d.fileName);

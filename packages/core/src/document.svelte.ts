@@ -11,6 +11,7 @@ export class DocumentSession {
 	untitledTitle = $state('Untitled');
 	permissionState = $state<PermissionState>('granted');
 	deletedOnDisk = $state(false);
+	isLoaded = $state(false);
 	
 	private savedContent = $state('');
 	private storage: Storage;
@@ -23,6 +24,7 @@ export class DocumentSession {
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
 		this.workspace = workspace;
+		this.isLoaded = initialContent !== '' || origin === null;
 
 		if (origin) {
 			// Check initial permission state
@@ -59,9 +61,25 @@ export class DocumentSession {
 
 	charCount = $derived(this.content.length);
 
-	wordCount = $derived(
-		this.content.trim().split(/\s+/).filter(Boolean).length
-	);
+	wordCount = $derived.by(() => {
+		const text = this.content;
+		let count = 0;
+		let inWord = false;
+		for (let i = 0; i < text.length; i++) {
+			const char = text[i];
+			// Using a simple check for whitespace characters
+			if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
+				if (inWord) {
+					count++;
+					inWord = false;
+				}
+			} else {
+				inWord = true;
+			}
+		}
+		if (inWord) count++;
+		return count;
+	});
 
 	async loadContent() {
 		if (!this.origin) return;
@@ -69,9 +87,10 @@ export class DocumentSession {
 			this.content = await this.storage.readFile(this.origin);
 			this.savedContent = this.content;
 			this.deletedOnDisk = false;
+			this.isLoaded = true;
 		} catch (e: any) {
 			console.error(`Failed to load content for ${this.origin.name}`, e);
-			if (e.name === 'NotFoundError') {
+			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				this.deletedOnDisk = true;
 			}
 			throw e;

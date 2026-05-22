@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState, MultiSchemeStorage, IsomorphicGitAdapter } from "@np/core";
+	import { AppState, MultiSchemeStorage } from "@np/core";
+	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBWorkspacePersistence } from "@np/adapters-browser";
 	import { AppShell } from "@np/ui";
 	import "./layout.css";
 
 	const storage = new MultiSchemeStorage();
-	const vcsFactory = (rootHandle: FileSystemDirectoryHandle) => new IsomorphicGitAdapter(rootHandle);
-	const appState = new AppState({ storage, vcsFactory });
+	storage.registerProvider('browser', new BrowserStorage());
+	const persistence = new IndexedDBWorkspacePersistence();
+	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
+	const appState = new AppState({ storage, persistence, vcsFactory });
 	setContext("appState", appState);
 
 	if (typeof window !== "undefined") {

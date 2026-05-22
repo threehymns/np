@@ -1,3 +1,4 @@
+import type { FileOrigin } from '../storage';
 import type { VCSAdapter, SwitchResult } from './vcs';
 
 export interface RepositorySafetyReport {
@@ -15,8 +16,8 @@ export class Repository {
 
 	private adapter: VCSAdapter;
 
-	constructor(rootHandle: FileSystemDirectoryHandle, vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter) {
-		this.adapter = vcsFactory(rootHandle);
+	constructor(rootOrigin: FileOrigin, vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter) {
+		this.adapter = vcsFactory(rootOrigin);
 	}
 
 	async refresh(): Promise<boolean> {
@@ -105,4 +106,3 @@ export class Repository {
 if (typeof window !== 'undefined') {
 	(window as any).Repository = Repository;
 }
-

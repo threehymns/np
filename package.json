@@ -11,7 +11,11 @@
 		"dev": "bun --filter web dev",
 		"build": "bun --filter web build",
 		"preview": "bun --filter web preview",
-		"check": "bun --filter web check"
+		"check": "bun --filter web check",
+		"desktop:dev": "bun --filter desktop dev",
+		"desktop:build": "bun --filter desktop build",
+		"desktop:start": "bun --filter desktop start",
+		"desktop:check": "bun --filter desktop check"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",

@@ -8,7 +8,6 @@ export * from './workspace.svelte';
 export * from './commands.svelte';
 export * from './state.svelte';
 export * from './project/vcs';
-export * from './project/isomorphic-git';
 export * from './project/tree.svelte';
 export * from './project/repository.svelte';
 export * from './transformer/types';

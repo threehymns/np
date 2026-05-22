@@ -1,6 +1,8 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult } from './vcs';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin } from '@np/core';
+import { toURI } from '@np/core';
+import { browserHandleRegistry } from './storage';
 
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
@@ -218,8 +220,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	private initialized = false;
 	private initPromise: Promise<boolean> | null = null;
 	private fs: BrowserGitFS | null = null;
+	private rootHandle: FileSystemDirectoryHandle | null = null;
 
-	constructor(private rootHandle: FileSystemDirectoryHandle) {}
+	constructor(private rootOrigin: FileOrigin) {}
 
 	private async ensureInitialized(): Promise<boolean> {
 		if (this.initialized) return true;
@@ -227,7 +230,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 		this.initPromise = (async () => {
 			try {
-				if (!this.rootHandle) return false;
+				const uri = toURI(this.rootOrigin);
+				const handle = await browserHandleRegistry.resolve(uri);
+				if (!handle || handle.kind !== 'directory') {
+					return false;
+				}
+				this.rootHandle = handle as FileSystemDirectoryHandle;
 
 				// Verify permission first.
 				const permission = await this.rootHandle.queryPermission({ mode: 'readwrite' });
@@ -518,35 +526,32 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const fullPath = `${this.dir}/${filepath}`;
 
 			const writeFileSafe = async (content: Uint8Array) => {
+				const parts = filepath.split('/');
+				parts.pop();
+				if (parts.length > 0) {
+					await this.fs!.promises.mkdir(`${this.dir}/${parts.join('/')}`).catch(() => {});
+				}
 				await this.fs!.promises.writeFile(fullPath, content);
 			};
 
 			const unlinkSafe = async () => {
-				try {
-					await this.fs!.promises.unlink(fullPath);
-				} catch (e) {}
+				await this.fs!.promises.unlink(fullPath).catch(() => {});
 			};
 
-			if (workdirContent !== null && stagedContent !== null) {
-				const bufferEqual = (a: Uint8Array, b: Uint8Array) => {
-					if (a.length !== b.length) return false;
-					for (let i = 0; i < a.length; i++) {
-						if (a[i] !== b[i]) return false;
-					}
-					return true;
-				};
-
-				if (bufferEqual(workdirContent, stagedContent)) {
-					await writeFileSafe(stagedContent);
-					await git.add({ fs: this.fs!, dir: this.dir, filepath });
-				} else {
-					await writeFileSafe(stagedContent);
-					await git.add({ fs: this.fs!, dir: this.dir, filepath });
-					await writeFileSafe(workdirContent);
-				}
-			} else if (workdirContent !== null && stagedContent === null) {
+			if (workdirContent && stagedContent) {
 				await writeFileSafe(workdirContent);
-			} else if (workdirContent === null && stagedContent !== null) {
+				await unlinkSafe(); // clear cache
+				await writeFileSafe(stagedContent);
+				await git.add({ fs: this.fs!, dir: this.dir, filepath });
+				await writeFileSafe(workdirContent);
+			} else if (workdirContent) {
+				await writeFileSafe(workdirContent);
+				if (stage === 0) {
+					try {
+						await git.remove({ fs: this.fs!, dir: this.dir, filepath });
+					} catch (e) {}
+				}
+			} else if (stagedContent) {
 				await writeFileSafe(stagedContent);
 				await git.add({ fs: this.fs!, dir: this.dir, filepath });
 				await unlinkSafe();
@@ -566,10 +571,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		this.initialized = false;
 		this.initPromise = null;
 		this.fs = null;
+		this.rootHandle = null;
 	}
 }
 
 if (typeof window !== 'undefined') {
 	(window as any).git = git;
 }
-

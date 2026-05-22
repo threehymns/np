@@ -56,8 +56,8 @@
 		});
 	}
 
-	async function selectFolder(handle: FileOrigin | FileSystemDirectoryHandle) {
-		await appState.workspace.openDirectory(handle);
+	async function selectFolder(origin: FileOrigin) {
+		await appState.workspace.openDirectory(origin);
 		closeAndFocusTrigger();
 	}
 
@@ -100,8 +100,8 @@
 <div class="flex flex-col h-full text-sidebar-foreground overflow-hidden select-none">
 	<div class="flex-1 overflow-auto py-1">
 		{#if mounted}
-			{#if appState.workspace.rootHandle}
-				{@const rootHandle = appState.workspace.rootHandle}
+			{#if appState.workspace.rootOrigin}
+				{@const rootOrigin = appState.workspace.rootOrigin}
 				<div class="px-2 mb-1">
 					<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
 						<div class="flex items-center gap-1 min-w-0">
@@ -112,7 +112,7 @@
 											{...props}
 											class="flex items-center gap-1 truncate hover:text-sidebar-foreground transition-all text-left hover:bg-sidebar-accent px-1.5 -ml-1 rounded-sm py-0.5"
 										>
-											<span class="truncate">{rootHandle.name}</span>
+											<span class="truncate">{rootOrigin.name}</span>
 											<CaretUpDown class="size-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
 										</button>
 									{/snippet}
@@ -124,16 +124,17 @@
 											<Command.Empty class="py-2 text-[11px] text-center">No folders found.</Command.Empty>
 											{#each appState.workspace.recentFolders as folder (folder.name)}
 												<Command.Item
-													value={folder.name}
+													value={folder.path}
 													onSelect={() => selectFolder(folder)}
 													class="text-[11px] flex items-center gap-2 px-2 py-1.5"
 												>
-													<div class="flex items-center gap-1 truncate">
-														<!-- TODO: Implement base path display once a native backend (like Electron) is available. 
-															The Web File System Access API does not provide absolute paths. -->
-														<span class="truncate">{folder.name}</span>
+													<div class="flex items-baseline min-w-0 flex-1">
+														<span class="truncate text-[10px] opacity-40 shrink-0">
+															{folder.path.slice(0, folder.path.lastIndexOf(folder.name))}
+														</span>
+														<span class="truncate font-medium">{folder.name}</span>
 													</div>
-													{#if rootHandle.name === folder.name}
+													{#if rootOrigin.path === folder.path}
 														<span class="text-[10px] opacity-40 shrink-0">- Current</span>
 													{/if}
 												</Command.Item>

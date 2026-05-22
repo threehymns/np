@@ -12,11 +12,13 @@
 
 	let {
 		doc,
+		active = true,
 		style = "",
 		wrap = true,
 		view = $bindable(),
 	} = $props<{
 		doc: DocumentSession;
+		active?: boolean;
 		style?: string;
 		wrap?: boolean;
 		view?: EditorView;
@@ -100,7 +102,7 @@
 
 	// Sync wrap setting
 	$effect(() => {
-		if (view) {
+		if (view && active) {
 			view.dispatch({
 				effects: wrapCompartment.reconfigure(
 					wrap ? EditorView.lineWrapping : [],
@@ -112,7 +114,7 @@
 	// Sync language
 	$effect(() => {
 		const lang = doc.language;
-		if (view) {
+		if (view && active) {
 			getLanguageExtensions(lang).then((extensions) => {
 				if (view) {
 					view.dispatch({
@@ -126,6 +128,8 @@
 	// Sync content from outside (e.g. file open)
 	$effect(() => {
 		const c = doc.content; // Track content
+		if (!active) return;
+
 		untrack(() => {
 			if (view) {
 				const currentDoc = view.state.doc.toString();
