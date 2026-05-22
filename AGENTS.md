@@ -29,3 +29,17 @@ You MUST use this tool whenever writing Svelte code before sending it to the use
 
 Generates a Svelte Playground link with the provided code.
 After completing the code, ask the user if they want a playground link. Only call this tool after user confirmation and NEVER if code was written to files in their project.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles mapped to label strings at `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Root `CONTEXT.md` + `docs/adr/` for past decisions. See `docs/agents/domain.md`.

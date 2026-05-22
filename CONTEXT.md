@@ -2,14 +2,15 @@
 
 ## Document
 A single file's content, its source (origin), and its current state.
-- **Origin**: The file system handle and metadata where a document is persisted.
+- **Origin**: A structured URI-like object (scheme, path, name) indicating where a document is persisted.
 - **Untitled**: A document that has not yet been saved to an origin.
 - **Language**: The formal syntax and grammar of the content (e.g., Markdown, TypeScript).
 - **Language Mode**: The active editor configuration used to process a Document. Typically auto-detected from the **Origin**'s extension, but can be manually overridden.
 
 ## Storage
-The interface for interacting with the underlying file system.
-- **FileSystemStorage**: A concrete adapter using the Web File System Access API.
+The path-based abstraction for file read/write operations.
+- **Storage Coordinator**: The central manager (e.g. `MultiSchemeStorage`) that intercepts file operations and routes them to the appropriate provider based on the **Origin**'s scheme.
+- **Storage Provider**: A scheme-specific adapter (e.g. `BrowserStorage`, `ElectronStorage`, `GitStorage`) implementing the operations for a given URI scheme.
 
 ## Preferences
 User-defined settings that persist across sessions (theme, zoom, word wrap).
