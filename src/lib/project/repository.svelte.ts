@@ -1,4 +1,4 @@
-import type { VCSAdapter } from './vcs';
+import type { VCSAdapter, SwitchResult } from './vcs';
 import { IsomorphicGitAdapter } from './isomorphic-git';
 
 export interface RepositorySafetyReport {
@@ -72,9 +72,9 @@ export class Repository {
 				};
 			}
 
-			const canCheckout = await this.adapter.canCheckoutBranch(targetBranch);
+			const res = await this.adapter.switchBranch(targetBranch, { dryRun: true });
 			
-			if (canCheckout) {
+			if (res.status === 'switched' || res.status === 'noop') {
 				return {
 					canSwitch: true,
 					unsavedFiles: [],
@@ -82,24 +82,23 @@ export class Repository {
 				};
 			}
 
-			// If we can't checkout, find out why by getting the full status
-			const status = await this.adapter.getStatus();
+			const uncommittedFiles = res.status === 'blocked' ? res.files : [];
 			return {
 				canSwitch: false,
 				unsavedFiles: [],
-				uncommittedFiles: status.uncommittedFiles
+				uncommittedFiles
 			};
 		} finally {
 			this.isBusy = false;
 		}
 	}
 
-	async switchBranch(branchName: string): Promise<boolean> {
+	async switchBranch(branchName: string): Promise<SwitchResult> {
 		this.isBusy = true;
 		try {
-			const success = await this.adapter.switchBranch(branchName);
+			const result = await this.adapter.switchBranch(branchName);
 			await this.refresh();
-			return success;
+			return result;
 		} finally {
 			this.isBusy = false;
 		}

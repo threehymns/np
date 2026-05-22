@@ -441,4 +441,152 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 		await expect(tab).toHaveClass(/line-through/);
 		await expect(tab).toHaveAttribute('title', 'file-to-delete.md (deleted on disk)');
 	});
+
+	test('should carry forward staged modifications and keep them staged', async ({ page }) => {
+		const result = await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const git = (window as any).git;
+			const { gitFs } = await (window as any).setupTestGitRepo();
+
+			// 1. Create a staged modification
+			await gitFs.promises.writeFile('/repo/README.md', 'Staged Change Content');
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
+
+			// 2. Create a staged new file
+			await gitFs.promises.writeFile('/repo/new-file.md', 'New File Content');
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'new-file.md' });
+
+			// 3. Switch branch
+			const res = await appState.workspace.switchBranch('feature-branch');
+
+			// 4. Check status matrix on feature-branch
+			const matrix = await git.statusMatrix({ fs: gitFs, dir: '/repo' });
+			const readmeStatus = matrix.find((row: any) => row[0] === 'README.md');
+			const newFileStatus = matrix.find((row: any) => row[0] === 'new-file.md');
+
+			return {
+				res,
+				currentBranch: appState.workspace.currentBranch,
+				readmeStatus,
+				newFileStatus
+			};
+		});
+
+		expect(result.res.status).toBe('switched');
+		expect(result.currentBranch).toBe('feature-branch');
+		// README.md: [1, 2, 2] -> present in HEAD, modified in workdir, identical in STAGE to WORKDIR (staged)
+		expect(result.readmeStatus).toEqual(['README.md', 1, 2, 2]);
+		// new-file.md: [0, 2, 2] -> absent in HEAD, present in WORKDIR, identical in STAGE to WORKDIR (staged)
+		expect(result.newFileStatus).toEqual(['new-file.md', 0, 2, 2]);
+	});
+
+	test('should carry forward partially staged modifications and preserve the three-way split', async ({ page }) => {
+		const result = await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const git = (window as any).git;
+			const { gitFs } = await (window as any).setupTestGitRepo();
+
+			// 1. Write staged content and add
+			await gitFs.promises.writeFile('/repo/README.md', 'Staged Content');
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
+
+			// 2. Write workdir content (differs from staged content)
+			await gitFs.promises.writeFile('/repo/README.md', 'Workdir Content');
+
+			// 3. Switch branch
+			const res = await appState.workspace.switchBranch('feature-branch');
+
+			// 4. Check status matrix
+			const matrix = await git.statusMatrix({ fs: gitFs, dir: '/repo' });
+			const readmeStatus = matrix.find((row: any) => row[0] === 'README.md');
+
+			// 5. Read workdir content
+			const workdirContent = await gitFs.promises.readFile('/repo/README.md', 'utf8');
+
+			// 6. Read staged content from OID
+			let stagedContent = null;
+			if (readmeStatus) {
+				const stagedOids: Record<string, string> = {};
+				await git.walk({
+					fs: gitFs,
+					dir: '/repo',
+					trees: [git.STAGE()],
+					map: async (filepath: string, [entry]: [any]) => {
+						if (filepath === '.' || !entry) return;
+						const type = await entry.type();
+						if (type === 'blob') {
+							stagedOids[filepath] = await entry.oid();
+						}
+					}
+				});
+				const oid = stagedOids['README.md'];
+				if (oid) {
+					const { blob } = await git.readBlob({ fs: gitFs, dir: '/repo', oid });
+					stagedContent = new TextDecoder().decode(blob);
+				}
+			}
+
+			return {
+				res,
+				readmeStatus,
+				workdirContent,
+				stagedContent
+			};
+		});
+
+		expect(result.res.status).toBe('switched');
+		// README.md: [1, 2, 3] -> present in HEAD, modified in workdir, stage differs from workdir (partially staged)
+		expect(result.readmeStatus).toEqual(['README.md', 1, 2, 3]);
+		expect(result.workdirContent).toBe('Workdir Content');
+		expect(result.stagedContent).toBe('Staged Content');
+	});
+
+	test('should roll back atomically to original branch and restore changes if checkout fails', async ({ page }) => {
+		const result = await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const git = (window as any).git;
+			const { gitFs } = await (window as any).setupTestGitRepo();
+
+			// Create a feature branch to switch to
+			await git.branch({ fs: gitFs, dir: '/repo', ref: 'fail-branch' });
+
+			// 1. Create a staged modification
+			await gitFs.promises.writeFile('/repo/README.md', 'Uncommitted Content');
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
+
+			// 2. Mock git.checkout to fail when doing the actual checkout of fail-branch
+			const originalCheckout = git.checkout;
+			git.checkout = async (opts: any) => {
+				if (opts.ref === 'fail-branch' && !opts.dryRun) {
+					throw new Error('Mock checkout failed');
+				}
+				return originalCheckout(opts);
+			};
+
+			// 3. Attempt switch
+			const res = await appState.workspace.switchBranch('fail-branch');
+
+			// Restore git.checkout mock
+			git.checkout = originalCheckout;
+
+			// 4. Check current branch and file status
+			const currentBranch = appState.workspace.currentBranch;
+			const matrix = await git.statusMatrix({ fs: gitFs, dir: '/repo' });
+			const readmeStatus = matrix.find((row: any) => row[0] === 'README.md');
+			const readmeContent = await gitFs.promises.readFile('/repo/README.md', 'utf8');
+
+			return {
+				res,
+				currentBranch,
+				readmeStatus,
+				readmeContent
+			};
+		});
+
+		expect(result.res.status).toBe('error');
+		expect(result.res.message).toBe('Mock checkout failed');
+		expect(result.currentBranch).toBe('main');
+		expect(result.readmeStatus).toEqual(['README.md', 1, 2, 2]);
+		expect(result.readmeContent).toBe('Uncommitted Content');
+	});
 });

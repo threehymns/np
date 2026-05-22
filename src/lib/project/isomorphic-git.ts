@@ -1,6 +1,6 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus } from './vcs';
+import type { VCSAdapter, VCSStatus, SwitchResult } from './vcs';
 
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
@@ -204,6 +204,15 @@ class BrowserGitFS {
 	}
 }
 
+interface FileSnapshot {
+	filepath: string;
+	head: number;
+	workdir: number;
+	stage: number;
+	workdirContent: Uint8Array | null;
+	stagedContent: Uint8Array | null;
+}
+
 export class IsomorphicGitAdapter implements VCSAdapter {
 	private dir = REPO_DIR;
 	private initialized = false;
@@ -303,105 +312,252 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	async switchBranch(branchName: string): Promise<boolean> {
-		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+	async switchBranch(branchName: string, options?: { dryRun?: boolean }): Promise<SwitchResult> {
+		if (!await this.ensureInitialized()) {
+			return { status: 'error', message: 'Git not initialized' };
+		}
 
+		let currentBranch: string | null = null;
+		let originalBranch: string | null = null;
 		try {
-			const [currentBranch, currentOid, targetOid] = await Promise.all([
-				git.currentBranch({ fs: this.fs!, dir: this.dir }),
+			currentBranch = (await git.currentBranch({ fs: this.fs!, dir: this.dir })) || null;
+			originalBranch = currentBranch;
+			const [currentOid, targetOid] = await Promise.all([
 				git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' }),
 				git.resolveRef({ fs: this.fs!, dir: this.dir, ref: branchName })
 			]);
 			
 			if (currentBranch === branchName && currentOid === targetOid) {
 				console.log(`[Git] Already on branch ${branchName} at ${targetOid}. Skipping checkout.`);
-				return false;
+				return { status: 'noop' };
 			}
 		} catch (e) {
 			// Proceed if optimization check fails
 		}
 
-		await git.checkout({
-			fs: this.fs!,
-			dir: this.dir,
-			ref: branchName
-		});
-		return true;
-	}
-
-	async canCheckoutBranch(branchName: string): Promise<boolean> {
-		if (!await this.ensureInitialized()) return false;
+		// Pre-flight safety check
 		try {
-			// First, run dryRun checkout. If isomorphic-git itself detects a conflict or error, block.
+			// Dry-run checkout to see if the target branch/ref is valid
 			await git.checkout({
 				fs: this.fs!,
 				dir: this.dir,
 				ref: branchName,
 				dryRun: true
 			});
-
-			// Now, run our own safety check to prevent overwriting uncommitted (staged/unstaged) files.
-			// 1. Get status to see all uncommitted files.
-			const status = await this.getStatus();
-			if (status.uncommittedFiles.length === 0) {
-				return true;
+		} catch (e: any) {
+			if (e.code === 'CheckoutConflictError') {
+				// Ignore CheckoutConflictError here; we will run our own more precise carry-forward conflict check.
+			} else {
+				return { status: 'error', message: e.message || `Failed to dry-run checkout branch ${branchName}` };
 			}
+		}
 
-			// 2. Resolve current HEAD and target branch commits
-			let headCommit: string | null = null;
-			let targetCommit: string | null = null;
-			try {
-				headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
-			} catch (e) {
-				// No HEAD yet (e.g. empty repo), so no commits/conflicts.
-				return true;
-			}
-			try {
-				targetCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: branchName });
-			} catch (e) {
-				console.warn('[Git] Failed to resolve target branch', branchName, e);
-				return false;
-			}
+		// Now, run our own safety check to prevent overwriting uncommitted (staged/unstaged) files.
+		const status = await this.getStatus();
+		let headCommit: string | null = null;
+		let targetCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {
+			// No HEAD yet
+		}
+		try {
+			targetCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: branchName });
+		} catch (e) {
+			return { status: 'error', message: `Failed to resolve target branch ${branchName}` };
+		}
 
-			// 3. For each uncommitted file, compare its OID in HEAD vs the target commit.
+		if (status.uncommittedFiles.length > 0) {
+			const conflictingFiles: string[] = [];
 			for (const filepath of status.uncommittedFiles) {
 				let headOid: string | null = null;
 				let targetOid: string | null = null;
 
-				try {
-					const blob = await git.readBlob({
-						fs: this.fs!,
-						dir: this.dir,
-						oid: headCommit,
-						filepath
-					});
-					headOid = blob.oid;
-				} catch (e) {
-					// File does not exist in HEAD
+				if (headCommit) {
+					try {
+						const blob = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: headCommit,
+							filepath
+						});
+						headOid = blob.oid;
+					} catch (e) {}
 				}
 
-				try {
-					const blob = await git.readBlob({
-						fs: this.fs!,
-						dir: this.dir,
-						oid: targetCommit,
-						filepath
-					});
-					targetOid = blob.oid;
-				} catch (e) {
-					// File does not exist in target branch
+				if (targetCommit) {
+					try {
+						const blob = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: targetCommit,
+							filepath
+						});
+						targetOid = blob.oid;
+					} catch (e) {}
 				}
 
 				if (headOid !== targetOid) {
-					console.warn(`[Git] Conflict detected for file ${filepath}: HEAD OID ${headOid} vs Target OID ${targetOid}`);
-					return false;
+					conflictingFiles.push(filepath);
 				}
 			}
 
-			return true;
-		} catch (e) {
-			console.warn('[Git] Checkout dry-run failed', e);
-			return false;
+			if (conflictingFiles.length > 0) {
+				return { status: 'blocked', reason: 'conflict', files: conflictingFiles };
+			}
+		}
+
+		if (options?.dryRun) {
+			return { status: 'switched' };
+		}
+
+		// 1. Take a snapshot of all dirty files
+		const snapshots: FileSnapshot[] = [];
+		try {
+			const matrix = await git.statusMatrix({ 
+				fs: this.fs!,
+				dir: this.dir,
+				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+			});
+
+			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
+				return head !== 1 || workdir !== 1 || stage !== 1;
+			});
+
+			if (dirtyRows.length > 0) {
+				const stagedOids: Record<string, string> = {};
+				await git.walk({
+					fs: this.fs!,
+					dir: this.dir,
+					trees: [git.STAGE()],
+					map: async (filepath, [entry]) => {
+						if (filepath === '.' || !entry) return;
+						const type = await entry.type();
+						if (type === 'blob') {
+							stagedOids[filepath] = await entry.oid();
+						}
+					}
+				});
+
+				for (const [filepath, head, workdir, stage] of dirtyRows) {
+					let workdirContent: Uint8Array | null = null;
+					let stagedContent: Uint8Array | null = null;
+
+					if (workdir !== 0) {
+						try {
+							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+							workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
+						} catch (e) {
+							console.warn(`[Git] Failed to read workdir content for snapshot: ${filepath}`, e);
+						}
+					}
+
+					const stagedOid = stagedOids[filepath as string];
+					if (stagedOid) {
+						try {
+							const { blob } = await git.readBlob({
+								fs: this.fs!,
+								dir: this.dir,
+								oid: stagedOid
+							});
+							stagedContent = blob;
+						} catch (e) {
+							console.warn(`[Git] Failed to read staged blob for snapshot: ${filepath}`, e);
+						}
+					}
+
+					snapshots.push({
+						filepath: filepath as string,
+						head: head as number,
+						workdir: workdir as number,
+						stage: stage as number,
+						workdirContent,
+						stagedContent
+					});
+				}
+			}
+		} catch (e: any) {
+			return { status: 'error', message: `Snapshot failed: ${e.message || e}` };
+		}
+
+		// 2. Perform checkout (with force: true to overwrite changes that isomorphic-git would complain about.
+		// Since we have snapshots of all local uncommitted changes, they are safe, and we will restore them right after!)
+		try {
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: branchName,
+				force: true
+			});
+
+			// 3. Restore snapshots on target branch
+			await this.restoreSnapshots(snapshots);
+			return { status: 'switched' };
+		} catch (err: any) {
+			console.error(`[Git] Checkout of ${branchName} failed, starting rollback...`, err);
+			if (originalBranch) {
+				try {
+					await git.checkout({
+						fs: this.fs!,
+						dir: this.dir,
+						ref: originalBranch,
+						force: true
+					});
+					await this.restoreSnapshots(snapshots);
+				} catch (rollbackErr) {
+					console.error('[Git] Critical: Rollback checkout failed!', rollbackErr);
+				}
+			}
+			return { status: 'error', message: err.message || 'Unknown checkout error' };
+		}
+	}
+
+	private async restoreSnapshots(snapshots: FileSnapshot[]): Promise<void> {
+		for (const snap of snapshots) {
+			const { filepath, workdirContent, stagedContent, stage } = snap;
+			const fullPath = `${this.dir}/${filepath}`;
+
+			const writeFileSafe = async (content: Uint8Array) => {
+				await this.fs!.promises.writeFile(fullPath, content);
+			};
+
+			const unlinkSafe = async () => {
+				try {
+					await this.fs!.promises.unlink(fullPath);
+				} catch (e) {}
+			};
+
+			if (workdirContent !== null && stagedContent !== null) {
+				const bufferEqual = (a: Uint8Array, b: Uint8Array) => {
+					if (a.length !== b.length) return false;
+					for (let i = 0; i < a.length; i++) {
+						if (a[i] !== b[i]) return false;
+					}
+					return true;
+				};
+
+				if (bufferEqual(workdirContent, stagedContent)) {
+					await writeFileSafe(stagedContent);
+					await git.add({ fs: this.fs!, dir: this.dir, filepath });
+				} else {
+					await writeFileSafe(stagedContent);
+					await git.add({ fs: this.fs!, dir: this.dir, filepath });
+					await writeFileSafe(workdirContent);
+				}
+			} else if (workdirContent !== null && stagedContent === null) {
+				await writeFileSafe(workdirContent);
+			} else if (workdirContent === null && stagedContent !== null) {
+				await writeFileSafe(stagedContent);
+				await git.add({ fs: this.fs!, dir: this.dir, filepath });
+				await unlinkSafe();
+			} else {
+				await unlinkSafe();
+				if (stage === 0) {
+					try {
+						await git.remove({ fs: this.fs!, dir: this.dir, filepath });
+					} catch (e) {}
+				}
+			}
 		}
 	}
 

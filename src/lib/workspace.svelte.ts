@@ -3,6 +3,7 @@ import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './s
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
+import type { SwitchResult } from './project/vcs';
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
@@ -291,13 +292,15 @@ export class Workspace {
 		return await this.repository.getSafetyReport(modifiedFiles, targetBranch);
 	}
 
-	async switchBranch(branchName: string) {
-		if (!this.repository || !this.rootOrigin) return;
+	async switchBranch(branchName: string): Promise<SwitchResult> {
+		if (!this.repository || !this.rootOrigin) {
+			return { status: 'error', message: 'No repository' };
+		}
 
 		try {
-			const success = await this.repository.switchBranch(branchName);
+			const result = await this.repository.switchBranch(branchName);
 			
-			if (success) {
+			if (result.status === 'switched' || result.status === 'noop') {
 				// Full reload after branch switch
 				await this.projectTree.scan(this.rootOrigin);
 				
@@ -311,8 +314,10 @@ export class Workspace {
 					}
 				}
 			}
-		} catch (e) {
+			return result;
+		} catch (e: any) {
 			console.error('Failed to switch branch', e);
+			return { status: 'error', message: e.message || 'Failed to switch branch' };
 		}
 	}
 
