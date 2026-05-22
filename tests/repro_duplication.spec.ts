@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { mockIconThemes } from './helpers/mock-network';
 
 test('editor should not duplicate text when typing quickly', async ({ page }) => {
   page.on('console', msg => console.log('BROWSER:', msg.text()));
+  await mockIconThemes(page);
   await page.goto('/');
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible();
+  await expect(editor).toBeVisible({ timeout: 30000 });
 
   await editor.click();
   await page.keyboard.press('Control+A');
@@ -18,9 +20,10 @@ test('editor should not duplicate text when typing quickly', async ({ page }) =>
 });
 
 test('editor should not duplicate text after Enter', async ({ page }) => {
+  await mockIconThemes(page);
   await page.goto('/');
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible();
+  await expect(editor).toBeVisible({ timeout: 30000 });
 
   await editor.click();
   await page.keyboard.press('Control+A');

@@ -228,9 +228,19 @@ export class Workspace {
 	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
 		if (!this.repository) return null;
 		
-		const modifiedFiles = this.documents
-			.filter(doc => doc.isModified)
-			.map(doc => doc.fileName);
+		const modifiedFiles = await Promise.all(
+			this.documents
+				.filter(doc => doc.isModified)
+				.map(async doc => {
+					if (doc.origin && this.rootHandle) {
+						try {
+							const parts = await this.rootHandle.resolve(doc.origin.handle);
+							if (parts) return parts.join('/');
+						} catch {}
+					}
+					return doc.fileName;
+				})
+		);
 			
 		return await this.repository.getSafetyReport(modifiedFiles, targetBranch);
 	}

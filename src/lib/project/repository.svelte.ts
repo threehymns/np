@@ -61,17 +61,17 @@ export class Repository {
 	}
 
 	async getSafetyReport(activeModifiedFiles: string[], targetBranch: string): Promise<RepositorySafetyReport> {
-		if (activeModifiedFiles.length > 0) {
-			const status = await this.adapter.getStatus();
-			return {
-				canSwitch: false,
-				unsavedFiles: activeModifiedFiles,
-				uncommittedFiles: status.uncommittedFiles
-			};
-		}
-
 		this.isBusy = true;
 		try {
+			if (activeModifiedFiles.length > 0) {
+				const status = await this.adapter.getStatus();
+				return {
+					canSwitch: false,
+					unsavedFiles: activeModifiedFiles,
+					uncommittedFiles: status.uncommittedFiles
+				};
+			}
+
 			const canCheckout = await this.adapter.canCheckoutBranch(targetBranch);
 			
 			if (canCheckout) {

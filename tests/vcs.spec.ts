@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { mockIconThemes } from './helpers/mock-network';
 
 test.describe('VCS and Branch Switching Integration Tests', () => {
 	test.beforeEach(async ({ page }) => {
+		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible();
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
 
 		// Define mock filesystem classes and setup helper inside the browser context
 		await page.evaluate(() => {
@@ -19,7 +21,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 						err.name = 'NotFoundError';
 						throw err;
 					}
-					return new File([this.data], this.name, { lastModified: this.mtime });
+					return new File([this.data as any], this.name, { lastModified: this.mtime });
 				}
 				async createWritable() {
 					const self = this;

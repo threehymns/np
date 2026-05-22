@@ -7,7 +7,7 @@ if (typeof window !== 'undefined') {
 	if (!(window as any).process) {
 		(window as any).process = {
 			env: {},
-			nextTick: (cb: Function) => setTimeout(cb, 0),
+			nextTick: (cb: Function) => queueMicrotask(cb as any),
 			browser: true
 		};
 	}

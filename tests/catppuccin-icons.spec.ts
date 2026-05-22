@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { mockIconThemes } from './helpers/mock-network';
 
 test.describe('Catppuccin Icon Theme', () => {
 	test.beforeEach(async ({ page }) => {
+		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible();
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
 	});
 
 	test('should resolve icons for catppuccin theme', async ({ page }) => {
