@@ -4,11 +4,13 @@
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { Switch } from "$lib/components/ui/switch/index.js";
-	import { appState } from "$lib/state.svelte.js";
+	import { useAppState } from "$lib/state.svelte.js";
 	import { setMode, resetMode } from "mode-watcher";
 	import { Palette, TextT, Gear } from "phosphor-svelte";
 	import { cn } from "$lib/utils.js";
 	import type { AppearanceMode } from "$lib/preferences.svelte";
+
+	const appState = useAppState();
 
 	let { open = $bindable(false) } = $props();
 

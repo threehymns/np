@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { appState } from '$lib/state.svelte.js';
+  import { useAppState } from '$lib/state.svelte.js';
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { X } from "phosphor-svelte";
   import { flip } from 'svelte/animate';
@@ -8,6 +8,8 @@
   import FileExplorer from '$lib/components/FileExplorer.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import type { EditorView } from 'codemirror';
+
+  const appState = useAppState();
 
   let draggedId = $state<string | null>(null);
   let editorViews = $state<Record<string, EditorView | undefined>>({});

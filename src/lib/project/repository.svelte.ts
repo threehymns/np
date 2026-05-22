@@ -1,5 +1,4 @@
 import type { VCSAdapter, SwitchResult } from './vcs';
-import { IsomorphicGitAdapter } from './isomorphic-git';
 
 export interface RepositorySafetyReport {
 	canSwitch: boolean;
@@ -16,10 +15,8 @@ export class Repository {
 
 	private adapter: VCSAdapter;
 
-	constructor(rootHandle: FileSystemDirectoryHandle) {
-		// For now, we always use the IsomorphicGitAdapter.
-		// In an Electron app, this could be injected or switched.
-		this.adapter = new IsomorphicGitAdapter(rootHandle);
+	constructor(rootHandle: FileSystemDirectoryHandle, vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter) {
+		this.adapter = vcsFactory(rootHandle);
 	}
 
 	async refresh(): Promise<boolean> {

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { commands } from "$lib/commands.svelte";
 	import * as Command from "$lib/components/ui/command";
-	import { appState } from "$lib/state.svelte";
+	import { useAppState } from "$lib/state.svelte";
 	import { ArrowLeft } from "phosphor-svelte";
 	import Icon from "$lib/components/Icon.svelte";
+
+	const appState = useAppState();
 
 	let inputValue = $state("");
 
@@ -27,7 +28,7 @@
 	});
 
 	function executeCommand(id: string) {
-		commands.execute(id);
+		appState.commands.execute(id);
 		if (!appState.commandPalette.items) {
 			appState.commandPalette.open = false;
 		}
@@ -110,7 +111,7 @@
 		{:else}
 			{#each ["File", "Edit", "Format", "View", "Export"] as category}
 				<Command.Group heading={category}>
-					{#each commands.getByCategory(category) as command}
+					{#each appState.commands.getByCategory(category) as command}
 						<Command.Item
 							onSelect={() => executeCommand(command.id)}
 							disabled={command.isEnabled && !command.isEnabled()}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appState } from "$lib/state.svelte";
+	import { useAppState } from "$lib/state.svelte";
 	import FileTreeItem from "./FileTreeItem.svelte";
 	import { FolderOpen, ArrowsClockwise, MagnifyingGlass, X, Funnel, Check, CaretUpDown, FolderPlus, GitBranch } from "phosphor-svelte";
 	import { Button } from "$lib/components/ui/button";
@@ -13,6 +13,8 @@
 	import { slide } from "svelte/transition";
 	import { cn } from "$lib/utils";
 	import { tick, onMount } from "svelte";
+
+	const appState = useAppState();
 
 	let showFilter = $state(false);
 	let comboOpen = $state(false);

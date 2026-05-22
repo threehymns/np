@@ -1,4 +1,4 @@
-import { appState } from '../state.svelte';
+import type { Workspace } from '../workspace.svelte';
 import { saveExpandedPaths, loadExpandedPaths } from '../persistence';
 import { SvelteSet } from 'svelte/reactivity';
 import { browserHandleRegistry, toURI, type FileOrigin } from '../storage';
@@ -74,7 +74,6 @@ class GitIgnoreMatcher {
 		return ignored;
 	}
 }
-
 export class ProjectTree {
 	nodes = $state<TreeNode[]>([]);
 	isScanning = $state(false);
@@ -86,8 +85,10 @@ export class ProjectTree {
 	private expandedPaths = new SvelteSet<string>();
 	private initPromise: Promise<void> | null = null;
 	private isRestoring = $state(false);
+	private workspace: Workspace;
 
-	constructor() {
+	constructor(workspace: Workspace) {
+		this.workspace = workspace;
 		if (typeof window !== 'undefined') {
 			this.isRestoring = true;
 			this.initPromise = this.loadExpansionState().finally(() => {
@@ -215,7 +216,7 @@ export class ProjectTree {
 	});
 
 	private async performSearch(query: string) {
-		if (!appState.workspace.rootOrigin) return;
+		if (!this.workspace.rootOrigin) return;
 		
 		if (this.searchAbortController) {
 			this.searchAbortController.abort();
@@ -230,7 +231,7 @@ export class ProjectTree {
 			const matchedChildren: TreeNode[] = [];
 			
 			try {
-				const entries = await appState.workspace.storage.readDirectory(origin);
+				const entries = await this.workspace.storage.readDirectory(origin);
 				for (const entry of entries) {
 					if (signal.aborted) return null;
 
@@ -269,7 +270,7 @@ export class ProjectTree {
 			}) : null;
 		};
 
-		const found = await search(appState.workspace.rootOrigin);
+		const found = await search(this.workspace.rootOrigin);
 		if (!signal.aborted) {
 			this.searchResults = found || [];
 			this.isSearching = false;
@@ -277,7 +278,7 @@ export class ProjectTree {
 	}
 
 	async scan(rootOrigin: FileOrigin) {
-		if (!appState.workspace.hasRootPermission) {
+		if (!this.workspace.hasRootPermission) {
 			return;
 		}
 		if (this.initPromise) {
@@ -292,7 +293,7 @@ export class ProjectTree {
 					path: rootOrigin.path ? `${rootOrigin.path}/.gitignore` : '.gitignore',
 					name: '.gitignore'
 				};
-				const content = await appState.workspace.storage.readFile(gitignoreOrigin);
+				const content = await this.workspace.storage.readFile(gitignoreOrigin);
 				this.gitignore = new GitIgnoreMatcher(content);
 			} catch (e) {
 				this.gitignore = null;
@@ -310,7 +311,7 @@ export class ProjectTree {
 		const nodes: TreeNode[] = [];
 		try {
 			let i = 0;
-			const entries = await appState.workspace.storage.readDirectory(origin);
+			const entries = await this.workspace.storage.readDirectory(origin);
 			for (const entry of entries) {
 				// Yield every 50 items to keep UI responsive
 				if (++i % 50 === 0) {
@@ -365,8 +366,8 @@ export class ProjectTree {
 	}
 
 	private async getNodePath(node: TreeNode): Promise<string> {
-		if (!appState.workspace.rootOrigin) return node.name;
-		const rootOrigin = appState.workspace.rootOrigin;
+		if (!this.workspace.rootOrigin) return node.name;
+		const rootOrigin = this.workspace.rootOrigin;
 		if (node.origin.path === rootOrigin.path) return '';
 		if (node.origin.path.startsWith(rootOrigin.path + '/')) {
 			return node.origin.path.slice(rootOrigin.path.length + 1);
@@ -375,40 +376,40 @@ export class ProjectTree {
 	}
 
 	async createFile(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
-		await appState.workspace.storage.createFile(parentOrigin, name);
+		await this.workspace.storage.createFile(parentOrigin, name);
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin);
 			parentNode.isExpanded = true;
 		} else {
-			await this.scan(appState.workspace.rootOrigin!);
+			await this.scan(this.workspace.rootOrigin!);
 		}
 	}
 
 	async createDirectory(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
-		await appState.workspace.storage.createDirectory(parentOrigin, name);
+		await this.workspace.storage.createDirectory(parentOrigin, name);
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin);
 			parentNode.isExpanded = true;
 		} else {
-			await this.scan(appState.workspace.rootOrigin!);
+			await this.scan(this.workspace.rootOrigin!);
 		}
 	}
 
 	async deleteEntry(node: TreeNode) {
-		await appState.workspace.storage.deleteEntry(node.origin);
-		await this.scan(appState.workspace.rootOrigin!);
+		await this.workspace.storage.deleteEntry(node.origin);
+		await this.scan(this.workspace.rootOrigin!);
 	}
 
 	async renameEntry(node: TreeNode, newName: string) {
-		const newOrigin = await appState.workspace.storage.renameEntry(node.origin, newName);
+		const newOrigin = await this.workspace.storage.renameEntry(node.origin, newName);
 		
 		// Update any open documents that match this origin
-		for (const doc of appState.documents) {
+		for (const doc of this.workspace.documents) {
 			if (doc.origin && toURI(doc.origin) === toURI(node.origin)) {
 				doc.origin = newOrigin;
 			}
 		}
 
-		await this.scan(appState.workspace.rootOrigin!);
+		await this.scan(this.workspace.rootOrigin!);
 	}
 }

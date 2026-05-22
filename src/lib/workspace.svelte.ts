@@ -3,7 +3,7 @@ import { type Storage, type FileOrigin, browserHandleRegistry, toURI } from './s
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
-import type { SwitchResult } from './project/vcs';
+import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
@@ -13,15 +13,17 @@ export class Workspace {
 	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
 	recentFolders = $state<FileOrigin[]>([]);
-	projectTree = new ProjectTree();
+	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
 	
 	storage: Storage;
+	vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter;
 	private untitledCounter = 0;
 	private isRestoring = $state(false);
 
-	constructor(storage: Storage) {
+	constructor(storage: Storage, vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter) {
 		this.storage = storage;
+		this.vcsFactory = vcsFactory;
 		
 		if (typeof window !== 'undefined') {
 			this.restoreSession();
@@ -152,7 +154,7 @@ export class Workspace {
 		const rootHandle = await browserHandleRegistry.resolve(toURI(origin));
 		if (rootHandle && rootHandle.kind === 'directory') {
 			this.rootHandle = rootHandle as FileSystemDirectoryHandle;
-			this.repository = new Repository(this.rootHandle);
+			this.repository = new Repository(this.rootHandle, this.vcsFactory);
 			await this.repository.refresh();
 		} else {
 			this.rootHandle = null;
@@ -187,7 +189,7 @@ export class Workspace {
 			const rootHandle = await browserHandleRegistry.resolve(toURI(this.rootOrigin));
 			if (rootHandle && rootHandle.kind === 'directory') {
 				this.rootHandle = rootHandle as FileSystemDirectoryHandle;
-				this.repository = new Repository(this.rootHandle);
+				this.repository = new Repository(this.rootHandle, this.vcsFactory);
 				
 				// Fresh start for the adapter
 				const adapter = (this.repository as any).adapter;
@@ -349,7 +351,7 @@ export class Workspace {
 						try {
 							await dirHandle.getDirectoryHandle('.git');
 							this.rootHandle = dirHandle;
-							this.repository = new Repository(dirHandle);
+							this.repository = new Repository(dirHandle, this.vcsFactory);
 							await this.repository.refresh();
 						} catch (e: any) {
 							if (e.name === 'NotFoundError') {

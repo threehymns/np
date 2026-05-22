@@ -8,13 +8,24 @@
 	import { Button } from "$lib/components/ui/button";
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 
-	import { appState } from "$lib/state.svelte.js";
-	import { commands } from "$lib/commands.svelte";
+	import { setContext } from "svelte";
+	import { AppState } from "$lib/state.svelte.js";
+	import { MultiSchemeStorage } from "$lib/storage";
+	import { IsomorphicGitAdapter } from "$lib/project/isomorphic-git";
 	import type { Theme, AppearanceMode } from "$lib/preferences.svelte";
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
 	import CommandPalette from "$lib/components/CommandPalette.svelte";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount } from "svelte";
+
+	const storage = new MultiSchemeStorage();
+	const vcsFactory = (rootHandle: FileSystemDirectoryHandle) => new IsomorphicGitAdapter(rootHandle);
+	const appState = new AppState({ storage, vcsFactory });
+	setContext("appState", appState);
+
+	if (typeof window !== "undefined") {
+		(window as any).appState = appState;
+	}
 
 	let { children } = $props();
 	let settingsOpen = $state(false);
@@ -46,7 +57,7 @@
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (commands.handleKeydown(e)) return;
+		if (appState.commands.handleKeydown(e)) return;
 
 		if ((e.metaKey || e.ctrlKey) && e.key === ',') {
 			e.preventDefault();
@@ -82,7 +93,7 @@
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>
 						{#if category === 'File'}
-							{#each commands.getByCategory('File') as command (command.id)}
+							{#each appState.commands.getByCategory('File') as command (command.id)}
 								<Menubar.Item 
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
@@ -97,7 +108,7 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each commands.getByCategory('Export') as command (command.id)}
+									{#each appState.commands.getByCategory('Export') as command (command.id)}
 										<Menubar.Item 
 											onclick={() => command.action()}
 											disabled={command.isEnabled && !command.isEnabled()}
@@ -127,7 +138,7 @@
 								<Menubar.Shortcut>{formatShortcut('cmd+\\')}</Menubar.Shortcut>
 							</Menubar.CheckboxItem>
 						{:else}
-							{#each commands.getByCategory(category) as command (command.id)}
+							{#each appState.commands.getByCategory(category) as command (command.id)}
 								<Menubar.Item 
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
@@ -195,7 +206,7 @@
 					<button 
 						type="button"
 						class="font-medium text-foreground/80 hover:text-foreground cursor-pointer transition-colors"
-						onclick={() => commands.execute('edit.changeLanguageMode')}
+						onclick={() => appState.commands.execute('edit.changeLanguageMode')}
 					>
 						{appState.activeDocument?.language?.name ?? 'Plain Text'}
 					</button>

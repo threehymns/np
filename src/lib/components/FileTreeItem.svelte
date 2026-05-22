@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appState } from "$lib/state.svelte";
+	import { useAppState } from "$lib/state.svelte";
 	import type { VisualNode } from "$lib/project/tree.svelte";
 	import { File, Folder, FolderOpen, CaretRight, Plus, FolderPlus, Trash, PencilSimple } from "phosphor-svelte";
 	import { cn } from "$lib/utils";
@@ -8,6 +8,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import FileTreeItem from "./FileTreeItem.svelte";
 	import { toURI } from "$lib/storage";
+
+	const appState = useAppState();
 
 	let { visualNode } = $props<{ visualNode: VisualNode }>();
 	let isRenaming = $state(false);

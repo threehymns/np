@@ -1,6 +1,6 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
-import { appState } from "./state.svelte";
+import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 
@@ -14,7 +14,7 @@ export interface Command {
 	isEnabled?: () => boolean;
 }
 
-class CommandRegistry {
+export class CommandRegistry {
 	private commands = $state<Command[]>([]);
 
 	register(command: Command) {
@@ -70,11 +70,9 @@ class CommandRegistry {
 	}
 }
 
-export const commands = new CommandRegistry();
-
 // Initial registration of core commands
-export function registerCoreCommands() {
-	commands.register({
+export function registerCoreCommands(appState: AppState) {
+	appState.commands.register({
 		id: 'file.new',
 		label: 'New',
 		category: 'File',
@@ -82,7 +80,7 @@ export function registerCoreCommands() {
 		action: () => { appState.newFile(); }
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'file.open',
 		label: 'Open...',
 		category: 'File',
@@ -90,14 +88,14 @@ export function registerCoreCommands() {
 		action: () => { appState.openFile(); }
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'file.openFolder',
 		label: 'Open Folder...',
 		category: 'File',
 		action: () => appState.workspace.openDirectory()
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'file.save',
 		label: 'Save',
 		category: 'File',
@@ -105,14 +103,14 @@ export function registerCoreCommands() {
 		action: () => appState.saveFile()
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'file.saveAs',
 		label: 'Save As...',
 		category: 'File',
 		action: () => appState.saveFileAs()
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',
@@ -126,7 +124,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.redo',
 		label: 'Redo',
 		category: 'Edit',
@@ -140,7 +138,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.cut',
 		label: 'Cut',
 		category: 'Edit',
@@ -163,7 +161,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.copy',
 		label: 'Copy',
 		category: 'Edit',
@@ -182,7 +180,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.paste',
 		label: 'Paste',
 		category: 'Edit',
@@ -202,7 +200,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.find',
 		label: 'Find...',
 		category: 'Edit',
@@ -211,7 +209,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.selectAll',
 		label: 'Select All',
 		category: 'Edit',
@@ -225,7 +223,7 @@ export function registerCoreCommands() {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'transformer.copyHTML',
 		label: 'Copy as HTML',
 		category: 'Export',
@@ -236,7 +234,7 @@ export function registerCoreCommands() {
 		}
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'transformer.exportHTML',
 		label: 'Export to HTML...',
 		category: 'Export',
@@ -269,7 +267,7 @@ export function registerCoreCommands() {
 		}
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'edit.changeLanguageMode',
 		label: 'Change Language Mode',
 		category: 'Edit',
@@ -343,7 +341,7 @@ export function registerCoreCommands() {
 		}
 	});
 
-	commands.register({
+	appState.commands.register({
 		id: 'view.toggleSidebar',
 		label: 'Toggle Sidebar',
 		category: 'View',

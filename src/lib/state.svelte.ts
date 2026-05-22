@@ -1,24 +1,36 @@
 import './polyfills';
-import { MultiSchemeStorage } from './storage';
+import type { Storage } from './storage';
+import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
-import { Preferences } from './preferences.svelte';
-import { registerCoreCommands } from './commands.svelte';
+import { Preferences, type PreferenceStorage } from './preferences.svelte';
+import { CommandRegistry, registerCoreCommands } from './commands.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
+import { getContext } from 'svelte';
+
+export interface AppStateOptions {
+	storage: Storage;
+	vcsFactory: (rootHandle: FileSystemDirectoryHandle) => VCSAdapter;
+	prefsStorage?: PreferenceStorage;
+}
 
 export class AppState {
-	prefs = new Preferences();
-	storage = new MultiSchemeStorage();
-	workspace = new Workspace(this.storage);
+	prefs: Preferences;
+	storage: Storage;
+	workspace: Workspace;
 	selection = selectionState;
 	commandPalette = new CommandPaletteState();
 	icons = iconRegistry;
+	commands = new CommandRegistry();
 	
 	activeEditorView = $state<any>(undefined);
 
-	constructor() {
-		registerCoreCommands();
+	constructor(options: AppStateOptions) {
+		this.storage = options.storage;
+		this.prefs = new Preferences(options.prefsStorage);
+		this.workspace = new Workspace(this.storage, options.vcsFactory);
+		registerCoreCommands(this);
 	}
 
 	async init() {
@@ -40,8 +52,10 @@ export class AppState {
 	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
 }
 
-export const appState = new AppState();
-
-if (typeof window !== 'undefined') {
-	(window as any).appState = appState;
+export function useAppState(): AppState {
+	const state = getContext<AppState>('appState');
+	if (!state) {
+		throw new Error('AppState not found in Svelte context. Make sure AppState is initialized in a parent component/layout.');
+	}
+	return state;
 }

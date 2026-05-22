@@ -2,7 +2,6 @@
 	import { untrack } from "svelte";
 	import { EditorView } from "codemirror";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
-	import { appState } from "$lib/state.svelte.js";
 	import { createEditorExtensions, getLanguageExtensions, selectionState } from "$lib/editor";
 
 	import "$lib/editor/styles/editor.css";

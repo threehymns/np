@@ -142,7 +142,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				if (!RepositoryClass) throw new Error('Repository constructor not found');
 
 				const root = new MockDirectoryHandle('test-project');
-				const repository = new RepositoryClass(root as any);
+				const repository = new RepositoryClass(root as any, appState.workspace.vcsFactory);
 				const adapter = repository.adapter;
 
 				// Create dummy .git folder to allow adapter to initialize its fs
