@@ -1,3 +1,4 @@
+import './polyfills';
 import { FileStorage } from './storage';
 import { Workspace } from './workspace.svelte';
 import { Preferences } from './preferences.svelte';
@@ -44,4 +45,3 @@ export const appState = new AppState();
 if (typeof window !== 'undefined') {
 	(window as any).appState = appState;
 }
-

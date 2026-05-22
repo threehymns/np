@@ -1,6 +1,7 @@
 import { DocumentSession } from './document.svelte';
 import type { Storage } from './storage';
 import { ProjectTree } from './project/tree.svelte';
+import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { saveHandles, loadHandles, saveActiveId, loadActiveId, saveRootHandle, loadRootHandle, saveRecentFolders, loadRecentFolders } from './persistence';
 
 export class Workspace {
@@ -8,7 +9,8 @@ export class Workspace {
 	activeDocumentId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	rootHandle = $state.raw<FileSystemDirectoryHandle | null>(null);
-	recentFolders = $state.raw<FileSystemDirectoryHandle[]>([]);
+	repository = $state<Repository | null>(null);
+	recentFolders = $state<FileSystemDirectoryHandle[]>([]);
 	projectTree = new ProjectTree();
 	hasRootPermission = $state(false);
 	
@@ -19,9 +21,6 @@ export class Workspace {
 	constructor(storage: Storage) {
 		this.storage = storage;
 		
-		// Initialize with a default untitled doc
-		this.newFile();
-
 		if (typeof window !== 'undefined') {
 			this.restoreSession();
 
@@ -51,7 +50,7 @@ export class Workspace {
 				$effect(() => {
 					if (this.isRestoring) return;
 					// Persist recent folders
-					saveRecentFolders(this.recentFolders);
+					saveRecentFolders($state.snapshot(this.recentFolders));
 				});
 			});
 		}
@@ -61,13 +60,21 @@ export class Workspace {
 		return this.documents.find((doc) => doc.id === this.activeDocumentId);
 	}
 
+	get currentBranch() {
+		return this.repository?.currentBranch ?? null;
+	}
+
+	get branches() {
+		return this.repository?.branches ?? [];
+	}
+
 	reorderDocuments(newDocs: DocumentSession[]) {
 		this.documents = newDocs;
 	}
 
 	async newFile() {
 		this.untitledCounter++;
-		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
+		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
 		this.documents.push(newDoc);
 		this.activeDocumentId = newDoc.id;
 		return newDoc;
@@ -88,7 +95,7 @@ export class Workspace {
 		}
 
 		const content = await this.storage.readFile(origin);
-		const newDoc = new DocumentSession(this.storage, content, origin);
+		const newDoc = new DocumentSession(this.storage, content, origin, undefined, this);
 		this.documents.push(newDoc);
 		this.activeDocumentId = newDoc.id;
 		return newDoc;
@@ -106,6 +113,8 @@ export class Workspace {
 
 		this.rootHandle = handle;
 		this.hasRootPermission = true;
+		this.repository = new Repository(handle);
+		await this.repository.refresh();
 		
 		// Add to recent folders
 		let existingIndex = -1;
@@ -127,14 +136,48 @@ export class Workspace {
 		this.recentFolders = [handle, ...newRecent].slice(0, 10);
 
 		await this.projectTree.scan(handle);
+
+		// Refresh permissions for already open files
+		for (const doc of this.documents) {
+			if (doc.origin) {
+				doc.hasRootPermissionForFile().then(hasRoot => {
+					if (hasRoot) {
+						doc.permissionState = 'granted';
+					}
+				});
+			}
+		}
 	}
 
 	async requestRootPermission() {
 		if (!this.rootHandle) return false;
 		const granted = await this.storage.verifyPermission(this.rootHandle, true);
 		if (granted) {
+			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
+			this.repository = new Repository(this.rootHandle);
+			
+			// Fresh start for the adapter
+			const adapter = (this.repository as any).adapter;
+			if (adapter && typeof adapter.reset === 'function') {
+				adapter.reset();
+			}
+			
+			const success = await this.repository.refresh();
+			console.log('[Workspace] Repository initialized after permission:', success);
+			
 			await this.projectTree.scan(this.rootHandle);
+
+			// Refresh permissions for already open files
+			for (const doc of this.documents) {
+				if (doc.origin) {
+					doc.hasRootPermissionForFile().then(hasRoot => {
+						if (hasRoot) {
+							doc.permissionState = 'granted';
+						}
+					});
+				}
+			}
 		}
 		return granted;
 	}
@@ -169,10 +212,10 @@ export class Workspace {
 		this.pendingCloseId = null;
 	}
 
-	private performClose(index: number, id: string) {
+	private async performClose(index: number, id: string) {
 		if (this.documents.length === 1) {
 			this.untitledCounter++;
-			this.documents[0] = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
+			this.documents[0] = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
 			this.activeDocumentId = this.documents[0].id;
 		} else {
 			this.documents.splice(index, 1);
@@ -182,23 +225,85 @@ export class Workspace {
 		}
 	}
 
+	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
+		if (!this.repository) return null;
+		
+		const modifiedFiles = this.documents
+			.filter(doc => doc.isModified)
+			.map(doc => doc.fileName);
+			
+		return await this.repository.getSafetyReport(modifiedFiles, targetBranch);
+	}
+
+	async switchBranch(branchName: string) {
+		if (!this.repository || !this.rootHandle) return;
+
+		try {
+			const success = await this.repository.switchBranch(branchName);
+			
+			if (success) {
+				// Full reload after branch switch
+				await this.projectTree.scan(this.rootHandle);
+				
+				for (const doc of this.documents) {
+					if (doc.origin) {
+						try {
+							await doc.loadContent();
+						} catch (e) {
+							// Ignored here; doc.loadContent() handles setting deletedOnDisk to true
+						}
+					}
+				}
+			}
+		} catch (e) {
+			console.error('Failed to switch branch', e);
+		}
+	}
+
 	private async restoreSession() {
 		this.isRestoring = true;
 		try {
-			const handles = await loadHandles();
-			const activeId = await loadActiveId();
-			const rootHandle = await loadRootHandle();
-			const recentFolders = await loadRecentFolders();
+			const [handles, activeId, rootHandle, recentFolders] = await Promise.all([
+				loadHandles(),
+				loadActiveId(),
+				loadRootHandle(),
+				loadRecentFolders()
+			]);
 			
-			// Set recent folders first so they are available
 			this.recentFolders = recentFolders;
 
 			if (rootHandle) {
-				this.rootHandle = rootHandle;
-				if (await rootHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
-					this.hasRootPermission = true;
-					await this.projectTree.scan(rootHandle);
-				} else {
+				try {
+					const permission = await rootHandle.queryPermission({ mode: 'readwrite' });
+					
+					if (permission === 'granted') {
+						// Permission is already granted. We can initialize repository and tree immediately.
+						try {
+							await rootHandle.getDirectoryHandle('.git');
+							this.rootHandle = rootHandle;
+							this.hasRootPermission = true;
+							this.repository = new Repository(rootHandle);
+							await this.repository.refresh();
+							await this.projectTree.scan(rootHandle);
+						} catch (e: any) {
+							if (e.name === 'NotFoundError') {
+								// Not a git repo, basic access is fine.
+								this.rootHandle = rootHandle;
+								this.hasRootPermission = true;
+								this.repository = null;
+								await this.projectTree.scan(rootHandle);
+							} else {
+								this.rootHandle = rootHandle;
+								this.hasRootPermission = false;
+							}
+						}
+					} else {
+						this.rootHandle = rootHandle;
+						this.hasRootPermission = false;
+					}
+				} catch (e) {
+					console.warn('[Workspace] Handle appears to be stale or invalid:', e);
+					this.rootHandle = null;
 					this.hasRootPermission = false;
 				}
 			}
@@ -209,15 +314,15 @@ export class Workspace {
 					const origin = { handle, name: handle.name };
 					let content = '';
 					
-					if (await handle.queryPermission() === 'granted') {
-						try {
+					try {
+						if (await handle.queryPermission() === 'granted') {
 							content = await this.storage.readFile(origin);
-						} catch (e) {
-							console.error(`Failed to read restored file ${handle.name}`, e);
 						}
+					} catch (e) {
+						console.warn(`[Workspace] Failed to read restored file ${handle.name}`, e);
 					}
 					
-					const doc = new DocumentSession(this.storage, content, origin);
+					const doc = new DocumentSession(this.storage, content, origin, undefined, this);
 					restoredDocs.push(doc);
 				}
 
@@ -228,10 +333,14 @@ export class Workspace {
 					} else {
 						this.activeDocumentId = restoredDocs[0].id;
 					}
+				} else if (this.documents.length === 0) {
+					await this.newFile();
 				}
+			} else if (this.documents.length === 0) {
+				await this.newFile();
 			}
 		} catch (e) {
-			console.error('Failed to restore session', e);
+			console.error('[Workspace] Failed to restore session', e);
 		} finally {
 			this.isRestoring = false;
 		}

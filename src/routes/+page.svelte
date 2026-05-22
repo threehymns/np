@@ -111,7 +111,8 @@
           >
             <Tabs.Trigger
               value={doc.id}
-              class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5"
+              class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5 {doc.deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
+              title={doc.deletedOnDisk ? `${doc.fileName} (deleted on disk)` : doc.fileName}
             >
               <Icon 
                 resource={doc.fileName}

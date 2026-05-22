@@ -158,7 +158,7 @@
 
 {#if visualNode.kind === 'directory' && visualNode.isExpanded && visualNode.children}
 	<div class="flex flex-col">
-		{#each visualNode.children as child (child.name)}
+		{#each visualNode.children as child (child.handle)}
 			<FileTreeItem visualNode={child} />
 		{/each}
 	</div>

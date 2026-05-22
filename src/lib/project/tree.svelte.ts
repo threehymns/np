@@ -96,8 +96,10 @@ export class ProjectTree {
 			$effect.root(() => {
 				$effect(() => {
 					if (this.isRestoring) return;
-					// Persist expanded paths
-					const paths = Array.from(this.expandedPaths);
+					// Persist expanded paths (pruned)
+					const paths = Array.from(this.expandedPaths)
+						.filter(p => !p.includes('node_modules') && !p.includes('.svelte-kit') && !p.includes('.git'))
+						.slice(0, 500);
 					saveExpandedPaths(paths);
 				});
 			});
@@ -105,9 +107,22 @@ export class ProjectTree {
 	}
 
 	private async loadExpansionState() {
-		const paths = await loadExpandedPaths();
-		for (const path of paths) {
-			this.expandedPaths.add(path);
+		try {
+			// Add a safety timeout of 2 seconds
+			const paths = await Promise.race([
+				loadExpandedPaths(),
+				new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Timeout loading expansion state')), 2000))
+			]);
+			
+			// Prune heavy folders and limit count
+			let count = 0;
+			for (const path of paths) {
+				if (path.includes('node_modules') || path.includes('.svelte-kit') || path.includes('.git')) continue;
+				if (count++ > 500) break; // Limit to 500 expanded folders max
+				this.expandedPaths.add(path);
+			}
+		} catch (e) {
+			console.warn('[Tree] Failed to load expansion state:', e);
 		}
 	}
 
@@ -125,10 +140,12 @@ export class ProjectTree {
 					
 					// Concatenate only if children are already loaded AND there is exactly one directory child
 					// If children are not loaded (length 0 but directory kind), we stop concatenation
+					let safety = 0;
 					while (
 						current.children && 
 						current.children.length === 1 && 
-						current.children[0].kind === 'directory'
+						current.children[0].kind === 'directory' &&
+						safety++ < 100
 					) {
 						current = current.children[0];
 						pathNames.push(current.name);
@@ -217,6 +234,8 @@ export class ProjectTree {
 
 					const entryPath = path ? `${path}/${entry.name}` : entry.name;
 					
+					// Hard ignores for heavy folders
+					if (entry.name === 'node_modules' || entry.name === '.svelte-kit' || entry.name === '.git') continue;
 					if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
 					if (this.gitignore?.ignores(entryPath)) continue;
 
@@ -256,7 +275,12 @@ export class ProjectTree {
 	}
 
 	async scan(rootHandle: FileSystemDirectoryHandle) {
-		if (this.initPromise) await this.initPromise;
+		if (!appState.workspace.hasRootPermission) {
+			return;
+		}
+		if (this.initPromise) {
+			await this.initPromise;
+		}
 		this.isScanning = true;
 		try {
 			// Load .gitignore if it exists
@@ -270,6 +294,8 @@ export class ProjectTree {
 			}
 
 			this.nodes = await this.buildLevel(rootHandle);
+		} catch (e) {
+			console.error('[Tree] Scan failed', e);
 		} finally {
 			this.isScanning = false;
 		}
@@ -277,27 +303,39 @@ export class ProjectTree {
 
 	private async buildLevel(handle: FileSystemDirectoryHandle, path = ""): Promise<TreeNode[]> {
 		const nodes: TreeNode[] = [];
-		for await (const entry of handle.values()) {
-			const entryPath = path ? `${path}/${entry.name}` : entry.name;
-			
-			if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
-			if (this.gitignore?.ignores(entryPath)) continue;
+		try {
+			let i = 0;
+			for await (const entry of handle.values()) {
+				// Yield every 50 items to keep UI responsive
+				if (++i % 50 === 0) {
+					await new Promise(resolve => setTimeout(resolve, 0));
+				}
 
-			const isExpanded = this.expandedPaths.has(entryPath);
-			const node: TreeNode = {
-				name: entry.name,
-				kind: entry.kind as 'file' | 'directory',
-				handle: entry,
-				parentHandle: handle,
-				isExpanded,
-				children: entry.kind === 'directory' ? [] : undefined
-			};
+				const entryPath = path ? `${path}/${entry.name}` : entry.name;
+				
+				// Hard ignores for heavy folders
+				if (entry.name === 'node_modules' || entry.name === '.svelte-kit' || entry.name === '.git') continue;
+				if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
+				if (this.gitignore?.ignores(entryPath)) continue;
 
-			if (isExpanded && node.kind === 'directory') {
-				node.children = await this.buildLevel(entry as FileSystemDirectoryHandle, entryPath);
+				const isExpanded = this.expandedPaths.has(entryPath);
+				const node: TreeNode = {
+					name: entry.name,
+					kind: entry.kind as 'file' | 'directory',
+					handle: entry,
+					parentHandle: handle,
+					isExpanded,
+					children: entry.kind === 'directory' ? [] : undefined
+				};
+
+				if (isExpanded && node.kind === 'directory') {
+					node.children = await this.buildLevel(entry as FileSystemDirectoryHandle, entryPath);
+				}
+
+				nodes.push(node);
 			}
-
-			nodes.push(node);
+		} catch (e) {
+			console.warn(`[Tree] Failed to build level for ${path || 'root'}`, e);
 		}
 
 		return nodes.sort((a, b) => {
@@ -322,8 +360,13 @@ export class ProjectTree {
 
 	private async getNodePath(node: TreeNode): Promise<string> {
 		if (!appState.workspace.rootHandle) return node.name;
-		const path = await appState.workspace.rootHandle.resolve(node.handle);
-		return path ? path.join('/') : node.name;
+		try {
+			const path = await appState.workspace.rootHandle.resolve(node.handle);
+			return path ? path.join('/') : node.name;
+		} catch (e) {
+			console.warn('[Tree] Failed to resolve path for node:', node.name, e);
+			return node.name;
+		}
 	}
 
 	async createFile(parentHandle: FileSystemDirectoryHandle, name: string, parentNode?: TreeNode) {

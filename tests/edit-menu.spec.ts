@@ -3,12 +3,52 @@ import { test, expect } from '@playwright/test';
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
 test('edit menu items work correctly', async ({ page }) => {
+  page.on('console', msg => console.log('BROWSER LOG:', msg.text()));
+  // Mock navigator.clipboard to avoid flaky parallel test failures due to browser focus
+  await page.addInitScript(() => {
+    let clipboardData = '';
+    const mockClipboard = {
+      writeText: async (text: string) => {
+        clipboardData = text;
+      },
+      readText: async () => {
+        return clipboardData;
+      }
+    };
+    try {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText = async (text: string) => {
+          clipboardData = text;
+        };
+        navigator.clipboard.readText = async () => {
+          return clipboardData;
+        };
+      }
+    } catch (e) {}
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: mockClipboard,
+        configurable: true,
+        writable: true
+      });
+    } catch (e) {}
+    try {
+      Object.defineProperty(Navigator.prototype, 'clipboard', {
+        get() {
+          return mockClipboard;
+        },
+        configurable: true
+      });
+    } catch (e) {}
+  });
+
   await page.goto('/');
 
   const editor = page.locator('.cm-content');
   await expect(editor).toBeVisible();
 
   await editor.click();
+  await expect(editor).toBeFocused();
   await page.keyboard.press('Control+A');
   await page.keyboard.press('Backspace');
 
@@ -18,6 +58,7 @@ test('edit menu items work correctly', async ({ page }) => {
   // Select All using Edit menu
   await page.click('text=Edit');
   await page.click('text=Select All');
+
 
   // Ensure selection is made, we can do this by typing to replace
   // If it's selected, typing 'Replace' will replace 'Hello World'
@@ -38,13 +79,17 @@ test('edit menu items work correctly', async ({ page }) => {
   // Select All and Copy
   await page.click('text=Edit');
   await page.click('text=Select All');
+  
   await page.click('text=Edit');
+
   await page.click('text=Copy');
   
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+
   
   // Go to end and paste
   await editor.click(); // removes selection
+  await expect(editor).toBeFocused();
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
   

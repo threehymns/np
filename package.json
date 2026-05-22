@@ -58,6 +58,7 @@
 		"@replit/codemirror-lang-svelte": "^6.0.0",
 		"codemirror": "^6.0.2",
 		"codemirror-markdown-tables": "^1.0.0",
+		"isomorphic-git": "^1.38.1",
 		"marked": "^18.0.4",
 		"mode-watcher": "^1.1.0"
 	}

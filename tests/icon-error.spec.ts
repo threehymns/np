@@ -65,12 +65,14 @@ test.describe('Icon Loading Error Handling', () => {
 			const themeDefaultUrl = await page.evaluate(() => (window as any).appState.icons.getThemeDefaultFileIcon());
 			expect(themeDefaultUrl).toContain('.svg');
 
-			await page.evaluate(async () => {
-				const appState = (window as any).appState;
-				appState.prefs.fileIconThemeId = 'phosphor';
-				await new Promise(r => setTimeout(r, 100));
-				appState.prefs.fileIconThemeId = 'material';
+			await page.evaluate(() => {
+				(window as any).appState.prefs.fileIconThemeId = 'phosphor';
 			});
+			await page.waitForTimeout(200);
+			await page.evaluate(() => {
+				(window as any).appState.prefs.fileIconThemeId = 'material';
+			});
+			await page.waitForTimeout(200);
 			const themeFallback = activeTab.locator('img[data-icon-theme-fallback="true"]');
 			await expect(themeFallback).toBeVisible({ timeout: 10000 });
 
@@ -78,11 +80,12 @@ test.describe('Icon Loading Error Handling', () => {
 			if (fallbackSrc) {
 				await page.route(fallbackSrc, route => route.fulfill({ status: 404 }));
 
-				await page.evaluate(async () => {
-					const appState = (window as any).appState;
-					appState.prefs.fileIconThemeId = 'phosphor';
-					await new Promise(r => setTimeout(r, 100));
-					appState.prefs.fileIconThemeId = 'material';
+				await page.evaluate(() => {
+					(window as any).appState.prefs.fileIconThemeId = 'phosphor';
+				});
+				await page.waitForTimeout(200);
+				await page.evaluate(() => {
+					(window as any).appState.prefs.fileIconThemeId = 'material';
 				});
 
 				const phosphorFallback = activeTab.locator('[data-icon-error="true"]');

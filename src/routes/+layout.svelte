@@ -1,4 +1,5 @@
 <script lang="ts">
+	import "$lib/polyfills";
 	import "./layout.css";
 	import * as Menubar from "$lib/components/ui/menubar/index.js";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";

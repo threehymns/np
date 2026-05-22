@@ -117,7 +117,12 @@ export function registerCoreCommands() {
 		label: 'Undo',
 		category: 'Edit',
 		shortcut: 'cmd+z',
-		action: () => appState.activeEditorView && undo(appState.activeEditorView),
+		action: () => {
+			if (appState.activeEditorView) {
+				undo(appState.activeEditorView);
+				appState.activeEditorView.focus();
+			}
+		},
 		isEnabled: () => !!appState.activeEditorView
 	});
 
@@ -126,7 +131,12 @@ export function registerCoreCommands() {
 		label: 'Redo',
 		category: 'Edit',
 		shortcut: 'shift+cmd+z',
-		action: () => appState.activeEditorView && redo(appState.activeEditorView),
+		action: () => {
+			if (appState.activeEditorView) {
+				redo(appState.activeEditorView);
+				appState.activeEditorView.focus();
+			}
+		},
 		isEnabled: () => !!appState.activeEditorView
 	});
 
@@ -161,12 +171,12 @@ export function registerCoreCommands() {
 		action: async () => {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
-				view.focus();
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
 					await navigator.clipboard.writeText(text);
 				}
+				view.focus();
 			}
 		},
 		isEnabled: () => !!appState.activeEditorView
@@ -180,10 +190,10 @@ export function registerCoreCommands() {
 		action: async () => {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
-				view.focus();
 				try {
 					const text = await navigator.clipboard.readText();
 					view.dispatch(view.state.replaceSelection(text));
+					view.focus();
 				} catch (err) {
 					console.error("Failed to read clipboard:", err);
 				}
@@ -206,7 +216,12 @@ export function registerCoreCommands() {
 		label: 'Select All',
 		category: 'Edit',
 		shortcut: 'cmd+a',
-		action: () => appState.activeEditorView && selectAll(appState.activeEditorView),
+		action: () => {
+			if (appState.activeEditorView) {
+				selectAll(appState.activeEditorView);
+				appState.activeEditorView.focus();
+			}
+		},
 		isEnabled: () => !!appState.activeEditorView
 	});
 
