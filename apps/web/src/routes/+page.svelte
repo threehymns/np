@@ -1,12 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { useAppState } from '@np/core';
-  import { Tabs, Editor, FileExplorer, Icon } from '@np/ui';
+  import { useAppState } from '@np/core/state.svelte';
+  
+  // Use direct imports
+  import * as Tabs from "@np/ui/Tabs";
+  import Icon from "@np/ui/Icon.svelte";
+  
   import { X } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from 'codemirror';
 
   const appState = useAppState();
+
+  // Lazy load heavy components
+  let Editor = $state<any>(null);
+  let FileExplorer = $state<any>(null);
 
   let draggedId = $state<string | null>(null);
   let editorViews = $state<Record<string, EditorView | undefined>>({});
@@ -44,7 +52,16 @@
   }
 
   onMount(() => {
-    handleUpdate();
+    // Load heavy components after the first paint
+    Promise.all([
+      import("@np/ui/Editor.svelte"),
+      import("@np/ui/FileExplorer.svelte")
+    ]).then(([editorMod, explorerMod]) => {
+      Editor = editorMod.default;
+      FileExplorer = explorerMod.default;
+    }).catch(err => {
+      console.error("[Web] Failed to load heavy components:", err);
+    });
   });
 
   let isDragging = $state(false);
@@ -81,7 +98,15 @@
     inert={!appState.prefs.sidebarVisible}
   >
     <div style="width: {appState.prefs.sidebarWidth}px;" class="h-full flex flex-col shrink-0">
-      <FileExplorer />
+      {#if FileExplorer}
+        <FileExplorer />
+      {:else}
+        <div class="p-4 space-y-2 animate-pulse">
+          <div class="h-4 bg-muted rounded w-3/4"></div>
+          <div class="h-4 bg-muted rounded w-1/2"></div>
+          <div class="h-4 bg-muted rounded w-2/3"></div>
+        </div>
+      {/if}
     </div>
     
     <!-- Resize Handle -->
@@ -147,12 +172,19 @@
     {:else}
       {#each appState.documents as doc (doc.id)}
         <Tabs.Content value={doc.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0">
-          <Editor 
-            doc={doc} 
-            bind:view={editorViews[doc.id]}
-            style="font-size: {appState.prefs.zoom}%;"
-            wrap={appState.prefs.wordWrap}
-          />
+          {#if appState.activeDocumentId === doc.id}
+            {#if Editor}
+              <Editor 
+                doc={doc} 
+                active={true}
+                bind:view={editorViews[doc.id]}
+                style="font-size: {appState.prefs.zoom}%;"
+                wrap={appState.prefs.wordWrap}
+              />
+            {:else}
+              <div class="flex-1 bg-background animate-pulse"></div>
+            {/if}
+          {/if}
         </Tabs.Content>
       {/each}
     {/if}

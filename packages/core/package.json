@@ -8,7 +8,10 @@
 		".": {
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
-		}
+		},
+		"./state.svelte": "./src/state.svelte.ts",
+		"./storage": "./src/storage.ts",
+		"./persistence": "./src/persistence.ts"
 	},
 	"dependencies": {
 		"@codemirror/commands": "^6.6.0",

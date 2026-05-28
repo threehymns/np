@@ -11,5 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	renameEntry: (oldPath: string, newName: string) => ipcRenderer.invoke('fs:renameEntry', oldPath, newName),
 	gitRun: (workingDir: string, args: string[]) => ipcRenderer.invoke('git:run', workingDir, args),
 	persistenceSave: (key: string, value: any) => ipcRenderer.invoke('persistence:save', key, value),
-	persistenceLoad: (key: string) => ipcRenderer.invoke('persistence:load', key)
+	persistenceLoad: (key: string) => ipcRenderer.invoke('persistence:load', key),
+	persistenceLoadAll: () => ipcRenderer.invoke('persistence:loadAll'),
+	showWindow: () => ipcRenderer.invoke('window:show'),
+	onWindowShown: (callback: () => void) => ipcRenderer.once('window-shown', () => callback())
 });

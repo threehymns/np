@@ -40,4 +40,8 @@ export class JSONFilePersistence implements WorkspacePersistence {
 	async loadActiveDocumentId(): Promise<string | null> {
 		return await window.electronAPI.persistenceLoad('activeDocumentId');
 	}
+
+	async loadAll(): Promise<Record<string, any>> {
+		return await window.electronAPI.persistenceLoadAll();
+	}
 }

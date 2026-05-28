@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { spawn } from 'child_process';
@@ -35,11 +35,20 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
+        show: true, // Show immediately
+        backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#ffffff',
         autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
             nodeIntegration: false
+        }
+    });
+    // Still send the event when ready for heavy tasks, 
+    // but the window is already visible to the user.
+    mainWindow.once('ready-to-show', () => {
+        if (mainWindow) {
+            mainWindow.webContents.send('window-shown');
         }
     });
     const devUrl = process.env.ELECTRON_DEV_URL;
@@ -183,5 +192,22 @@ function registerIpcHandlers() {
                 return null;
             }
         });
+    });
+    ipcMain.handle('persistence:loadAll', async () => {
+        return persistenceLock.then(async () => {
+            try {
+                return await readPersistenceFile();
+            }
+            catch (e) {
+                console.error('Failed to load all persistence:', e);
+                return {};
+            }
+        });
+    });
+    ipcMain.handle('window:show', () => {
+        if (mainWindow && !mainWindow.isVisible()) {
+            mainWindow.show();
+            mainWindow.webContents.send('window-shown');
+        }
     });
 }

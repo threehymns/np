@@ -1,10 +1,16 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
-  import { AppState, MultiSchemeStorage } from "@np/core";
+  import { AppState } from "@np/core/state.svelte";
+  import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
   import { JSONFilePersistence } from "./JSONFilePersistence";
   import { SpawnGitAdapter } from "./SpawnGitAdapter";
-  import { AppShell, Tabs, Editor, FileExplorer, Icon } from "@np/ui";
+  
+  // Use direct imports to avoid pulling in the entire UI library index
+  import AppShell from "@np/ui/AppShell.svelte";
+  import * as Tabs from "@np/ui/Tabs";
+  import Icon from "@np/ui/Icon.svelte";
+  
   import { X } from "phosphor-svelte";
   import { flip } from "svelte/animate";
   import type { EditorView } from "codemirror";
@@ -19,6 +25,10 @@
   if (typeof window !== "undefined") {
     (window as any).appState = appState;
   }
+
+  // Lazy load heavy components
+  let Editor = $state<any>(null);
+  let FileExplorer = $state<any>(null);
 
   let draggedId = $state<string | null>(null);
   let editorViews = $state<Record<string, EditorView | undefined>>({});
@@ -56,7 +66,21 @@
   }
 
   onMount(() => {
-    handleUpdate();
+    // Basic initialization is enough for the first paint
+    if (window.electronAPI?.showWindow) {
+      window.electronAPI.showWindow();
+    }
+
+    // Load heavy components after the first paint
+    Promise.all([
+      import("@np/ui/Editor.svelte"),
+      import("@np/ui/FileExplorer.svelte")
+    ]).then(([editorMod, explorerMod]) => {
+      Editor = editorMod.default;
+      FileExplorer = explorerMod.default;
+    }).catch(err => {
+      console.error("[App] Failed to load heavy components:", err);
+    });
   });
 
   let isDragging = $state(false);
@@ -94,7 +118,15 @@
       inert={!appState.prefs.sidebarVisible}
     >
       <div style="width: {appState.prefs.sidebarWidth}px;" class="flex-1 min-h-0 flex flex-col">
-        <FileExplorer />
+        {#if FileExplorer}
+          <FileExplorer />
+        {:else}
+          <div class="p-4 space-y-2 animate-pulse">
+            <div class="h-4 bg-muted rounded w-3/4"></div>
+            <div class="h-4 bg-muted rounded w-1/2"></div>
+            <div class="h-4 bg-muted rounded w-2/3"></div>
+          </div>
+        {/if}
       </div>
       
       <!-- Resize Handle -->
@@ -161,13 +193,17 @@
         {#each appState.documents as doc (doc.id)}
           <Tabs.Content value={doc.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0">
             {#if appState.activeDocumentId === doc.id}
-              <Editor 
-                doc={doc} 
-                active={true}
-                bind:view={editorViews[doc.id]}
-                style="font-size: {appState.prefs.zoom}%;"
-                wrap={appState.prefs.wordWrap}
-              />
+              {#if Editor}
+                <Editor 
+                  doc={doc} 
+                  active={true}
+                  bind:view={editorViews[doc.id]}
+                  style="font-size: {appState.prefs.zoom}%;"
+                  wrap={appState.prefs.wordWrap}
+                />
+              {:else}
+                <div class="flex-1 bg-background animate-pulse"></div>
+              {/if}
             {/if}
           </Tabs.Content>
         {/each}

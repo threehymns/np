@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState, MultiSchemeStorage } from "@np/core";
+	import { AppState } from "@np/core/state.svelte";
+	import { MultiSchemeStorage } from "@np/core/storage";
 	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBWorkspacePersistence } from "@np/adapters-browser";
-	import { AppShell } from "@np/ui";
+	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
 	const storage = new MultiSchemeStorage();

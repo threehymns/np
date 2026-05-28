@@ -143,4 +143,44 @@ export class IndexedDBWorkspacePersistence implements WorkspacePersistence {
 			request.onerror = () => reject(request.error);
 		});
 	}
+
+	async loadAll(): Promise<Record<string, any>> {
+		const db = await openDB();
+		return new Promise((resolve, reject) => {
+			const transaction = db.transaction(STORE_NAME, 'readonly');
+			const store = transaction.objectStore(STORE_NAME);
+			const request = store.getAll();
+			const keysRequest = store.getAllKeys();
+			
+			let results: any[] = [];
+			let keys: IDBValidKey[] = [];
+			
+			request.onsuccess = () => {
+				results = request.result;
+				if (keys.length > 0) finalize();
+			};
+			
+			keysRequest.onsuccess = () => {
+				keys = keysRequest.result;
+				if (results.length > 0) finalize();
+			};
+
+			const finalize = () => {
+				const map: Record<string, any> = {};
+				keys.forEach((key, i) => {
+					// Map internal DB keys to the keys expected by Workspace.restoreSession
+					if (key === 'open-files') map.openFiles = results[i];
+					else if (key === 'active-id') map.activeDocumentId = results[i];
+					else if (key === 'root-folder') map.rootFolder = results[i];
+					else if (key === 'recent-folders') map.recentFolders = results[i];
+					else if (key === 'expanded-paths') map.expandedPaths = results[i];
+					else map[key.toString()] = results[i];
+				});
+				resolve(map);
+			};
+
+			request.onerror = () => reject(request.error);
+			keysRequest.onerror = () => reject(keysRequest.error);
+		});
+	}
 }

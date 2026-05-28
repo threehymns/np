@@ -1,17 +1,19 @@
 <script lang="ts">
-	import { useAppState } from "@np/core";
+	import { useAppState } from "@np/core/state.svelte";
+	
+	const appState = useAppState();
+
 	import * as Menubar from "./components/ui/menubar/index.js";
 	import * as AlertDialog from "./components/ui/alert-dialog/index.js";
 	import favicon from "./assets/favicon.png";
 	import { X, Sidebar } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
 	import * as Tooltip from "./components/ui/tooltip/index.js";
-	import SettingsModal from "./components/SettingsModal.svelte";
-	import CommandPalette from "./components/CommandPalette.svelte";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
 
-	const appState = useAppState();
+	let SettingsModal = $state<any>(null);
+	let CommandPalette = $state<any>(null);
 
 	let { children } = $props<{ children: Snippet }>();
 	let settingsOpen = $state(false);
@@ -20,6 +22,17 @@
 
 	onMount(async () => {
 		await appState.init();
+		
+		// Lazy load secondary UI
+		Promise.all([
+			import("./components/SettingsModal.svelte"),
+			import("./components/CommandPalette.svelte")
+		]).then(([settingsMod, commandMod]) => {
+			SettingsModal = settingsMod.default;
+			CommandPalette = commandMod.default;
+		}).catch(err => {
+			console.error("[AppShell] Failed to load secondary UI components:", err);
+		});
 	});
 
 	$effect(() => {
@@ -204,8 +217,13 @@
 	{/if}
 </div>
 
-<CommandPalette />
-<SettingsModal bind:open={settingsOpen} />
+{#if CommandPalette}
+	<CommandPalette />
+{/if}
+
+{#if SettingsModal}
+	<SettingsModal bind:open={settingsOpen} />
+{/if}
 
 <AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>
 	<AlertDialog.Content>

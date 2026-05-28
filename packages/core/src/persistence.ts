@@ -11,6 +11,7 @@ export interface WorkspacePersistence {
 	loadExpandedPaths(): Promise<string[]>;
 	saveActiveDocumentId(id: string): Promise<void>;
 	loadActiveDocumentId(): Promise<string | null>;
+	loadAll(): Promise<Record<string, any>>;
 }
 
 export class MemoryWorkspacePersistence implements WorkspacePersistence {
@@ -19,6 +20,16 @@ export class MemoryWorkspacePersistence implements WorkspacePersistence {
 	private recentFolders: FileOrigin[] = [];
 	private expandedPaths: string[] = [];
 	private activeDocumentId: string | null = null;
+
+	async loadAll(): Promise<Record<string, any>> {
+		return {
+			openFiles: this.openFiles,
+			rootFolder: this.rootFolder,
+			recentFolders: this.recentFolders,
+			expandedPaths: this.expandedPaths,
+			activeDocumentId: this.activeDocumentId
+		};
+	}
 
 	async saveOpenFiles(origins: FileOrigin[]): Promise<void> {
 		this.openFiles = origins;

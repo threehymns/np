@@ -9,6 +9,11 @@
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
 		},
+		"./AppShell.svelte": "./src/AppShell.svelte",
+		"./Editor.svelte": "./src/components/Editor.svelte",
+		"./FileExplorer.svelte": "./src/components/FileExplorer.svelte",
+		"./Icon.svelte": "./src/components/Icon.svelte",
+		"./Tabs": "./src/components/ui/tabs/index.js",
 		"./layout.css": "./src/layout.css"
 	},
 	"dependencies": {

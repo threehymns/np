@@ -293,14 +293,27 @@ export class Workspace {
 	private async restoreSession() {
 		this.isRestoring = true;
 		try {
-			const [origins, activeId, rootOrigin, recentFolders] = await Promise.all([
-				this.persistence.loadOpenFiles(),
-				this.persistence.loadActiveDocumentId(),
-				this.persistence.loadRootFolder(),
-				this.persistence.loadRecentFolders()
-			]);
+			const all = await this.persistence.loadAll();
 			
-			this.recentFolders = recentFolders || [];
+			const origins: FileOrigin[] = all.openFiles || [];
+			const activeId: string | null = all.activeDocumentId || null;
+			const rootOrigin: FileOrigin | null = all.rootFolder || null;
+			const recentFolders: FileOrigin[] = all.recentFolders || [];
+			
+			this.recentFolders = recentFolders;
+
+			if (origins.length > 0) {
+				const restoredDocs: DocumentSession[] = origins.map(origin => 
+					new DocumentSession(this.storage, '', origin, undefined, this)
+				);
+
+				this.documents = restoredDocs;
+				if (activeId && restoredDocs.some(d => d.id === activeId)) {
+					this.activeDocumentId = activeId;
+				} else {
+					this.activeDocumentId = restoredDocs[0].id;
+				}
+			}
 
 			if (rootOrigin) {
 				this.rootOrigin = rootOrigin;
@@ -308,36 +321,23 @@ export class Workspace {
 				const permission = await this.storage.queryPermission(rootOrigin, true);
 				
 				if (permission === 'granted') {
-					// Permission is already granted. We can initialize repository and tree immediately.
 					this.hasRootPermission = true;
-					try {
-						this.repository = new Repository(rootOrigin, this.vcsFactory);
-						await this.repository.refresh();
-					} catch (e: any) {
-						console.error('[Workspace] Failed to refresh repo during restore:', e);
-					}
-					await this.projectTree.scan(rootOrigin);
+					// Initialize repo and tree in background
+					(async () => {
+						try {
+							this.repository = new Repository(rootOrigin!, this.vcsFactory);
+							await this.repository.refresh();
+							await this.projectTree.scan(rootOrigin!);
+						} catch (e: any) {
+							console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
+						}
+					})();
 				} else {
 					this.hasRootPermission = false;
 				}
 			}
 
-			if (origins.length > 0) {
-				const restoredDocs: DocumentSession[] = origins.map(origin => 
-					new DocumentSession(this.storage, '', origin, undefined, this)
-				);
-
-				if (restoredDocs.length > 0) {
-					this.documents = restoredDocs;
-					if (activeId && restoredDocs.some(d => d.id === activeId)) {
-						this.activeDocumentId = activeId;
-					} else {
-						this.activeDocumentId = restoredDocs[0].id;
-					}
-				} else if (this.documents.length === 0) {
-					await this.newFile();
-				}
-			} else if (this.documents.length === 0) {
+			if (this.documents.length === 0) {
 				await this.newFile();
 			}
 		} catch (e) {

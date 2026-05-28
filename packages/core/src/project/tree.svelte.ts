@@ -83,28 +83,48 @@ export class ProjectTree {
 	private searchAbortController: AbortController | null = null;
 	private expandedPaths = new SvelteSet<string>();
 	private initPromise: Promise<void> | null = null;
-	private isRestoring = $state(false);
+	private isRestoring = $state(true);
 	private workspace: Workspace;
 
 	constructor(workspace: Workspace) {
 		this.workspace = workspace;
 		if (typeof window !== 'undefined') {
-			this.isRestoring = true;
-			this.initPromise = this.loadExpansionState().finally(() => {
-				this.isRestoring = false;
-			});
-			
 			$effect.root(() => {
 				$effect(() => {
-					if (this.isRestoring) return;
+					// Don't save while restoring OR if we haven't even attempted to load yet
+					if (this.isRestoring || !this.initPromise) return;
+					
 					// Persist expanded paths (pruned)
 					const paths = Array.from(this.expandedPaths)
 						.filter(p => !p.includes('node_modules') && !p.includes('.svelte-kit') && !p.includes('.git'))
 						.slice(0, 500);
-					this.workspace.persistence.saveExpandedPaths(paths);
+					
+					// Safety check for persistence
+					if (this.workspace.persistence) {
+						this.workspace.persistence.saveExpandedPaths(paths);
+					}
 				});
 			});
 		}
+	}
+
+	async init() {
+		if (this.initPromise) return this.initPromise;
+
+		this.isRestoring = true;
+		this.initPromise = (async () => {
+			try {
+				await this.loadExpansionState();
+			} finally {
+				// Use a small timeout to ensure the UI has time to react 
+				// before we start allowing persistence saves again
+				setTimeout(() => {
+					this.isRestoring = false;
+				}, 100);
+			}
+		})();
+
+		return this.initPromise;
 	}
 
 	private async loadExpansionState() {
@@ -280,9 +300,9 @@ export class ProjectTree {
 		if (!this.workspace.hasRootPermission) {
 			return;
 		}
-		if (this.initPromise) {
-			await this.initPromise;
-		}
+		
+		await this.init();
+
 		this.isScanning = true;
 		try {
 			// Load .gitignore if it exists

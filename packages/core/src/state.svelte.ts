@@ -37,7 +37,22 @@ export class AppState {
 	}
 
 	async init() {
-		await this.prefs.initializeIcons();
+		// Defer heavy icon initialization until after the first paint
+		const deferredInit = async () => {
+			try {
+				await this.prefs.initializeIcons();
+			} catch (e) {
+				console.error('[AppState] Failed to initialize icons:', e);
+			}
+		};
+
+		if (typeof window !== 'undefined' && (window as any).electronAPI?.onWindowShown) {
+			(window as any).electronAPI.onWindowShown(deferredInit);
+		} else if (typeof requestIdleCallback !== 'undefined') {
+			requestIdleCallback(() => { void deferredInit(); });
+		} else {
+			setTimeout(() => { void deferredInit(); }, 100);
+		}
 	}
 
 	// Convenience accessors

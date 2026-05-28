@@ -10,6 +10,9 @@ export interface ElectronAPI {
 	gitRun(workingDir: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
 	persistenceSave(key: string, value: any): Promise<void>;
 	persistenceLoad(key: string): Promise<any>;
+	persistenceLoadAll(): Promise<Record<string, any>>;
+	showWindow(): Promise<void>;
+	onWindowShown(callback: () => void): void;
 }
 
 declare global {

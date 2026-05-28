@@ -4,6 +4,24 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>np</title>
+		<script>
+			// Apply theme immediately to prevent flash
+			const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			if (isDark) {
+				document.documentElement.classList.add('dark');
+			}
+		</script>
+		<style>
+			/* Match Electron's backgroundColor */
+			html, body {
+				background-color: #ffffff;
+				margin: 0;
+				padding: 0;
+			}
+			html.dark, html.dark body {
+				background-color: #1a1a1a;
+			}
+		</style>
 	</head>
 	<body class="bg-background text-foreground">
 		<div id="app"></div>
