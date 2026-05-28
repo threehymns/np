@@ -93,7 +93,7 @@
       style="width: {appState.prefs.sidebarVisible ? appState.prefs.sidebarWidth : 0}px;"
       inert={!appState.prefs.sidebarVisible}
     >
-      <div style="width: {appState.prefs.sidebarWidth}px;" class="h-full flex flex-col shrink-0">
+      <div style="width: {appState.prefs.sidebarWidth}px;" class="flex-1 min-h-0 flex flex-col">
         <FileExplorer />
       </div>
       

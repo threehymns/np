@@ -19,7 +19,7 @@ export class Workspace {
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
 	persistence: WorkspacePersistence;
 	private untitledCounter = 0;
-	private isRestoring = $state(false);
+	private isRestoring = $state(true);
 
 	constructor(
 		storage: Storage,

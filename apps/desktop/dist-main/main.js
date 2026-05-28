@@ -158,13 +158,30 @@ function registerIpcHandlers() {
         });
     });
     // Persistence handlers
+    let persistenceLock = Promise.resolve();
     ipcMain.handle('persistence:save', async (_, key, value) => {
-        const data = await readPersistenceFile();
-        data[key] = value;
-        await writePersistenceFile(data);
+        persistenceLock = persistenceLock.then(async () => {
+            try {
+                const data = await readPersistenceFile();
+                data[key] = value;
+                await writePersistenceFile(data);
+            }
+            catch (e) {
+                console.error(`Failed to save persistence key "${key}":`, e);
+            }
+        });
+        return persistenceLock;
     });
     ipcMain.handle('persistence:load', async (_, key) => {
-        const data = await readPersistenceFile();
-        return data[key] ?? null;
+        return persistenceLock.then(async () => {
+            try {
+                const data = await readPersistenceFile();
+                return data[key] ?? null;
+            }
+            catch (e) {
+                console.error(`Failed to load persistence key "${key}":`, e);
+                return null;
+            }
+        });
     });
 }

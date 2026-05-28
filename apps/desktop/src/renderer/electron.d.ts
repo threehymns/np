@@ -1,7 +1,7 @@
 export interface ElectronAPI {
 	openFile(): Promise<{ path: string; name: string } | null>;
 	openDirectory(): Promise<{ path: string; name: string } | null>;
-	readFile(filePath: string): Promise<string>;
+	readFile(filePath: string): Promise<Uint8Array>;
 	writeFile(filePath: string, content: string): Promise<void>;
 	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string }>>;
 	createDirectory(dirPath: string): Promise<void>;

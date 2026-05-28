@@ -149,7 +149,7 @@
 		</Menubar.Root>
 	</div>
 	
-	<main class="flex-1 min-h-0 overflow-auto relative z-0">
+	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
 		{@render children()}
 	</main>
 

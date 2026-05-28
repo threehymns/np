@@ -8,3 +8,4 @@ export { default as CommandPalette } from './components/CommandPalette.svelte';
 export { default as Icon } from './components/Icon.svelte';
 export * from './editor/index';
 export * as Tabs from './components/ui/tabs/index';
+export * as ScrollArea from './components/ui/scroll-area/index';

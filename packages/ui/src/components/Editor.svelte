@@ -2,7 +2,7 @@
 	import { untrack } from "svelte";
 	import { EditorView } from "codemirror";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
-	import { createEditorExtensions, getLanguageExtensions, selectionState } from '../editor';
+	import { createEditorExtensions, getLanguageExtensions, selectionState } from '../editor/index.js';
 
 	import '../editor/styles/editor.css';
 	import '../editor/styles/markdown.css';
@@ -185,6 +185,31 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
+	}
+
+	:global(.cm-scroller) {
+		scrollbar-width: thin;
+		scrollbar-color: var(--border) transparent;
+	}
+
+	:global(.cm-scroller::-webkit-scrollbar) {
+		width: 10px;
+	}
+
+	:global(.cm-scroller::-webkit-scrollbar-track) {
+		background: transparent;
+	}
+
+	:global(.cm-scroller::-webkit-scrollbar-thumb) {
+		background-color: var(--border);
+		border-radius: 5px;
+		border: 2px solid transparent;
+		background-clip: content-box;
+		transition: background-color 0.2s;
+	}
+
+	:global(.cm-scroller::-webkit-scrollbar-thumb:hover) {
+		background-color: var(--muted-foreground);
 	}
 
 	.permission-overlay {

@@ -4,6 +4,7 @@
 	import { FolderOpen, ArrowsClockwise, MagnifyingGlass, X, Funnel, Check, CaretUpDown, FolderPlus, GitBranch } from "phosphor-svelte";
 	import { Button } from './ui/button';
 	import { Input } from './ui/input';
+	import { ScrollArea } from "./ui/scroll-area/index.js";
 	import * as Tooltip from './ui/tooltip/index.js';
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
@@ -98,189 +99,191 @@
 {/if}
 
 <div class="flex flex-col h-full text-sidebar-foreground overflow-hidden select-none">
-	<div class="flex-1 overflow-auto py-1">
-		{#if mounted}
-			{#if appState.workspace.rootOrigin}
-				{@const rootOrigin = appState.workspace.rootOrigin}
-				<div class="px-2 mb-1">
-					<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
-						<div class="flex items-center gap-1 min-w-0">
-							<Popover.Root bind:open={comboOpen}>
-								<Popover.Trigger bind:ref={triggerRef}>
-									{#snippet child({ props })}
-										<button
-											{...props}
-											class="flex items-center gap-1 truncate hover:text-sidebar-foreground transition-all text-left hover:bg-sidebar-accent px-1.5 -ml-1 rounded-sm py-0.5"
+	{#if mounted && appState.workspace.rootOrigin}
+		{@const rootOrigin = appState.workspace.rootOrigin}
+		<div class="px-2 py-1 shrink-0">
+			<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
+				<div class="flex items-center gap-1 min-w-0">
+					<Popover.Root bind:open={comboOpen}>
+						<Popover.Trigger bind:ref={triggerRef}>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									class="flex items-center gap-1 truncate hover:text-sidebar-foreground transition-all text-left hover:bg-sidebar-accent px-1.5 -ml-1 rounded-sm py-0.5"
+								>
+									<span class="truncate">{rootOrigin.name}</span>
+									<CaretUpDown class="size-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
+								</button>
+							{/snippet}
+						</Popover.Trigger>
+						<Popover.Content class="p-0 flex flex-col" align="start">
+							<Command.Root class="flex-1 p-0">
+								<Command.Input placeholder="Recent Folders" class="h-8" />
+								<Command.List class="px-1 pt-2 pb-0">
+									<Command.Empty class="py-2 text-[11px] text-center">No folders found.</Command.Empty>
+									{#each appState.workspace.recentFolders as folder (folder.name)}
+										<Command.Item
+											value={folder.path}
+											onSelect={() => selectFolder(folder)}
+											class="text-[11px] flex items-center gap-2 px-2 py-1.5"
 										>
-											<span class="truncate">{rootOrigin.name}</span>
-											<CaretUpDown class="size-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
-										</button>
-									{/snippet}
-								</Popover.Trigger>
-								<Popover.Content class="p-0 flex flex-col" align="start">
-									<Command.Root class="flex-1 p-0">
-										<Command.Input placeholder="Recent Folders" class="h-8" />
-										<Command.List class="px-1 pt-2 pb-0">
-											<Command.Empty class="py-2 text-[11px] text-center">No folders found.</Command.Empty>
-											{#each appState.workspace.recentFolders as folder (folder.name)}
-												<Command.Item
-													value={folder.path}
-													onSelect={() => selectFolder(folder)}
-													class="text-[11px] flex items-center gap-2 px-2 py-1.5"
+											<div class="flex items-baseline min-w-0 flex-1">
+												<span class="truncate text-[10px] opacity-40 shrink-0">
+													{folder.path.slice(0, folder.path.lastIndexOf(folder.name))}
+												</span>
+												<span class="truncate font-medium">{folder.name}</span>
+											</div>
+											{#if rootOrigin.path === folder.path}
+												<span class="text-[10px] opacity-40 shrink-0">- Current</span>
+											{/if}
+										</Command.Item>
+									{/each}
+								</Command.List>
+							</Command.Root>
+							<div class="border-t p-1 flex justify-end">
+								<Tooltip.Provider delayDuration={400}>
+									<Tooltip.Root>
+										<Tooltip.Trigger>
+											{#snippet child({ props })}
+												<Button 
+													variant="ghost" 
+													size="icon-xs" 
+													{...props} 
+													onclick={() => {
+														appState.workspace.openDirectory();
+														closeAndFocusTrigger();
+													}}
+													class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
 												>
-													<div class="flex items-baseline min-w-0 flex-1">
-														<span class="truncate text-[10px] opacity-40 shrink-0">
-															{folder.path.slice(0, folder.path.lastIndexOf(folder.name))}
-														</span>
-														<span class="truncate font-medium">{folder.name}</span>
-													</div>
-													{#if rootOrigin.path === folder.path}
-														<span class="text-[10px] opacity-40 shrink-0">- Current</span>
-													{/if}
-												</Command.Item>
-											{/each}
-										</Command.List>
-									</Command.Root>
-									<div class="border-t p-1 flex justify-end">
-										<Tooltip.Provider delayDuration={400}>
-											<Tooltip.Root>
-												<Tooltip.Trigger>
-													{#snippet child({ props })}
-														<Button 
-															variant="ghost" 
-															size="icon-xs" 
-															{...props} 
-															onclick={() => {
-																appState.workspace.openDirectory();
-																closeAndFocusTrigger();
-															}}
-															class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-														>
-															<FolderPlus class="size-3.5" />
-														</Button>
-													{/snippet}
-												</Tooltip.Trigger>
-												<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-													Open New Folder
-												</Tooltip.Content>
-											</Tooltip.Root>
-										</Tooltip.Provider>
-									</div>
-								</Popover.Content>
-							</Popover.Root>
-
-							{#if appState.workspace.hasRootPermission && appState.workspace.currentBranch}
-								<Popover.Root bind:open={branchComboOpen}>
-									<Popover.Trigger>
-										{#snippet child({ props })}
-											<button
-												{...props}
-												class="flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate"
-											>
-												{#if appState.workspace.repository?.isBusy}
-													<div class="size-3 animate-spin border-2 border-sidebar-foreground/50 border-t-sidebar-foreground rounded-full"></div>
-												{:else}
-													<GitBranch class="size-3 shrink-0" />
-												{/if}
-												<span class="text-[10px] truncate max-w-[80px]">{appState.workspace.currentBranch}</span>
-											</button>
-										{/snippet}
-									</Popover.Trigger>
-									<Popover.Content class="p-0 flex flex-col" align="start">
-										<Command.Root class="flex-1 p-0">
-											<Command.Input placeholder="Switch Branch" class="h-8" />
-											<Command.List class="px-1 py-1">
-												<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
-												{#each appState.workspace.branches as branch}
-													<Command.Item
-														value={branch}
-														onSelect={() => switchBranch(branch)}
-														class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
-													>
-														<div class="flex items-center gap-2 truncate">
-															<GitBranch class="size-3 opacity-50" />
-															<span class="truncate">{branch}</span>
-														</div>
-														{#if appState.workspace.currentBranch === branch}
-															<Check class="size-3 opacity-50" />
-														{/if}
-													</Command.Item>
-												{/each}
-											</Command.List>
-										</Command.Root>
-									</Popover.Content>
-								</Popover.Root>
-							{/if}
-						</div>
-
-
-						<div class="flex gap-0.5 shrink-0 opacity-0 pointer-events-none group-hover/header:opacity-100 group-hover/header:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity">
-							<Tooltip.Provider delayDuration={400}>
-								<Tooltip.Root>
-									<Tooltip.Trigger>
-										{#snippet child({ props })}
-											<Button variant="ghost" size="icon-xs" {...props} onclick={toggleFilter} class={cn(showFilter ? 'bg-sidebar-accent text-sidebar-accent-foreground' : '', "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
-												<Funnel class="size-3" />
-											</Button>
-										{/snippet}
-									</Tooltip.Trigger>
-									<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-										Filter Files
-									</Tooltip.Content>
-								</Tooltip.Root>
-								<Tooltip.Root>
-									<Tooltip.Trigger>
-										{#snippet child({ props })}
-											<Button variant="ghost" size="icon-xs" {...props} onclick={refresh} class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-												<ArrowsClockwise class="size-3" />
-											</Button>
-										{/snippet}
-									</Tooltip.Trigger>
-									<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-										Refresh Explorer
-									</Tooltip.Content>
-								</Tooltip.Root>
-								<Tooltip.Root>
-									<Tooltip.Trigger>
-										{#snippet child({ props })}
-											<Button variant="ghost" size="icon-xs" {...props} onclick={() => appState.workspace.openDirectory()} class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-												<FolderOpen class="size-3" />
-											</Button>
-										{/snippet}
-									</Tooltip.Trigger>
-									<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-										Open Folder
-									</Tooltip.Content>
-								</Tooltip.Root>
-							</Tooltip.Provider>
-						</div>
-					</div>
-
-					{#if showFilter}
-						<div transition:slide={{ duration: 200 }} class="px-2 py-1.5">
-							<div class="relative group">
-								<Funnel class="absolute left-2 top-1/2 -translate-y-1/2 size-3 opacity-40 group-focus-within:opacity-80 transition-opacity" />
-								<!-- svelte-ignore a11y_autofocus -->
-								<input
-									type="text"
-									autofocus
-									placeholder="Filter files by name..."
-									bind:value={appState.workspace.projectTree.searchQuery}
-									class="w-full bg-sidebar-accent/50 border-none rounded-md pl-7 pr-7 py-1 text-[11px] outline-none ring-1 ring-sidebar-border/50 focus:ring-sidebar-ring/40 transition-all placeholder:opacity-50"
-								/>
-								{#if appState.workspace.projectTree.searchQuery}
-									<button 
-										onclick={clearSearch}
-										class="absolute right-2 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-100 transition-opacity"
-									>
-										<X class="size-3" />
-									</button>
-								{/if}
+													<FolderPlus class="size-3.5" />
+												</Button>
+											{/snippet}
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+											Open New Folder
+										</Tooltip.Content>
+									</Tooltip.Root>
+								</Tooltip.Provider>
 							</div>
-						</div>
+						</Popover.Content>
+					</Popover.Root>
+
+					{#if appState.workspace.hasRootPermission && appState.workspace.currentBranch}
+						<Popover.Root bind:open={branchComboOpen}>
+							<Popover.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										class="flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate"
+									>
+										{#if appState.workspace.repository?.isBusy}
+											<div class="size-3 animate-spin border-2 border-sidebar-foreground/50 border-t-sidebar-foreground rounded-full"></div>
+										{:else}
+											<GitBranch class="size-3 shrink-0" />
+										{/if}
+										<span class="text-[10px] truncate max-w-[80px]">{appState.workspace.currentBranch}</span>
+									</button>
+								{/snippet}
+							</Popover.Trigger>
+							<Popover.Content class="p-0 flex flex-col" align="start">
+								<Command.Root class="flex-1 p-0">
+									<Command.Input placeholder="Switch Branch" class="h-8" />
+									<Command.List class="px-1 py-1">
+										<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
+										{#each appState.workspace.branches as branch}
+											<Command.Item
+												value={branch}
+												onSelect={() => switchBranch(branch)}
+												class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
+											>
+												<div class="flex items-center gap-2 truncate">
+													<GitBranch class="size-3 opacity-50" />
+													<span class="truncate">{branch}</span>
+												</div>
+												{#if appState.workspace.currentBranch === branch}
+													<Check class="size-3 opacity-50" />
+												{/if}
+											</Command.Item>
+										{/each}
+									</Command.List>
+								</Command.Root>
+							</Popover.Content>
+						</Popover.Root>
 					{/if}
 				</div>
-				
+
+
+				<div class="flex gap-0.5 shrink-0 opacity-0 pointer-events-none group-hover/header:opacity-100 group-hover/header:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity">
+					<Tooltip.Provider delayDuration={400}>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<Button variant="ghost" size="icon-xs" {...props} onclick={toggleFilter} class={cn(showFilter ? 'bg-sidebar-accent text-sidebar-accent-foreground' : '', "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
+										<Funnel class="size-3" />
+									</Button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Filter Files
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<Button variant="ghost" size="icon-xs" {...props} onclick={refresh} class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+										<ArrowsClockwise class="size-3" />
+									</Button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Refresh Explorer
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<Button variant="ghost" size="icon-xs" {...props} onclick={() => appState.workspace.openDirectory()} class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+										<FolderOpen class="size-3" />
+									</Button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Open Folder
+							</Tooltip.Content>
+						</Tooltip.Root>
+					</Tooltip.Provider>
+				</div>
+			</div>
+
+			{#if showFilter}
+				<div transition:slide={{ duration: 200 }} class="px-2 py-1.5">
+					<div class="relative group">
+						<Funnel class="absolute left-2 top-1/2 -translate-y-1/2 size-3 opacity-40 group-focus-within:opacity-80 transition-opacity" />
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							type="text"
+							autofocus
+							placeholder="Filter files by name..."
+							bind:value={appState.workspace.projectTree.searchQuery}
+							class="w-full bg-sidebar-accent/50 border-none rounded-md pl-7 pr-7 py-1 text-[11px] outline-none ring-1 ring-sidebar-border/50 focus:ring-sidebar-ring/40 transition-all placeholder:opacity-50"
+						/>
+						{#if appState.workspace.projectTree.searchQuery}
+							<button 
+								onclick={clearSearch}
+								class="absolute right-2 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-100 transition-opacity"
+							>
+								<X class="size-3" />
+							</button>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<ScrollArea class="flex-1 min-h-0 py-1">
+		{#if mounted}
+			{#if appState.workspace.rootOrigin}
 				<div class="space-y-0.5">
 					{#if appState.workspace.hasRootPermission}
 						{#each appState.workspace.projectTree.visualNodes as visualNode (toURI(visualNode.origin))}
@@ -322,5 +325,14 @@
 				</div>
 			{/if}
 		{/if}
-	</div>
+	</ScrollArea>
 </div>
+
+<style>
+	:global([data-slot="scroll-area-viewport"]::-webkit-scrollbar) {
+		display: none;
+	}
+	:global([data-slot="scroll-area-viewport"]) {
+		scrollbar-width: none;
+	}
+</style>

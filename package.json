@@ -8,14 +8,14 @@
 		"packages/*"
 	],
 	"scripts": {
-		"dev": "bun --filter web dev",
-		"build": "bun --filter web build",
-		"preview": "bun --filter web preview",
-		"check": "bun --filter web check",
-		"desktop:dev": "bun --filter desktop dev",
-		"desktop:build": "bun --filter desktop build",
-		"desktop:start": "bun --filter desktop start",
-		"desktop:check": "bun --filter desktop check"
+		"dev:web": "bun --filter web dev",
+		"build:web": "bun --filter web build",
+		"preview:web": "bun --filter web preview",
+		"check:web": "bun --filter web check",
+		"dev:desktop": "bun --filter desktop dev",
+		"build:desktop": "bun --filter desktop build",
+		"start:desktop": "bun --filter desktop start",
+		"check:desktop": "bun --filter desktop check"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",

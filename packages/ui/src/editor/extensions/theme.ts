@@ -1,7 +1,7 @@
 import { EditorView } from "@codemirror/view";
 
 export const editorTheme = EditorView.theme({
-	"&": {
+	"&": { 
 		height: "100%",
 		fontSize: "1.05rem",
 		backgroundColor: "transparent",
