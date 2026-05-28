@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "bun run scripts/dev.ts",
 		"build": "vite build && tsc -p tsconfig.main.json",
-		"start": "electron .",
+		"start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
 		"check": "svelte-check --tsconfig ./tsconfig.json"
 	},
 	"devDependencies": {

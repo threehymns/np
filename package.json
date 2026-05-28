@@ -8,7 +8,9 @@
 		"packages/*"
 	],
 	"scripts": {
+		"dev": "bun run dev:desktop",
 		"dev:web": "bun --filter web dev",
+		"build": "bun --filter web build && bun --filter desktop build",
 		"build:web": "bun --filter web build",
 		"preview:web": "bun --filter web preview",
 		"check:web": "bun --filter web check",
