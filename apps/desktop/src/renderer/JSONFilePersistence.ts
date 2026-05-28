@@ -1,12 +1,14 @@
-import type { WorkspacePersistence, FileOrigin } from '@np/core';
+import type { WorkspacePersistence, FileOrigin, SerializedDocument } from '@np/core';
 
 export class JSONFilePersistence implements WorkspacePersistence {
-	async saveOpenFiles(origins: FileOrigin[]): Promise<void> {
-		await window.electronAPI.persistenceSave('openFiles', origins);
+	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
+		const key = folderUri ? `openFiles:${folderUri}` : 'openFiles';
+		await window.electronAPI.persistenceSave(key, origins);
 	}
 
-	async loadOpenFiles(): Promise<FileOrigin[]> {
-		return (await window.electronAPI.persistenceLoad('openFiles')) || [];
+	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+		const key = folderUri ? `openFiles:${folderUri}` : 'openFiles';
+		return (await window.electronAPI.persistenceLoad(key)) || [];
 	}
 
 	async saveRootFolder(origin: FileOrigin | null): Promise<void> {
@@ -25,20 +27,24 @@ export class JSONFilePersistence implements WorkspacePersistence {
 		return (await window.electronAPI.persistenceLoad('recentFolders')) || [];
 	}
 
-	async saveExpandedPaths(paths: string[]): Promise<void> {
-		await window.electronAPI.persistenceSave('expandedPaths', paths);
+	async saveExpandedPaths(paths: string[], folderUri = ''): Promise<void> {
+		const key = folderUri ? `expandedPaths:${folderUri}` : 'expandedPaths';
+		await window.electronAPI.persistenceSave(key, paths);
 	}
 
-	async loadExpandedPaths(): Promise<string[]> {
-		return (await window.electronAPI.persistenceLoad('expandedPaths')) || [];
+	async loadExpandedPaths(folderUri = ''): Promise<string[]> {
+		const key = folderUri ? `expandedPaths:${folderUri}` : 'expandedPaths';
+		return (await window.electronAPI.persistenceLoad(key)) || [];
 	}
 
-	async saveActiveDocumentId(id: string): Promise<void> {
-		await window.electronAPI.persistenceSave('activeDocumentId', id);
+	async saveActiveDocumentId(id: string, folderUri = ''): Promise<void> {
+		const key = folderUri ? `activeDocumentId:${folderUri}` : 'activeDocumentId';
+		await window.electronAPI.persistenceSave(key, id);
 	}
 
-	async loadActiveDocumentId(): Promise<string | null> {
-		return await window.electronAPI.persistenceLoad('activeDocumentId');
+	async loadActiveDocumentId(folderUri = ''): Promise<string | null> {
+		const key = folderUri ? `activeDocumentId:${folderUri}` : 'activeDocumentId';
+		return await window.electronAPI.persistenceLoad(key);
 	}
 
 	async loadAll(): Promise<Record<string, any>> {

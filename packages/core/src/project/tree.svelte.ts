@@ -101,11 +101,17 @@ export class ProjectTree {
 					
 					// Safety check for persistence
 					if (this.workspace.persistence) {
-						this.workspace.persistence.saveExpandedPaths(paths);
+						const folderUri = this.workspace.rootOrigin ? toURI(this.workspace.rootOrigin) : '';
+						this.workspace.persistence.saveExpandedPaths(paths, folderUri);
 					}
 				});
 			});
 		}
+	}
+
+	resetExpansionState() {
+		this.initPromise = null;
+		this.expandedPaths.clear();
 	}
 
 	async init() {
@@ -129,12 +135,14 @@ export class ProjectTree {
 
 	private async loadExpansionState() {
 		try {
+			const folderUri = this.workspace.rootOrigin ? toURI(this.workspace.rootOrigin) : '';
 			// Add a safety timeout of 2 seconds
 			const paths = await Promise.race([
-				this.workspace.persistence.loadExpandedPaths(),
+				this.workspace.persistence.loadExpandedPaths(folderUri),
 				new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Timeout loading expansion state')), 2000))
 			]);
 			
+			this.expandedPaths.clear();
 			// Prune heavy folders and limit count
 			let count = 0;
 			for (const path of paths) {

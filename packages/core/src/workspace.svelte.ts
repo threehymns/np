@@ -2,7 +2,7 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
-import type { WorkspacePersistence } from './persistence';
+import { type WorkspacePersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export class Workspace {
@@ -21,6 +21,42 @@ export class Workspace {
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 
+	private saveOpenFilesTimeout: any = null;
+
+	private debouncedSaveOpenFiles() {
+		if (this.saveOpenFilesTimeout) {
+			clearTimeout(this.saveOpenFilesTimeout);
+		}
+		this.saveOpenFilesTimeout = setTimeout(() => {
+			this.flushSaveOpenFiles();
+		}, 500);
+	}
+
+	flushSaveOpenFiles() {
+		if (this.isRestoring) return;
+
+		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const serializedDocs: SerializedDocument[] = this.documents.map(doc => {
+			const serialized: SerializedDocument = {
+				id: doc.id,
+				origin: doc.origin ? $state.snapshot(doc.origin) : null,
+				untitledTitle: doc.untitledTitle,
+				isModified: doc.isModified
+			};
+			if (doc.isModified || !doc.origin) {
+				serialized.draftContent = doc.content;
+			}
+			return serialized;
+		});
+
+		this.persistence.saveOpenFiles(serializedDocs, folderUri);
+
+		if (this.saveOpenFilesTimeout) {
+			clearTimeout(this.saveOpenFilesTimeout);
+			this.saveOpenFilesTimeout = null;
+		}
+	}
+
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
@@ -33,6 +69,10 @@ export class Workspace {
 		if (typeof window !== 'undefined') {
 			this.restoreSession();
 
+			window.addEventListener('beforeunload', () => {
+				this.flushSaveOpenFiles();
+			});
+
 			$effect.root(() => {
 				$effect(() => {
 					const activeDoc = this.activeDocument;
@@ -43,18 +83,22 @@ export class Workspace {
 
 				$effect(() => {
 					if (this.isRestoring) return;
-					// Persist open files (origins)
-					const origins = this.documents
-						.map(doc => doc.origin ? $state.snapshot(doc.origin) : null)
-						.filter((o): o is FileOrigin => !!o);
 					
-					this.persistence.saveOpenFiles(origins);
+					const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+					this.documents.forEach(doc => {
+						const _c = doc.content;
+						const _m = doc.isModified;
+						const _o = doc.origin;
+						const _t = doc.untitledTitle;
+					});
+					
+					this.debouncedSaveOpenFiles();
 				});
 
 				$effect(() => {
 					if (this.isRestoring) return;
-					// Persist active document ID
-					this.persistence.saveActiveDocumentId(this.activeDocumentId);
+					const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+					this.persistence.saveActiveDocumentId(this.activeDocumentId, folderUri);
 				});
 
 				$effect(() => {
@@ -89,10 +133,12 @@ export class Workspace {
 	}
 
 	async newFile() {
+		console.log('[Workspace] newFile called. Counter:', this.untitledCounter + 1);
 		this.untitledCounter++;
 		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
 		this.documents.push(newDoc);
 		this.activeDocumentId = newDoc.id;
+		console.log('[Workspace] newFile finished. documents count:', this.documents.length);
 		return newDoc;
 	}
 
@@ -137,6 +183,13 @@ export class Workspace {
 		const granted = await this.storage.verifyPermission(origin, true);
 		if (!granted) return;
 
+		// Save old state
+		this.flushSaveOpenFiles();
+		const oldFolderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		await this.saveFolderState(oldFolderUri);
+
+		this.isRestoring = true;
+
 		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 
@@ -147,7 +200,16 @@ export class Workspace {
 		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
 		this.recentFolders = [origin, ...newRecent].slice(0, 10);
 
+		// Reset project tree expansion state
+		this.projectTree.resetExpansionState();
+
 		await this.projectTree.scan(origin);
+
+		// Load new folder state
+		const folderUri = toURI(origin);
+		await this.loadFolderState(folderUri);
+
+		this.isRestoring = false;
 
 		// Refresh permissions for already open files
 		for (const doc of this.documents) {
@@ -290,22 +352,59 @@ export class Workspace {
 		}
 	}
 
-	private async restoreSession() {
-		this.isRestoring = true;
-		try {
-			const all = await this.persistence.loadAll();
-			
-			const origins: FileOrigin[] = all.openFiles || [];
-			const activeId: string | null = all.activeDocumentId || null;
-			const rootOrigin: FileOrigin | null = all.rootFolder || null;
-			const recentFolders: FileOrigin[] = all.recentFolders || [];
-			
-			this.recentFolders = recentFolders;
+	async saveFolderState(folderUri: string) {
+		console.log('[Workspace] saveFolderState start for:', folderUri);
+		const serializedDocs: SerializedDocument[] = this.documents.map(doc => {
+			const serialized: SerializedDocument = {
+				id: doc.id,
+				origin: doc.origin ? $state.snapshot(doc.origin) : null,
+				untitledTitle: doc.untitledTitle,
+				isModified: doc.isModified
+			};
+			if (doc.isModified || !doc.origin) {
+				serialized.draftContent = doc.content;
+			}
+			return serialized;
+		});
 
-			if (origins.length > 0) {
-				const restoredDocs: DocumentSession[] = origins.map(origin => 
-					new DocumentSession(this.storage, '', origin, undefined, this)
-				);
+		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
+		await this.persistence.saveActiveDocumentId(this.activeDocumentId, folderUri);
+		console.log('[Workspace] saveFolderState finished for:', folderUri);
+	}
+
+	async loadFolderState(folderUri: string) {
+		console.log('[Workspace] loadFolderState start for:', folderUri);
+		try {
+			const origins = await this.persistence.loadOpenFiles(folderUri);
+			console.log('[Workspace] loadOpenFiles returned:', origins);
+			const activeId = await this.persistence.loadActiveDocumentId(folderUri);
+			console.log('[Workspace] loadActiveDocumentId returned:', activeId);
+
+			if (origins && origins.length > 0) {
+				const restoredDocs: DocumentSession[] = [];
+				for (const serialized of origins) {
+					const isNewSchema = serialized && typeof serialized === 'object' && ('id' in serialized);
+					
+					let doc: DocumentSession;
+					if (isNewSchema) {
+						doc = new DocumentSession(
+							this.storage,
+							'',
+							serialized.origin,
+							serialized.untitledTitle || 'Untitled',
+							this
+						);
+						doc.id = serialized.id as any;
+						if (serialized.draftContent !== undefined) {
+							doc.restoreDraft(serialized.draftContent);
+						}
+					} else {
+						// Old schema compatibility
+						const origin = serialized as unknown as FileOrigin;
+						doc = new DocumentSession(this.storage, '', origin, undefined, this);
+					}
+					restoredDocs.push(doc);
+				}
 
 				this.documents = restoredDocs;
 				if (activeId && restoredDocs.some(d => d.id === activeId)) {
@@ -313,7 +412,30 @@ export class Workspace {
 				} else {
 					this.activeDocumentId = restoredDocs[0].id;
 				}
+			} else {
+				console.log('[Workspace] No origins found, creating new file');
+				this.documents = [];
+				await this.newFile();
 			}
+			console.log('[Workspace] loadFolderState finished. documents count:', this.documents.length);
+		} catch (e) {
+			console.error('[Workspace] Failed to load folder state', e);
+			this.documents = [];
+			await this.newFile();
+		}
+	}
+
+	private async restoreSession() {
+		console.log('[Workspace] restoreSession start');
+		this.isRestoring = true;
+		try {
+			const all = await this.persistence.loadAll();
+			console.log('[Workspace] loadAll returned:', all);
+			
+			const rootOrigin: FileOrigin | null = all.rootFolder || null;
+			const recentFolders: FileOrigin[] = all.recentFolders || [];
+			
+			this.recentFolders = recentFolders;
 
 			if (rootOrigin) {
 				this.rootOrigin = rootOrigin;
@@ -337,13 +459,18 @@ export class Workspace {
 				}
 			}
 
-			if (this.documents.length === 0) {
-				await this.newFile();
-			}
+			// Load namespaced state for the restored folder URI
+			const folderUri = rootOrigin ? toURI(rootOrigin) : '';
+			console.log('[Workspace] Restoring state for folderUri:', folderUri);
+			await this.loadFolderState(folderUri);
+
 		} catch (e) {
 			console.error('[Workspace] Failed to restore session', e);
+			this.documents = [];
+			await this.newFile();
 		} finally {
 			this.isRestoring = false;
+			console.log('[Workspace] restoreSession finished. isRestoring = false');
 		}
 	}
 }

@@ -139,4 +139,19 @@ export class DocumentSession {
 		}
 		return false;
 	}
+
+	restoreDraft(draftContent: string) {
+		this.content = draftContent;
+		this.isLoaded = true;
+		if (this.origin) {
+			this.storage.readFile(this.origin).then(
+				(saved) => {
+					this.savedContent = saved;
+				},
+				(err) => {
+					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
+				}
+			);
+		}
+	}
 }

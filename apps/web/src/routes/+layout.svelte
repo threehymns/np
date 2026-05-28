@@ -15,6 +15,7 @@
 
 	if (typeof window !== "undefined") {
 		(window as any).appState = appState;
+		console.log('[Layout] AppState exposed on window. documents count:', appState.documents.length);
 	}
 
 	let { children } = $props();

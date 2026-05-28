@@ -1,4 +1,4 @@
-import type { WorkspacePersistence, FileOrigin } from '@np/core';
+import type { WorkspacePersistence, FileOrigin, SerializedDocument } from '@np/core';
 
 const DB_NAME = 'np-storage';
 const STORE_NAME = 'handles';
@@ -34,23 +34,25 @@ export function openDB(): Promise<IDBDatabase> {
 }
 
 export class IndexedDBWorkspacePersistence implements WorkspacePersistence {
-	async saveOpenFiles(origins: FileOrigin[]): Promise<void> {
+	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
+		const key = folderUri ? `open-files:${folderUri}` : 'open-files';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readwrite');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.put(origins, 'open-files');
+			const request = store.put(origins, key);
 			request.onsuccess = () => resolve();
 			request.onerror = () => reject(request.error);
 		});
 	}
 
-	async loadOpenFiles(): Promise<FileOrigin[]> {
+	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+		const key = folderUri ? `open-files:${folderUri}` : 'open-files';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readonly');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.get('open-files');
+			const request = store.get(key);
 			request.onsuccess = () => resolve(request.result || []);
 			request.onerror = () => reject(request.error);
 		});
@@ -100,45 +102,49 @@ export class IndexedDBWorkspacePersistence implements WorkspacePersistence {
 		});
 	}
 
-	async saveExpandedPaths(paths: string[]): Promise<void> {
+	async saveExpandedPaths(paths: string[], folderUri = ''): Promise<void> {
+		const key = folderUri ? `expanded-paths:${folderUri}` : 'expanded-paths';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readwrite');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.put(paths, 'expanded-paths');
+			const request = store.put(paths, key);
 			request.onsuccess = () => resolve();
 			request.onerror = () => reject(request.error);
 		});
 	}
 
-	async loadExpandedPaths(): Promise<string[]> {
+	async loadExpandedPaths(folderUri = ''): Promise<string[]> {
+		const key = folderUri ? `expanded-paths:${folderUri}` : 'expanded-paths';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readonly');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.get('expanded-paths');
+			const request = store.get(key);
 			request.onsuccess = () => resolve(request.result || []);
 			request.onerror = () => reject(request.error);
 		});
 	}
 
-	async saveActiveDocumentId(id: string): Promise<void> {
+	async saveActiveDocumentId(id: string, folderUri = ''): Promise<void> {
+		const key = folderUri ? `active-id:${folderUri}` : 'active-id';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readwrite');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.put(id, 'active-id');
+			const request = store.put(id, key);
 			request.onsuccess = () => resolve();
 			request.onerror = () => reject(request.error);
 		});
 	}
 
-	async loadActiveDocumentId(): Promise<string | null> {
+	async loadActiveDocumentId(folderUri = ''): Promise<string | null> {
+		const key = folderUri ? `active-id:${folderUri}` : 'active-id';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readonly');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.get('active-id');
+			const request = store.get(key);
 			request.onsuccess = () => resolve(request.result || null);
 			request.onerror = () => reject(request.error);
 		});
@@ -154,27 +160,32 @@ export class IndexedDBWorkspacePersistence implements WorkspacePersistence {
 			
 			let results: any[] = [];
 			let keys: IDBValidKey[] = [];
+			let resultsReady = false;
+			let keysReady = false;
 			
 			request.onsuccess = () => {
 				results = request.result;
-				if (keys.length > 0) finalize();
+				resultsReady = true;
+				if (keysReady) finalize();
 			};
 			
 			keysRequest.onsuccess = () => {
 				keys = keysRequest.result;
-				if (results.length > 0) finalize();
+				keysReady = true;
+				if (resultsReady) finalize();
 			};
 
 			const finalize = () => {
 				const map: Record<string, any> = {};
 				keys.forEach((key, i) => {
 					// Map internal DB keys to the keys expected by Workspace.restoreSession
-					if (key === 'open-files') map.openFiles = results[i];
-					else if (key === 'active-id') map.activeDocumentId = results[i];
-					else if (key === 'root-folder') map.rootFolder = results[i];
-					else if (key === 'recent-folders') map.recentFolders = results[i];
-					else if (key === 'expanded-paths') map.expandedPaths = results[i];
-					else map[key.toString()] = results[i];
+					const keyStr = key.toString();
+					if (keyStr === 'open-files') map.openFiles = results[i];
+					else if (keyStr === 'active-id') map.activeDocumentId = results[i];
+					else if (keyStr === 'root-folder') map.rootFolder = results[i];
+					else if (keyStr === 'recent-folders') map.recentFolders = results[i];
+					else if (keyStr === 'expanded-paths') map.expandedPaths = results[i];
+					else map[keyStr] = results[i];
 				});
 				resolve(map);
 			};
