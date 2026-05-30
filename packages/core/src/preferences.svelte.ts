@@ -27,6 +27,8 @@ import { iconRegistry } from './editor/icons.svelte';
 export class Preferences {
 	wordWrap = $state(true);
 	statusBar = $state(true);
+	vimMode = $state(false);
+	vimSyncClipboard = $state(true);
 	zoom = $state(100);
 	lineEnding = $state('Unix (LF)');
 	encoding = $state('UTF-8');
@@ -87,6 +89,8 @@ export class Preferences {
 				const prefs = JSON.parse(saved);
 				if (prefs.wordWrap !== undefined) this.wordWrap = prefs.wordWrap;
 				if (prefs.statusBar !== undefined) this.statusBar = prefs.statusBar;
+				if (prefs.vimMode !== undefined) this.vimMode = prefs.vimMode;
+				if (prefs.vimSyncClipboard !== undefined) this.vimSyncClipboard = prefs.vimSyncClipboard;
 				if (prefs.zoom !== undefined) this.zoom = prefs.zoom;
 				if (prefs.lineEnding !== undefined) this.lineEnding = prefs.lineEnding;
 				if (prefs.encoding !== undefined) this.encoding = prefs.encoding;
@@ -108,6 +112,8 @@ export class Preferences {
 			const prefs = {
 				wordWrap: this.wordWrap,
 				statusBar: this.statusBar,
+				vimMode: this.vimMode,
+				vimSyncClipboard: this.vimSyncClipboard,
 				zoom: this.zoom,
 				lineEnding: this.lineEnding,
 				encoding: this.encoding,

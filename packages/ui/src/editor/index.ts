@@ -7,6 +7,7 @@ import {
 	highlightActiveLine,
 	keymap,
 	lineNumbers,
+	drawSelection,
 } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import {
@@ -29,6 +30,34 @@ import {
 	TableTheme,
 	TableStyle,
 } from "codemirror-markdown-tables";
+import { vim, Vim, CodeMirror } from "@replit/codemirror-vim";
+
+// Patch CodeMirror wrapper prototype methods to avoid RangeError on out-of-bounds selections/offsets.
+// This handles a bug in @replit/codemirror-vim where pasting in Visual Line mode can calculate
+// out-of-bounds indexes/positions for the last selection, throwing RangeError and causing
+// keydowns (like 'p') to propagate to the browser and type literal characters.
+if (CodeMirror && CodeMirror.prototype) {
+	if (CodeMirror.prototype.posFromIndex) {
+		const originalPosFromIndex = CodeMirror.prototype.posFromIndex;
+		CodeMirror.prototype.posFromIndex = function(this: any, offset: number) {
+			const docLength = this.cm6.state.doc.length;
+			const clippedOffset = Math.max(0, Math.min(offset, docLength));
+			return originalPosFromIndex.call(this, clippedOffset);
+		};
+	}
+	if (CodeMirror.prototype.indexFromPos) {
+		const originalIndexFromPos = CodeMirror.prototype.indexFromPos;
+		CodeMirror.prototype.indexFromPos = function(this: any, pos: any) {
+			if (!pos) return 0;
+			const doc = this.cm6.state.doc;
+			const lines = doc.lines;
+			const clippedLine = Math.max(0, Math.min(pos.line, lines - 1));
+			const lineObj = doc.line(clippedLine + 1);
+			const clippedCh = Math.max(0, Math.min(pos.ch, lineObj.length));
+			return originalIndexFromPos.call(this, { line: clippedLine, ch: clippedCh });
+		};
+	}
+}
 
 import { allLanguages } from "@np/core";
 import { markdownHighlight } from "./extensions/highlight";
@@ -128,16 +157,20 @@ const markdownTableTheme = {
 export function createEditorExtensions(options: {
 	wrapCompartment: Compartment;
 	languageCompartment: Compartment;
+	vimCompartment: Compartment;
 	wrap: boolean;
+	vimEnabled: boolean;
 	initialLanguageExtensions: any[];
 }) {
-	const { wrapCompartment, languageCompartment, wrap, initialLanguageExtensions } = options;
+	const { wrapCompartment, languageCompartment, vimCompartment, wrap, vimEnabled, initialLanguageExtensions } = options;
 
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
 		languageCompartment.of(initialLanguageExtensions),
+		vimCompartment.of(vimEnabled ? vim() : []),
 		highlightSpecialChars(),
 		history(),
+		drawSelection(),
 		foldGutter(),
 		dropCursor(),
 		EditorState.allowMultipleSelections.of(true),
@@ -178,4 +211,79 @@ export * from "./extensions/link-events";
 export * from "./extensions/theme";
 export { allLanguages, LanguageSupport } from "@np/core";
 export { SelectionState, selectionState } from "@np/core";
+
+let originalMethods: Map<any, { setText: any; pushText: any }> = new Map();
+
+export function setupVimClipboardSync(enabled: boolean) {
+	if (typeof window === "undefined" || !navigator.clipboard) return;
+
+	try {
+		const controller = Vim.getRegisterController();
+		if (!controller) return;
+
+		const registersToSync = ['"', '+', '*'];
+
+		registersToSync.forEach(name => {
+			const reg = name === '"' ? controller.unnamedRegister : controller.getRegister(name);
+			if (!reg) return;
+
+			if (enabled) {
+				if (originalMethods.has(reg)) return;
+
+				const originalSetText = reg.setText.bind(reg);
+				const originalPushText = reg.pushText.bind(reg);
+
+				originalMethods.set(reg, { setText: originalSetText, pushText: originalPushText });
+
+				reg.setText = (text: string, linewise?: boolean, blockwise?: boolean) => {
+					originalSetText(text, linewise, blockwise);
+					if (text) {
+						navigator.clipboard.writeText(text).catch(() => {});
+					}
+				};
+
+				reg.pushText = (text: string, linewise?: boolean) => {
+					originalPushText(text, linewise);
+					const currentText = reg.toString();
+					if (currentText) {
+						navigator.clipboard.writeText(currentText).catch(() => {});
+					}
+				};
+			} else {
+				const original = originalMethods.get(reg);
+				if (original) {
+					reg.setText = original.setText;
+					reg.pushText = original.pushText;
+					originalMethods.delete(reg);
+				}
+			}
+		});
+	} catch (e) {
+		console.warn("Failed to toggle Vim clipboard sync:", e);
+	}
+}
+
+export async function syncVimRegistersFromClipboard() {
+	if (typeof window === "undefined" || !navigator.clipboard) return;
+
+	try {
+		const text = await navigator.clipboard.readText();
+		if (!text) return;
+
+		const controller = Vim.getRegisterController();
+		if (!controller) return;
+
+		const registersToSync = ['"', '+', '*'];
+		registersToSync.forEach(name => {
+			const reg = name === '"' ? controller.unnamedRegister : controller.getRegister(name);
+			if (reg && reg.toString() !== text) {
+				reg.keyBuffer = [text];
+				reg.linewise = false;
+				reg.blockwise = false;
+			}
+		});
+	} catch (e) {
+		// Fail silently
+	}
+}
 

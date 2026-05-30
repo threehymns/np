@@ -2,13 +2,14 @@
 	import { untrack } from "svelte";
 	import { EditorView } from "codemirror";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
-	import { createEditorExtensions, getLanguageExtensions, selectionState } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
+	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
 
-	import { DocumentSession } from '@np/core';
+	import { DocumentSession, useAppState } from '@np/core';
 
 	let {
 		doc,
@@ -24,10 +25,12 @@
 		view?: EditorView;
 	}>();
 
+	const appState = useAppState();
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
 	const wrapCompartment = new Compartment();
 	const languageCompartment = new Compartment();
+	const vimCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
 	$effect(() => {
@@ -44,7 +47,9 @@
 					...createEditorExtensions({
 						wrapCompartment,
 						languageCompartment,
+						vimCompartment,
 						wrap,
+						vimEnabled: untrack(() => appState.prefs.vimMode),
 						initialLanguageExtensions: initialExtensions,
 					}),
 					EditorView.updateListener.of((update) => {
@@ -111,6 +116,31 @@
 		}
 	});
 
+	// Sync vim setting
+	$effect(() => {
+		const vimEnabled = appState.prefs.vimMode;
+		if (view && active) {
+			view.dispatch({
+				effects: vimCompartment.reconfigure(
+					vimEnabled ? vim() : [],
+				),
+			});
+		}
+	});
+
+	// Sync vim clipboard setting
+	$effect(() => {
+		const vimEnabled = appState.prefs.vimMode;
+		const syncClipboard = appState.prefs.vimSyncClipboard;
+		setupVimClipboardSync(vimEnabled && syncClipboard);
+	});
+
+	function handleFocusOrKey() {
+		if (appState.prefs.vimMode && appState.prefs.vimSyncClipboard) {
+			void syncVimRegistersFromClipboard();
+		}
+	}
+
 	// Sync language
 	$effect(() => {
 		const lang = doc.language;
@@ -163,6 +193,8 @@
 	class="editor-wrapper {style}"
 	class:alt-pressed={altPressed}
 	data-testid="editor-input"
+	onfocusin={handleFocusOrKey}
+	onkeydown={handleFocusOrKey}
 >
 	{#if doc.permissionState !== 'granted'}
 		<div class="permission-overlay">

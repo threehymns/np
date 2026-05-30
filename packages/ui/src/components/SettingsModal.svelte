@@ -282,6 +282,24 @@
 
 									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
 										<div class="space-y-0.5">
+											<Label class="text-sm font-medium">Vim Mode</Label>
+											<p class="text-[10px] text-muted-foreground">Enable Vim keybindings and modal editing</p>
+										</div>
+										<Switch bind:checked={appState.prefs.vimMode} />
+									</div>
+
+									{#if appState.prefs.vimMode}
+										<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+											<div class="space-y-0.5">
+												<Label class="text-sm font-medium">Sync Vim Clipboard</Label>
+												<p class="text-[10px] text-muted-foreground">Sync Vim yanks/pastes with system clipboard</p>
+											</div>
+											<Switch bind:checked={appState.prefs.vimSyncClipboard} />
+										</div>
+									{/if}
+
+									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+										<div class="space-y-0.5">
 											<Label class="text-sm font-medium">Auto-save</Label>
 											<p class="text-[10px] text-muted-foreground">Coming soon</p>
 										</div>
