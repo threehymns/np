@@ -15,5 +15,8 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     persistenceLoad: (key) => electron_1.ipcRenderer.invoke('persistence:load', key),
     persistenceLoadAll: () => electron_1.ipcRenderer.invoke('persistence:loadAll'),
     showWindow: () => electron_1.ipcRenderer.invoke('window:show'),
-    onWindowShown: (callback) => electron_1.ipcRenderer.once('window-shown', () => callback())
+    onWindowShown: (callback) => electron_1.ipcRenderer.once('window-shown', () => callback()),
+    readFileUserKeymap: () => electron_1.ipcRenderer.invoke('keymap:read'),
+    writeFileUserKeymap: (content) => electron_1.ipcRenderer.invoke('keymap:write', content),
+    toggleDevTools: () => electron_1.ipcRenderer.invoke('window:toggleDevTools')
 });

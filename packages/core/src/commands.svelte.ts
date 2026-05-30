@@ -3,12 +3,12 @@ import { openSearchPanel } from "@codemirror/search";
 import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
+import { parseURI } from "./storage";
 
 export interface Command {
 	id: string;
 	label: string;
 	category: string;
-	shortcut?: string;
 	action: () => void | Promise<void>;
 	isVisible?: () => boolean;
 	isEnabled?: () => boolean;
@@ -39,35 +39,6 @@ export class CommandRegistry {
 			command.action();
 		}
 	}
-
-	handleKeydown(e: KeyboardEvent) {
-		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-		const meta = isMac ? e.metaKey : e.ctrlKey;
-		
-		for (const command of this.commands) {
-			if (!command.shortcut) continue;
-			
-			const parts = command.shortcut.toLowerCase().split('+');
-			const key = parts.pop();
-			const hasMeta = parts.includes('cmd') || parts.includes('ctrl');
-			const hasShift = parts.includes('shift');
-			const hasAlt = parts.includes('alt');
-
-			if (
-				e.key.toLowerCase() === key &&
-				meta === hasMeta &&
-				e.shiftKey === hasShift &&
-				e.altKey === hasAlt
-			) {
-				if (!command.isEnabled || command.isEnabled()) {
-					e.preventDefault();
-					command.action();
-					return true;
-				}
-			}
-		}
-		return false;
-	}
 }
 
 // Initial registration of core commands
@@ -76,7 +47,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'file.new',
 		label: 'New',
 		category: 'File',
-		shortcut: 'cmd+n',
 		action: () => { appState.newFile(); }
 	});
 
@@ -84,7 +54,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'file.open',
 		label: 'Open...',
 		category: 'File',
-		shortcut: 'cmd+o',
 		action: () => { appState.openFile(); }
 	});
 
@@ -99,7 +68,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'file.save',
 		label: 'Save',
 		category: 'File',
-		shortcut: 'cmd+s',
 		action: () => appState.saveFile()
 	});
 
@@ -114,7 +82,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',
-		shortcut: 'cmd+z',
 		action: () => {
 			if (appState.activeEditorView) {
 				undo(appState.activeEditorView);
@@ -128,7 +95,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.redo',
 		label: 'Redo',
 		category: 'Edit',
-		shortcut: 'shift+cmd+z',
 		action: () => {
 			if (appState.activeEditorView) {
 				redo(appState.activeEditorView);
@@ -142,7 +108,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.cut',
 		label: 'Cut',
 		category: 'Edit',
-		shortcut: 'cmd+x',
 		action: async () => {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
@@ -165,7 +130,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.copy',
 		label: 'Copy',
 		category: 'Edit',
-		shortcut: 'cmd+c',
 		action: async () => {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
@@ -184,7 +148,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.paste',
 		label: 'Paste',
 		category: 'Edit',
-		shortcut: 'cmd+v',
 		action: async () => {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
@@ -204,7 +167,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.find',
 		label: 'Find...',
 		category: 'Edit',
-		shortcut: 'cmd+f',
 		action: () => appState.activeEditorView && openSearchPanel(appState.activeEditorView),
 		isEnabled: () => !!appState.activeEditorView
 	});
@@ -213,7 +175,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.selectAll',
 		label: 'Select All',
 		category: 'Edit',
-		shortcut: 'cmd+a',
 		action: () => {
 			if (appState.activeEditorView) {
 				selectAll(appState.activeEditorView);
@@ -271,7 +232,6 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'edit.changeLanguageMode',
 		label: 'Change Language Mode',
 		category: 'Edit',
-		shortcut: 'cmd+k m', // VS Code style: Cmd+K M (though we'll trigger from Cmd+P/Menu)
 		action: () => {
 			if (!appState.activeDocument) return;
 			const currentDoc = appState.activeDocument;
@@ -324,7 +284,6 @@ export function registerCoreCommands(appState: AppState) {
 						id: lang.name,
 						label: lang.name,
 						meta: isCurrent ? 'Configured Language' : undefined,
-						shortcut: `(${packageId})`,
 						icon: lang.name,
 						action: () => {
 							currentDoc.userLanguageOverride = lang.name;
@@ -345,9 +304,39 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'view.toggleSidebar',
 		label: 'Toggle Sidebar',
 		category: 'View',
-		shortcut: 'cmd+\\',
 		action: () => {
 			appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible;
+		}
+	});
+
+	appState.commands.register({
+		id: 'window.toggleDevTools',
+		label: 'Toggle Developer Tools',
+		category: 'Window',
+		action: () => {
+			if (typeof window !== 'undefined' && (window as any).electronAPI?.toggleDevTools) {
+				(window as any).electronAPI.toggleDevTools();
+			}
+		},
+		isVisible: () => typeof window !== 'undefined' && !!(window as any).electronAPI
+	});
+
+	appState.commands.register({
+		id: 'settings.open',
+		label: 'Preferences: Open Settings',
+		category: 'Preferences',
+		action: () => {
+			appState.settingsOpen = true;
+		}
+	});
+
+	appState.commands.register({
+		id: 'keybindings.open',
+		label: 'Preferences: Open Keymaps (JSON)',
+		category: 'Preferences',
+		action: () => {
+			appState.workspace.openFile(parseURI('keymap://user/keymap.json'));
+			appState.settingsOpen = false;
 		}
 	});
 }

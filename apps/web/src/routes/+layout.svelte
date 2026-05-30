@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState } from "@np/core/state.svelte";
+	import { AppState, KeymapStorageProvider } from "@np/core";
 	import { MultiSchemeStorage } from "@np/core/storage";
 	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBWorkspacePersistence } from "@np/adapters-browser";
 	import AppShell from "@np/ui/AppShell.svelte";
@@ -11,6 +11,7 @@
 	const persistence = new IndexedDBWorkspacePersistence();
 	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
 	const appState = new AppState({ storage, persistence, vcsFactory });
+	storage.registerProvider('keymap', new KeymapStorageProvider(appState.keymaps));
 	setContext("appState", appState);
 
 	if (typeof window !== "undefined") {

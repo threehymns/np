@@ -41,16 +41,6 @@
 			appState.commandPalette.goBack();
 		}
 	}
-
-	function formatShortcut(shortcut?: string) {
-		if (!shortcut) return "";
-		const isMac = typeof navigator !== "undefined" && navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-		return shortcut
-			.replace("cmd", isMac ? "⌘" : "Ctrl")
-			.replace("shift", "⇧")
-			.replace("alt", "⌥")
-			.toUpperCase();
-	}
 </script>
 
 <Command.Dialog bind:open={appState.commandPalette.open}>
@@ -117,8 +107,8 @@
 							disabled={command.isEnabled && !command.isEnabled()}
 						>
 							<span>{command.label}</span>
-							{#if command.shortcut}
-								<Command.Shortcut>{formatShortcut(command.shortcut)}</Command.Shortcut>
+							{#if appState.keymaps.getShortcutForCommand(command.id)}
+								<Command.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Command.Shortcut>
 							{/if}
 						</Command.Item>
 					{/each}

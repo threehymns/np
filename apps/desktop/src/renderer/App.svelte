@@ -1,6 +1,6 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
-  import { AppState } from "@np/core/state.svelte";
+  import { AppState, KeymapStorageProvider } from "@np/core";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
   import { JSONFilePersistence } from "./JSONFilePersistence";
@@ -20,6 +20,7 @@
   const persistence = new JSONFilePersistence();
   const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
   const appState = new AppState({ storage, persistence, vcsFactory });
+  storage.registerProvider("keymap", new KeymapStorageProvider(appState.keymaps));
   setContext("appState", appState);
 
   if (typeof window !== "undefined") {

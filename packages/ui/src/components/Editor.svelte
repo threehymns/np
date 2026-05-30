@@ -10,6 +10,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState } from '@np/core';
+	import { Vim, CodeMirror } from "@replit/codemirror-vim";
 
 	let {
 		doc,
@@ -126,6 +127,41 @@
 				),
 			});
 		}
+	});
+
+	// Sync keymap context
+	$effect(() => {
+		if (!active) return;
+
+		appState.keymaps.setContext("editor", true);
+		
+		let currentMode = "normal";
+		const updateMode = (args: any) => {
+			currentMode = args.mode;
+			appState.keymaps.setContext("vim_mode", appState.prefs.vimMode ? currentMode : undefined);
+		};
+
+		if (appState.prefs.vimMode) {
+			if (typeof (Vim as any).on === 'function') {
+				(Vim as any).on("mode-change", updateMode);
+			} else if (CodeMirror && typeof (CodeMirror as any).on === 'function') {
+				(CodeMirror as any).on(Vim, "mode-change", updateMode);
+			}
+			// Initial set
+			appState.keymaps.setContext("vim_mode", "normal");
+		} else {
+			appState.keymaps.setContext("vim_mode", undefined);
+		}
+		
+		return () => {
+			appState.keymaps.setContext("editor", false);
+			appState.keymaps.setContext("vim_mode", undefined);
+			if (typeof (Vim as any).off === 'function') {
+				(Vim as any).off("mode-change", updateMode);
+			} else if (CodeMirror && typeof (CodeMirror as any).off === 'function') {
+				(CodeMirror as any).off(Vim, "mode-change", updateMode);
+			}
+		};
 	});
 
 	// Sync vim clipboard setting

@@ -6,7 +6,7 @@
 	import { Switch } from './ui/switch/index.js';
 	import { useAppState } from '@np/core';
 	import { setMode, resetMode } from "mode-watcher";
-	import { Palette, TextT, Gear } from "phosphor-svelte";
+	import { Palette, TextT, Gear, Keyboard } from "phosphor-svelte";
 	import { cn } from '@np/core';
 	import type { AppearanceMode } from '@np/core';
 
@@ -47,7 +47,75 @@
 	const categories = [
 		{ id: 'appearance', name: 'Appearance', icon: Palette },
 		{ id: 'editor', name: 'Editor', icon: TextT },
+		{ id: 'keymaps', name: 'Keybindings', icon: Keyboard }
 	];
+
+	let searchQuery = $state('');
+	let recordingCmdId = $state<string | null>(null);
+
+	const allCommands = $derived(appState.commands.getAll());
+	const filteredCommands = $derived(
+		allCommands.filter(c => 
+			c.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
+			c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			c.category.toLowerCase().includes(searchQuery.toLowerCase())
+		)
+	);
+
+	function getShortcutForCommand(cmdId: string): string {
+		return appState.keymaps.getShortcutForCommand(cmdId) || '';
+	}
+
+	function formatShortcutLabel(shortcut: string) {
+		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+		return shortcut
+			.replace('cmd', isMac ? '⌘' : 'Ctrl')
+			.replace('shift', '⇧')
+			.replace('alt', '⌥')
+			.toUpperCase();
+	}
+
+	function startRecording(cmdId: string) {
+		recordingCmdId = cmdId;
+	}
+
+	function stopRecording() {
+		recordingCmdId = null;
+	}
+
+	function handleRecordingKeydown(e: KeyboardEvent) {
+		if (!recordingCmdId) return;
+		if (['control', 'shift', 'alt', 'meta'].includes(e.key.toLowerCase())) {
+			return;
+		}
+
+		e.preventDefault();
+		e.stopPropagation();
+
+		let key = e.key.toLowerCase();
+		if (key === ' ') key = 'space';
+		if (key === 'escape') key = 'esc';
+		if (key === 'arrowup') key = 'up';
+		if (key === 'arrowdown') key = 'down';
+		if (key === 'arrowleft') key = 'left';
+		if (key === 'arrowright') key = 'right';
+
+		const parts: string[] = [];
+		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+		const meta = isMac ? e.metaKey : e.ctrlKey;
+		const ctrl = isMac ? e.ctrlKey : false;
+
+		if (meta) parts.push('cmd');
+		if (ctrl) parts.push('ctrl');
+		if (e.altKey) parts.push('alt');
+		if (e.shiftKey) parts.push('shift');
+
+		parts.push(key);
+		const shortcutStr = parts.join('+');
+
+		appState.keymaps.setCustomKeybinding(recordingCmdId!, shortcutStr);
+		stopRecording();
+	}
 
 	const catppuccinAccents = [
 		{ id: 'rosewater', color: '#f5e0dc', name: 'Rosewater' },
@@ -101,6 +169,8 @@
 		lastThemeFamily = family;
 	});
 </script>
+
+<svelte:window onkeydowncapture={handleRecordingKeydown} />
 
 <Dialog.Root bind:open>
 	<Dialog.Content class="sm:max-w-4xl h-[600px] flex flex-col p-0 gap-0 overflow-hidden bg-background border-border shadow-2xl">
@@ -341,6 +411,76 @@
 										</div>
 									</div>
 								</div>
+							</div>
+						</div>
+					{:else if activeCategory === 'keymaps'}
+						<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col h-[520px]">
+							<header class="flex justify-between items-center">
+								<div>
+									<h2 class="text-2xl font-bold tracking-tight">Keybindings</h2>
+									<p class="text-sm text-muted-foreground">Search and customize keyboard shortcuts.</p>
+								</div>
+								<button 
+									class="px-3 py-1.5 bg-secondary text-secondary-foreground rounded-md text-xs font-semibold hover:bg-secondary/80 transition-colors border cursor-pointer"
+									onclick={() => appState.commands.execute('keybindings.open')}
+								>
+									Edit as JSON
+								</button>
+							</header>
+
+							<div class="flex items-center gap-2">
+								<input
+									type="text"
+									placeholder="Search commands..."
+									bind:value={searchQuery}
+									class="w-full px-3 py-2 bg-muted/40 border border-border rounded-md text-sm outline-none focus:border-primary/50 transition-colors"
+								/>
+							</div>
+
+							<div class="flex-1 min-h-0 overflow-y-auto border rounded-md">
+								<table class="w-full text-sm text-left border-collapse">
+									<thead>
+										<tr class="border-b bg-muted/20 text-muted-foreground font-semibold text-[10px] uppercase tracking-wider sticky top-0 backdrop-blur-md">
+											<th class="p-3">Command</th>
+											<th class="p-3">Keybinding</th>
+											<th class="p-3 text-right">Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each filteredCommands as cmd}
+											<tr class="border-b hover:bg-muted/10 transition-colors">
+												<td class="p-3">
+													<div class="font-medium text-foreground">{cmd.label}</div>
+													<div class="text-[10px] text-muted-foreground mt-0.5">{cmd.id} • {cmd.category}</div>
+												</td>
+												<td class="p-3 font-mono text-xs text-primary/95">
+													{#if recordingCmdId === cmd.id}
+														<span class="animate-pulse text-muted-foreground italic font-sans">Recording key...</span>
+													{:else}
+														{getShortcutForCommand(cmd.id) || 'None'}
+													{/if}
+												</td>
+												<td class="p-3 text-right">
+													{#if recordingCmdId === cmd.id}
+														<button 
+															class="px-2.5 py-1 bg-destructive text-destructive-foreground text-xs font-semibold rounded-md hover:bg-destructive/90 transition-colors cursor-pointer"
+															onclick={() => stopRecording()}
+														>
+															Cancel
+														</button>
+													{:else}
+														<button 
+															class="px-2.5 py-1 bg-muted hover:bg-muted/80 text-foreground text-xs font-semibold rounded-md border transition-colors cursor-pointer"
+															onclick={() => startRecording(cmd.id)}
+														>
+															Edit
+														</button>
+													{/if}
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
 							</div>
 						</div>
 					{/if}

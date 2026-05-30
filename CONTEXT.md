@@ -38,3 +38,8 @@ A searchable dialog interface allowing the user to search and run registered act
 - **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., Catppuccin, Material, VS Code Icons).
 - **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
 - **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
+
+## Keymap
+- **Keymap**: A configuration file or preference (e.g. `keymap.json`) mapping keyboard input sequences to Command IDs, scoped to active Contexts.
+- **Context Registry**: A registry tracking active focus states and environment tags (e.g. `["editor", "vim_mode:normal"]`) to evaluate whether keybindings are active.
+- **Keymap Registry**: The central coordinator that intercept key events, matches them against active keymap bindings, and dispatches corresponding commands.

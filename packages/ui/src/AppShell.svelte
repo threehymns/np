@@ -14,25 +14,40 @@
 
 	let SettingsModal = $state<any>(null);
 	let CommandPalette = $state<any>(null);
+	let WhichKey = $state<any>(null);
 
 	let { children } = $props<{ children: Snippet }>();
-	let settingsOpen = $state(false);
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
 	onMount(async () => {
 		await appState.init();
 		
+		const handleCaptureKeydown = (e: KeyboardEvent) => {
+			if (appState.keymaps.handleKeydown(e)) {
+				e.stopPropagation();
+				e.preventDefault();
+			}
+		};
+
+		window.addEventListener('keydown', handleCaptureKeydown, true);
+
 		// Lazy load secondary UI
 		Promise.all([
 			import("./components/SettingsModal.svelte"),
-			import("./components/CommandPalette.svelte")
-		]).then(([settingsMod, commandMod]) => {
+			import("./components/CommandPalette.svelte"),
+			import("./components/WhichKey.svelte")
+		]).then(([settingsMod, commandMod, whichKeyMod]) => {
 			SettingsModal = settingsMod.default;
 			CommandPalette = commandMod.default;
+			WhichKey = whichKeyMod.default;
 		}).catch(err => {
 			console.error("[AppShell] Failed to load secondary UI components:", err);
 		});
+
+		return () => {
+			window.removeEventListener('keydown', handleCaptureKeydown, true);
+		};
 	});
 
 	$effect(() => {
@@ -54,28 +69,9 @@
 			body.setAttribute('data-accent', accent);
 		}
 	});
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (appState.commands.handleKeydown(e)) return;
-
-		if ((e.metaKey || e.ctrlKey) && e.key === ',') {
-			e.preventDefault();
-			settingsOpen = true;
-		}
-	}
-
-	function formatShortcut(shortcut?: string) {
-		if (!shortcut) return '';
-		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-		return shortcut
-			.replace('cmd', isMac ? '⌘' : 'Ctrl')
-			.replace('shift', '⇧')
-			.replace('alt', '⌥')
-			.toUpperCase();
-	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
@@ -98,8 +94,8 @@
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
-									{#if command.shortcut}
-										<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+									{#if appState.keymaps.getShortcutForCommand(command.id)}
+										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
 									{/if}
 								</Menubar.Item>
 							{/each}
@@ -113,8 +109,8 @@
 											disabled={command.isEnabled && !command.isEnabled()}
 										>
 											{command.label}
-											{#if command.shortcut}
-												<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+											{#if appState.keymaps.getShortcutForCommand(command.id)}
+												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
 											{/if}
 										</Menubar.Item>
 									{/each}
@@ -134,7 +130,9 @@
 							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
 							<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
 								Sidebar
-								<Menubar.Shortcut>{formatShortcut('cmd+\\')}</Menubar.Shortcut>
+								{#if appState.keymaps.getShortcutForCommand('view.toggleSidebar')}
+									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleSidebar')}</Menubar.Shortcut>
+								{/if}
 							</Menubar.CheckboxItem>
 						{:else}
 							{#each appState.commands.getByCategory(category) as command (command.id)}
@@ -143,8 +141,8 @@
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
-									{#if command.shortcut}
-										<Menubar.Shortcut>{formatShortcut(command.shortcut)}</Menubar.Shortcut>
+									{#if appState.keymaps.getShortcutForCommand(command.id)}
+										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
 									{/if}
 								</Menubar.Item>
 							{/each}
@@ -152,8 +150,11 @@
 
 						{#if category === 'Edit'}
 							<Menubar.Separator />
-							<Menubar.Item onclick={() => settingsOpen = true}>
-								Settings... <Menubar.Shortcut>{formatShortcut('cmd+,')}</Menubar.Shortcut>
+							<Menubar.Item onclick={() => appState.settingsOpen = true}>
+								Settings... 
+								{#if appState.keymaps.getShortcutForCommand('settings.open')}
+									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
+								{/if}
 							</Menubar.Item>
 						{/if}
 					</Menubar.Content>
@@ -179,7 +180,7 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({formatShortcut('cmd+\\')})</span>
+							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
 						</Tooltip.Content>
 					</Tooltip.Root>
 				</Tooltip.Provider>
@@ -221,8 +222,12 @@
 	<CommandPalette />
 {/if}
 
+{#if WhichKey}
+	<WhichKey />
+{/if}
+
 {#if SettingsModal}
-	<SettingsModal bind:open={settingsOpen} />
+	<SettingsModal bind:open={appState.settingsOpen} />
 {/if}
 
 <AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>

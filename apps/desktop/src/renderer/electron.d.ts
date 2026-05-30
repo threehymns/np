@@ -13,6 +13,9 @@ export interface ElectronAPI {
 	persistenceLoadAll(): Promise<Record<string, any>>;
 	showWindow(): Promise<void>;
 	onWindowShown(callback: () => void): void;
+	readFileUserKeymap(): Promise<string | null>;
+	writeFileUserKeymap(content: string): Promise<void>;
+	toggleDevTools(): Promise<void>;
 }
 
 declare global {

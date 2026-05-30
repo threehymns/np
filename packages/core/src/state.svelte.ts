@@ -4,6 +4,7 @@ import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { CommandRegistry, registerCoreCommands } from './commands.svelte';
+import { KeymapRegistry } from './keymap.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
@@ -25,6 +26,8 @@ export class AppState {
 	commandPalette = new CommandPaletteState();
 	icons = iconRegistry;
 	commands = new CommandRegistry();
+	keymaps = new KeymapRegistry(this);
+	settingsOpen = $state(false);
 	
 	activeEditorView = $state<any>(undefined);
 
@@ -47,7 +50,17 @@ export class AppState {
 		};
 
 		if (typeof window !== 'undefined' && (window as any).electronAPI?.onWindowShown) {
-			(window as any).electronAPI.onWindowShown(deferredInit);
+			// On desktop, the window might already be shown
+			// We use a timeout as a safeguard
+			let initialized = false;
+			const safeInit = () => {
+				if (initialized) return;
+				initialized = true;
+				deferredInit();
+			};
+
+			(window as any).electronAPI.onWindowShown(safeInit);
+			setTimeout(safeInit, 2000); // 2s safeguard
 		} else if (typeof requestIdleCallback !== 'undefined') {
 			requestIdleCallback(() => { void deferredInit(); });
 		} else {

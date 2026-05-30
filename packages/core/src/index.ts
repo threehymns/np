@@ -7,6 +7,8 @@ export * from './document.svelte';
 export * from './workspace.svelte';
 export * from './commands.svelte';
 export * from './state.svelte';
+export * from './context.svelte';
+export * from './keymap.svelte';
 export * from './project/vcs';
 export * from './project/tree.svelte';
 export * from './project/repository.svelte';

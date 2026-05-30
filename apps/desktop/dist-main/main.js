@@ -3,6 +3,9 @@ import path from 'path';
 import fs from 'fs/promises';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+app.setName('np');
+// Enable Chromium's native overlay scrollbars feature
+app.commandLine.appendSwitch('enable-features', 'OverlayScrollbar');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let mainWindow = null;
@@ -205,9 +208,30 @@ function registerIpcHandlers() {
         });
     });
     ipcMain.handle('window:show', () => {
-        if (mainWindow && !mainWindow.isVisible()) {
-            mainWindow.show();
+        if (mainWindow) {
+            if (!mainWindow.isVisible()) {
+                mainWindow.show();
+            }
             mainWindow.webContents.send('window-shown');
+        }
+    });
+    ipcMain.handle('keymap:read', async () => {
+        const filePath = path.join(app.getPath('userData'), 'keymap.json');
+        try {
+            return await fs.readFile(filePath, 'utf-8');
+        }
+        catch {
+            return null;
+        }
+    });
+    ipcMain.handle('keymap:write', async (_, content) => {
+        const filePath = path.join(app.getPath('userData'), 'keymap.json');
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, 'utf-8');
+    });
+    ipcMain.handle('window:toggleDevTools', () => {
+        if (mainWindow) {
+            mainWindow.webContents.toggleDevTools();
         }
     });
 }

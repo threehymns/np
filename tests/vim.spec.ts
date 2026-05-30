@@ -109,3 +109,60 @@ test('vim mode - shift+v followed by p to paste clipboard content (with clipboar
   expect(text).not.toContain('second linep');
   expect(text).toContain('copied from clipboard');
 });
+
+test('vim mode - WhichKey support', async ({ page }) => {
+  page.on('console', msg => console.log('BROWSER:', msg.type(), msg.text()));
+  await mockIconThemes(page);
+  await page.goto('/');
+
+  const editor = page.locator('.cm-content');
+  await expect(editor).toBeVisible({ timeout: 30000 });
+
+  // Enable Vim Mode via window.appState
+  await page.evaluate(() => {
+    (window as any).appState.prefs.vimMode = true;
+  });
+
+  // Wait for Svelte effects and CodeMirror reconfiguration to settle
+  await page.waitForTimeout(500);
+
+  // Focus editor
+  await editor.focus();
+  await editor.click();
+
+  // Type some text and escape to normal mode to ensure CodeMirror-Vim has text/state
+  await page.keyboard.press('i');
+  await page.keyboard.type('test');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+
+  // Press Space (Vim Leader key)
+  await page.keyboard.press('Space');
+
+  // Verify WhichKey panel is visible
+  const panel = page.locator('.whichkey-panel');
+  await expect(panel).toBeVisible();
+
+  // Verify it shows "Leader"
+  const title = page.locator('.whichkey-title');
+  await expect(title).toHaveText('Leader');
+
+  // Press 'f' to go into the File subgroup
+  await page.keyboard.press('f');
+
+  // Verify it shows "Leader ➔ file"
+  await expect(title).toHaveText('Leader ➔ file');
+
+  // Click the "new-file" option in WhichKey panel
+  const newFileBtn = page.locator('.whichkey-item', { hasText: 'new-file' });
+  await expect(newFileBtn).toBeVisible();
+  await newFileBtn.click();
+
+  // Verify panel is hidden
+  await expect(panel).not.toBeVisible();
+
+  // Verify that a new file was created
+  const docCount = await page.evaluate(() => (window as any).appState.documents.length);
+  expect(docCount).toBe(2);
+});
+

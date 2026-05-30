@@ -20,6 +20,7 @@ export class Workspace {
 	persistence: WorkspacePersistence;
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
+	private restorePromise: Promise<void> | null = null;
 
 	private saveOpenFilesTimeout: any = null;
 
@@ -425,52 +426,58 @@ export class Workspace {
 		}
 	}
 
-	private async restoreSession() {
-		console.log('[Workspace] restoreSession start');
-		this.isRestoring = true;
-		try {
-			const all = await this.persistence.loadAll();
-			console.log('[Workspace] loadAll returned:', all);
-			
-			const rootOrigin: FileOrigin | null = all.rootFolder || null;
-			const recentFolders: FileOrigin[] = all.recentFolders || [];
-			
-			this.recentFolders = recentFolders;
+	async restoreSession() {
+		if (this.restorePromise) return this.restorePromise;
 
-			if (rootOrigin) {
-				this.rootOrigin = rootOrigin;
-
-				const permission = await this.storage.queryPermission(rootOrigin, true);
+		this.restorePromise = (async () => {
+			console.log('[Workspace] restoreSession start');
+			this.isRestoring = true;
+			try {
+				const all = await this.persistence.loadAll();
+				console.log('[Workspace] loadAll returned:', all);
 				
-				if (permission === 'granted') {
-					this.hasRootPermission = true;
-					// Initialize repo and tree in background
-					(async () => {
-						try {
-							this.repository = new Repository(rootOrigin!, this.vcsFactory);
-							await this.repository.refresh();
-							await this.projectTree.scan(rootOrigin!);
-						} catch (e: any) {
-							console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
-						}
-					})();
-				} else {
-					this.hasRootPermission = false;
+				const rootOrigin: FileOrigin | null = all.rootFolder || null;
+				const recentFolders: FileOrigin[] = all.recentFolders || [];
+				
+				this.recentFolders = recentFolders;
+
+				if (rootOrigin) {
+					this.rootOrigin = rootOrigin;
+
+					const permission = await this.storage.queryPermission(rootOrigin, true);
+					
+					if (permission === 'granted') {
+						this.hasRootPermission = true;
+						// Initialize repo and tree in background
+						(async () => {
+							try {
+								this.repository = new Repository(rootOrigin!, this.vcsFactory);
+								await this.repository.refresh();
+								await this.projectTree.scan(rootOrigin!);
+							} catch (e: any) {
+								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
+							}
+						})();
+					} else {
+						this.hasRootPermission = false;
+					}
 				}
+
+				// Load namespaced state for the restored folder URI
+				const folderUri = rootOrigin ? toURI(rootOrigin) : '';
+				console.log('[Workspace] Restoring state for folderUri:', folderUri);
+				await this.loadFolderState(folderUri);
+
+			} catch (e) {
+				console.error('[Workspace] Failed to restore session', e);
+				this.documents = [];
+				await this.newFile();
+			} finally {
+				this.isRestoring = false;
+				console.log('[Workspace] restoreSession finished. isRestoring = false');
 			}
+		})();
 
-			// Load namespaced state for the restored folder URI
-			const folderUri = rootOrigin ? toURI(rootOrigin) : '';
-			console.log('[Workspace] Restoring state for folderUri:', folderUri);
-			await this.loadFolderState(folderUri);
-
-		} catch (e) {
-			console.error('[Workspace] Failed to restore session', e);
-			this.documents = [];
-			await this.newFile();
-		} finally {
-			this.isRestoring = false;
-			console.log('[Workspace] restoreSession finished. isRestoring = false');
-		}
+		return this.restorePromise;
 	}
 }
