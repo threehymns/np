@@ -310,6 +310,45 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	appState.commands.register({
+		id: 'view.zoomIn',
+		label: 'Zoom In',
+		category: 'View',
+		action: () => appState.prefs.zoomIn()
+	});
+
+	appState.commands.register({
+		id: 'view.zoomOut',
+		label: 'Zoom Out',
+		category: 'View',
+		action: () => appState.prefs.zoomOut()
+	});
+
+	appState.commands.register({
+		id: 'view.zoomReset',
+		label: 'Restore Default Zoom',
+		category: 'View',
+		action: () => appState.prefs.resetZoom()
+	});
+
+	appState.commands.register({
+		id: 'view.toggleStatusBar',
+		label: 'Status Bar',
+		category: 'View',
+		action: () => {
+			appState.prefs.statusBar = !appState.prefs.statusBar;
+		}
+	});
+
+	appState.commands.register({
+		id: 'format.toggleWordWrap',
+		label: 'Word Wrap',
+		category: 'Format',
+		action: () => {
+			appState.prefs.wordWrap = !appState.prefs.wordWrap;
+		}
+	});
+
+	appState.commands.register({
 		id: 'window.toggleDevTools',
 		label: 'Toggle Developer Tools',
 		category: 'Window',

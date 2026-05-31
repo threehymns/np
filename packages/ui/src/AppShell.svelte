@@ -117,17 +117,32 @@
 								</Menubar.SubContent>
 							</Menubar.Sub>
 						{:else if category === 'Format'}
-							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>Word Wrap</Menubar.CheckboxItem>
+							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>
+								Word Wrap
+								{#if appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}
+									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}</Menubar.Shortcut>
+								{/if}
+							</Menubar.CheckboxItem>
 						{:else if category === 'View'}
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									<Menubar.Item onclick={() => appState.prefs.zoomIn()}>Zoom In <Menubar.Shortcut>⌘+</Menubar.Shortcut></Menubar.Item>
-									<Menubar.Item onclick={() => appState.prefs.zoomOut()}>Zoom Out <Menubar.Shortcut>⌘-</Menubar.Shortcut></Menubar.Item>
-									<Menubar.Item onclick={() => appState.prefs.resetZoom()}>Restore Default Zoom <Menubar.Shortcut>⌘0</Menubar.Shortcut></Menubar.Item>
+									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom')) as command (command.id)}
+										<Menubar.Item onclick={() => command.action()}>
+											{command.label}
+											{#if appState.keymaps.getShortcutForCommand(command.id)}
+												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
+											{/if}
+										</Menubar.Item>
+									{/each}
 								</Menubar.SubContent>
 							</Menubar.Sub>
-							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>Status Bar</Menubar.CheckboxItem>
+							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>
+								Status Bar
+								{#if appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}
+									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}</Menubar.Shortcut>
+								{/if}
+							</Menubar.CheckboxItem>
 							<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
 								Sidebar
 								{#if appState.keymaps.getShortcutForCommand('view.toggleSidebar')}

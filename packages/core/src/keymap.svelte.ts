@@ -65,7 +65,10 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+s": "file.save",
 			"cmd+shift+s": "file.saveAs",
 			"cmd+p": "command-palette",
-			"cmd+\\\\": "view.toggleSidebar",
+			"cmd+\\": "view.toggleSidebar",
+			"cmd++": "view.zoomIn",
+			"cmd+-": "view.zoomOut",
+			"cmd+0": "view.zoomReset",
 			"cmd+,": "settings.open",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools"
