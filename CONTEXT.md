@@ -40,6 +40,9 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
 
 ## Keymap
-- **Keymap**: A configuration file or preference (e.g. `keymap.json`) mapping keyboard input sequences to Command IDs, scoped to active Contexts.
-- **Context Registry**: A registry tracking active focus states and environment tags (e.g. `["editor", "vim_mode:normal"]`) to evaluate whether keybindings are active.
-- **Keymap Registry**: The central coordinator that intercept key events, matches them against active keymap bindings, and dispatches corresponding commands.
+- **Keymap**: A configuration file or preference (e.g. `keymap.json`) mapping keyboard input sequences (including chords) to Command IDs, scoped to active Contexts.
+- **Context Registry**: A registry tracking active focus states and environment tags (e.g. `editor`, `vim_mode == normal`) to evaluate whether keybindings are active.
+- **Keymap Registry**: The central coordinator that intercept key events (using a global capture-phase listener), matches them against active keymap bindings, handles chords, and dispatches corresponding commands. It also manages a key buffer for active chords.
+- **WhichKey**: A visual HUD that appears during a keybinding chord to guide the user through available next keys and their associated commands or groups.
+- **Chord**: A sequence of keypresses (e.g. `Space f n`) that triggers a command. Chords are context-aware and can be navigated back via `Backspace` or cancelled via `Escape`.
+

@@ -10,7 +10,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState } from '@np/core';
-	import { Vim, CodeMirror } from "@replit/codemirror-vim";
+	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
 		doc,
@@ -135,33 +135,38 @@
 
 		appState.keymaps.setContext("editor", true);
 		
-		let currentMode = "normal";
+		if (!appState.prefs.vimMode) {
+			appState.keymaps.setContext("vim_mode", undefined);
+			return;
+		}
+
+		// Initial set
+		appState.keymaps.setContext("vim_mode", "normal");
+		
+		if (!view) return;
+
+		const cm = getCM(view);
+		if (!cm) return;
+
 		const updateMode = (args: any) => {
-			currentMode = args.mode;
-			appState.keymaps.setContext("vim_mode", appState.prefs.vimMode ? currentMode : undefined);
+			appState.keymaps.setContext("vim_mode", args.mode);
 		};
 
-		if (appState.prefs.vimMode) {
-			if (typeof (Vim as any).on === 'function') {
-				(Vim as any).on("mode-change", updateMode);
-			} else if (CodeMirror && typeof (CodeMirror as any).on === 'function') {
-				(CodeMirror as any).on(Vim, "mode-change", updateMode);
-			}
-			// Initial set
-			appState.keymaps.setContext("vim_mode", "normal");
-		} else {
-			appState.keymaps.setContext("vim_mode", undefined);
-		}
+		cm.on("vim-mode-change", updateMode);
 		
 		return () => {
-			appState.keymaps.setContext("editor", false);
-			appState.keymaps.setContext("vim_mode", undefined);
-			if (typeof (Vim as any).off === 'function') {
-				(Vim as any).off("mode-change", updateMode);
-			} else if (CodeMirror && typeof (CodeMirror as any).off === 'function') {
-				(CodeMirror as any).off(Vim, "mode-change", updateMode);
-			}
+			cm.off("vim-mode-change", updateMode);
 		};
+	});
+
+	// Also sync mode when view changes or vim is toggled
+	$effect(() => {
+		if (view && active && appState.prefs.vimMode) {
+			const cm = getCM(view);
+			if (cm) {
+				appState.keymaps.setContext("vim_mode", (cm as any).state.vim?.insertMode ? "insert" : (cm as any).state.vim?.visualMode ? "visual" : "normal");
+			}
+		}
 	});
 
 	// Sync vim clipboard setting

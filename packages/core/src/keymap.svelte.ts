@@ -243,6 +243,7 @@ export class KeymapRegistry {
 	}
 	
 	handleKeydown(e: KeyboardEvent): boolean {
+		console.log('handleKeydown', e.key, (e.target as HTMLElement).tagName);
 		// Ignore if target is a standard input field or textarea, 
 		// but only for plain character keys (to allow Cmd+S etc.)
 		const target = e.target as HTMLElement;

@@ -153,8 +153,8 @@ test('vim mode - WhichKey support', async ({ page }) => {
   // Verify it shows "Leader ➔ file"
   await expect(title).toHaveText('Leader ➔ file');
 
-  // Click the "new-file" option in WhichKey panel
-  const newFileBtn = page.locator('.whichkey-item', { hasText: 'new-file' });
+  // Click the "New" option in WhichKey panel
+  const newFileBtn = page.locator('.whichkey-item', { hasText: 'New' });
   await expect(newFileBtn).toBeVisible();
   await newFileBtn.click();
 
