@@ -16,6 +16,7 @@ export class Repository {
 	changes = $state<GitChange[]>([]);
 	commits = $state<GitCommit[]>([]);
 	activeDiffFile = $state<GitChange | null>(null);
+	selectedPaths = $state<string[]>([]);
 
 	public adapter: VCSAdapter;
 
