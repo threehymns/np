@@ -241,8 +241,14 @@ export class Workspace {
 		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 
-		this.repository = new Repository(origin, this.vcsFactory);
-		await this.repository.refresh();
+		const vcsAdapter = this.vcsFactory(origin);
+		const hasGit = await vcsAdapter.detect(origin.path);
+		if (hasGit) {
+			this.repository = new Repository(origin, this.vcsFactory);
+			await this.repository.refresh();
+		} else {
+			this.repository = null;
+		}
 		
 		// Add to recent folders
 		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
@@ -278,16 +284,18 @@ export class Workspace {
 			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
 
-			this.repository = new Repository(this.rootOrigin, this.vcsFactory);
-			
-			// Fresh start for the adapter
-			const adapter = (this.repository as any).adapter;
-			if (adapter && typeof adapter.reset === 'function') {
-				adapter.reset();
+			const vcsAdapter = this.vcsFactory(this.rootOrigin);
+			if (typeof (vcsAdapter as any).reset === 'function') {
+				(vcsAdapter as any).reset();
 			}
-			
-			const success = await this.repository.refresh();
-			console.log('[Workspace] Repository initialized after permission:', success);
+			const hasGit = await vcsAdapter.detect(this.rootOrigin.path);
+			if (hasGit) {
+				this.repository = new Repository(this.rootOrigin, this.vcsFactory);
+				const success = await this.repository.refresh();
+				console.log('[Workspace] Repository initialized after permission:', success);
+			} else {
+				this.repository = null;
+			}
 			
 			await this.projectTree.scan(this.rootOrigin);
 
@@ -542,8 +550,14 @@ export class Workspace {
 						// Initialize repo and tree in background
 						(async () => {
 							try {
-								this.repository = new Repository(rootOrigin!, this.vcsFactory);
-								await this.repository.refresh();
+								const vcsAdapter = this.vcsFactory(rootOrigin!);
+								const hasGit = await vcsAdapter.detect(rootOrigin!.path);
+								if (hasGit) {
+									this.repository = new Repository(rootOrigin!, this.vcsFactory);
+									await this.repository.refresh();
+								} else {
+									this.repository = null;
+								}
 								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);

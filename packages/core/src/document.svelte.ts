@@ -1,8 +1,8 @@
-import { type Storage, type FileOrigin } from './storage';
+import { type Storage, type FileOrigin, type PermissionState } from './storage';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 import type { Workspace } from './workspace.svelte';
 
-export type PermissionState = 'granted' | 'prompt' | 'denied';
+export type { PermissionState };
 
 export class DocumentSession {
 	id = crypto.randomUUID();

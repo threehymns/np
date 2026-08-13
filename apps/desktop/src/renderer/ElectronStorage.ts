@@ -1,7 +1,11 @@
-import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
+import type { StorageProvider, FileOrigin, StorageEntry, PermissionState } from '@np/core';
 
 export class ElectronStorage implements StorageProvider {
 	scheme = 'file';
+
+	async checkPermission(path: string): Promise<PermissionState> {
+		return 'granted';
+	}
 
 	async pickFile(): Promise<FileOrigin | null> {
 		const res = await window.electronAPI.openFile();

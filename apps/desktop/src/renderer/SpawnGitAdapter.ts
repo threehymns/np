@@ -3,6 +3,15 @@ import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCom
 export class SpawnGitAdapter implements VCSAdapter {
 	constructor(private rootOrigin: FileOrigin) {}
 
+	async detect(rootPath: string): Promise<boolean> {
+		try {
+			const res = await window.electronAPI.gitRun(rootPath, ['rev-parse', '--is-inside-work-tree']);
+			return res.code === 0;
+		} catch (e) {
+			return false;
+		}
+	}
+
 	private async runGit(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
 		return await window.electronAPI.gitRun(this.rootOrigin.path, args);
 	}

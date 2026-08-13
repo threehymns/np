@@ -1,5 +1,5 @@
 import { toURI, parseURI } from '@np/core';
-import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
+import type { StorageProvider, FileOrigin, StorageEntry, PermissionState } from '@np/core';
 import { openDB } from './persistence';
 
 export class BrowserHandleRegistry {
@@ -239,7 +239,7 @@ export class BrowserStorage implements StorageProvider {
 		return false;
 	}
 
-	async queryPermission(origin: FileOrigin, readWrite = false): Promise<'granted' | 'prompt' | 'denied'> {
+	async queryPermission(origin: FileOrigin, readWrite = false): Promise<PermissionState> {
 		const uri = toURI(origin);
 		const handle = await browserHandleRegistry.resolve(uri);
 		if (!handle) return 'prompt';
@@ -250,6 +250,11 @@ export class BrowserStorage implements StorageProvider {
 		}
 		const state = await handle.queryPermission(options);
 		return state === 'granted' ? 'granted' : state === 'prompt' ? 'prompt' : 'denied';
+	}
+
+	async checkPermission(path: string): Promise<PermissionState> {
+		const origin: FileOrigin = { scheme: this.scheme, path, name: path.split('/').pop() || '' };
+		return this.queryPermission(origin, true);
 	}
 
 	async createFile(parent: FileOrigin, name: string): Promise<FileOrigin> {

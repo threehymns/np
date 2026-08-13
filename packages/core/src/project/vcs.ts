@@ -40,6 +40,7 @@ export interface GroupedChange {
 }
 
 export interface VCSAdapter {
+	detect(rootPath: string): Promise<boolean>;
 	getCurrentBranch(): Promise<string | null>;
 	getBranches(): Promise<string[]>;
 	getStatus(): Promise<VCSStatus>;

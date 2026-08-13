@@ -32,6 +32,8 @@ export interface StorageEntry {
 	origin: FileOrigin;
 }
 
+export type PermissionState = 'granted' | 'prompt' | 'denied';
+
 export interface StorageProvider {
 	scheme: string;
 	pickFile(): Promise<FileOrigin | null>;
@@ -40,7 +42,8 @@ export interface StorageProvider {
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
 	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
-	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<'granted' | 'prompt' | 'denied'>;
+	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<PermissionState>;
+	checkPermission(path: string): Promise<PermissionState>;
 	createFile(parent: FileOrigin, name: string): Promise<FileOrigin>;
 	createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin>;
 	deleteEntry(origin: FileOrigin): Promise<void>;
@@ -54,7 +57,8 @@ export interface Storage {
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
 	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
-	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<'granted' | 'prompt' | 'denied'>;
+	queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<PermissionState>;
+	checkPermission(path: string, scheme?: string): Promise<PermissionState>;
 	createFile(parent: FileOrigin, name: string): Promise<FileOrigin>;
 	createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin>;
 	deleteEntry(origin: FileOrigin): Promise<void>;
@@ -118,8 +122,14 @@ export class MultiSchemeStorage implements Storage {
 		return await this.getProvider(origin.scheme).verifyPermission(origin, readWrite);
 	}
 
-	async queryPermission(origin: FileOrigin, readWrite = false): Promise<'granted' | 'prompt' | 'denied'> {
+	async queryPermission(origin: FileOrigin, readWrite = false): Promise<PermissionState> {
 		return await this.getProvider(origin.scheme).queryPermission(origin, readWrite);
+	}
+
+	async checkPermission(path: string, scheme?: string): Promise<PermissionState> {
+		const targetScheme = scheme ?? this.defaultScheme;
+		if (!targetScheme) throw new Error("No scheme available for checkPermission");
+		return await this.getProvider(targetScheme).checkPermission(path);
 	}
 
 	async createFile(parent: FileOrigin, name: string): Promise<FileOrigin> {

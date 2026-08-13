@@ -224,6 +224,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	constructor(private rootOrigin: FileOrigin) {}
 
+	async detect(rootPath: string): Promise<boolean> {
+		try {
+			const uri = toURI({ scheme: this.rootOrigin.scheme, path: rootPath, name: this.rootOrigin.name });
+			const handle = await browserHandleRegistry.resolve(uri);
+			if (!handle || handle.kind !== 'directory') {
+				return false;
+			}
+			const dirHandle = handle as FileSystemDirectoryHandle;
+			await dirHandle.getDirectoryHandle('.git');
+			return true;
+		} catch (e: any) {
+			if (e.name === 'NotReadableError') {
+				console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
+			}
+			return false;
+		}
+	}
+
 	private async ensureInitialized(): Promise<boolean> {
 		if (this.initialized) return true;
 		if (this.initPromise) return this.initPromise;
@@ -244,13 +262,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				}
 
 				// Check if it's a git repo
-				try {
-					await this.rootHandle.getDirectoryHandle('.git');
-				} catch (e: any) {
-					if (e.name === 'NotReadableError') {
-						console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
-						return false;
-					}
+				const hasGit = await this.detect(this.rootOrigin.path);
+				if (!hasGit) {
 					return false;
 				}
 				
