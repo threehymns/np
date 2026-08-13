@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "np",
@@ -85,7 +84,6 @@
         "clsx": "^2.1.1",
         "isomorphic-git": "^1.38.1",
         "marked": "^18.0.4",
-        "phosphor-svelte": "^3.1.0",
         "tailwind-merge": "^3.5.0",
       },
     },
