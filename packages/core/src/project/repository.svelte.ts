@@ -32,7 +32,7 @@ export class Repository {
 			const [branchRes, branchesRes, changesRes, commitsRes] = await Promise.allSettled([
 				this.adapter.getCurrentBranch(),
 				this.adapter.getBranches(),
-				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve([]),
+				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
 				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([])
 			]);
 
@@ -51,10 +51,15 @@ export class Repository {
 				this.branches = [];
 			}
 
-			if (changesRes.status === 'fulfilled') {
+			if (changesRes.status === 'fulfilled' && changesRes.value !== null) {
 				this.changes = changesRes.value;
-				this.uncommittedFiles = this.changes.map(c => c.filepath);
+				this.uncommittedFiles = [...new Set(this.changes.map(c => c.filepath))];
 				this.isDirty = this.changes.length > 0;
+			} else if (changesRes.status === 'fulfilled') {
+				const status = await this.adapter.getStatus();
+				this.changes = [];
+				this.uncommittedFiles = status.uncommittedFiles;
+				this.isDirty = status.isDirty;
 			} else {
 				this.changes = [];
 				this.uncommittedFiles = [];
@@ -89,6 +94,9 @@ export class Repository {
 			this.branches = [];
 			this.changes = [];
 			this.commits = [];
+			this.uncommittedFiles = [];
+			this.isDirty = false;
+			this.activeDiffFile = null;
 			return false;
 		} finally {
 			this.isBusy = false;

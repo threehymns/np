@@ -130,7 +130,7 @@
 }
 
 /* Change Gutter (Unified Diff) */
-.cm-gutters {
+.cm-mergeView .cm-gutters {
 	display: flex !important;
 }
 

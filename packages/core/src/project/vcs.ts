@@ -51,6 +51,7 @@ export interface VCSAdapter {
 	discardChanges?(filepath: string): Promise<void>;
 	commit?(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void>;
 	createBranch?(branchName: string): Promise<void>;
+	getUserConfig?(): Promise<{ name: string; email: string } | null>;
 	updateIndexContent?(filepath: string, content: string): Promise<void>;
 	updateFileContent?(filepath: string, content: string): Promise<void>;
 }
