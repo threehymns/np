@@ -171,11 +171,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 					diff: diffRes.stdout,
 					staged: true,
 					originalContent,
-					modifiedContent
+					modifiedContent,
+					stagedContent: modifiedContent
 				});
 			}
 			if (y !== ' ') {
-				const status = y === '?' ? 'A' : (y === 'D' ? 'D' : 'M');
+				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
 				const diffRes = await this.runGit(['diff', filepath]);
 				
 				// Fetch original content (from staged index if staged, else from HEAD)
@@ -219,11 +220,49 @@ export class SpawnGitAdapter implements VCSAdapter {
 					diff: diffText,
 					staged: false,
 					originalContent,
-					modifiedContent
+					modifiedContent,
+					stagedContent: originalContent
 				});
 			}
 		}
 		return changes;
+	}
+
+	async updateFileContent(filepath: string, content: string): Promise<void> {
+		const fullPath = this.rootOrigin.path + '/' + filepath;
+		await window.electronAPI.writeFile(fullPath, content);
+	}
+
+	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		const tmpPath = this.rootOrigin.path + '/.git/tmp_hunk_stage';
+		try {
+			await window.electronAPI.writeFile(tmpPath, content);
+			const hashRes = await this.runGit(['hash-object', '-w', '.git/tmp_hunk_stage']);
+			const hash = hashRes.stdout.trim();
+			if (hashRes.code === 0 && hash && hash.length === 40) {
+				await this.runGit(['update-index', '--cacheinfo', '100644', hash, filepath]);
+			} else {
+				throw new Error('Failed to obtain blob hash');
+			}
+		} catch (e) {
+			const fullPath = this.rootOrigin.path + '/' + filepath;
+			let originalWorktree: string | null = null;
+			try {
+				const buf = await window.electronAPI.readFile(fullPath);
+				originalWorktree = typeof buf === 'string' ? buf : new TextDecoder().decode(buf);
+			} catch (err) {}
+
+			await this.updateFileContent(filepath, content);
+			await this.stageFile(filepath);
+
+			if (originalWorktree !== null && originalWorktree !== content) {
+				await this.updateFileContent(filepath, originalWorktree);
+			}
+		} finally {
+			try {
+				await window.electronAPI.deleteEntry(tmpPath);
+			} catch (err) {}
+		}
 	}
 }
 

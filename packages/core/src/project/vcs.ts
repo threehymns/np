@@ -11,13 +11,14 @@ export interface VCSStatus {
 
 export interface GitChange {
 	filepath: string;
-	status: 'M' | 'A' | 'D'; // Modified, Added, Deleted
+	status: 'M' | 'A' | 'D' | 'U'; // Modified, Added, Deleted, Untracked
 	additions: number;
 	deletions: number;
 	diff: string;
 	staged: boolean;
 	originalContent?: string;
 	modifiedContent?: string;
+	stagedContent?: string;
 }
 
 export interface GitCommit {
@@ -30,7 +31,7 @@ export interface GitCommit {
 
 export interface GroupedChange {
 	filepath: string;
-	status: 'M' | 'A' | 'D';
+	status: 'M' | 'A' | 'D' | 'U';
 	additions: number;
 	deletions: number;
 	hasStaged: boolean;
@@ -50,6 +51,8 @@ export interface VCSAdapter {
 	discardChanges?(filepath: string): Promise<void>;
 	commit?(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void>;
 	createBranch?(branchName: string): Promise<void>;
+	updateIndexContent?(filepath: string, content: string): Promise<void>;
+	updateFileContent?(filepath: string, content: string): Promise<void>;
 }
 
 
