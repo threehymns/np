@@ -6,7 +6,7 @@ import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
-import type { GitChange } from "./project/vcs";
+import type { GitChange, HunkRange } from "./project/vcs";
 
 async function showAlert(appState: AppState, msg: string): Promise<void> {
 	if (appState.dialogService?.alert) {
@@ -682,13 +682,6 @@ export function registerCoreCommands(appState: AppState) {
 			await applyHunkAction(appState, change, hunk, 'discard');
 		}
 	});
-}
-
-export interface HunkRange {
-	fromA: number;
-	toA: number;
-	fromB: number;
-	toB: number;
 }
 
 export async function applyHunkAction(

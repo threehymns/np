@@ -1,7 +1,7 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit } from '@np/core';
-import { toURI } from '@np/core';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, HunkRange } from '@np/core';
+import { toURI, parseDiffStats, mapGitStatus, computeHunkModification, computeHunkDiscard } from '@np/core';
 import { browserHandleRegistry } from './storage';
 
 const REPO_DIR = '/repo';
@@ -726,6 +726,35 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (originalWorktree !== null && originalWorktree !== content) {
 				await this.updateFileContent(filepath, originalWorktree);
 			}
+		}
+	}
+
+	async stageHunk(change: GitChange, hunk: HunkRange): Promise<void> {
+		const origContent = change.originalContent || '';
+		const modContent = change.modifiedContent || '';
+		const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+		const newIndexContent = computeHunkModification(origContent, modContent, stagedContent, hunk, 'stage');
+		await this.updateIndexContent(change.filepath, newIndexContent);
+	}
+
+	async unstageHunk(change: GitChange, hunk: HunkRange): Promise<void> {
+		const origContent = change.originalContent || '';
+		const modContent = change.modifiedContent || '';
+		const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+		const newIndexContent = computeHunkModification(origContent, modContent, stagedContent, hunk, 'unstage');
+		await this.updateIndexContent(change.filepath, newIndexContent);
+	}
+
+	async discardHunk(change: GitChange, hunk: HunkRange): Promise<void> {
+		const origContent = change.originalContent || '';
+		const modContent = change.modifiedContent || '';
+		const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+		const res = computeHunkDiscard(origContent, modContent, stagedContent, hunk);
+		if (res.newIndexContent !== undefined) {
+			await this.updateIndexContent(change.filepath, res.newIndexContent);
+		}
+		if (res.newWorktreeContent !== undefined) {
+			await this.updateFileContent(change.filepath, res.newWorktreeContent);
 		}
 	}
 
