@@ -32,7 +32,20 @@
 			}
 		};
 
+		const handleFocus = () => {
+			if (appState.workspace.repository && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
+			}
+		};
+
+		const handleBeforeUnload = () => {
+			appState.workspace.flushSaveOpenFiles();
+		};
+
 		window.addEventListener('keydown', handleCaptureKeydown, true);
+		window.addEventListener('focus', handleFocus);
+		document.addEventListener('visibilitychange', handleFocus);
+		window.addEventListener('beforeunload', handleBeforeUnload);
 
 		// Lazy load secondary UI
 		Promise.all([
@@ -49,6 +62,9 @@
 
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
+			window.removeEventListener('focus', handleFocus);
+			document.removeEventListener('visibilitychange', handleFocus);
+			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
 	});
 
