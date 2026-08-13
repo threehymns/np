@@ -423,6 +423,7 @@ export class KeymapStorageProvider implements StorageProvider {
 	async readDirectory(origin: FileOrigin): Promise<StorageEntry[]> { return []; }
 	async verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean> { return true; }
 	async queryPermission(origin: FileOrigin, readWrite?: boolean): Promise<'granted' | 'prompt' | 'denied'> { return 'granted'; }
+	async checkPermission(path: string): Promise<'granted' | 'prompt' | 'denied'> { return 'granted'; }
 	async createFile(parent: FileOrigin, name: string): Promise<FileOrigin> { return parent; }
 	async createDirectory(parent: FileOrigin, name: string): Promise<FileOrigin> { return parent; }
 	async deleteEntry(origin: FileOrigin): Promise<void> {}
