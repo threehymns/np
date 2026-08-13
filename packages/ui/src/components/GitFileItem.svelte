@@ -2,15 +2,13 @@
 	import { useAppState } from '@np/core/state.svelte';
 	import { 
 		ArrowUDownLeftIcon, MinusIcon, PlusIcon,
-		GitDiffIcon,
-
-    FileArrowUpIcon
-
+		GitDiffIcon, FileArrowUpIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
 	import type { GitChange, GroupedChange } from '@np/core';
 	import * as ContextMenu from './ui/context-menu';
 	import * as Tooltip from './ui/tooltip/index';
+	import GitStatusChip from './GitStatusChip.svelte';
 
 	let { 
 		change, 
@@ -56,18 +54,6 @@
 	}
 </script>
 
-{#snippet renderStatusChip(status: 'M' | 'A' | 'D' | 'S' | 'U')}
-	{#if status === 'M'}
-		<span class="text-[9px] font-bold px-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-mono scale-90 w-4 flex justify-center shrink-0">M</span>
-	{:else if status === 'A' || status === 'U'}
-		<span class="text-[9px] font-bold px-1 rounded bg-primary/10 text-primary font-mono scale-90 w-4 flex justify-center shrink-0">U</span>
-	{:else if status === 'D'}
-		<span class="text-[9px] font-bold px-1 rounded bg-destructive/10 text-destructive font-mono scale-90 w-4 flex justify-center shrink-0">D</span>
-	{:else if status === 'S'}
-		<span class="text-[9px] font-bold px-1 rounded bg-primary/10 text-primary font-mono scale-90 w-4 flex justify-center shrink-0">S</span>
-	{/if}
-{/snippet}
-
 <ContextMenu.Root>
 	<ContextMenu.Trigger>
 		<div 
@@ -79,9 +65,9 @@
 		>
 			<div class="flex items-center gap-1.5 min-w-0">
 				{#if isStaged}
-					{@render renderStatusChip('S')}
+					<GitStatusChip status="S" />
 				{:else}
-					{@render renderStatusChip(change.status === 'A' ? 'U' : change.status)}
+					<GitStatusChip status={change.status} />
 				{/if}
 				<Icon resource={change.filepath} size={14} class="shrink-0" />
 				<span class="truncate text-foreground/90 font-medium">{fileName}</span>
