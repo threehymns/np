@@ -1,5 +1,5 @@
 import type { FileOrigin } from '../storage';
-import type { VCSAdapter, SwitchResult } from './vcs';
+import type { VCSAdapter, SwitchResult, GitChange, GitCommit } from './vcs';
 
 export interface RepositorySafetyReport {
 	canSwitch: boolean;
@@ -13,20 +13,26 @@ export class Repository {
 	isDirty = $state(false);
 	uncommittedFiles = $state<string[]>([]);
 	isBusy = $state(false);
+	changes = $state<GitChange[]>([]);
+	commits = $state<GitCommit[]>([]);
+	activeDiffFile = $state<GitChange | null>(null);
 
-	private adapter: VCSAdapter;
+	public adapter: VCSAdapter;
 
 	constructor(rootOrigin: FileOrigin, vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter) {
 		this.adapter = vcsFactory(rootOrigin);
 	}
 
+
 	async refresh(): Promise<boolean> {
 		this.isBusy = true;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
-			const [branchRes, branchesRes] = await Promise.allSettled([
+			const [branchRes, branchesRes, changesRes, commitsRes] = await Promise.allSettled([
 				this.adapter.getCurrentBranch(),
-				this.adapter.getBranches()
+				this.adapter.getBranches(),
+				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve([]),
+				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([])
 			]);
 
 			let success = false;
@@ -43,15 +49,45 @@ export class Repository {
 			} else {
 				this.branches = [];
 			}
-			
-			// Defer status check as it is very expensive
-			this.isDirty = false;
-			this.uncommittedFiles = [];
+
+			if (changesRes.status === 'fulfilled') {
+				this.changes = changesRes.value;
+				this.uncommittedFiles = this.changes.map(c => c.filepath);
+				this.isDirty = this.changes.length > 0;
+			} else {
+				this.changes = [];
+				this.uncommittedFiles = [];
+				this.isDirty = false;
+			}
+
+			if (commitsRes.status === 'fulfilled') {
+				this.commits = commitsRes.value;
+			} else {
+				this.commits = [];
+			}
+
+			// Ensure activeDiffFile points to a valid entry or reset it
+			if (this.activeDiffFile) {
+				let stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath && c.staged === this.activeDiffFile!.staged);
+				if (!stillExists) {
+					stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath);
+				}
+				if (!stillExists) {
+					this.activeDiffFile = this.changes[0] || null;
+				} else {
+					this.activeDiffFile = stillExists;
+				}
+			} else if (this.changes.length > 0) {
+				this.activeDiffFile = this.changes[0];
+			}
+
 			return success;
 		} catch (e) {
 			console.error('Failed to refresh repository metadata', e);
 			this.currentBranch = null;
 			this.branches = [];
+			this.changes = [];
+			this.commits = [];
 			return false;
 		} finally {
 			this.isBusy = false;
@@ -101,8 +137,8 @@ export class Repository {
 			this.isBusy = false;
 		}
 	}
+
 }
 
-if (typeof window !== 'undefined') {
-	(window as any).Repository = Repository;
-}
+
+

@@ -1,6 +1,6 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin } from '@np/core';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit } from '@np/core';
 import { toURI } from '@np/core';
 import { browserHandleRegistry } from './storage';
 
@@ -566,6 +566,213 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
+	async getChanges(): Promise<GitChange[]> {
+		if (!await this.ensureInitialized()) return [];
+		try {
+			const matrix = await git.statusMatrix({ 
+				fs: this.fs!,
+				dir: this.dir,
+				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+			});
+
+			const stagedOids: Record<string, string> = {};
+			await git.walk({
+				fs: this.fs!,
+				dir: this.dir,
+				trees: [git.STAGE()],
+				map: async (filepath, entries) => {
+					if (filepath === '.' || !entries || !entries[0]) return;
+					const entry = entries[0];
+					const type = await entry.type();
+					if (type === 'blob') {
+						stagedOids[filepath] = await entry.oid();
+					}
+				}
+			});
+
+			let headCommit: string | null = null;
+			try {
+				headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+			} catch (e) {
+				// No commits yet
+			}
+
+			const result: GitChange[] = [];
+
+			for (const [filepath, head, workdir, stage] of matrix) {
+				const hasStaged = (stage as any) !== 1 || (head === 0 && (stage as any) === 2);
+				const hasUnstaged = (workdir as any) !== (stage as any);
+
+				if (!hasStaged && !hasUnstaged) continue;
+
+				let headContent = '';
+				if (head === 1 && headCommit) {
+					try {
+						const { blob } = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: headCommit,
+							filepath
+						});
+						headContent = new TextDecoder().decode(blob);
+					} catch (e) {}
+				}
+
+				let stagedContent = '';
+				const stagedOid = stagedOids[filepath];
+				if (stagedOid) {
+					try {
+						const { blob } = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: stagedOid
+						});
+						stagedContent = new TextDecoder().decode(blob);
+					} catch (e) {}
+				} else if (head === 1) {
+					stagedContent = headContent;
+				}
+
+				let workdirContent = '';
+				if (workdir !== 0) {
+					try {
+						const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+						workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+					} catch (e) {}
+				}
+
+				if (hasStaged) {
+					const status = head === 0 ? 'A' : (stage === 0 ? 'D' : 'M');
+					const { diffText, additions, deletions } = computeDiff(headContent, stagedContent);
+					result.push({
+						filepath,
+						status,
+						additions,
+						deletions,
+						diff: diffText,
+						staged: true,
+						originalContent: headContent,
+						modifiedContent: stagedContent
+					});
+				}
+
+				if (hasUnstaged) {
+					const status = stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M');
+					const { diffText, additions, deletions } = computeDiff(stagedContent, workdirContent);
+					result.push({
+						filepath,
+						status,
+						additions,
+						deletions,
+						diff: diffText,
+						staged: false,
+						originalContent: stagedContent,
+						modifiedContent: workdirContent
+					});
+				}
+			}
+
+			return result;
+		} catch (e) {
+			console.error('[Git] getChanges failed', e);
+			return [];
+		}
+	}
+
+	async getCommits(): Promise<GitCommit[]> {
+		if (!await this.ensureInitialized()) return [];
+		try {
+			const commits = await git.log({
+				fs: this.fs!,
+				dir: this.dir,
+				depth: 50
+			});
+			return commits.map(c => {
+				const author = `${c.commit.author.name} <${c.commit.author.email}>`;
+				const date = new Date(c.commit.author.timestamp * 1000).toLocaleString();
+				return {
+					hash: c.oid.substring(0, 7),
+					author,
+					message: c.commit.message,
+					date,
+					files: []
+				};
+			});
+		} catch (e) {
+			return [];
+		}
+	}
+
+	async stageFile(filepath: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		const matrix = await git.statusMatrix({
+			fs: this.fs!,
+			dir: this.dir,
+			filepaths: [filepath]
+		});
+		if (matrix.length > 0) {
+			const [,, workdir] = matrix[0];
+			if (workdir === 0) {
+				await git.remove({ fs: this.fs!, dir: this.dir, filepath });
+				return;
+			}
+		}
+		await git.add({ fs: this.fs!, dir: this.dir, filepath });
+	}
+
+	async unstageFile(filepath: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		try {
+			await git.resetIndex({
+				fs: this.fs!,
+				dir: this.dir,
+				filepath
+			});
+		} catch (e) {
+			console.error('[Git] Failed to unstage file', e);
+		}
+	}
+
+	async discardChanges(filepath: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		try {
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: [filepath],
+				force: true
+			});
+		} catch (e) {
+			try {
+				await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+			} catch (unlinkErr) {
+				console.error('[Git] Failed to unlink file on discard', unlinkErr);
+			}
+		}
+	}
+
+	async commit(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		await git.commit({
+			fs: this.fs!,
+			dir: this.dir,
+			message,
+			author: options?.author || { name: 'You', email: 'you@example.com' },
+			amend: options?.amend
+		});
+	}
+
+	async createBranch(branchName: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		await git.branch({
+			fs: this.fs!,
+			dir: this.dir,
+			ref: branchName
+		});
+		await this.switchBranch(branchName);
+	}
+
 	reset() {
 		console.log('[Git] Resetting adapter state...');
 		this.initialized = false;
@@ -574,6 +781,159 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		this.rootHandle = null;
 	}
 }
+
+function computeDiff(oldStr: string, newStr: string): { diffText: string; additions: number; deletions: number } {
+	if (oldStr === newStr) {
+		return { diffText: '', additions: 0, deletions: 0 };
+	}
+
+	const oldLines = oldStr ? oldStr.split(/\r?\n/) : [];
+	const newLines = newStr ? newStr.split(/\r?\n/) : [];
+
+	if (oldLines.length === 0) {
+		const additions = newLines.length;
+		const hunkBody = newLines.map(l => '+' + l).join('\n');
+		const diffText = `@@ -0,0 +1,${additions} @@\n` + hunkBody;
+		return { diffText, additions, deletions: 0 };
+	}
+
+	if (newLines.length === 0) {
+		const deletions = oldLines.length;
+		const hunkBody = oldLines.map(l => '-' + l).join('\n');
+		const diffText = `@@ -1,${deletions} +0,0 @@\n` + hunkBody;
+		return { diffText, additions: 0, deletions };
+	}
+
+	// Trim common prefix and suffix lines
+	let prefix = 0;
+	while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+		prefix++;
+	}
+
+	let suffix = 0;
+	while (
+		suffix < oldLines.length - prefix &&
+		suffix < newLines.length - prefix &&
+		oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+	) {
+		suffix++;
+	}
+
+	const subOld = oldLines.slice(prefix, oldLines.length - suffix);
+	const subNew = newLines.slice(prefix, newLines.length - suffix);
+
+	const oldLen = subOld.length;
+	const newLen = subNew.length;
+
+	let prevRow = new Int32Array(newLen + 1);
+	let currRow = new Int32Array(newLen + 1);
+	const trace: Uint8Array[] = [];
+
+	for (let i = 1; i <= oldLen; i++) {
+		const rowTrace = new Uint8Array(newLen + 1);
+		for (let j = 1; j <= newLen; j++) {
+			if (subOld[i - 1] === subNew[j - 1]) {
+				currRow[j] = prevRow[j - 1] + 1;
+				rowTrace[j] = 1;
+			} else if (currRow[j - 1] >= prevRow[j]) {
+				currRow[j] = currRow[j - 1];
+				rowTrace[j] = 2;
+			} else {
+				currRow[j] = prevRow[j];
+				rowTrace[j] = 3;
+			}
+		}
+		trace.push(rowTrace);
+		prevRow.set(currRow);
+		currRow.fill(0);
+	}
+
+	let i = oldLen, j = newLen;
+	const subOps: { type: 'keep' | 'add' | 'delete'; line: string; oldLineNum: number; newLineNum: number }[] = [];
+	while (i > 0 || j > 0) {
+		if (i > 0 && j > 0 && subOld[i - 1] === subNew[j - 1]) {
+			subOps.unshift({ type: 'keep', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: prefix + j });
+			i--;
+			j--;
+		} else if (j > 0 && (i === 0 || trace[i - 1][j] === 2)) {
+			subOps.unshift({ type: 'add', line: subNew[j - 1], oldLineNum: -1, newLineNum: prefix + j });
+			j--;
+		} else {
+			subOps.unshift({ type: 'delete', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: -1 });
+			i--;
+		}
+	}
+
+	const ops: { type: 'keep' | 'add' | 'delete'; line: string; oldLineNum: number; newLineNum: number }[] = [];
+	const contextBefore = Math.min(3, prefix);
+	for (let p = prefix - contextBefore; p < prefix; p++) {
+		ops.push({ type: 'keep', line: oldLines[p], oldLineNum: p + 1, newLineNum: p + 1 });
+	}
+	ops.push(...subOps);
+	const contextAfter = Math.min(3, suffix);
+	for (let s = 0; s < contextAfter; s++) {
+		const idxOld = oldLines.length - suffix + s;
+		const idxNew = newLines.length - suffix + s;
+		ops.push({ type: 'keep', line: oldLines[idxOld], oldLineNum: idxOld + 1, newLineNum: idxNew + 1 });
+	}
+
+	let diffText = '';
+	let additions = 0;
+	let deletions = 0;
+
+	let k = 0;
+	while (k < ops.length) {
+		if (ops[k].type === 'keep') {
+			k++;
+			continue;
+		}
+
+		const hunkStart = Math.max(0, k - 3);
+		let hunkEnd = k;
+		let lastChangeIdx = k;
+
+		while (hunkEnd < ops.length) {
+			if (ops[hunkEnd].type !== 'keep') {
+				lastChangeIdx = hunkEnd;
+			}
+			if (hunkEnd - lastChangeIdx > 3) {
+				break;
+			}
+			hunkEnd++;
+		}
+		hunkEnd = Math.min(ops.length, lastChangeIdx + 4);
+
+		const hunkOps = ops.slice(hunkStart, hunkEnd);
+		let oldStart = 0, newStart = 0;
+		let oldCount = 0, newCount = 0;
+
+		for (const op of hunkOps) {
+			if (op.oldLineNum !== -1 && oldStart === 0) oldStart = op.oldLineNum;
+			if (op.newLineNum !== -1 && newStart === 0) newStart = op.newLineNum;
+			if (op.oldLineNum !== -1) oldCount++;
+			if (op.newLineNum !== -1) newCount++;
+		}
+
+		let hunkBody = '';
+		for (const op of hunkOps) {
+			if (op.type === 'keep') {
+				hunkBody += ' ' + op.line + '\n';
+			} else if (op.type === 'add') {
+				hunkBody += '+' + op.line + '\n';
+				additions++;
+			} else if (op.type === 'delete') {
+				hunkBody += '-' + op.line + '\n';
+				deletions++;
+			}
+		}
+
+		diffText += `@@ -${oldStart || 1},${oldCount} +${newStart || 1},${newCount} @@\n` + hunkBody;
+		k = hunkEnd;
+	}
+
+	return { diffText: diffText.trim(), additions, deletions };
+}
+
 
 if (typeof window !== 'undefined') {
 	(window as any).git = git;

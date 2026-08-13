@@ -217,6 +217,32 @@
 			}
 		});
 	});
+
+	// Handle pending line scroll
+	$effect(() => {
+		const lineNum = doc.pendingLineToScroll;
+		if (view && active && lineNum !== null) {
+			untrack(() => {
+				doc.pendingLineToScroll = null;
+			});
+			// Wait a tick for editor rendering to ensure DOM and dimensions are correct
+			setTimeout(() => {
+				if (!view) return;
+				try {
+					const lineCount = view.state.doc.lines;
+					const targetLine = Math.max(1, Math.min(lineNum, lineCount));
+					const line = view.state.doc.line(targetLine);
+					view.dispatch({
+						selection: { anchor: line.from },
+						scrollIntoView: true,
+					});
+					view.focus();
+				} catch (e) {
+					console.error("Failed to scroll/select line", e);
+				}
+			}, 50);
+		}
+	});
 </script>
 
 <svelte:window
@@ -231,6 +257,8 @@
 
 <div
 	bind:this={editorEl}
+	role="region"
+	aria-label="Code Editor"
 	class="editor-wrapper {style}"
 	class:alt-pressed={altPressed}
 	data-testid="editor-input"

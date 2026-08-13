@@ -9,3 +9,7 @@ export { default as Icon } from './components/Icon.svelte';
 export * from './editor/index';
 export * as Tabs from './components/ui/tabs/index';
 export * as ScrollArea from './components/ui/scroll-area/index';
+
+// Git Panel
+export { default as GitPanel } from './components/GitPanel.svelte';
+export { default as DiffViewer } from './components/DiffViewer.svelte';
