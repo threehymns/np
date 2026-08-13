@@ -21,7 +21,9 @@
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
 	onMount(() => {
-		appState.init();
+		Promise.resolve(appState.init()).catch(err => {
+			console.error("[AppShell] Failed to initialize app state:", err);
+		});
 
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
 			if (appState.keymaps.handleKeydown(e)) {
@@ -231,7 +233,7 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Project Explorer <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
+							Project Explorer{#if appState.keymaps.getShortcutForCommand('view.showExplorer')}<span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.showExplorer')})</span>{/if}
 						</Tooltip.Content>
 					</Tooltip.Root>
 
@@ -263,7 +265,7 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Source Control <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
+							Source Control{#if appState.keymaps.getShortcutForCommand('view.showGit')}<span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.showGit')})</span>{/if}
 						</Tooltip.Content>
 					</Tooltip.Root>
 				</Tooltip.Provider>

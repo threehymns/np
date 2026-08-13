@@ -178,14 +178,14 @@
 			<GitDiffIcon size={11} />
 			Open Diff
 			<ContextMenu.Shortcut>
-				{appState.keymaps.getShortcutForCommand('git.diff')}
+				{appState.keymaps.getShortcutForCommand('git.openDiff')}
 			</ContextMenu.Shortcut>
 		</ContextMenu.Item>
 		<ContextMenu.Item onclick={() => triggerAction('open')}>
 			<FileArrowUpIcon size={11} />
 			Open File
 			<ContextMenu.Shortcut>
-				{appState.keymaps.getShortcutForCommand('git.open')}
+				{appState.keymaps.getShortcutForCommand('editor.open')}
 			</ContextMenu.Shortcut>
 		</ContextMenu.Item>
 	</ContextMenu.Content>
