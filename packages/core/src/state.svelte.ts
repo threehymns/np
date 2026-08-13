@@ -29,6 +29,7 @@ export class AppState {
 	keymaps = new KeymapRegistry(this);
 	settingsOpen = $state(false);
 	
+	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
 	activeEditorView = $state<any>(undefined);
 
 	constructor(options: AppStateOptions) {
@@ -73,6 +74,8 @@ export class AppState {
 	get activeDocument() { return this.workspace.activeDocument; }
 	get activeDocumentId() { return this.workspace.activeDocumentId; }
 	set activeDocumentId(value: string) { this.workspace.activeDocumentId = value; }
+	get activeTabId() { return this.workspace.activeTabId; }
+	set activeTabId(value: string) { this.workspace.activeTabId = value; }
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
@@ -80,6 +83,7 @@ export class AppState {
 	async saveFileAs() { await this.activeDocument?.save({ forceNewOrigin: true }); }
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
+	closeTab(id: string) { this.workspace.closeTab(id); }
 	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
 }
 

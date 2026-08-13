@@ -1,0 +1,154 @@
+:root {
+	--diff-deleted: color-mix(in srgb, var(--destructive) 10%, transparent);
+	--diff-added: color-mix(in srgb, oklch(0.65 0.17 140) 10%, transparent);
+}
+
+.cm-mergeView {
+	display: flex !important;
+	flex-direction: row !important;
+	width: 100% !important;
+	align-items: stretch !important;
+}
+
+.cm-mergeViewEditors {
+	display: flex !important;
+	flex-direction: row !important;
+	flex: 1 !important;
+	align-items: stretch !important;
+	min-width: 0 !important;
+}
+
+.cm-mergeViewEditor {
+	flex: 1 !important;
+	min-width: 0 !important;
+	overflow-x: auto !important;
+}
+
+.cm-mergeViewEditor-a {
+	border-right: 1px solid var(--border) !important;
+	opacity: 0.9 !important;
+}
+
+.cm-merge-a .cm-changedText {
+  background: var(--diff-deleted) !important;
+}
+
+.cm-merge-b .cm-changedText {
+  background: var(--diff-added) !important;
+}
+
+.cm-insertedLine, .cm-deletedLine {
+  background: none !important;
+}
+
+.cm-mergeViewGutter {
+	width: 24px !important;
+	flex-shrink: 0 !important;
+	background: color-mix(in srgb, var(--muted) 20%, transparent) !important;
+	border-right: 1px solid var(--border) !important;
+	display: flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+}
+
+.cm-mergeViewGutter svg {
+	fill: var(--muted-foreground) !important;
+	stroke: var(--muted-foreground) !important;
+	opacity: 0.5 !important;
+}
+
+/* Style collapsed unchanged regions banner/widget */
+.cm-collapsedLines {
+	background: color-mix(in srgb, var(--muted) 40%, transparent) !important;
+	border: 1px solid var(--border) !important;
+	border-radius: var(--radius) !important;
+	color: var(--muted-foreground) !important;
+	font-family: var(--font-mono, monospace) !important;
+	font-size: 11px !important;
+	display: flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	cursor: pointer !important;
+	transition: all 150ms ease !important;
+	margin: 0 1em;
+}
+
+.cm-collapsedLines:hover {
+	background: color-mix(in srgb, var(--accent) 80%, transparent) !important;
+	color: var(--accent-foreground) !important;
+}
+
+/* Style chunk revert buttons */
+.cm-merge-revert {
+	color: var(--muted-foreground) !important;
+	background: transparent !important;
+	border: none !important;
+	cursor: pointer !important;
+	padding: 2px !important;
+	border-radius: 3px !important;
+	display: inline-flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	transition: all 150ms ease !important;
+}
+
+.cm-merge-revert:hover {
+	color: var(--foreground) !important;
+	background: var(--muted) !important;
+}
+
+/* Style Chunk Action Buttons (Accept / Reject) */
+.cm-chunkButtons button {
+	font-family: inherit !important;
+	font-size: 10px !important;
+	font-weight: 600 !important;
+	padding: 3px 8px !important;
+	border-radius: var(--radius) !important;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+	transition: all 150ms ease !important;
+	cursor: pointer !important;
+}
+
+.cm-chunkButtons button[name=accept] {
+	background: oklch(0.65 0.17 140) !important; /* emerald/green matching primary */
+	color: white !important;
+	border: none !important;
+}
+
+.cm-chunkButtons button[name=accept]:hover {
+	background: oklch(0.55 0.15 140) !important;
+}
+
+.cm-chunkButtons button[name=reject] {
+	background: var(--destructive) !important; /* destructive red */
+	color: var(--destructive-foreground) !important;
+	border: none !important;
+}
+
+.cm-chunkButtons button[name=reject]:hover {
+	background: color-mix(in srgb, var(--destructive) 80%, black) !important;
+}
+
+/* Change Gutter (Unified Diff) */
+.cm-gutters {
+	display: flex !important;
+}
+
+.cm-changeGutter {
+	width: 4px !important;
+	order: -1 !important;
+	margin-right: 2px !important;
+}
+
+
+.cm-addedLineGutter {
+	background-color: oklch(0.65 0.17 140) !important;
+	opacity: 0.8;
+}
+
+.cm-deletedLineGutter {
+	background-color: var(--destructive) !important;
+	opacity: 0.8;
+}
+
+/* No generic cm-changedLineGutter as it depends on side (deleted=red, added=green) */

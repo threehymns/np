@@ -209,6 +209,8 @@ export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/theme";
+export * from "./extensions/diff-theme";
+import "./styles/diff.css";
 export { allLanguages, LanguageSupport } from "@np/core";
 export { SelectionState, selectionState } from "@np/core";
 

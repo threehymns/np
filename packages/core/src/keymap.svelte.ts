@@ -369,7 +369,7 @@ export class KeymapRegistry {
 				userKeymap = [];
 			}
 
-			let block = userKeymap.find(b => !b.context);
+			let block = userKeymap.find((b: any) => !b.context);
 			if (!block) {
 				block = { bindings: {} };
 				userKeymap.push(block);

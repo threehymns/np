@@ -12,6 +12,7 @@ export class DocumentSession {
 	permissionState = $state<PermissionState>('granted');
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
+	pendingLineToScroll = $state<number | null>(null);
 	
 	private savedContent = $state('');
 	private storage: Storage;
