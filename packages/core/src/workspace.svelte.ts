@@ -83,66 +83,49 @@ export class Workspace {
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
 		
-		if (typeof window !== 'undefined') {
-			this.restoreSession();
+		this.restoreSession();
 
-			const autoRefreshRepo = () => {
-				if (this.repository && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
-					this.repository.refresh().catch(e => console.error('[Workspace] Auto-refresh failed', e));
+		$effect.root(() => {
+			$effect(() => {
+				const activeDoc = this.activeDocument;
+				if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
+					activeDoc.loadContent();
 				}
-			};
-
-			window.addEventListener('focus', autoRefreshRepo);
-			if (typeof document !== 'undefined') {
-				document.addEventListener('visibilitychange', autoRefreshRepo);
-			}
-
-			window.addEventListener('beforeunload', () => {
-				this.flushSaveOpenFiles();
 			});
 
-			$effect.root(() => {
-				$effect(() => {
-					const activeDoc = this.activeDocument;
-					if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
-						activeDoc.loadContent();
-					}
+			$effect(() => {
+				if (this.isRestoring) return;
+				
+				const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+				const _tabs = this.tabs.map(t => t.id).join(',');
+				this.documents.forEach(doc => {
+					const _c = doc.content;
+					const _m = doc.isModified;
+					const _o = doc.origin;
+					const _t = doc.untitledTitle;
 				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					
-					const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-					const _tabs = this.tabs.map(t => t.id).join(',');
-					this.documents.forEach(doc => {
-						const _c = doc.content;
-						const _m = doc.isModified;
-						const _o = doc.origin;
-						const _t = doc.untitledTitle;
-					});
-					
-					this.debouncedSaveOpenFiles();
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-					this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					// Persist root folder
-					this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					// Persist recent folders
-					this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
-				});
+				
+				this.debouncedSaveOpenFiles();
 			});
-		}
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+			});
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				// Persist root folder
+				this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
+			});
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				// Persist recent folders
+				this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
+			});
+		});
 	}
 
 	get activeTab() {
