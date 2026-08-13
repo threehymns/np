@@ -9,12 +9,12 @@ import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
 import { getContext } from 'svelte';
-import { type WorkspacePersistence, MemoryWorkspacePersistence } from './persistence';
+import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
 export interface AppStateOptions {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	persistence?: WorkspacePersistence;
+	persistence?: SessionPersistence;
 	prefsStorage?: PreferenceStorage;
 }
 
@@ -34,7 +34,7 @@ export class AppState {
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
 		this.prefs = new Preferences(options.prefsStorage);
-		const persistence = options.persistence ?? new MemoryWorkspacePersistence();
+		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
 		registerCoreCommands(this);
 	}

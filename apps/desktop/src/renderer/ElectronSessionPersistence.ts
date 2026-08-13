@@ -1,6 +1,6 @@
-import type { WorkspacePersistence, FileOrigin, SerializedDocument } from '@np/core';
+import type { SessionPersistence, FileOrigin, SerializedDocument } from '@np/core';
 
-export class JSONFilePersistence implements WorkspacePersistence {
+export class ElectronSessionPersistence implements SessionPersistence {
 	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
 		const key = folderUri ? `openFiles:${folderUri}` : 'openFiles';
 		await window.electronAPI.persistenceSave(key, origins);
