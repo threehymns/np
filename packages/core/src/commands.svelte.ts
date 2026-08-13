@@ -1,9 +1,38 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
+import { Text } from "@codemirror/state";
+import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI } from "./storage";
+import type { GitChange } from "./project/vcs";
+
+function safeAlert(msg: string) {
+	if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+		window.alert(msg);
+	}
+}
+
+function safeConfirm(msg: string): boolean {
+	if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+		return window.confirm(msg);
+	}
+	return true;
+}
+
+async function safeClipboardWrite(text: string): Promise<void> {
+	if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+		await navigator.clipboard.writeText(text);
+	}
+}
+
+async function safeClipboardRead(): Promise<string> {
+	if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+		return await navigator.clipboard.readText();
+	}
+	return '';
+}
 
 export interface Command {
 	id: string;
@@ -115,7 +144,7 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await navigator.clipboard.writeText(text);
+					await safeClipboardWrite(text);
 					view.dispatch({
 						changes: { from, to, insert: "" },
 						selection: { anchor: from }
@@ -136,7 +165,7 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await navigator.clipboard.writeText(text);
+					await safeClipboardWrite(text);
 				}
 				view.focus();
 			}
@@ -152,9 +181,11 @@ export function registerCoreCommands(appState: AppState) {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
 				try {
-					const text = await navigator.clipboard.readText();
-					view.dispatch(view.state.replaceSelection(text));
-					view.focus();
+					const text = await safeClipboardRead();
+					if (text) {
+						view.dispatch(view.state.replaceSelection(text));
+						view.focus();
+					}
 				} catch (err) {
 					console.error("Failed to read clipboard:", err);
 				}
@@ -191,7 +222,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			await navigator.clipboard.writeText(html);
+			await safeClipboardWrite(html);
 		}
 	});
 
@@ -203,9 +234,9 @@ export function registerCoreCommands(appState: AppState) {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
 			
-			if ('showSaveFilePicker' in window) {
+			if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
 				try {
-					const handle = await window.showSaveFilePicker({
+					const handle = await (window as any).showSaveFilePicker({
 						suggestedName: appState.activeDocument.fileName.replace(/\.md$/, '') + '.html',
 						types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
 					});
@@ -215,7 +246,7 @@ export function registerCoreCommands(appState: AppState) {
 				} catch (e) {
 					if ((e as Error).name !== 'AbortError') console.error(e);
 				}
-			} else {
+			} else if (typeof document !== 'undefined') {
 				// Fallback to data URI download
 				const blob = new Blob([html], { type: 'text/html' });
 				const url = URL.createObjectURL(blob);
@@ -392,7 +423,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to stage file:', e);
-					if (typeof window !== 'undefined') alert(`Failed to stage file '${filepath}': ${(e as Error).message}`);
+					safeAlert(`Failed to stage file '${filepath}': ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -413,7 +444,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to unstage file:', e);
-					if (typeof window !== 'undefined') alert(`Failed to unstage file '${filepath}': ${(e as Error).message}`);
+					safeAlert(`Failed to unstage file '${filepath}': ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -427,8 +458,8 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Source Control',
 		action: async (filepath: string, skipConfirm = false) => {
 			const repo = appState.workspace.repository;
-			if (!skipConfirm && typeof window !== 'undefined') {
-				const confirmed = confirm(`Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
+			if (!skipConfirm) {
+				const confirmed = safeConfirm(`Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
 				if (!confirmed) return;
 			}
 			if (repo && repo.adapter.discardChanges) {
@@ -438,7 +469,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to discard changes:', e);
-					if (typeof window !== 'undefined') alert(`Failed to discard changes in '${filepath}': ${(e as Error).message}`);
+					safeAlert(`Failed to discard changes in '${filepath}': ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -456,7 +487,7 @@ export function registerCoreCommands(appState: AppState) {
 			
 			const stagedCount = repo.changes.filter(c => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
-				if (typeof window !== 'undefined') alert('Cannot commit: No staged changes to commit.');
+				safeAlert('Cannot commit: No staged changes to commit.');
 				return false;
 			}
 
@@ -467,7 +498,7 @@ export function registerCoreCommands(appState: AppState) {
 				return true;
 			} catch (e) {
 				console.error('Commit failed', e);
-				if (typeof window !== 'undefined') alert(`Commit failed: ${(e as Error).message}`);
+				safeAlert(`Commit failed: ${(e as Error).message}`);
 				return false;
 			} finally {
 				repo.isBusy = false;
@@ -488,7 +519,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to create branch:', e);
-					if (typeof window !== 'undefined') alert(`Failed to create branch '${branchName}': ${(e as Error).message}`);
+					safeAlert(`Failed to create branch '${branchName}': ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -512,7 +543,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to stage all changes:', e);
-					if (typeof window !== 'undefined') alert(`Failed to stage all changes: ${(e as Error).message}`);
+					safeAlert(`Failed to stage all changes: ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -536,7 +567,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to unstage all changes:', e);
-					if (typeof window !== 'undefined') alert(`Failed to unstage all changes: ${(e as Error).message}`);
+					safeAlert(`Failed to unstage all changes: ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -550,10 +581,9 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Source Control',
 		action: async () => {
 			const repo = appState.workspace.repository;
-			if (typeof window !== 'undefined') {
-				const confirmed = confirm('Are you sure you want to discard ALL uncommitted changes? This action cannot be undone.');
-				if (!confirmed) return;
-			}
+			const confirmed = safeConfirm('Are you sure you want to discard ALL uncommitted changes? This action cannot be undone.');
+			if (!confirmed) return;
+
 			if (repo && repo.adapter.discardChanges) {
 				repo.isBusy = true;
 				try {
@@ -570,7 +600,7 @@ export function registerCoreCommands(appState: AppState) {
 					await repo.refresh();
 				} catch (e) {
 					console.error('Failed to discard all changes:', e);
-					if (typeof window !== 'undefined') alert(`Failed to discard all changes: ${(e as Error).message}`);
+					safeAlert(`Failed to discard all changes: ${(e as Error).message}`);
 				} finally {
 					repo.isBusy = false;
 				}
@@ -598,4 +628,146 @@ export function registerCoreCommands(appState: AppState) {
 			}
 		}
 	});
+
+	appState.commands.register({
+		id: 'git.stageHunk',
+		label: 'Git: Stage Hunk',
+		category: 'Source Control',
+		action: async (change: GitChange, hunk: HunkRange) => {
+			await applyHunkAction(appState, change, hunk, 'stage');
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.unstageHunk',
+		label: 'Git: Unstage Hunk',
+		category: 'Source Control',
+		action: async (change: GitChange, hunk: HunkRange) => {
+			await applyHunkAction(appState, change, hunk, 'unstage');
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.discardHunk',
+		label: 'Git: Discard Hunk',
+		category: 'Source Control',
+		action: async (change: GitChange, hunk: HunkRange) => {
+			await applyHunkAction(appState, change, hunk, 'discard');
+		}
+	});
+}
+
+export interface HunkRange {
+	fromA: number;
+	toA: number;
+	fromB: number;
+	toB: number;
+}
+
+export async function applyHunkAction(
+	appState: AppState,
+	change: GitChange,
+	hunk: HunkRange,
+	action: 'stage' | 'unstage' | 'discard'
+) {
+	const repo = appState.workspace.repository;
+	if (!repo) return;
+
+	const origContent = change.originalContent || '';
+	const modContent = change.modifiedContent || '';
+	const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+
+	const origText = Text.of(origContent.split(/\r?\n/));
+	const modText = Text.of(modContent.split(/\r?\n/));
+	const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+	const mapPos = (posA: number, textA: Text, textB: Text) => {
+		const chunks = Chunk.build(textA, textB);
+		let lastToA = 0;
+		let lastToB = 0;
+		for (const c of chunks) {
+			if (posA <= c.fromA) {
+				return lastToB + (posA - lastToA);
+			}
+			if (posA <= c.toA) {
+				return c.fromB;
+			}
+			lastToA = c.toA;
+			lastToB = c.toB;
+		}
+		return lastToB + (posA - lastToA);
+	};
+
+	repo.isBusy = true;
+	try {
+		if (action === 'stage') {
+			const indexFrom = mapPos(hunk.fromA, origText, stagedText);
+			const indexTo = mapPos(hunk.toA, origText, stagedText);
+
+			const newIndexContent = stagedContent.slice(0, indexFrom) +
+				modContent.slice(hunk.fromB, hunk.toB) +
+				stagedContent.slice(indexTo);
+
+			if (repo.adapter.updateIndexContent) {
+				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+			}
+		} else if (action === 'unstage') {
+			const indexFrom = mapPos(hunk.fromB, modText, stagedText);
+			const indexTo = mapPos(hunk.toB, modText, stagedText);
+
+			const newIndexContent = stagedContent.slice(0, indexFrom) +
+				origContent.slice(hunk.fromA, hunk.toA) +
+				stagedContent.slice(indexTo);
+
+			if (repo.adapter.updateIndexContent) {
+				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+			}
+		} else if (action === 'discard') {
+			const unstagedChunks = Chunk.build(stagedText, modText);
+			const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
+			const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
+			const isUnstaged = unstagedChunks.some((uc: any) => {
+				const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
+				const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
+				return (lineStartB <= ucEndB && lineEndB >= ucStartB);
+			});
+
+			if (isUnstaged) {
+				const indexFrom = mapPos(hunk.fromA, origText, stagedText);
+				const indexTo = mapPos(hunk.toA, origText, stagedText);
+
+				const newWorktreeContent = modContent.slice(0, hunk.fromB) +
+					stagedContent.slice(indexFrom, indexTo) +
+					modContent.slice(hunk.toB);
+
+				if (repo.adapter.updateFileContent) {
+					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
+				}
+			} else {
+				const indexFrom = mapPos(hunk.fromB, modText, stagedText);
+				const indexTo = mapPos(hunk.toB, modText, stagedText);
+
+				const newIndexContent = stagedContent.slice(0, indexFrom) +
+					origContent.slice(hunk.fromA, hunk.toA) +
+					stagedContent.slice(indexTo);
+
+				const newWorktreeContent = modContent.slice(0, hunk.fromB) +
+					origContent.slice(hunk.fromA, hunk.toA) +
+					modContent.slice(hunk.toB);
+
+				if (repo.adapter.updateIndexContent) {
+					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+				}
+				if (repo.adapter.updateFileContent) {
+					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
+				}
+			}
+		}
+		await repo.refresh();
+	} catch (e) {
+		console.error(`Failed to ${action} hunk:`, e);
+		safeAlert(`Failed to ${action} hunk in '${change.filepath}': ${(e as Error).message}`);
+	} finally {
+		repo.isBusy = false;
+	}
 }

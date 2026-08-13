@@ -1,14 +1,216 @@
 <script lang="ts">
-	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
+	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
 	import type { GitChange } from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
-	import { EditorView, lineNumbers, keymap } from "@codemirror/view";
-	import { EditorState, Compartment, Text } from "@codemirror/state";
+	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
+	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
 	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
 	import { MergeView, unifiedMergeView, Chunk } from "@codemirror/merge";
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
+
+	class HunkWidget extends WidgetType {
+		hunkIndex: number;
+		hunkRange: { fromA: number; toA: number; fromB: number; toB: number };
+		staged: boolean;
+		change: GitChange;
+		appState: any;
+
+		constructor(
+			hunkIndex: number,
+			hunkRange: { fromA: number; toA: number; fromB: number; toB: number },
+			staged: boolean,
+			change: GitChange,
+			appState: any
+		) {
+			super();
+			this.hunkIndex = hunkIndex;
+			this.hunkRange = hunkRange;
+			this.staged = staged;
+			this.change = change;
+			this.appState = appState;
+		}
+
+		toDOM(): HTMLElement {
+			const wrap = document.createElement('div');
+			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover/95 text-popover-foreground border border-border/80 rounded-md px-1.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-90 hover:opacity-100 transition-opacity select-none';
+			wrap.style.cssText = 'float: right; margin-top: -2px; margin-bottom: -2px; position: relative; z-index: 20;';
+
+			const preventEvent = (e: Event) => {
+				e.stopPropagation();
+				e.preventDefault();
+			};
+			wrap.addEventListener('mousedown', preventEvent);
+			wrap.addEventListener('pointerdown', preventEvent);
+			wrap.addEventListener('mouseup', preventEvent);
+			wrap.addEventListener('click', preventEvent);
+
+			const label = document.createElement('span');
+			label.className = 'font-bold text-[9px] opacity-70 mr-0.5';
+			label.textContent = `#${this.hunkIndex + 1}`;
+			wrap.appendChild(label);
+
+			if (this.staged) {
+				const unstageBtn = document.createElement('button');
+				unstageBtn.type = 'button';
+				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
+				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
+				unstageBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8H40a8 8 0 0 1 0-16h176a8 8 0 0 1 8 8Z"></path></svg>`;
+				unstageBtn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute('git.unstageHunk', this.change, this.hunkRange);
+				};
+				wrap.appendChild(unstageBtn);
+
+				const discardBtn = document.createElement('button');
+				discardBtn.type = 'button';
+				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
+				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
+				discardBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M216 48h-40V36a16 16 0 0 0-16-16h-64a16 16 0 0 0-16 16v12H40a8 8 0 0 0 0 16h8v144a16 16 0 0 0 16 16h128a16 16 0 0 0 16-16V64h8a8 8 0 0 0 0-16ZM96 36h64v12H96Zm96 172H64V64h128Z"></path></svg>`;
+				discardBtn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
+				};
+				wrap.appendChild(discardBtn);
+			} else {
+				const stageBtn = document.createElement('button');
+				stageBtn.type = 'button';
+				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
+				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
+				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
+				stageBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8h-80v80a8 8 0 0 1-16 0v-80H40a8 8 0 0 1 0-16h80V40a8 8 0 0 1 16 0v80h80a8 8 0 0 1 8 8Z"></path></svg>`;
+				stageBtn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute('git.stageHunk', this.change, this.hunkRange);
+				};
+				wrap.appendChild(stageBtn);
+
+				const discardBtn = document.createElement('button');
+				discardBtn.type = 'button';
+				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
+				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
+				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
+				discardBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a96 96 0 0 1-152.12 78.59 8 8 0 0 1 9.42-13 80 80 0 0 0 126.7-65.59 80 80 0 0 0-141.24-51.41L80 96H40a8 8 0 0 1-8-8V48a8 8 0 0 1 16 0v24.69l18.59-18.59A96 96 0 0 1 224 128Z"></path></svg>`;
+				discardBtn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
+				};
+				wrap.appendChild(discardBtn);
+			}
+
+			return wrap;
+		}
+
+		ignoreEvent() {
+			return true;
+		}
+	}
+
+	function getUnifiedHunks(origText: Text, modText: Text): { fromA: number; toA: number; fromB: number; toB: number }[] {
+		const rawChunks = Chunk.build(origText, modText);
+		if (rawChunks.length <= 1) {
+			return rawChunks.map(c => ({ fromA: c.fromA, toA: c.toA, fromB: c.fromB, toB: c.toB }));
+		}
+
+		const merged: { fromA: number; toA: number; fromB: number; toB: number }[] = [];
+		let current = {
+			fromA: rawChunks[0].fromA,
+			toA: rawChunks[0].toA,
+			fromB: rawChunks[0].fromB,
+			toB: rawChunks[0].toB
+		};
+
+		for (let i = 1; i < rawChunks.length; i++) {
+			const next = rawChunks[i];
+			const lineGapA = origText.lineAt(Math.min(next.fromA, origText.length)).number - origText.lineAt(Math.min(current.toA, origText.length)).number;
+			const lineGapB = modText.lineAt(Math.min(next.fromB, modText.length)).number - modText.lineAt(Math.min(current.toB, modText.length)).number;
+
+			if (lineGapA <= 3 && lineGapB <= 3) {
+				current.toA = next.toA;
+				current.toB = next.toB;
+			} else {
+				merged.push(current);
+				current = {
+					fromA: next.fromA,
+					toA: next.toA,
+					fromB: next.fromB,
+					toB: next.toB
+				};
+			}
+		}
+		merged.push(current);
+
+		return merged;
+	}
+
+	function createHunkWidgetExtension(change: GitChange, state: any) {
+		return ViewPlugin.fromClass(
+			class {
+				decorations: DecorationSet;
+
+				constructor(view: EditorView) {
+					this.decorations = this.buildDecorations(view);
+				}
+
+				update(update: ViewUpdate) {
+					if (update.docChanged || update.viewportChanged) {
+						this.decorations = this.buildDecorations(update.view);
+					}
+				}
+
+				buildDecorations(view: EditorView): DecorationSet {
+					const builder = new RangeSetBuilder<Decoration>();
+					const origContent = change.originalContent || '';
+					const modContent = view.state.doc.toString();
+					const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+
+					const origText = Text.of(origContent.split(/\r?\n/));
+					const modText = Text.of(modContent.split(/\r?\n/));
+					const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+					const hunks = getUnifiedHunks(origText, modText);
+					const unstagedChunks = Chunk.build(stagedText, modText);
+
+					hunks.forEach((hunk, hunkIdx) => {
+						let isHunkStaged = change.staged;
+						if (change.stagedContent !== undefined || (!change.staged && origContent !== stagedContent)) {
+							const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
+							const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
+
+							const overlapsUnstaged = unstagedChunks.some(uc => {
+								const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
+								const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
+								if (hunk.fromB === hunk.toB && uc.fromB === uc.toB) {
+									return Math.abs(uc.fromB - hunk.fromB) <= 1 || (lineStartB === ucStartB);
+								}
+								return (lineStartB <= ucEndB && lineEndB >= ucStartB);
+							});
+
+							isHunkStaged = !overlapsUnstaged;
+						}
+
+						const pos = Math.min(hunk.fromB, view.state.doc.length);
+						const line = view.state.doc.lineAt(pos);
+						const widget = Decoration.widget({
+							widget: new HunkWidget(hunkIdx, hunk, isHunkStaged, change, state),
+							side: 1
+						});
+						builder.add(line.from, line.from, widget);
+					});
+
+					return builder.finish();
+				}
+			},
+			{
+				decorations: (v) => v.decorations
+			}
+		);
+	}
 
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, { inline?: EditorView; split?: MergeView }>();
@@ -178,6 +380,7 @@
 			originalContent: string;
 			readOnly: boolean;
 			filepath: string;
+			fileChange: GitChange;
 			wrap: boolean;
 		}
 	) {
@@ -195,6 +398,7 @@
 						original: currentOptions.originalContent,
 						collapseUnchanged: { margin: 3, minSize: 4 }
 					}),
+					createHunkWidgetExtension(currentOptions.fileChange, appState),
 					...langExtensions,
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
@@ -269,6 +473,7 @@
 			leftContent: string;
 			rightContent: string;
 			filepath: string;
+			fileChange: GitChange;
 			wrap: boolean;
 			onDocChange?: (newVal: string) => void;
 		}
@@ -298,6 +503,7 @@
 					doc: currentOptions.rightContent,
 					extensions: [
 						EditorState.readOnly.of(true),
+						createHunkWidgetExtension(currentOptions.fileChange, appState),
 						...langExtensions,
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
@@ -478,8 +684,74 @@
 		}
 	});
 
-	// Active changes to render (single file or array of all files)
-	let activeChanges = $derived(change ? [change] : changes);
+	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {
+		const map = new Map<string, GitChange[]>();
+		for (const c of changeList) {
+			const existing = map.get(c.filepath);
+			if (existing) {
+				existing.push(c);
+			} else {
+				map.set(c.filepath, [c]);
+			}
+		}
+
+		const result: GitChange[] = [];
+		for (const [filepath, group] of map.entries()) {
+			if (group.length === 1) {
+				result.push(group[0]);
+			} else {
+				const stagedChange = group.find((c) => c.staged);
+				const unstagedChange = group.find((c) => !c.staged);
+
+				if (stagedChange && unstagedChange) {
+					result.push({
+						filepath,
+						status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
+						staged: false,
+						diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
+						originalContent: stagedChange.originalContent ?? '',
+						modifiedContent: unstagedChange.modifiedContent ?? '',
+						stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent ?? '',
+						additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
+						deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
+					});
+				} else {
+					result.push(group[0]);
+				}
+			}
+		}
+
+		return result;
+	}
+
+	let filterScope = $state<'all' | 'selected'>('all');
+
+	// Active changes to render (defaults to all files, combined by filepath, filtered by selection if filterScope === 'selected')
+	let activeChanges = $derived.by(() => {
+		let rawList: GitChange[] = [];
+		if (change) {
+			rawList = [change];
+		} else if (filterScope === 'selected') {
+			const selected = repo?.selectedPaths ?? [];
+			if (selected.length > 0) {
+				const set = new Set(selected);
+				const filtered = changes.filter((c) => set.has(c.filepath));
+				if (filtered.length > 0) rawList = filtered;
+			}
+			if (rawList.length === 0) {
+				const activeFile = repo?.activeDiffFile?.filepath;
+				if (activeFile) {
+					const filtered = changes.filter((c) => c.filepath === activeFile);
+					if (filtered.length > 0) rawList = filtered;
+				}
+			}
+			if (rawList.length === 0) rawList = changes;
+		} else {
+			rawList = changes;
+		}
+
+		return combineChangesByFilepath(rawList);
+	});
 
 	// Compute cumulative stats across all active changes
 	let totalAdditions = $derived(activeChanges.reduce((sum, c) => sum + c.additions, 0));
@@ -503,7 +775,7 @@
 			const modContent = change.modifiedContent || '';
 			const origText = Text.of(origContent.split(/\r?\n/));
 			const modText = Text.of(modContent.split(/\r?\n/));
-			const chunks = Chunk.build(origText, modText);
+			const chunks = getUnifiedHunks(origText, modText);
 			chunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
@@ -737,6 +1009,26 @@
 					<RowsIcon class="size-3.5" />
 				</button>
 			</div>
+
+			<!-- Toggle Filter Scope: All vs Selected -->
+			<div class="flex items-center rounded-md border border-border bg-background p-0.5 text-[10px] font-mono select-none">
+				<button
+					type="button"
+					onclick={() => filterScope = 'all'}
+					class="px-2 py-0.5 rounded-sm hover:text-foreground hover:bg-muted transition-colors cursor-pointer {filterScope === 'all' ? 'bg-muted text-foreground font-bold' : 'text-muted-foreground'}"
+					title="Show all file diffs"
+				>
+					All
+				</button>
+				<button
+					type="button"
+					onclick={() => filterScope = 'selected'}
+					class="px-2 py-0.5 rounded-sm hover:text-foreground hover:bg-muted transition-colors cursor-pointer {filterScope === 'selected' ? 'bg-muted text-foreground font-bold' : 'text-muted-foreground'}"
+					title="Show diffs for selected files only"
+				>
+					Selected
+				</button>
+			</div>
 		</div>
 
 		<!-- Actions -->
@@ -863,7 +1155,7 @@
 
 					<!-- Diff Content (collapsible) -->
 					{#if !isCollapsed}
-						<div class="bg-muted/5 relative group">
+						<div class="bg-muted/5 relative group border-t border-border/40">
 							{#if viewMode === 'inline'}
 								<!-- Inline View: Single Editor showing unified diff of the whole file -->
 								<div class="flex-1 overflow-hidden bg-background">
@@ -872,6 +1164,7 @@
 										originalContent: fileChange.originalContent || '',
 										readOnly: false,
 										filepath: fileChange.filepath,
+										fileChange: fileChange,
 										wrap: appState.prefs.wordWrap
 									}}></div>
 								</div>
@@ -882,6 +1175,7 @@
 										leftContent: fileChange.originalContent || '',
 										rightContent: fileChange.modifiedContent || '',
 										filepath: fileChange.filepath,
+										fileChange: fileChange,
 										wrap: appState.prefs.wordWrap
 									}}></div>
 								</div>
