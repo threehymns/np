@@ -46,6 +46,7 @@
 	let showCommitDropdown = $state(false);
 	let isAmend = $state(false);
 	let isSignoff = $state(false);
+	let userConfig = $state<{ name: string; email: string } | null>(null);
 
 	let commitBtnLabel = $derived.by(() => {
 		const parts: string[] = [];
@@ -264,8 +265,8 @@
 		let message = commitMessage.trim();
 		if (!message) return;
 
-		if (isSignoff) {
-			message = `${message}\n\nSigned-off-by: You <you@example.com>`;
+		if (isSignoff && userConfig?.name && userConfig?.email) {
+			message = `${message}\n\nSigned-off-by: ${userConfig.name} <${userConfig.email}>`;
 		}
 
 		const success = await appState.commands.execute('git.commit', message, { amend: isAmend });
@@ -297,17 +298,17 @@
 		}
 	}
 
-	function handleSelectPath(path: string, event: MouseEvent) {
-		const allChanges = [...stagedChangesGrouped, ...unstagedChangesGrouped, ...untrackedChangesGrouped];
+	function handleSelectPath(path: string, event: MouseEvent, sectionList?: GroupedChange[]) {
+		const targetList = sectionList || [...stagedChangesGrouped, ...unstagedChangesGrouped, ...untrackedChangesGrouped];
 		if (event.shiftKey && lastSelectedPath) {
-			const idx1 = allChanges.findIndex(c => c.filepath === lastSelectedPath);
-			const idx2 = allChanges.findIndex(c => c.filepath === path);
+			const idx1 = targetList.findIndex(c => c.filepath === lastSelectedPath);
+			const idx2 = targetList.findIndex(c => c.filepath === path);
 
 			if (idx1 !== -1 && idx2 !== -1) {
 				const start = Math.min(idx1, idx2);
 				const end = Math.max(idx1, idx2);
 				for (let i = start; i <= end; i++) {
-					selectedPaths.add(allChanges[i].filepath);
+					selectedPaths.add(targetList[i].filepath);
 				}
 			}
 		} else if (event.ctrlKey || event.metaKey) {
@@ -357,7 +358,10 @@
 	onMount(() => {
 		window.addEventListener('click', handleDocumentClick);
 		if (repo) {
-			repo.refresh();
+			Promise.resolve(repo.refresh()).catch(err => {
+				console.error("[GitPanel] Failed to refresh repository:", err);
+			});
+			repo.adapter.getUserConfig?.().then(cfg => { userConfig = cfg || null; }).catch(() => {});
 		}
 		return () => {
 			window.removeEventListener('click', handleDocumentClick);
@@ -446,7 +450,7 @@
 										isSelected={selectedPaths.has(change.filepath)}
 										isActive={repo?.activeDiffFile?.filepath === change.filepath}
 										{selectedPaths}
-										onclick={(e) => handleSelectPath(change.filepath, e as any)}
+										onclick={(e) => handleSelectPath(change.filepath, e as any, stagedChangesGrouped)}
 									/>
 								{/each}
 							{:else}
@@ -505,7 +509,7 @@
 										isSelected={selectedPaths.has(change.filepath)}
 										isActive={repo?.activeDiffFile?.filepath === change.filepath}
 										{selectedPaths}
-										onclick={(e) => handleSelectPath(change.filepath, e as any)}
+										onclick={(e) => handleSelectPath(change.filepath, e as any, unstagedChangesGrouped)}
 									/>
 								{/each}
 							{:else}
@@ -570,7 +574,7 @@
 										isSelected={selectedPaths.has(change.filepath)}
 										isActive={repo?.activeDiffFile?.filepath === change.filepath}
 										{selectedPaths}
-										onclick={(e) => handleSelectPath(change.filepath, e as any)}
+										onclick={(e) => handleSelectPath(change.filepath, e as any, untrackedChangesGrouped)}
 									/>
 								{/each}
 							{:else}
@@ -604,7 +608,7 @@
 					<ButtonGroup class="flex-1 max-w-[140px]">
 						<Button
 							onclick={handleCommit}
-							disabled={repo.changes.filter(c => c.staged).length === 0 || repo.isBusy || !commitMessage.trim()}
+							disabled={(repo.changes.filter(c => c.staged).length === 0 && !isAmend) || repo.isBusy || !commitMessage.trim()}
 							size="xs"
 							class="flex-1 shadow-sm font-semibold tracking-wide"
 						>
@@ -640,8 +644,10 @@
 							</button>
 							<button
 								type="button"
-								onclick={() => { isSignoff = !isSignoff; showCommitDropdown = false; }}
-								class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between {isSignoff ? 'text-primary' : ''}"
+								onclick={() => { if (userConfig) { isSignoff = !isSignoff; } showCommitDropdown = false; }}
+								disabled={!userConfig}
+								class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between {isSignoff ? 'text-primary' : ''} {!userConfig ? 'opacity-50 cursor-not-allowed' : ''}"
+								title={!userConfig ? "Git identity (user.name & user.email) not configured" : "Add Signed-off-by trailer"}
 							>
 								<span>Add sign-off</span>
 								{#if isSignoff}

@@ -83,7 +83,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async stageFile(filepath: string): Promise<void> {
-		await this.runGit(['add', filepath]);
+		await this.runGit(['add', '--', filepath]);
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
@@ -96,6 +96,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 			await this.runGit(['reset', 'HEAD', '--', filepath]);
 			await this.runGit(['clean', '-fd', '--', filepath]);
 		}
+	}
+
+	async getUserConfig(): Promise<{ name: string; email: string } | null> {
+		const nameRes = await this.runGit(['config', 'user.name']);
+		const emailRes = await this.runGit(['config', 'user.email']);
+		const name = nameRes.code === 0 ? nameRes.stdout.trim() : '';
+		const email = emailRes.code === 0 ? emailRes.stdout.trim() : '';
+		if (name && email) return { name, email };
+		return null;
 	}
 
 	async commit(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void> {
@@ -121,7 +130,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const res = await this.runGit(['log', '-n', '50', '--pretty=format:%h|%an <%ae>|%ad|%s', '--date=short']);
 		if (res.code !== 0) return [];
 		return res.stdout.split('\n').filter(Boolean).map(line => {
-			const [hash, author, date, message] = line.split('|');
+			const [hash, author, date, ...rest] = line.split('|');
+			const message = rest.join('|');
 			return { hash, author, date, message, files: [] };
 		});
 	}
@@ -148,11 +158,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		for (const line of lines) {
 			const x = line[0];
 			const y = line[1];
-			const filepath = line.substring(3).trim().replace(/^"(.*)"$/, '$1');
+			const rawPath = line.substring(3).trim();
+			const arrowIdx = rawPath.indexOf(' -> ');
+			const targetPath = arrowIdx === -1 ? rawPath : rawPath.slice(arrowIdx + 4);
+			const filepath = targetPath.trim().replace(/^"(.*)"$/, '$1');
 
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
-				const diffRes = await this.runGit(['diff', '--cached', filepath]);
+				const diffRes = await this.runGit(['diff', '--cached', '--', filepath]);
 				const { additions, deletions } = this.parseDiffStats(diffRes.stdout);
 				
 				// Fetch original content (from HEAD)
@@ -177,7 +190,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 			if (y !== ' ') {
 				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
-				const diffRes = await this.runGit(['diff', filepath]);
+				const diffRes = await this.runGit(['diff', '--', filepath]);
 				
 				// Fetch original content (from staged index if staged, else from HEAD)
 				let originalContent = '';
@@ -203,6 +216,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 				if (y === '?') {
 					const lines = modifiedContent.split('\n');
+					if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 					additions = lines.length;
 					deletions = 0;
 					diffText = `@@ -0,0 +1,${additions} @@\n` + lines.map(l => '+' + l).join('\n');

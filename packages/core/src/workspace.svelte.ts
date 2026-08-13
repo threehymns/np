@@ -113,6 +113,7 @@ export class Workspace {
 					if (this.isRestoring) return;
 					
 					const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+					const _tabs = this.tabs.map(t => t.id).join(',');
 					this.documents.forEach(doc => {
 						const _c = doc.content;
 						const _m = doc.isModified;
@@ -338,14 +339,23 @@ export class Workspace {
 			if (index !== -1) {
 				const doc = this.documents[index];
 				if (saveFirst) {
-					doc.save().then(() => {
-						this.performClose(id);
-					});
+					doc.save().then(
+						(saved) => {
+							if (saved) {
+								this.performClose(id);
+								this.pendingCloseId = null;
+							}
+						},
+						(err) => {
+							console.error('[Workspace] Save before close failed', err);
+						}
+					);
+					return;
 				} else {
 					this.performClose(id);
+					this.pendingCloseId = null;
+					return;
 				}
-				this.pendingCloseId = null;
-				return;
 			}
 		}
 

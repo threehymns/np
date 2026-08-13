@@ -600,8 +600,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const result: GitChange[] = [];
 
 			for (const [filepath, head, workdir, stage] of matrix) {
-				const hasStaged = (stage as any) !== 1 || (head === 0 && (stage as any) === 2);
-				const hasUnstaged = (workdir as any) !== (stage as any);
+				const hasStaged = (head === 0 && stage !== 0) || (head === 1 && stage !== 1);
+				const hasUnstaged = workdir !== stage;
 
 				if (!hasStaged && !hasUnstaged) continue;
 
@@ -783,19 +783,39 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		} catch (e) {
 			try {
 				await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+				await git.remove({ fs: this.fs!, dir: this.dir, filepath }).catch(() => {});
 			} catch (unlinkErr) {
 				console.error('[Git] Failed to unlink file on discard', unlinkErr);
 			}
 		}
 	}
 
+	async getUserConfig(): Promise<{ name: string; email: string } | null> {
+		if (!await this.ensureInitialized()) return null;
+		try {
+			const name = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'user.name' });
+			const email = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'user.email' });
+			if (name && email) return { name: String(name).trim(), email: String(email).trim() };
+		} catch (e) {}
+		return null;
+	}
+
 	async commit(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void> {
 		if (!await this.ensureInitialized()) return;
+		let author = options?.author;
+		if (!author) {
+			const config = await this.getUserConfig();
+			if (config) {
+				author = config;
+			} else {
+				author = { name: 'You', email: 'you@example.com' };
+			}
+		}
 		await git.commit({
 			fs: this.fs!,
 			dir: this.dir,
 			message,
-			author: options?.author || { name: 'You', email: 'you@example.com' },
+			author,
 			amend: options?.amend
 		});
 	}
@@ -862,6 +882,16 @@ function computeDiff(oldStr: string, newStr: string): { diffText: string; additi
 	const oldLen = subOld.length;
 	const newLen = subNew.length;
 
+	if (oldLen * newLen > 4_000_000) {
+		return {
+			diffText: `@@ -1,${oldLines.length} +1,${newLines.length} @@\n` +
+				oldLines.map(l => '-' + l).join('\n') + (oldLines.length > 0 ? '\n' : '') +
+				newLines.map(l => '+' + l).join('\n') + (newLines.length > 0 ? '\n' : ''),
+			additions: newLines.length,
+			deletions: oldLines.length
+		};
+	}
+
 	let prevRow = new Int32Array(newLen + 1);
 	let currRow = new Int32Array(newLen + 1);
 	const trace: Uint8Array[] = [];
@@ -919,13 +949,14 @@ function computeDiff(oldStr: string, newStr: string): { diffText: string; additi
 	let deletions = 0;
 
 	let k = 0;
+	let prevHunkEnd = 0;
 	while (k < ops.length) {
 		if (ops[k].type === 'keep') {
 			k++;
 			continue;
 		}
 
-		const hunkStart = Math.max(0, k - 3);
+		const hunkStart = Math.max(prevHunkEnd, k - 3);
 		let hunkEnd = k;
 		let lastChangeIdx = k;
 
@@ -966,6 +997,7 @@ function computeDiff(oldStr: string, newStr: string): { diffText: string; additi
 
 		diffText += `@@ -${oldStart || 1},${oldCount} +${newStart || 1},${newCount} @@\n` + hunkBody;
 		k = hunkEnd;
+		prevHunkEnd = hunkEnd;
 	}
 
 	return { diffText: diffText.trim(), additions, deletions };
