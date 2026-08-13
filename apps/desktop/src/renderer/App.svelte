@@ -3,7 +3,7 @@
   import { AppState, KeymapStorageProvider } from "@np/core";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
-  import { JSONFilePersistence } from "./JSONFilePersistence";
+  import { ElectronSessionPersistence } from "./ElectronSessionPersistence";
   import { SpawnGitAdapter } from "./SpawnGitAdapter";
   
   import AppShell from "@np/ui/AppShell.svelte";
@@ -11,7 +11,7 @@
 
   const storage = new MultiSchemeStorage();
   storage.registerProvider("file", new ElectronStorage());
-  const persistence = new JSONFilePersistence();
+  const persistence = new ElectronSessionPersistence();
   const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
   const appState = new AppState({ storage, persistence, vcsFactory });
   storage.registerProvider("keymap", new KeymapStorageProvider(appState.keymaps));

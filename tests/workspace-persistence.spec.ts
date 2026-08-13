@@ -157,7 +157,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 
 			// 4. Force a reload by clearing documents state and calling restoreSession
 			appState.workspace.documents = [];
-			await appState.workspace.restoreSession();
+			await appState.workspace.restoreSession(true);
 
 			// Wait for background draft loading/resolving
 			await new Promise(resolve => setTimeout(resolve, 100));

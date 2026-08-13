@@ -8,7 +8,7 @@ export interface SerializedDocument {
 	isModified: boolean;
 }
 
-export interface WorkspacePersistence {
+export interface SessionPersistence {
 	saveOpenFiles(origins: SerializedDocument[], folderUri?: string): Promise<void>;
 	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]>;
 	saveRootFolder(origin: FileOrigin | null): Promise<void>;
@@ -22,7 +22,7 @@ export interface WorkspacePersistence {
 	loadAll(): Promise<Record<string, any>>;
 }
 
-export class MemoryWorkspacePersistence implements WorkspacePersistence {
+export class MemorySessionPersistence implements SessionPersistence {
 	private states = new Map<string, {
 		openFiles: SerializedDocument[];
 		activeDocumentId: string | null;
