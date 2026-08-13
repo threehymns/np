@@ -2,7 +2,7 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
-import { type WorkspacePersistence, type SerializedDocument } from './persistence';
+import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export interface WorkspaceTab {
@@ -23,7 +23,7 @@ export class Workspace {
 	
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	persistence: WorkspacePersistence;
+	persistence: SessionPersistence;
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 	private restorePromise: Promise<void> | null = null;
@@ -77,7 +77,7 @@ export class Workspace {
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: WorkspacePersistence
+		persistence: SessionPersistence
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
@@ -535,7 +535,10 @@ export class Workspace {
 		}
 	}
 
-	async restoreSession() {
+	async restoreSession(force = false) {
+		if (force) {
+			this.restorePromise = null;
+		}
 		if (this.restorePromise) return this.restorePromise;
 
 		this.restorePromise = (async () => {
