@@ -202,3 +202,11 @@
 	user-select: none;
 	pointer-events: none;
 }
+
+.cm-gutters {
+ border-right-width: 0 !important;
+}
+
+.cm-gutter.cm-foldGutter {
+  display: none !important;
+}

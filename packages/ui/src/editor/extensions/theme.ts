@@ -13,7 +13,7 @@ export const editorTheme = EditorView.theme({
 		width: "100%",
 	},
 	"&.is-markdown .cm-content": {
-		fontFamily: "ui-sans-serif, system-ui, sans-serif",
+		fontFamily: "ui-sans-serif, system-ui, sans-serif !important",
 		maxWidth: "var(--editor-max-width)",
 		margin: "0 auto",
 	},
@@ -27,10 +27,10 @@ export const editorTheme = EditorView.theme({
 	},
 	".cm-gutters": {
 		display: "none",
+		backgroundColor: "var(--background)",
 	},
 	"&.is-code .cm-gutters": {
 		display: "flex",
-		backgroundColor: "transparent",
 		border: "none",
 		color: "var(--muted-foreground)",
 		fontFamily: "var(--font-mono)",

@@ -11,6 +11,8 @@
   import * as Tabs from "@np/ui/Tabs";
   import Icon from "@np/ui/Icon.svelte";
   
+  import { DiffViewer } from "@np/ui";
+
   import { X } from "phosphor-svelte";
   import { flip } from "svelte/animate";
   import type { EditorView } from "codemirror";
@@ -30,15 +32,10 @@
   // Lazy load heavy components
   let Editor = $state<any>(null);
   let FileExplorer = $state<any>(null);
+  let GitPanel = $state<any>(null);
 
   let draggedId = $state<string | null>(null);
   let editorViews = $state<Record<string, EditorView | undefined>>({});
-
-  $effect(() => {
-    appState.activeEditorView = editorViews[appState.activeDocumentId];
-  });
-
-  function handleUpdate(e?: Event) {}
 
   function handleDragStart(e: DragEvent, id: string) {
     draggedId = id;
@@ -51,15 +48,14 @@
   function handleDragEnter(targetId: string) {
     if (!draggedId || draggedId === targetId) return;
 
-    const fromIdx = appState.documents.findIndex(d => d.id === draggedId);
-    const toIdx = appState.documents.findIndex(d => d.id === targetId);
-    
-    if (fromIdx === -1 || toIdx === -1) return;
+    const tabs = appState.workspace.tabs;
+    const fromIdx = tabs.findIndex(t => t.id === draggedId);
+    const toIdx = tabs.findIndex(t => t.id === targetId);
 
-    const docs = [...appState.documents];
-    const [movedDoc] = docs.splice(fromIdx, 1);
-    docs.splice(toIdx, 0, movedDoc);
-    appState.workspace.reorderDocuments(docs);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const [movedTab] = tabs.splice(fromIdx, 1);
+      tabs.splice(toIdx, 0, movedTab);
+    }
   }
 
   function handleDragEnd() {
@@ -75,10 +71,12 @@
     // Load heavy components after the first paint
     Promise.all([
       import("@np/ui/Editor.svelte"),
-      import("@np/ui/FileExplorer.svelte")
-    ]).then(([editorMod, explorerMod]) => {
+      import("@np/ui/FileExplorer.svelte"),
+      import("@np/ui/GitPanel.svelte")
+    ]).then(([editorMod, explorerMod, gitMod]) => {
       Editor = editorMod.default;
       FileExplorer = explorerMod.default;
+      GitPanel = gitMod.default;
     }).catch(err => {
       console.error("[App] Failed to load heavy components:", err);
     });
@@ -119,14 +117,26 @@
       inert={!appState.prefs.sidebarVisible}
     >
       <div style="width: {appState.prefs.sidebarWidth}px;" class="flex-1 min-h-0 flex flex-col">
-        {#if FileExplorer}
-          <FileExplorer />
-        {:else}
-          <div class="p-4 space-y-2 animate-pulse">
-            <div class="h-4 bg-muted rounded w-3/4"></div>
-            <div class="h-4 bg-muted rounded w-1/2"></div>
-            <div class="h-4 bg-muted rounded w-2/3"></div>
-          </div>
+        {#if appState.activeSidebarTab === 'explorer'}
+          {#if FileExplorer}
+            <FileExplorer />
+          {:else}
+            <div class="p-4 space-y-2 animate-pulse">
+              <div class="h-4 bg-muted rounded w-3/4"></div>
+              <div class="h-4 bg-muted rounded w-1/2"></div>
+              <div class="h-4 bg-muted rounded w-2/3"></div>
+            </div>
+          {/if}
+        {:else if appState.activeSidebarTab === 'git'}
+          {#if GitPanel}
+            <GitPanel />
+          {:else}
+            <div class="p-4 space-y-2 animate-pulse">
+              <div class="h-4 bg-muted rounded w-3/4"></div>
+              <div class="h-4 bg-muted rounded w-1/2"></div>
+              <div class="h-4 bg-muted rounded w-2/3"></div>
+            </div>
+          {/if}
         {/if}
       </div>
       
@@ -140,41 +150,49 @@
       ></button>
     </aside>
 
-    <Tabs.Root bind:value={appState.activeDocumentId} class="flex h-full flex-1 flex-col min-w-0">
-      {#if appState.documents.length > 1}
+    <Tabs.Root bind:value={appState.activeTabId} class="flex h-full flex-1 flex-col min-w-0">
+      {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.type === 'diff')}
         <Tabs.List class="bg-muted/50 justify-start rounded-none border-b px-2 h-10 items-end gap-1 w-full overflow-visible no-scrollbar">
-          {#each appState.documents as doc (doc.id)}
+          {#each appState.workspace.tabs as tab (tab.id)}
+            {@const doc = tab.type === 'document' ? appState.documents.find(d => d.id === tab.id) : null}
+            {@const title = tab.type === 'diff' ? 'Uncommitted Changes' : (doc?.fileName ?? 'Untitled')}
+            {@const isModified = tab.type === 'document' && doc?.isModified}
+            {@const deletedOnDisk = tab.type === 'document' && doc?.deletedOnDisk}
             <div 
               animate:flip={{ duration: 150 }}
-              class="group relative flex items-center h-full shrink-0 {draggedId === doc.id ? 'opacity-20' : ''}"
+              class="group relative flex items-center h-full shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
               draggable="true"
-              ondragstart={(e) => handleDragStart(e, doc.id)}
+              ondragstart={(e) => handleDragStart(e, tab.id)}
               ondragover={(e) => e.preventDefault()}
-              ondragenter={() => handleDragEnter(doc.id)}
+              ondragenter={() => handleDragEnter(tab.id)}
               ondragend={handleDragEnd}
               role="listitem"
             >
               <Tabs.Trigger
-                value={doc.id}
-                class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5 {doc.deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
-                title={doc.deletedOnDisk ? `${doc.fileName} (deleted on disk)` : doc.fileName}
+                value={tab.id}
+                class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
+                title={deletedOnDisk ? `${title} (deleted on disk)` : title}
               >
-                <Icon 
-                  resource={doc.fileName}
-                  type="file"
-                  class="size-3.5 opacity-90" 
-                />
-                {doc.fileName}
+                {#if tab.type === 'diff'}
+                  <span class="size-3.5 opacity-90 text-primary font-bold">Δ</span>
+                {:else}
+                  <Icon 
+                    resource={title}
+                    type="file"
+                    class="size-3.5 opacity-90" 
+                  />
+                {/if}
+                {title}
               </Tabs.Trigger>
               <button
                 onclick={(e) => {
                   e.stopPropagation();
-                  appState.closeDocument(doc.id);
+                  appState.closeTab(tab.id);
                 }}
-                class="group/close absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted transition-opacity focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none {doc.isModified ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
+                class="group/close absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted transition-opacity focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none {isModified ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
                 title="Close tab"
               >
-                {#if doc.isModified}
+                {#if isModified}
                   <div class="w-1.5 h-1.5 rounded-full bg-foreground/40 group-hover:hidden group-focus-visible/close:hidden m-0.5"></div>
                   <X size={10} class="hidden group-hover:block group-focus-visible/close:block" />
                 {:else}
@@ -186,22 +204,31 @@
           <div class="flex-1 h-full min-w-4"></div>
         </Tabs.List>
       {/if}
-      {#if appState.documents.length === 0}
+      {#if appState.workspace.tabs.length === 0}
         <div class="flex-1 flex items-center justify-center text-muted-foreground bg-background">
           <p>No documents open. Press Ctrl+N to create a new one.</p>
         </div>
       {:else}
-        {#each appState.documents as doc (doc.id)}
-          <Tabs.Content value={doc.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0">
-            {#if appState.activeDocumentId === doc.id}
-              {#if Editor}
-                <Editor 
-                  doc={doc} 
-                  active={true}
-                  bind:view={editorViews[doc.id]}
-                  style="font-size: {appState.prefs.zoom}%;"
-                  wrap={appState.prefs.wordWrap}
-                />
+        {#each appState.workspace.tabs as tab (tab.id)}
+          <Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full">
+            {#if appState.activeTabId === tab.id}
+              {#if tab.type === 'diff'}
+                <div class="h-full w-full overflow-hidden">
+                  <DiffViewer 
+                    changes={appState.workspace.repository?.changes ?? []}
+                  />
+                </div>
+              {:else if Editor}
+                {@const doc = appState.documents.find(d => d.id === tab.id)}
+                {#if doc}
+                  <Editor 
+                    doc={doc} 
+                    active={true}
+                    bind:view={editorViews[tab.id]}
+                    style="font-size: {appState.prefs.zoom}%;"
+                    wrap={appState.prefs.wordWrap}
+                  />
+                {/if}
               {:else}
                 <div class="flex-1 bg-background animate-pulse"></div>
               {/if}

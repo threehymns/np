@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { useAppState } from "@np/core/state.svelte";
-	
+
 	const appState = useAppState();
 
-	import * as Menubar from "./components/ui/menubar/index.js";
-	import * as AlertDialog from "./components/ui/alert-dialog/index.js";
+	import * as Menubar from "./components/ui/menubar/index";
+	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
-	import { X, Sidebar } from "phosphor-svelte";
+	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
-	import * as Tooltip from "./components/ui/tooltip/index.js";
+	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
 
@@ -20,9 +20,9 @@
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
-	onMount(async () => {
-		await appState.init();
-		
+	onMount(() => {
+		appState.init();
+
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
 			if (appState.keymaps.handleKeydown(e)) {
 				e.stopPropagation();
@@ -89,7 +89,7 @@
 					<Menubar.Content>
 						{#if category === 'File'}
 							{#each appState.commands.getByCategory('File') as command (command.id)}
-								<Menubar.Item 
+								<Menubar.Item
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
@@ -104,7 +104,7 @@
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
 									{#each appState.commands.getByCategory('Export') as command (command.id)}
-										<Menubar.Item 
+										<Menubar.Item
 											onclick={() => command.action()}
 											disabled={command.isEnabled && !command.isEnabled()}
 										>
@@ -151,7 +151,7 @@
 							</Menubar.CheckboxItem>
 						{:else}
 							{#each appState.commands.getByCategory(category) as command (command.id)}
-								<Menubar.Item 
+								<Menubar.Item
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
@@ -166,7 +166,7 @@
 						{#if category === 'Edit'}
 							<Menubar.Separator />
 							<Menubar.Item onclick={() => appState.settingsOpen = true}>
-								Settings... 
+								Settings...
 								{#if appState.keymaps.getShortcutForCommand('settings.open')}
 									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
 								{/if}
@@ -177,20 +177,29 @@
 			{/each}
 		</Menubar.Root>
 	</div>
-	
+
 	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
 		{@render children()}
 	</main>
 
 	{#if appState.prefs.statusBar}
 		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
-			<div class="flex items-center gap-3">
-				<Tooltip.Provider delayDuration={400}>
+			<div class="flex items-center gap-1">
+			<Tooltip.Provider>
 					<Tooltip.Root>
 						<Tooltip.Trigger>
 							{#snippet child({ props })}
-								<Button variant="ghost" size="icon-xs" {...props} onclick={() => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible} class={appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : ''}>
-									<Sidebar class="size-3.5" />
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									{...props}
+									onclick={(e) => {
+										(props as any).onclick?.(e);
+										appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible;
+									}}
+									class={appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : ''}
+								>
+									<SidebarIcon class="size-3.5" />
 								</Button>
 							{/snippet}
 						</Tooltip.Trigger>
@@ -198,8 +207,68 @@
 							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
 						</Tooltip.Content>
 					</Tooltip.Root>
+
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									{...props}
+									onclick={(e) => {
+										(props as any).onclick?.(e);
+										if (appState.activeSidebarTab === 'explorer' && appState.prefs.sidebarVisible) {
+											appState.prefs.sidebarVisible = false;
+										} else {
+											appState.activeSidebarTab = 'explorer';
+											appState.prefs.sidebarVisible = true;
+										}
+									}}
+									class="flex items-center justify-center hover:bg-accent/50 {appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+								>
+									<FolderOpenIcon class="size-3.5" />
+								</Button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
+							Project Explorer <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
+						</Tooltip.Content>
+					</Tooltip.Root>
+
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									{...props}
+									onclick={(e) => {
+										(props as any).onclick?.(e);
+										if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
+											appState.prefs.sidebarVisible = false;
+										} else {
+											appState.activeSidebarTab = 'git';
+											appState.prefs.sidebarVisible = true;
+										}
+									}}
+									class="flex items-center justify-center relative hover:bg-accent/50 {appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+								>
+									<GitMergeIcon class="size-3.5" />
+									{#if (appState.workspace.repository?.changes?.length ?? 0) > 0}
+										<span class="absolute -top-1 -right-1 min-w-3 h-3 bg-primary text-primary-foreground text-[7px] font-bold rounded-full flex items-center justify-center border border-background px-0.5 font-sans pointer-events-none">
+											{appState.workspace.repository?.changes.length}
+										</span>
+									{/if}
+								</Button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
+							Source Control <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
+						</Tooltip.Content>
+					</Tooltip.Root>
 				</Tooltip.Provider>
-				<div class="flex gap-3 opacity-80">
+
+				<div class="flex gap-3 opacity-80 ml-2">
 					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
 					<span>{appState.activeDocument?.charCount ?? 0} chars</span>
 				</div>

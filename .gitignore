@@ -26,3 +26,7 @@ vite.config.ts.timestamp-*
 # Temporary and tool-specific files
 scratch/
 .antigravitycli/
+test-results/
+**/build/
+**/.svelte-kit/
+**/dist/

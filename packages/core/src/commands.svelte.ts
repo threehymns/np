@@ -9,7 +9,7 @@ export interface Command {
 	id: string;
 	label: string;
 	category: string;
-	action: () => void | Promise<void>;
+	action: (...args: any[]) => any;
 	isVisible?: () => boolean;
 	isEnabled?: () => boolean;
 }
@@ -33,10 +33,10 @@ export class CommandRegistry {
 		return this.commands.filter(c => c.category === category);
 	}
 
-	execute(id: string) {
+	execute(id: string, ...args: any[]) {
 		const command = this.get(id);
 		if (command && (!command.isEnabled || command.isEnabled())) {
-			command.action();
+			return command.action(...args);
 		}
 	}
 }
@@ -376,6 +376,226 @@ export function registerCoreCommands(appState: AppState) {
 		action: () => {
 			appState.workspace.openFile(parseURI('keymap://user/keymap.json'));
 			appState.settingsOpen = false;
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.stage',
+		label: 'Git: Stage File',
+		category: 'Source Control',
+		action: async (filepath: string) => {
+			const repo = appState.workspace.repository;
+			if (repo && repo.adapter.stageFile) {
+				repo.isBusy = true;
+				try {
+					await repo.adapter.stageFile(filepath);
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to stage file:', e);
+					if (typeof window !== 'undefined') alert(`Failed to stage file '${filepath}': ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.unstage',
+		label: 'Git: Unstage File',
+		category: 'Source Control',
+		action: async (filepath: string) => {
+			const repo = appState.workspace.repository;
+			if (repo && repo.adapter.unstageFile) {
+				repo.isBusy = true;
+				try {
+					await repo.adapter.unstageFile(filepath);
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to unstage file:', e);
+					if (typeof window !== 'undefined') alert(`Failed to unstage file '${filepath}': ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.discard',
+		label: 'Git: Discard Changes',
+		category: 'Source Control',
+		action: async (filepath: string, skipConfirm = false) => {
+			const repo = appState.workspace.repository;
+			if (!skipConfirm && typeof window !== 'undefined') {
+				const confirmed = confirm(`Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
+				if (!confirmed) return;
+			}
+			if (repo && repo.adapter.discardChanges) {
+				repo.isBusy = true;
+				try {
+					await repo.adapter.discardChanges(filepath);
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to discard changes:', e);
+					if (typeof window !== 'undefined') alert(`Failed to discard changes in '${filepath}': ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.commit',
+		label: 'Git: Commit',
+		category: 'Source Control',
+		action: async (message: string, options?: { author?: { name: string; email: string }; amend?: boolean }) => {
+			const repo = appState.workspace.repository;
+			if (!repo || !repo.adapter.commit) return false;
+			
+			const stagedCount = repo.changes.filter(c => c.staged).length;
+			if (stagedCount === 0 && !options?.amend) {
+				if (typeof window !== 'undefined') alert('Cannot commit: No staged changes to commit.');
+				return false;
+			}
+
+			repo.isBusy = true;
+			try {
+				await repo.adapter.commit(message, options);
+				await repo.refresh();
+				return true;
+			} catch (e) {
+				console.error('Commit failed', e);
+				if (typeof window !== 'undefined') alert(`Commit failed: ${(e as Error).message}`);
+				return false;
+			} finally {
+				repo.isBusy = false;
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.createBranch',
+		label: 'Git: Create Branch',
+		category: 'Source Control',
+		action: async (branchName: string) => {
+			const repo = appState.workspace.repository;
+			if (repo && repo.adapter.createBranch) {
+				repo.isBusy = true;
+				try {
+					await repo.adapter.createBranch(branchName);
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to create branch:', e);
+					if (typeof window !== 'undefined') alert(`Failed to create branch '${branchName}': ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.stageAll',
+		label: 'Git: Stage All Changes',
+		category: 'Source Control',
+		action: async () => {
+			const repo = appState.workspace.repository;
+			if (repo && repo.adapter.stageFile) {
+				repo.isBusy = true;
+				try {
+					const unstaged = repo.changes.filter(c => !c.staged);
+					for (const u of unstaged) {
+						await repo.adapter.stageFile(u.filepath);
+					}
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to stage all changes:', e);
+					if (typeof window !== 'undefined') alert(`Failed to stage all changes: ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.unstageAll',
+		label: 'Git: Unstage All Changes',
+		category: 'Source Control',
+		action: async () => {
+			const repo = appState.workspace.repository;
+			if (repo && repo.adapter.unstageFile) {
+				repo.isBusy = true;
+				try {
+					const staged = repo.changes.filter(c => c.staged);
+					for (const s of staged) {
+						await repo.adapter.unstageFile(s.filepath);
+					}
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to unstage all changes:', e);
+					if (typeof window !== 'undefined') alert(`Failed to unstage all changes: ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.discardAll',
+		label: 'Git: Discard All Changes',
+		category: 'Source Control',
+		action: async () => {
+			const repo = appState.workspace.repository;
+			if (typeof window !== 'undefined') {
+				const confirmed = confirm('Are you sure you want to discard ALL uncommitted changes? This action cannot be undone.');
+				if (!confirmed) return;
+			}
+			if (repo && repo.adapter.discardChanges) {
+				repo.isBusy = true;
+				try {
+					if (repo.adapter.unstageFile) {
+						const staged = repo.changes.filter(c => c.staged);
+						for (const s of staged) {
+							await repo.adapter.unstageFile(s.filepath);
+						}
+					}
+					const allChanges = [...repo.changes];
+					for (const c of allChanges) {
+						await repo.adapter.discardChanges(c.filepath);
+					}
+					await repo.refresh();
+				} catch (e) {
+					console.error('Failed to discard all changes:', e);
+					if (typeof window !== 'undefined') alert(`Failed to discard all changes: ${(e as Error).message}`);
+				} finally {
+					repo.isBusy = false;
+				}
+			}
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.openDiff',
+		label: 'Git: Open Uncommitted Changes',
+		category: 'Source Control',
+		action: (filepath?: string) => {
+			const ws = appState.workspace;
+			const id = '__project_diff__';
+			const existing = ws.tabs.find(t => t.id === id);
+			if (!existing) {
+				ws.tabs.push({ id, type: 'diff' });
+			}
+			ws.activeTabId = id;
+			if (filepath && ws.repository) {
+				const change = ws.repository.changes.find(c => c.filepath === filepath);
+				if (change) {
+					ws.repository.activeDiffFile = change;
+				}
+			}
 		}
 	});
 }
