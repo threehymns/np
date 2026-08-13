@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
-	import { 
+	import {
 		ArrowUDownLeftIcon, MinusIcon, PlusIcon,
 		GitDiffIcon, FileArrowUpIcon
 	} from 'phosphor-svelte';
@@ -10,11 +10,11 @@
 	import * as Tooltip from './ui/tooltip/index';
 	import GitStatusChip from './GitStatusChip.svelte';
 
-	let { 
-		change, 
-		isStaged, 
-		showPath = false, 
-		isSelected = false, 
+	let {
+		change,
+		isStaged,
+		showPath = false,
+		isSelected = false,
 		isActive = false,
 		dense = false,
 		selectedPaths,
@@ -55,7 +55,7 @@
 
 <ContextMenu.Root>
 	<ContextMenu.Trigger>
-		<div 
+		<div
 			role="button"
 			tabindex="0"
 			{onclick}
@@ -167,7 +167,7 @@
 					{appState.keymaps.getShortcutForCommand('git.stage')}
 				</ContextMenu.Shortcut>
 			</ContextMenu.Item>
-			<ContextMenu.Item 
+			<ContextMenu.Item
 				onclick={() => triggerAction('discard')}
 				class="text-destructive focus:text-destructive hover:!bg-destructive/10"
 			>

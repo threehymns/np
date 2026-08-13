@@ -16,4 +16,3 @@ export { default as GitPanel } from './components/GitPanel.svelte';
 export { default as GitFileItem } from './components/GitFileItem.svelte';
 export { default as GitStatusChip } from './components/GitStatusChip.svelte';
 export { default as DiffViewer } from './components/DiffViewer.svelte';
-

@@ -582,7 +582,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	async getChanges(): Promise<GitChange[]> {
 		if (!await this.ensureInitialized()) return [];
 		try {
-			const matrix = await git.statusMatrix({ 
+			const matrix = await git.statusMatrix({
 				fs: this.fs!,
 				dir: this.dir,
 				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')

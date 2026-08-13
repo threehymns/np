@@ -368,4 +368,3 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 }
-

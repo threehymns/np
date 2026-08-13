@@ -56,5 +56,3 @@ export interface VCSAdapter {
 	updateIndexContent?(filepath: string, content: string): Promise<void>;
 	updateFileContent?(filepath: string, content: string): Promise<void>;
 }
-
-

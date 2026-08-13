@@ -502,7 +502,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async (message: string, options?: { author?: { name: string; email: string }; amend?: boolean }) => {
 			const repo = appState.workspace.repository;
 			if (!repo || !repo.adapter.commit) return false;
-			
+
 			const stagedCount = repo.changes.filter(c => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
 				await showAlert(appState, 'Cannot commit: No staged changes to commit.');

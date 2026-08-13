@@ -1,10 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { useAppState } from '@np/core/state.svelte';
-  
+
   import * as Tabs from "../components/ui/tabs/index";
   import Icon from "./Icon.svelte";
-  
   import { X, GitDiffIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from 'codemirror';
@@ -106,7 +105,7 @@
 </script>
 
 <div class="flex h-full w-full overflow-hidden" class:select-none={isDragging}>
-  <aside 
+  <aside
     class="relative shrink-0 bg-sidebar flex flex-col overflow-hidden"
     class:border-r={appState.prefs.sidebarVisible}
     class:transition-[width]={!isDragging}
@@ -138,9 +137,9 @@
         {/if}
       {/if}
     </div>
-    
+
     <!-- Resize Handle -->
-    <button 
+    <button
       type="button"
       aria-label="Resize Sidebar"
       tabindex="-1"
@@ -157,7 +156,7 @@
           {@const title = tab.type === 'diff' ? 'Uncommitted Changes' : (doc?.fileName ?? 'Untitled')}
           {@const isModified = tab.type === 'document' && doc?.isModified}
           {@const deletedOnDisk = tab.type === 'document' && doc?.deletedOnDisk}
-          <div 
+          <div
             animate:flip={{ duration: 150 }}
             class="group relative flex items-center h-full shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
             draggable="true"
@@ -176,10 +175,10 @@
               {#if tab.type === 'diff'}
                 <GitDiffIcon class="size-3.5 opacity-90 text-primary shrink-0" />
               {:else}
-                <Icon 
+                <Icon
                   resource={title}
                   type="file"
-                  class="size-3.5 opacity-90" 
+                  class="size-3.5 opacity-90"
                 />
               {/if}
               {title}
@@ -214,15 +213,15 @@
           {#if appState.activeTabId === tab.id}
             {#if tab.type === 'diff'}
               <div class="h-full w-full overflow-hidden">
-                <DiffViewer 
+                <DiffViewer
                   changes={appState.workspace.repository?.changes ?? []}
                 />
               </div>
             {:else if Editor}
               {@const doc = appState.documents.find(d => d.id === tab.id)}
               {#if doc}
-                <Editor 
-                  doc={doc} 
+                <Editor
+                  doc={doc}
                   active={true}
                   bind:view={editorViews[tab.id]}
                   style="font-size: {appState.prefs.zoom}%;"
