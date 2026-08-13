@@ -86,6 +86,17 @@ export class Workspace {
 		if (typeof window !== 'undefined') {
 			this.restoreSession();
 
+			const autoRefreshRepo = () => {
+				if (this.repository && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+					this.repository.refresh().catch(e => console.error('[Workspace] Auto-refresh failed', e));
+				}
+			};
+
+			window.addEventListener('focus', autoRefreshRepo);
+			if (typeof document !== 'undefined') {
+				document.addEventListener('visibilitychange', autoRefreshRepo);
+			}
+
 			window.addEventListener('beforeunload', () => {
 				this.flushSaveOpenFiles();
 			});
