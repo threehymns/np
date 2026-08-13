@@ -652,12 +652,13 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						diff: diffText,
 						staged: true,
 						originalContent: headContent,
-						modifiedContent: stagedContent
+						modifiedContent: stagedContent,
+						stagedContent
 					});
 				}
 
 				if (hasUnstaged) {
-					const status = stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M');
+					const status = (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
 					const { diffText, additions, deletions } = computeDiff(stagedContent, workdirContent);
 					result.push({
 						filepath,
@@ -667,7 +668,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						diff: diffText,
 						staged: false,
 						originalContent: stagedContent,
-						modifiedContent: workdirContent
+						modifiedContent: workdirContent,
+						stagedContent
 					});
 				}
 			}
@@ -676,6 +678,41 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		} catch (e) {
 			console.error('[Git] getChanges failed', e);
 			return [];
+		}
+	}
+
+	async updateFileContent(filepath: string, content: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
+	}
+
+	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		if (!await this.ensureInitialized()) return;
+		try {
+			const oid = await git.writeBlob({
+				fs: this.fs!,
+				dir: this.dir,
+				blob: new TextEncoder().encode(content)
+			});
+			await git.updateIndex({
+				fs: this.fs!,
+				dir: this.dir,
+				filepath,
+				oid
+			});
+		} catch (e) {
+			let originalWorktree: string | null = null;
+			try {
+				const buf = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+				originalWorktree = typeof buf === 'string' ? buf : new TextDecoder().decode(buf);
+			} catch (err) {}
+
+			await this.updateFileContent(filepath, content);
+			await this.stageFile(filepath);
+
+			if (originalWorktree !== null && originalWorktree !== content) {
+				await this.updateFileContent(filepath, originalWorktree);
+			}
 		}
 	}
 
