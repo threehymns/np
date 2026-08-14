@@ -16,6 +16,8 @@ export interface GitChange {
 	deletions: number;
 	diff: string;
 	staged: boolean;
+	/** True when this change aggregates a staged and an unstaged change for the same filepath. */
+	combined?: boolean;
 	originalContent?: string;
 	modifiedContent?: string;
 	stagedContent?: string;
@@ -43,6 +45,22 @@ export interface FileDiffDetail {
 	originalContent: string;
 	modifiedContent: string;
 	stagedContent?: string;
+}
+
+/**
+ * Synthesize a diff from content already attached to a `GitChange`.
+ * Returns null when the change carries no content (i.e. content must be
+ * resolved on demand via the adapter).
+ */
+export function fileDiffFromChange(change: GitChange): FileDiffDetail | null {
+	if (change.originalContent === undefined && change.modifiedContent === undefined) {
+		return null;
+	}
+	return {
+		originalContent: change.originalContent ?? '',
+		modifiedContent: change.modifiedContent ?? '',
+		stagedContent: change.stagedContent
+	};
 }
 
 export interface VCSAdapter {

@@ -169,4 +169,48 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		const cmCount = await cmEditors.count();
 		expect(cmCount).toBeGreaterThan(0);
 	});
+
+	test('loads diffs on demand: collapsed files skip loading until expanded', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+			const adapter = (window as any).appState.workspace.repository.adapter;
+			(window as any).__getFileDiffCalls = 0;
+			const original = adapter.getFileDiff.bind(adapter);
+			adapter.getFileDiff = async (...args: any[]) => {
+				(window as any).__getFileDiffCalls += 1;
+				return original(...args);
+			};
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+		await expect(fileHeaders).toHaveCount(2);
+
+		// Only the active (expanded) file should have triggered a diff load
+		await page.waitForFunction(() => (window as any).__getFileDiffCalls === 1, undefined, { timeout: 5000 });
+		// One expanded file in split view mounts two CodeMirror editors
+		await expect(page.locator('.cm-editor')).toHaveCount(2);
+
+		// Expanding the collapsed file triggers a second on-demand load
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await page.waitForFunction(() => (window as any).__getFileDiffCalls === 2, undefined, { timeout: 5000 });
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Collapsing it again unmounts editors without triggering another load
+		await fileHeaders.nth(1).locator('button[title="Collapse"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(2);
+		expect(await page.evaluate(() => (window as any).__getFileDiffCalls)).toBe(2);
+
+		// Re-expanding reuses the cached diff (no extra adapter call)
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+		expect(await page.evaluate(() => (window as any).__getFileDiffCalls)).toBe(2);
+	});
 });

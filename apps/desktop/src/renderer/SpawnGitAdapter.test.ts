@@ -29,7 +29,7 @@ describe('SpawnGitAdapter', () => {
 		};
 	});
 
-	it('passes -uall to git status and does not invoke readFile or git show on getChanges', async () => {
+	it('passes -uall to git status and only reads untracked files (no git show) during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
@@ -48,6 +48,12 @@ describe('SpawnGitAdapter', () => {
 			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/file.txt') {
+				return new TextEncoder().encode('line1\nline2\n');
+			}
+			throw new Error('ENOENT');
+		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const changes = await adapter.getChanges();
@@ -57,15 +63,20 @@ describe('SpawnGitAdapter', () => {
 		expect(statusCall).toBeDefined();
 		expect(statusCall![1]).toContain('-uall');
 
-		// Should not have called readFile or git show at all during getChanges
-		expect(mockReadFile).not.toHaveBeenCalled();
+		// Should not have called git show at all during getChanges
 		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 
-		// Only file.txt should be in changes
+		// The untracked file is the only thing read (to count lines); tracked files are not read
+		expect(mockReadFile).toHaveBeenCalledWith('/test/repo/file.txt');
+		expect(mockReadFile.mock.calls.length).toBe(1);
+
+		// Only file.txt should be in changes, with an accurate line count
 		expect(changes.length).toBe(1);
 		expect(changes[0].filepath).toBe('file.txt');
 		expect(changes[0].status).toBe('U');
+		expect(changes[0].additions).toBe(2);
+		expect(changes[0].deletions).toBe(0);
 	});
 
 	it('does not invoke readFile or git show on deleted files during getChanges', async () => {
@@ -249,6 +260,40 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('deleted content from head');
 		expect(diff.modifiedContent).toBe('');
+	});
+
+	it('resolves the original content of a renamed file from its previous path', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// porcelain -z rename entry: "R  new.txt\0old.txt\0"
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			if (cmd === 'diff --cached --numstat') {
+				return { code: 0, stdout: '0\t0\told.txt => new.txt\n', stderr: '' };
+			}
+			if (cmd === 'diff --numstat') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'renamed from old', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 0, stdout: 'renamed to new', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const changes = await adapter.getChanges();
+		const renamed = changes.find(c => c.filepath === 'new.txt');
+		expect(renamed).toBeDefined();
+		expect(renamed?.staged).toBe(true);
+
+		const diff = await adapter.getFileDiff('new.txt', { staged: true });
+		expect(diff.originalContent).toBe('renamed from old');
+		expect(diff.modifiedContent).toBe('renamed to new');
+		expect(mockReadFile).not.toHaveBeenCalled();
 	});
 });
 

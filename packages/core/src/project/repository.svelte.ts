@@ -1,4 +1,5 @@
 import type { FileOrigin } from '../storage';
+import { fileDiffFromChange } from './vcs';
 import type { VCSAdapter, SwitchResult, GitChange, GitCommit, FileDiffDetail } from './vcs';
 
 export interface RepositorySafetyReport {
@@ -30,14 +31,10 @@ export class Repository {
 			return await this.adapter.getFileDiff(filepath, options);
 		}
 		const change = this.changes.find(c => c.filepath === filepath && (options?.staged === undefined || c.staged === options.staged));
-		if (!change || (change.originalContent === undefined && change.modifiedContent === undefined)) {
+		if (!change) {
 			return null;
 		}
-		return {
-			originalContent: change.originalContent ?? '',
-			modifiedContent: change.modifiedContent ?? '',
-			stagedContent: change.stagedContent
-		};
+		return fileDiffFromChange(change);
 	}
 
 
