@@ -10,7 +10,7 @@
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
-	import { mount } from 'svelte';
+	import { mount, unmount } from 'svelte';
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -18,6 +18,7 @@
 		staged: boolean;
 		change: GitChange;
 		appState: any;
+		private mountedApps: Array<Record<string, any>> = [];
 
 		constructor(
 			hunkIndex: number,
@@ -35,6 +36,7 @@
 		}
 
 		toDOM(): HTMLElement {
+			this.mountedApps = [];
 			const wrap = document.createElement('div');
 			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover/95 text-popover-foreground border border-border/80 rounded-md px-1.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-90 hover:opacity-100 transition-opacity select-none';
 			wrap.style.cssText = 'float: right; margin-top: -2px; margin-bottom: -2px; position: relative; z-index: 20;';
@@ -59,7 +61,7 @@
 				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
 				unstageBtn.setAttribute('aria-label', `Unstage Hunk #${this.hunkIndex + 1}`);
-				mount(MinusIcon, { target: unstageBtn, props: { size: 10 } });
+				this.mountedApps.push(mount(MinusIcon, { target: unstageBtn, props: { size: 10 } }));
 				unstageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -72,7 +74,7 @@
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
 				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				mount(TrashIcon, { target: discardBtn, props: { size: 10 } });
+				this.mountedApps.push(mount(TrashIcon, { target: discardBtn, props: { size: 10 } }));
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -85,7 +87,7 @@
 				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
 				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
-				mount(PlusIcon, { target: stageBtn, props: { size: 10 } });
+				this.mountedApps.push(mount(PlusIcon, { target: stageBtn, props: { size: 10 } }));
 				stageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -98,7 +100,7 @@
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
 				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				mount(ArrowCounterClockwiseIcon, { target: discardBtn, props: { size: 10 } });
+				this.mountedApps.push(mount(ArrowCounterClockwiseIcon, { target: discardBtn, props: { size: 10 } }));
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -108,6 +110,15 @@
 			}
 
 			return wrap;
+		}
+
+		destroy() {
+			for (const app of this.mountedApps) {
+				try {
+					unmount(app);
+				} catch (e) {}
+			}
+			this.mountedApps = [];
 		}
 
 		ignoreEvent() {
