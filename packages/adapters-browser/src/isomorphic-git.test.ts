@@ -217,7 +217,12 @@ describe('IsomorphicGitAdapter', () => {
 			return { blob: new Uint8Array() };
 		});
 		const resolveRefSpy = mock(async () => 'head-commit-oid');
-		const walkSpy = mock(async ({ map }: { map: Function }) => {});
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			await map('deleted.txt', [{
+				type: async () => 'blob',
+				oid: async () => 'head-commit-oid'
+			}]);
+		});
 
 		const origReadBlob = git.readBlob;
 		const origResolveRef = git.resolveRef;
@@ -401,6 +406,48 @@ describe('IsomorphicGitAdapter', () => {
 
 			expect(diff.originalContent).toBe('deleted head text');
 			expect(diff.modifiedContent).toBe('');
+			expect(diff.stagedContent).toBe('');
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+		}
+	});
+
+	it('loads on-demand diff content via getFileDiff for staged deleted files recreated in worktree', async () => {
+		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
+			if (oid === 'head-commit-oid') {
+				return { blob: new TextEncoder().encode('deleted head text') };
+			}
+			return { blob: new Uint8Array() };
+		});
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const walkSpy = mock(async ({ map }: { map: Function }) => {});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+
+		mockDirectoryHandle.getFileHandle = mock(async () => ({
+			kind: 'file',
+			name: 'deleted.txt',
+			getFile: mock(async () => ({
+				text: mock(async () => 'recreated in worktree'),
+				arrayBuffer: mock(async () => new TextEncoder().encode('recreated in worktree').buffer),
+				size: 'recreated in worktree'.length,
+				lastModified: Date.now()
+			}))
+		}));
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const diff = await adapter.getFileDiff('deleted.txt', { staged: false });
+
+			expect(diff.originalContent).toBe('');
+			expect(diff.modifiedContent).toBe('recreated in worktree');
 			expect(diff.stagedContent).toBe('');
 		} finally {
 			(git as any).readBlob = origReadBlob;
