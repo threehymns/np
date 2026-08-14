@@ -642,7 +642,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		try {
 			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
 		} catch (e) {}
-
+		let headFound = false;
 		let headContent = '';
 		if (headCommit) {
 			try {
@@ -653,9 +653,11 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					filepath
 				});
 				headContent = new TextDecoder().decode(blob);
+				headFound = true;
 			} catch (e) {}
 		}
 
+		let stagedOid: string | null = null;
 		let stagedContent = '';
 		try {
 			await git.walk({
@@ -668,6 +670,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						if (type === 'blob') {
 							const oid = await entries[0].oid();
 							if (oid) {
+								stagedOid = oid;
 								const { blob } = await git.readBlob({
 									fs: this.fs!,
 									dir: this.dir,
@@ -681,16 +684,70 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 		} catch (e) {}
 
-		if (!stagedContent && headContent) {
-			stagedContent = headContent;
-		}
-
 		let workdirContent = '';
 		if (options?.staged !== true) {
 			try {
 				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
 				workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 			} catch (e) {}
+		}
+
+		// Exact rename resolution fallback: if filepath was not in HEAD, search HEAD tree for matching blob oid
+		if (headCommit && !headFound) {
+			let targetOid: string | null = stagedOid;
+			if (!targetOid) {
+				try {
+					let buffer: Uint8Array | string | null = null;
+					if (workdirContent !== '') {
+						buffer = workdirContent;
+					} else {
+						buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+					}
+					if (buffer !== null && buffer !== undefined) {
+						const res = await git.hashBlob({
+							object: typeof buffer === 'string' ? new TextEncoder().encode(buffer) : buffer
+						});
+						targetOid = res.oid;
+					}
+				} catch (e) {}
+			}
+
+			if (targetOid) {
+				let matchedHeadOid: string | null = null;
+				try {
+					await git.walk({
+						fs: this.fs!,
+						dir: this.dir,
+						trees: [git.TREE({ ref: headCommit })],
+						map: async (walkPath, entries) => {
+							if (matchedHeadOid || !entries || !entries[0]) return null;
+							const type = await entries[0].type();
+							if (type === 'blob') {
+								const oid = await entries[0].oid();
+								if (oid === targetOid) {
+									matchedHeadOid = oid;
+									return null;
+								}
+							}
+						}
+					});
+				} catch (e) {}
+
+				if (matchedHeadOid) {
+					try {
+						const { blob } = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: matchedHeadOid
+						});
+						headContent = new TextDecoder().decode(blob);
+					} catch (e) {}
+				}
+			}
+		}
+
+		if (!stagedContent && headContent) {
+			stagedContent = headContent;
 		}
 
 		return resolveDiffDetail(headContent, stagedContent, workdirContent, options);
