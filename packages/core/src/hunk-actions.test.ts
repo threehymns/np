@@ -9,7 +9,13 @@ function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] 
 				repository: {
 					adapter,
 					isBusy: false,
-					refresh: mock(async () => {})
+					refresh: mock(async () => {}),
+					getFileDiff: async (filepath: string, options?: any) => {
+						if (adapter.getFileDiff) {
+							return await adapter.getFileDiff(filepath, options);
+						}
+						return null;
+					}
 				}
 			},
 			dialogService: {
@@ -194,4 +200,104 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
+
+	it("resolves missing diff content via adapter.getFileDiff on stage", async () => {
+		let updatedFile = "";
+		let updatedContent = "";
+		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
+			return {
+				originalContent: "line1\n",
+				modifiedContent: "line1\nline2\n",
+				stagedContent: "line1\n"
+			};
+		});
+		const { appState } = createMockAppState({
+			getFileDiff: getFileDiffMock,
+			updateIndexContent: mock(async (file: string, content: string) => {
+				updatedFile = file;
+				updatedContent = content;
+			})
+		});
+		// Change without loaded originalContent / modifiedContent
+		const change = createTestChange({
+			originalContent: undefined,
+			modifiedContent: undefined,
+			stagedContent: undefined
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
+
+		await applyHunkAction(appState, change, hunk, "stage");
+		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: false });
+		expect(updatedFile).toBe("test.txt");
+		expect(updatedContent).toBe("line1\nline2\n");
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
+
+	it("resolves missing diff content via adapter.getFileDiff on unstage", async () => {
+		let updatedFile = "";
+		let updatedContent = "";
+		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
+			return {
+				originalContent: "line1\n",
+				modifiedContent: "line1\nline2\n",
+				stagedContent: "line1\nline2\n"
+			};
+		});
+		const { appState } = createMockAppState({
+			getFileDiff: getFileDiffMock,
+			updateIndexContent: mock(async (file: string, content: string) => {
+				updatedFile = file;
+				updatedContent = content;
+			})
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: undefined,
+			modifiedContent: undefined,
+			stagedContent: undefined
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
+
+		await applyHunkAction(appState, change, hunk, "unstage");
+		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: true });
+		expect(updatedFile).toBe("test.txt");
+		expect(updatedContent).toBe("line1\n");
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
+
+	it("resolves missing diff content via adapter.getFileDiff on discard", async () => {
+		let updatedWorktreeFile = "";
+		let updatedWorktreeContent = "";
+		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
+			return {
+				originalContent: "line1\n",
+				modifiedContent: "line1\nline2\n",
+				stagedContent: "line1\n"
+			};
+		});
+		const { appState } = createMockAppState({
+			getFileDiff: getFileDiffMock,
+			updateFileContent: mock(async (file: string, content: string) => {
+				updatedWorktreeFile = file;
+				updatedWorktreeContent = content;
+			})
+		});
+		const change = createTestChange({
+			staged: false,
+			originalContent: undefined,
+			modifiedContent: undefined,
+			stagedContent: undefined
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: false });
+		expect(updatedWorktreeFile).toBe("test.txt");
+		expect(updatedWorktreeContent).toBe("line1\n");
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
 });
+

@@ -1,6 +1,8 @@
-import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit } from '@np/core';
+import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 
 export class SpawnGitAdapter implements VCSAdapter {
+	private renamedOrigPaths = new Map<string, string>();
+
 	constructor(private rootOrigin: FileOrigin) {}
 
 	private async runGit(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -223,23 +225,16 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const changes: GitChange[] = [];
 		const entries = this.parseStatusEntries(statusRes.stdout);
+		this.renamedOrigPaths.clear();
 
 		for (const { x, y, filepath, origPath } of entries) {
+			if (origPath) {
+				this.renamedOrigPaths.set(filepath, origPath);
+			}
+
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
 				const stat = stagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
-
-				// Fetch original content (from HEAD)
-				let originalContent = '';
-				if (status !== 'A') {
-					originalContent = await this.readGitObject(`HEAD:${origPath || filepath}`);
-				}
-
-				// Fetch modified content (from staged index)
-				let modifiedContent = '';
-				if (status !== 'D') {
-					modifiedContent = await this.readGitObject(`:${filepath}`);
-				}
 
 				changes.push({
 					filepath,
@@ -247,64 +242,73 @@ export class SpawnGitAdapter implements VCSAdapter {
 					additions: stat.additions,
 					deletions: stat.deletions,
 					diff: '',
-					staged: true,
-					originalContent,
-					modifiedContent,
-					stagedContent: modifiedContent
+					staged: true
 				});
 			}
 
 			if (y !== ' ') {
 				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
-
-				// Fetch original content (from staged index if staged, else from HEAD)
-				let originalContent = '';
-				if (y !== '?') {
-					originalContent = await this.readGitObject(`:${filepath}`);
-					if (!originalContent) {
-						originalContent = await this.readGitObject(`HEAD:${origPath || filepath}`);
-					}
-				}
-
-				// Fetch modified content (from filesystem)
-				let modifiedContent = '';
-				if (status !== 'D') {
-					try {
-						const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
-						modifiedContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-					} catch (e) {}
-				}
-
-				let additions = 0;
-				let deletions = 0;
-
-				if (y === '?') {
-					const lines = modifiedContent ? modifiedContent.split('\n') : [];
-					if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-					additions = lines.length;
-					deletions = 0;
-				} else {
-					const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
-					additions = stat.additions;
-					deletions = stat.deletions;
-				}
+				const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
 
 				changes.push({
 					filepath,
 					status,
-					additions,
-					deletions,
+					additions: stat.additions,
+					deletions: stat.deletions,
 					diff: '',
-					staged: false,
-					originalContent,
-					modifiedContent,
-					stagedContent: originalContent
+					staged: false
 				});
 			}
 		}
 
 		return changes;
 	}
+
+	private async readStagedOrHead(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string; stagedContent: string }> {
+		const [headContent, indexContent] = await Promise.all([
+			this.readGitObject(`HEAD:${origPath}`),
+			this.readGitObject(`:${filepath}`)
+		]);
+		return {
+			headContent,
+			indexContent,
+			stagedContent: indexContent || headContent
+		};
+	}
+
+	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
+		const origPath = this.renamedOrigPaths.get(filepath) || filepath;
+		const { headContent, indexContent, stagedContent } = await this.readStagedOrHead(filepath, origPath);
+
+		if (options?.staged === true) {
+			return {
+				originalContent: headContent,
+				modifiedContent: indexContent,
+				stagedContent: indexContent
+			};
+		}
+
+		let worktreeContent = '';
+		try {
+			const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+			worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e) {}
+
+		if (options?.staged === false) {
+			return {
+				originalContent: stagedContent,
+				modifiedContent: worktreeContent,
+				stagedContent
+			};
+		}
+
+		return {
+			originalContent: headContent,
+			modifiedContent: worktreeContent,
+			stagedContent
+		};
+	}
+
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		const fullPath = this.rootOrigin.path + '/' + filepath;

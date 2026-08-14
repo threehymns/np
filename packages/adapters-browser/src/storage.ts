@@ -1,4 +1,4 @@
-import { toURI, parseURI } from '@np/core';
+import { toURI, parseURI } from '@np/core/storage';
 import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
 import { openDB } from './persistence';
 
