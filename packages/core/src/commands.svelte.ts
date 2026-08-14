@@ -22,9 +22,10 @@ async function showConfirm(appState: AppState, msg: string): Promise<boolean> {
 }
 
 async function writeClipboard(appState: AppState, text: string): Promise<void> {
-	if (appState.clipboardService?.writeText) {
-		await appState.clipboardService.writeText(text);
+	if (!appState.clipboardService?.writeText) {
+		throw new Error('Clipboard service is unavailable');
 	}
+	await appState.clipboardService.writeText(text);
 }
 
 async function readClipboard(appState: AppState): Promise<string> {
@@ -144,11 +145,15 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await writeClipboard(appState, text);
-					view.dispatch({
-						changes: { from, to, insert: "" },
-						selection: { anchor: from }
-					});
+					try {
+						await writeClipboard(appState, text);
+						view.dispatch({
+							changes: { from, to, insert: "" },
+							selection: { anchor: from }
+						});
+					} catch (err) {
+						console.error("Failed to cut to clipboard:", err);
+					}
 				}
 			}
 		},
@@ -165,7 +170,11 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await writeClipboard(appState, text);
+					try {
+						await writeClipboard(appState, text);
+					} catch (err) {
+						console.error("Failed to copy to clipboard:", err);
+					}
 				}
 				view.focus();
 			}
@@ -222,7 +231,11 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			await writeClipboard(appState, html);
+			try {
+				await writeClipboard(appState, html);
+			} catch (err) {
+				console.error("Failed to copy HTML to clipboard:", err);
+			}
 		}
 	});
 
