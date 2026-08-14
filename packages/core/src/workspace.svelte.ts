@@ -39,11 +39,8 @@ export class Workspace {
 		}, 500);
 	}
 
-	flushSaveOpenFiles() {
-		if (this.isRestoring) return;
-
-		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-		const serializedDocs: SerializedDocument[] = this.tabs.map(tab => {
+	private serializeTabs(): SerializedDocument[] {
+		return this.tabs.map(tab => {
 			if (tab.type === 'diff') {
 				return {
 					id: tab.id,
@@ -65,6 +62,13 @@ export class Workspace {
 			}
 			return serialized;
 		}).filter(Boolean) as SerializedDocument[];
+	}
+
+	flushSaveOpenFiles() {
+		if (this.isRestoring) return;
+
+		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const serializedDocs = this.serializeTabs();
 
 		this.persistence.saveOpenFiles(serializedDocs, folderUri);
 
@@ -155,8 +159,17 @@ export class Workspace {
 		return this.repository?.branches ?? [];
 	}
 
-	reorderTabs(newTabs: WorkspaceTab[]) {
-		this.tabs = newTabs;
+	reorderTabs(tabsOrFromIdx: WorkspaceTab[] | number, toIdx?: number) {
+		if (Array.isArray(tabsOrFromIdx)) {
+			this.tabs = tabsOrFromIdx;
+		} else if (typeof tabsOrFromIdx === 'number' && typeof toIdx === 'number') {
+			if (tabsOrFromIdx < 0 || tabsOrFromIdx >= this.tabs.length || toIdx < 0 || toIdx >= this.tabs.length || tabsOrFromIdx === toIdx) {
+				return;
+			}
+			const [movedTab] = this.tabs.splice(tabsOrFromIdx, 1);
+			this.tabs.splice(toIdx, 0, movedTab);
+		}
+		this.debouncedSaveOpenFiles();
 	}
 
 	reorderDocuments(newDocs: DocumentSession[]) {
@@ -326,11 +339,12 @@ export class Workspace {
 						(saved) => {
 							if (saved) {
 								this.performClose(id);
-								this.pendingCloseId = null;
 							}
+							this.pendingCloseId = null;
 						},
 						(err) => {
 							console.error('[Workspace] Save before close failed', err);
+							this.pendingCloseId = null;
 						}
 					);
 					return;
@@ -420,30 +434,11 @@ export class Workspace {
 		}
 	}
 
+
+
 	async saveFolderState(folderUri: string) {
 		console.log('[Workspace] saveFolderState start for:', folderUri);
-		const serializedDocs: SerializedDocument[] = this.tabs.map(tab => {
-			if (tab.type === 'diff') {
-				return {
-					id: tab.id,
-					origin: null,
-					isModified: false,
-					virtualTabType: 'diff'
-				} as any;
-			}
-			const doc = this.documents.find(d => d.id === tab.id);
-			if (!doc) return null;
-			const serialized: SerializedDocument = {
-				id: doc.id,
-				origin: doc.origin ? $state.snapshot(doc.origin) : null,
-				untitledTitle: doc.untitledTitle,
-				isModified: doc.isModified
-			};
-			if (doc.isModified || !doc.origin) {
-				serialized.draftContent = doc.content;
-			}
-			return serialized;
-		}).filter(Boolean) as SerializedDocument[];
+		const serializedDocs = this.serializeTabs();
 
 		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 		await this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
