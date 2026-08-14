@@ -771,14 +771,15 @@ export async function applyHunkAction(
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
 				}
 			} else {
+				if (!repo.adapter.updateIndexContent) {
+					throw new Error('VCS adapter does not support updating index for hunk discard');
+				}
 				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
 				const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
 				const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, origHunkSlice);
 				const newWorktreeContent = spliceText(modText, hunk.fromB, hunk.toB, origHunkSlice);
 
-				if (repo.adapter.updateIndexContent) {
-					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
-				}
+				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				if (repo.adapter.updateFileContent) {
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
 				}
