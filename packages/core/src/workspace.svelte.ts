@@ -159,17 +159,26 @@ export class Workspace {
 		return this.repository?.branches ?? [];
 	}
 
+	setTabs(tabs: WorkspaceTab[]) {
+		this.tabs = tabs;
+		this.debouncedSaveOpenFiles();
+	}
+
+	moveTab(fromIdx: number, toIdx: number) {
+		if (fromIdx < 0 || fromIdx >= this.tabs.length || toIdx < 0 || toIdx >= this.tabs.length || fromIdx === toIdx) {
+			return;
+		}
+		const [movedTab] = this.tabs.splice(fromIdx, 1);
+		this.tabs.splice(toIdx, 0, movedTab);
+		this.debouncedSaveOpenFiles();
+	}
+
 	reorderTabs(tabsOrFromIdx: WorkspaceTab[] | number, toIdx?: number) {
 		if (Array.isArray(tabsOrFromIdx)) {
-			this.tabs = tabsOrFromIdx;
+			this.setTabs(tabsOrFromIdx);
 		} else if (typeof tabsOrFromIdx === 'number' && typeof toIdx === 'number') {
-			if (tabsOrFromIdx < 0 || tabsOrFromIdx >= this.tabs.length || toIdx < 0 || toIdx >= this.tabs.length || tabsOrFromIdx === toIdx) {
-				return;
-			}
-			const [movedTab] = this.tabs.splice(tabsOrFromIdx, 1);
-			this.tabs.splice(toIdx, 0, movedTab);
+			this.moveTab(tabsOrFromIdx, toIdx);
 		}
-		this.debouncedSaveOpenFiles();
 	}
 
 	reorderDocuments(newDocs: DocumentSession[]) {

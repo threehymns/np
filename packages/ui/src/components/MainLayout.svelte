@@ -45,7 +45,7 @@
     const toIdx = tabs.findIndex(t => t.id === targetId);
 
     if (fromIdx !== -1 && toIdx !== -1) {
-      appState.workspace.reorderTabs(fromIdx, toIdx);
+      appState.workspace.moveTab(fromIdx, toIdx);
     }
   }
 
@@ -59,7 +59,7 @@
       const tabMap = new Map(appState.workspace.tabs.map(t => [t.id, t]));
       const restored = initialTabIds.map(id => tabMap.get(id)).filter(Boolean) as typeof appState.workspace.tabs;
       if (restored.length === appState.workspace.tabs.length) {
-        appState.workspace.reorderTabs(restored);
+        appState.workspace.setTabs(restored);
       }
     }
     draggedId = null;
