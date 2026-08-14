@@ -615,7 +615,17 @@ export function registerCoreCommands(appState: AppState) {
 			const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
 			await appState.workspace.openFile(parseURI(fileUri));
 		} else {
-			await appState.workspace.openFile(parseURI(target));
+			const isAbsolute = target.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(target) || target.startsWith('\\\\');
+			if (isAbsolute) {
+				const name = target.split(/[/\\]/).filter(Boolean).pop() || target;
+				await appState.workspace.openFile({
+					scheme: 'file',
+					path: target,
+					name
+				});
+			} else {
+				return;
+			}
 		}
 	};
 
