@@ -691,6 +691,34 @@ export interface HunkRange {
 	toB: number;
 }
 
+export function mapPos(posA: number, chunks: readonly Chunk[]): number {
+	let lastToA = 0;
+	let lastToB = 0;
+	for (const c of chunks) {
+		if (posA <= c.fromA) {
+			return lastToB + (posA - lastToA);
+		}
+		if (posA <= c.toA) {
+			return c.fromB;
+		}
+		lastToA = c.toA;
+		lastToB = c.toB;
+	}
+	return lastToB + (posA - lastToA);
+}
+
+export function mapRange(posFrom: number, posTo: number, textA: Text, textB: Text): { from: number; to: number } {
+	const chunks = Chunk.build(textA, textB);
+	return {
+		from: mapPos(posFrom, chunks),
+		to: mapPos(posTo, chunks)
+	};
+}
+
+export function spliceText(target: Text, from: number, to: number, replacement: string): string {
+	return target.sliceString(0, from) + replacement + target.sliceString(to);
+}
+
 export async function applyHunkAction(
 	appState: AppState,
 	change: GitChange,
@@ -738,35 +766,6 @@ export async function applyHunkAction(
 		const origText = Text.of(origContent.split(/\r?\n/));
 		const modText = Text.of(modContent.split(/\r?\n/));
 		const stagedText = Text.of(stagedContent.split(/\r?\n/));
-
-		const mapPos = (posA: number, chunks: readonly Chunk[]) => {
-			let lastToA = 0;
-			let lastToB = 0;
-			for (const c of chunks) {
-				if (posA <= c.fromA) {
-					return lastToB + (posA - lastToA);
-				}
-				if (posA <= c.toA) {
-					return c.fromB;
-				}
-				lastToA = c.toA;
-				lastToB = c.toB;
-			}
-			return lastToB + (posA - lastToA);
-		};
-
-		const mapRange = (posFrom: number, posTo: number, textA: Text, textB: Text) => {
-			const chunks = Chunk.build(textA, textB);
-			return {
-				from: mapPos(posFrom, chunks),
-				to: mapPos(posTo, chunks)
-			};
-		};
-
-		const spliceText = (target: Text, from: number, to: number, replacement: string) => {
-			return target.sliceString(0, from) + replacement + target.sliceString(to);
-		};
-
 		if (action === 'stage') {
 			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
 			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB));
