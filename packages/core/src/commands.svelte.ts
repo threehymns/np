@@ -691,6 +691,11 @@ export interface HunkRange {
 	toB: number;
 }
 
+/**
+ * Maps a character position in document A (original text) to document B (modified text)
+ * using diff chunks. If posA falls inside a changed chunk, it maps to the start of chunk B (fromB).
+ * If posA is outside changed chunks, it offsets posA relative to preceding chunk boundaries.
+ */
 export function mapPos(posA: number, chunks: readonly Chunk[]): number {
 	let lastToA = 0;
 	let lastToB = 0;
@@ -707,6 +712,10 @@ export function mapPos(posA: number, chunks: readonly Chunk[]): number {
 	return lastToB + (posA - lastToA);
 }
 
+/**
+ * Maps a character range [posFrom, posTo] defined on textA (original coordinate space)
+ * into textB (target coordinate space) by computing diff chunks and mapping both endpoints.
+ */
 export function mapRange(posFrom: number, posTo: number, textA: Text, textB: Text): { from: number; to: number } {
 	const chunks = Chunk.build(textA, textB);
 	return {
@@ -715,6 +724,9 @@ export function mapRange(posFrom: number, posTo: number, textA: Text, textB: Tex
 	};
 }
 
+/**
+ * Replaces a character slice [from, to] in the target Text document with the replacement string.
+ */
 export function spliceText(target: Text, from: number, to: number, replacement: string): string {
 	return target.sliceString(0, from) + replacement + target.sliceString(to);
 }
