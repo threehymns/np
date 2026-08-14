@@ -19,6 +19,7 @@ export class Repository {
 	selectedPaths = $state<string[]>([]);
 
 	public adapter: VCSAdapter;
+	private refreshGeneration = 0;
 
 	constructor(rootOrigin: FileOrigin, vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter) {
 		this.adapter = vcsFactory(rootOrigin);
@@ -26,6 +27,7 @@ export class Repository {
 
 
 	async refresh(): Promise<boolean> {
+		const generation = ++this.refreshGeneration;
 		this.isBusy = true;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
@@ -35,6 +37,8 @@ export class Repository {
 				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
 				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([])
 			]);
+
+			if (generation !== this.refreshGeneration) return false;
 
 			let success = false;
 			if (branchRes.status === 'fulfilled' && branchRes.value !== null) {
@@ -57,6 +61,7 @@ export class Repository {
 				this.isDirty = this.changes.length > 0;
 			} else if (changesRes.status === 'fulfilled') {
 				const status = await this.adapter.getStatus();
+				if (generation !== this.refreshGeneration) return false;
 				this.changes = [];
 				this.uncommittedFiles = status.uncommittedFiles;
 				this.isDirty = status.isDirty;
@@ -89,6 +94,7 @@ export class Repository {
 
 			return success;
 		} catch (e) {
+			if (generation !== this.refreshGeneration) return false;
 			console.error('Failed to refresh repository metadata', e);
 			this.currentBranch = null;
 			this.branches = [];
@@ -99,7 +105,9 @@ export class Repository {
 			this.activeDiffFile = null;
 			return false;
 		} finally {
-			this.isBusy = false;
+			if (generation === this.refreshGeneration) {
+				this.isBusy = false;
+			}
 		}
 	}
 
