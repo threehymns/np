@@ -86,8 +86,6 @@ export class Workspace {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
-		
-		this.restoreSession();
 
 		$effect.root(() => {
 			$effect(() => {
