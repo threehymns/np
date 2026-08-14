@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
-	import type { GitChange } from '@np/core';
+	import type { GitChange, FileDiffDetail } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -736,9 +736,9 @@
 						status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
 						staged: false,
 						diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
-						originalContent: stagedChange.originalContent ?? '',
-						modifiedContent: unstagedChange.modifiedContent ?? '',
-						stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent ?? '',
+						originalContent: stagedChange.originalContent,
+						modifiedContent: unstagedChange.modifiedContent,
+						stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent,
 						additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
 						deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
 					});
@@ -750,6 +750,58 @@
 
 		return result;
 	}
+
+	let loadedDiffs = $state<Record<string, FileDiffDetail>>({});
+	let loadingDiffs = $state<Record<string, boolean>>({});
+
+	function resolveFileDiff(fileChange: GitChange): FileDiffDetail | null {
+		if (loadedDiffs[fileChange.filepath]) {
+			return loadedDiffs[fileChange.filepath];
+		}
+		if (fileChange.originalContent !== undefined || fileChange.modifiedContent !== undefined) {
+			return {
+				originalContent: fileChange.originalContent || '',
+				modifiedContent: fileChange.modifiedContent || '',
+				stagedContent: fileChange.stagedContent
+			};
+		}
+		return null;
+	}
+
+	async function fetchDiff(filepath: string) {
+		if (loadingDiffs[filepath] || loadedDiffs[filepath]) return;
+		loadingDiffs[filepath] = true;
+		try {
+			if (repo) {
+				const diff = await repo.getFileDiff(filepath);
+				loadedDiffs[filepath] = diff;
+			}
+		} catch (e) {
+			console.error(`Failed to load diff for ${filepath}:`, e);
+			loadedDiffs[filepath] = { originalContent: '', modifiedContent: '', stagedContent: '' };
+		} finally {
+			loadingDiffs[filepath] = false;
+		}
+	}
+
+	let lastChangesRef: GitChange[] | null = null;
+	$effect(() => {
+		if (repo?.changes !== lastChangesRef) {
+			lastChangesRef = repo?.changes ?? null;
+			loadedDiffs = {};
+			loadingDiffs = {};
+		}
+	});
+
+	$effect(() => {
+		for (const file of activeChanges) {
+			if (!isFileCollapsed(file.filepath)) {
+				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[file.filepath] && !loadingDiffs[file.filepath]) {
+					fetchDiff(file.filepath);
+				}
+			}
+		}
+	});
 
 	let filterScope = $state<'all' | 'selected'>('all');
 
@@ -796,8 +848,11 @@
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
-			const origContent = change.originalContent || '';
-			const modContent = change.modifiedContent || '';
+			const diff = loadedDiffs[change.filepath];
+			const origContent = diff?.originalContent ?? change.originalContent ?? '';
+			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
+			if (!origContent && !modContent) return;
+
 			const origText = Text.of(origContent.split(/\r?\n/));
 			const modText = Text.of(modContent.split(/\r?\n/));
 			const chunks = getUnifiedHunks(origText, modText);
@@ -1151,29 +1206,42 @@
 
 					<!-- Diff Content (collapsible) -->
 					{#if !isCollapsed}
+						{@const diff = resolveFileDiff(fileChange)}
 						<div class="bg-muted/5 relative group border-t border-border/40">
-							{#if viewMode === 'inline'}
-								<!-- Inline View: Single Editor showing unified diff of the whole file -->
-								<div class="flex-1 overflow-hidden bg-background">
-									<div use:setupEditor={{
-										content: fileChange.modifiedContent || '',
-										originalContent: fileChange.originalContent || '',
-										readOnly: true,
-										filepath: fileChange.filepath,
-										fileChange: fileChange,
-										wrap: appState.prefs.wordWrap
-									}}></div>
-								</div>
+							{#if diff}
+								{@const effectiveChange = {
+									...fileChange,
+									originalContent: diff.originalContent,
+									modifiedContent: diff.modifiedContent,
+									stagedContent: diff.stagedContent
+								}}
+								{#if viewMode === 'inline'}
+									<!-- Inline View: Single Editor showing unified diff of the whole file -->
+									<div class="flex-1 overflow-hidden bg-background">
+										<div use:setupEditor={{
+											content: diff.modifiedContent,
+											originalContent: diff.originalContent,
+											readOnly: true,
+											filepath: fileChange.filepath,
+											fileChange: effectiveChange,
+											wrap: appState.prefs.wordWrap
+										}}></div>
+									</div>
+								{:else}
+									<!-- Split View: Side-by-side MergeView of the whole file -->
+									<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
+										<div use:setupMergeView={{
+											leftContent: diff.originalContent,
+											rightContent: diff.modifiedContent,
+											filepath: fileChange.filepath,
+											fileChange: effectiveChange,
+											wrap: appState.prefs.wordWrap
+										}}></div>
+									</div>
+								{/if}
 							{:else}
-								<!-- Split View: Side-by-side MergeView of the whole file -->
-								<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
-									<div use:setupMergeView={{
-										leftContent: fileChange.originalContent || '',
-										rightContent: fileChange.modifiedContent || '',
-										filepath: fileChange.filepath,
-										fileChange: fileChange,
-										wrap: appState.prefs.wordWrap
-									}}></div>
+								<div class="flex items-center justify-center p-6 text-muted-foreground text-xs font-mono">
+									<span class="animate-pulse">Loading diff...</span>
 								</div>
 							{/if}
 						</div>

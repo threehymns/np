@@ -39,6 +39,12 @@ export interface GroupedChange {
 	changes: GitChange[];
 }
 
+export interface FileDiffDetail {
+	originalContent: string;
+	modifiedContent: string;
+	stagedContent?: string;
+}
+
 export interface VCSAdapter {
 	getCurrentBranch(): Promise<string | null>;
 	getBranches(): Promise<string[]>;
@@ -46,6 +52,7 @@ export interface VCSAdapter {
 	switchBranch(branchName: string, options?: { dryRun?: boolean }): Promise<SwitchResult>;
 	getChanges?(): Promise<GitChange[]>;
 	getCommits?(): Promise<GitCommit[]>;
+	getFileDiff?(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail>;
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
 	discardChanges?(filepath: string): Promise<void>;
@@ -55,5 +62,6 @@ export interface VCSAdapter {
 	updateIndexContent?(filepath: string, content: string): Promise<void>;
 	updateFileContent?(filepath: string, content: string): Promise<void>;
 }
+
 
 

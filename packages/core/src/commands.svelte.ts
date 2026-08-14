@@ -712,13 +712,30 @@ export async function applyHunkAction(
 			}
 		}
 
-		if (typeof change.originalContent !== 'string' || typeof change.modifiedContent !== 'string') {
+		let origContent = change.originalContent;
+		let modContent = change.modifiedContent;
+		let stagedContent = change.stagedContent;
+
+		if (typeof origContent !== 'string' || typeof modContent !== 'string') {
+			const diff = repo.getFileDiff
+				? await repo.getFileDiff(change.filepath, { staged: change.staged })
+				: (repo.adapter.getFileDiff ? await repo.adapter.getFileDiff(change.filepath, { staged: change.staged }) : null);
+			if (diff && typeof diff.originalContent === 'string' && typeof diff.modifiedContent === 'string') {
+				origContent = diff.originalContent;
+				modContent = diff.modifiedContent;
+				if (diff.stagedContent !== undefined) {
+					stagedContent = diff.stagedContent;
+				}
+			}
+		}
+
+		if (typeof origContent !== 'string' || typeof modContent !== 'string') {
 			throw new Error(`Cannot perform hunk ${action}: missing diff content for ${change.filepath}`);
 		}
 
-		const origContent = change.originalContent;
-		const modContent = change.modifiedContent;
-		const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+		if (stagedContent === undefined) {
+			stagedContent = change.staged ? modContent : origContent;
+		}
 
 		const origText = Text.of(origContent.split(/\r?\n/));
 		const modText = Text.of(modContent.split(/\r?\n/));

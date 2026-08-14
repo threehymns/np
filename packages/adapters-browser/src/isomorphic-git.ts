@@ -1,7 +1,7 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit } from '@np/core';
-import { toURI } from '@np/core';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 
 const REPO_DIR = '/repo';
@@ -575,28 +575,6 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
 			});
 
-			const stagedOids: Record<string, string> = {};
-			await git.walk({
-				fs: this.fs!,
-				dir: this.dir,
-				trees: [git.STAGE()],
-				map: async (filepath, entries) => {
-					if (filepath === '.' || !entries || !entries[0]) return;
-					const entry = entries[0];
-					const type = await entry.type();
-					if (type === 'blob') {
-						stagedOids[filepath] = await entry.oid();
-					}
-				}
-			});
-
-			let headCommit: string | null = null;
-			try {
-				headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
-			} catch (e) {
-				// No commits yet
-			}
-
 			const result: GitChange[] = [];
 
 			for (const [filepath, head, workdir, stage] of matrix) {
@@ -605,71 +583,27 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 				if (!hasStaged && !hasUnstaged) continue;
 
-				let headContent = '';
-				if (head === 1 && headCommit) {
-					try {
-						const { blob } = await git.readBlob({
-							fs: this.fs!,
-							dir: this.dir,
-							oid: headCommit,
-							filepath
-						});
-						headContent = new TextDecoder().decode(blob);
-					} catch (e) {}
-				}
-
-				let stagedContent = '';
-				const stagedOid = stagedOids[filepath];
-				if (stagedOid) {
-					try {
-						const { blob } = await git.readBlob({
-							fs: this.fs!,
-							dir: this.dir,
-							oid: stagedOid
-						});
-						stagedContent = new TextDecoder().decode(blob);
-					} catch (e) {}
-				} else if (head === 1) {
-					stagedContent = headContent;
-				}
-
-				let workdirContent = '';
-				if (workdir !== 0) {
-					try {
-						const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-						workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-					} catch (e) {}
-				}
-
 				if (hasStaged) {
 					const status = head === 0 ? 'A' : (stage === 0 ? 'D' : 'M');
-					const { diffText, additions, deletions } = computeDiff(headContent, stagedContent);
 					result.push({
-						filepath,
+						filepath: filepath as string,
 						status,
-						additions,
-						deletions,
-						diff: diffText,
-						staged: true,
-						originalContent: headContent,
-						modifiedContent: stagedContent,
-						stagedContent
+						additions: 0,
+						deletions: 0,
+						diff: '',
+						staged: true
 					});
 				}
 
 				if (hasUnstaged) {
 					const status = (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
-					const { diffText, additions, deletions } = computeDiff(stagedContent, workdirContent);
 					result.push({
-						filepath,
+						filepath: filepath as string,
 						status,
-						additions,
-						deletions,
-						diff: diffText,
-						staged: false,
-						originalContent: stagedContent,
-						modifiedContent: workdirContent,
-						stagedContent
+						additions: 0,
+						deletions: 0,
+						diff: '',
+						staged: false
 					});
 				}
 			}
@@ -679,6 +613,87 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			console.error('[Git] getChanges failed', e);
 			return [];
 		}
+	}
+
+	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
+		if (!await this.ensureInitialized()) {
+			return { originalContent: '', modifiedContent: '', stagedContent: '' };
+		}
+
+		let headCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+
+		let headContent = '';
+		if (headCommit) {
+			try {
+				const { blob } = await git.readBlob({
+					fs: this.fs!,
+					dir: this.dir,
+					oid: headCommit,
+					filepath
+				});
+				headContent = new TextDecoder().decode(blob);
+			} catch (e) {}
+		}
+
+		let stagedContent = '';
+		try {
+			await git.walk({
+				fs: this.fs!,
+				dir: this.dir,
+				trees: [git.STAGE()],
+				map: async (walkPath, entries) => {
+					if (walkPath === filepath && entries && entries[0]) {
+						const type = await entries[0].type();
+						if (type === 'blob') {
+							const oid = await entries[0].oid();
+							if (oid) {
+								const { blob } = await git.readBlob({
+									fs: this.fs!,
+									dir: this.dir,
+									oid
+								});
+								stagedContent = new TextDecoder().decode(blob);
+							}
+						}
+					}
+				}
+			});
+		} catch (e) {}
+
+		if (!stagedContent && headContent) {
+			stagedContent = headContent;
+		}
+
+		let workdirContent = '';
+		try {
+			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+			workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e) {}
+
+		if (options?.staged === true) {
+			return {
+				originalContent: headContent,
+				modifiedContent: stagedContent,
+				stagedContent
+			};
+		}
+
+		if (options?.staged === false) {
+			return {
+				originalContent: stagedContent,
+				modifiedContent: workdirContent,
+				stagedContent
+			};
+		}
+
+		return {
+			originalContent: headContent,
+			modifiedContent: workdirContent,
+			stagedContent
+		};
 	}
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
