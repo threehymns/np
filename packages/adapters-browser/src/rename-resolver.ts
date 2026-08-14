@@ -76,7 +76,11 @@ export async function resolveRenamedHeadContent(params: RenameResolutionParams):
 
 	if (!matchedHeadOid && deletedCandidates.length > 0) {
 		deletedCandidates.sort((a, b) => b.score - a.score);
-		matchedHeadOid = deletedCandidates[0].oid;
+		const bestCandidate = deletedCandidates[0];
+		const isUnique = deletedCandidates.length === 1 || bestCandidate.score > deletedCandidates[1].score;
+		if (bestCandidate.score > 0 && isUnique) {
+			matchedHeadOid = bestCandidate.oid;
+		}
 	}
 
 	if (matchedHeadOid) {
