@@ -83,7 +83,7 @@ export function resolveDiffDetail(
 
 	if (options?.staged === false) {
 		return {
-			originalContent: stagedContent,
+			originalContent: stagedContent || headContent,
 			modifiedContent: workdirContent,
 			stagedContent
 		};
