@@ -1,6 +1,8 @@
-:root {
+:root, [data-theme] {
+	--diff-green: oklch(0.65 0.17 140);
+	--diff-green-hover: oklch(0.55 0.15 140);
 	--diff-deleted: color-mix(in srgb, var(--destructive) 10%, transparent);
-	--diff-added: color-mix(in srgb, oklch(0.65 0.17 140) 10%, transparent);
+	--diff-added: color-mix(in srgb, var(--diff-green) 10%, transparent);
 }
 
 .cm-mergeView {
@@ -110,13 +112,13 @@
 }
 
 .cm-chunkButtons button[name=accept] {
-	background: oklch(0.65 0.17 140) !important; /* emerald/green matching primary */
+	background: var(--diff-green) !important;
 	color: white !important;
 	border: none !important;
 }
 
 .cm-chunkButtons button[name=accept]:hover {
-	background: oklch(0.55 0.15 140) !important;
+	background: var(--diff-green-hover) !important;
 }
 
 .cm-chunkButtons button[name=reject] {
@@ -142,7 +144,7 @@
 
 
 .cm-addedLineGutter {
-	background-color: oklch(0.65 0.17 140) !important;
+	background-color: var(--diff-green) !important;
 	opacity: 0.8;
 }
 
