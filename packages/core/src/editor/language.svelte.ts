@@ -27,12 +27,12 @@ export class LanguageSupport {
 		// Special cases or manual mapping if language-data doesn't cover it
 		if (extension === "svelte") return extraLanguages[0];
 
-		const found = LanguageDescription.matchFilename(allLanguages, filename);
-		return found || this.getMarkdown();
+		const found = LanguageDescription.matchFilename(allLanguages as any, filename);
+		return (found || this.getMarkdown()) as LanguageDescription;
 	}
 
 	static getMarkdown(): LanguageDescription {
-		return allLanguages.find((l) => l.name === "Markdown")!;
+		return allLanguages.find((l) => l.name === "Markdown") as LanguageDescription;
 	}
 
 	static async loadLanguage(lang: LanguageDescription) {

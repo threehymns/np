@@ -25,7 +25,6 @@
 	"dependencies": {
 		"@np/core": "workspace:*",
 		"@np/ui": "workspace:*",
-		"codemirror": "^6.0.2",
 		"phosphor-svelte": "^3.1.0"
 	}
 }
