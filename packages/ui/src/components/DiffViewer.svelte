@@ -332,7 +332,7 @@
 			const nextFile = activeChanges[idx + 1];
 			if (!nextFile) return;
 
-			const isNextCollapsed = collapsedFiles[nextFile.filepath] ?? (activeFile ? (nextFile.filepath !== activeFile) : true);
+			const isNextCollapsed = isFileCollapsed(nextFile.filepath);
 
 			if (isNextCollapsed) {
 				const header = document.getElementById(`diff-header-${nextFile.filepath}`);
@@ -357,7 +357,7 @@
 		} else {
 			const prevFile = activeChanges[idx - 1];
 			if (prevFile) {
-				const isPrevCollapsed = collapsedFiles[prevFile.filepath] ?? (activeFile ? (prevFile.filepath !== activeFile) : true);
+				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 
 				if (isPrevCollapsed) {
 					const header = document.getElementById(`diff-header-${prevFile.filepath}`);
@@ -651,10 +651,13 @@
 	// Collapsible files mapping
 	let collapsedFiles = $state<Record<string, boolean>>({});
 
-	function toggleCollapse(filepath: string) {
+	function isFileCollapsed(filepath: string): boolean {
 		const activeFile = repo?.activeDiffFile?.filepath;
-		const current = collapsedFiles[filepath] ?? (activeFile ? (filepath !== activeFile) : true);
-		collapsedFiles[filepath] = !current;
+		return collapsedFiles[filepath] ?? (activeFile ? (filepath !== activeFile) : true);
+	}
+
+	function toggleCollapse(filepath: string) {
+		collapsedFiles[filepath] = !isFileCollapsed(filepath);
 	}
 
 	async function openFileInRegularTab(filepath: string, lineNumber?: number) {
@@ -774,10 +777,8 @@
 	// Compute all hunks across expanded active changes as a $derived signal (skipping collapsed files)
 	let allHunks = $derived.by(() => {
 		const list: HunkTarget[] = [];
-		const activeFile = repo?.activeDiffFile?.filepath;
 		activeChanges.forEach((change, fileIndex) => {
-			const isCollapsed = collapsedFiles[change.filepath] ?? (activeFile ? (change.filepath !== activeFile) : true);
-			if (isCollapsed) return; // Skip collapsed files from hunk navigation
+			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
 			const origContent = change.originalContent || '';
 			const modContent = change.modifiedContent || '';
@@ -897,8 +898,7 @@
 		const idx = activeChanges.findIndex((c) => c.filepath === filepath);
 		if (idx === -1) return;
 
-		const activeFile = repo?.activeDiffFile?.filepath;
-		const isCollapsed = collapsedFiles[filepath] ?? (activeFile ? (filepath !== activeFile) : true);
+		const isCollapsed = isFileCollapsed(filepath);
 
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
@@ -929,7 +929,7 @@
 			event.preventDefault();
 			const prevFile = activeChanges[idx - 1];
 			if (prevFile) {
-				const isPrevCollapsed = collapsedFiles[prevFile.filepath] ?? (activeFile ? (prevFile.filepath !== activeFile) : true);
+				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 				if (!isPrevCollapsed) {
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode);
 					if (editor) {
@@ -983,7 +983,7 @@
 	<div class="flex items-center justify-between mb-2 border-b border-border shrink-0 h-11 px-4 select-none">
 		<div class="flex items-center gap-2">
 			{#if activeChanges.length > 0}
-				{@const allCollapsed = activeChanges.every(f => collapsedFiles[f.filepath] ?? (repo?.activeDiffFile?.filepath ? (f.filepath !== repo?.activeDiffFile?.filepath) : true))}
+				{@const allCollapsed = activeChanges.every(f => isFileCollapsed(f.filepath))}
 				<Button
 					variant="ghost"
 					size="icon-sm"
@@ -1092,8 +1092,7 @@
 			</div>
 		{:else}
 			{#each activeChanges as fileChange (fileChange.filepath + '-' + fileChange.staged)}
-				{@const activeFile = repo?.activeDiffFile?.filepath}
-				{@const isCollapsed = collapsedFiles[fileChange.filepath] ?? (activeFile ? (fileChange.filepath !== activeFile) : true)}
+				{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
 				<div class="flex flex-col bg-background" id="diff-file-{fileChange.filepath}">
 					<!-- File Header inside multibuffer -->
 					<div class="sticky top-0 z-10 bg-background pt-2 pb-1 px-2">
