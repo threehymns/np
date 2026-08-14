@@ -57,6 +57,12 @@ export class AppState {
 	}
 
 	async init() {
+		try {
+			await this.workspace.restoreSession();
+		} catch (e) {
+			console.error('[AppState] Failed to restore session:', e);
+		}
+
 		// Defer heavy icon initialization until after the first paint
 		const deferredInit = async () => {
 			try {
