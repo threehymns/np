@@ -34,6 +34,23 @@ export default defineConfig({
 			]
 		}
 	},
+	resolve: {
+		dedupe: [
+			'@codemirror/state',
+			'@codemirror/view',
+			'@codemirror/language',
+			'@codemirror/commands',
+			'@codemirror/autocomplete',
+			'@codemirror/search',
+			'@codemirror/merge',
+			'@codemirror/lang-markdown',
+			'@codemirror/language-data',
+			'@lezer/common',
+			'@lezer/highlight',
+			'@lezer/lr',
+			'@lezer/markdown'
+		]
+	},
 	ssr: {
 		noExternal: ['@mobily/ts-belt', 'codemirror-markdown-tables', '@np/core', '@np/ui']
 	}

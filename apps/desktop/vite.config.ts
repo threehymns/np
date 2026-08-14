@@ -21,5 +21,22 @@ export default defineConfig({
 				'!**/node_modules/@np/ui/**'
 			]
 		}
+	},
+	resolve: {
+		dedupe: [
+			'@codemirror/state',
+			'@codemirror/view',
+			'@codemirror/language',
+			'@codemirror/commands',
+			'@codemirror/autocomplete',
+			'@codemirror/search',
+			'@codemirror/merge',
+			'@codemirror/lang-markdown',
+			'@codemirror/language-data',
+			'@lezer/common',
+			'@lezer/highlight',
+			'@lezer/lr',
+			'@lezer/markdown'
+		]
 	}
 });

@@ -78,8 +78,8 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 		return [
 			lang,
 			markdown({
-				codeLanguages: allLanguages,
-				extensions: [Table, GFM],
+				codeLanguages: allLanguages as any,
+				extensions: [Table, GFM] as any,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
@@ -88,7 +88,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM],
+					extensions: [Table, GFM] as any,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),

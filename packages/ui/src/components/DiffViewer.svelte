@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
 	import type { GitChange } from '@np/core';
-	import { useAppState } from '@np/core/state.svelte';
+	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
@@ -12,20 +12,27 @@
 
 	import { mount, unmount } from 'svelte';
 
+	export interface HunkCoordinates {
+		fromA: number;
+		toA: number;
+		fromB: number;
+		toB: number;
+	}
+
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
-		hunkRange: { fromA: number; toA: number; fromB: number; toB: number };
+		hunkRange: HunkCoordinates;
 		staged: boolean;
 		change: GitChange;
-		appState: any;
+		appState: AppState;
 		private mountedApps: Array<Record<string, any>> = [];
 
 		constructor(
 			hunkIndex: number,
-			hunkRange: { fromA: number; toA: number; fromB: number; toB: number },
+			hunkRange: HunkCoordinates,
 			staged: boolean,
 			change: GitChange,
-			appState: any
+			appState: AppState
 		) {
 			super();
 			this.hunkIndex = hunkIndex;
@@ -126,14 +133,14 @@
 		}
 	}
 
-	function getUnifiedHunks(origText: Text, modText: Text): { fromA: number; toA: number; fromB: number; toB: number }[] {
+	function getUnifiedHunks(origText: Text, modText: Text): HunkCoordinates[] {
 		const rawChunks = Chunk.build(origText, modText);
 		if (rawChunks.length <= 1) {
 			return rawChunks.map(c => ({ fromA: c.fromA, toA: c.toA, fromB: c.fromB, toB: c.toB }));
 		}
 
-		const merged: { fromA: number; toA: number; fromB: number; toB: number }[] = [];
-		let current = {
+		const merged: HunkCoordinates[] = [];
+		let current: HunkCoordinates = {
 			fromA: rawChunks[0].fromA,
 			toA: rawChunks[0].toA,
 			fromB: rawChunks[0].fromB,
@@ -163,7 +170,7 @@
 		return merged;
 	}
 
-	function createHunkWidgetExtension(change: GitChange, state: any) {
+	function createHunkWidgetExtension(change: GitChange, state: AppState) {
 		return ViewPlugin.fromClass(
 			class {
 				decorations: DecorationSet;
@@ -322,72 +329,66 @@
 		]);
 	}
 
+	function focusHeader(filepath: string) {
+		const header = document.getElementById(`diff-header-${filepath}`);
+		if (header) {
+			header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+			setTimeout(() => header.focus(), 0);
+		}
+	}
+
+	function focusEditorFirstLine(editor: EditorView) {
+		const firstPos = editor.visibleRanges[0]?.from ?? 0;
+		const line1 = editor.state.doc.lineAt(Math.min(firstPos, editor.state.doc.length));
+		editor.dispatch({
+			selection: { anchor: line1.from, head: line1.from },
+			effects: EditorView.scrollIntoView(line1.from, { y: 'center' })
+		});
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+		setTimeout(() => editor.focus(), 0);
+	}
+
+	function focusEditorLastLine(editor: EditorView) {
+		const lastRanges = editor.visibleRanges;
+		const lastPos = lastRanges[lastRanges.length - 1]?.to ?? editor.state.doc.length;
+		const samplePos = Math.max(0, lastPos > 0 ? lastPos - 1 : 0);
+		const lastLine = editor.state.doc.lineAt(samplePos);
+		editor.dispatch({
+			selection: { anchor: lastLine.from, head: lastLine.from },
+			effects: EditorView.scrollIntoView(lastLine.from, { y: 'center' })
+		});
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+		setTimeout(() => editor.focus(), 0);
+	}
+
 	async function navigateFromFileEditor(filepath: string, direction: 'down' | 'up', side: 'a' | 'b' = 'b') {
 		const idx = activeChanges.findIndex((c) => c.filepath === filepath);
 		if (idx === -1) return;
-
-		const activeFile = repo?.activeDiffFile?.filepath;
 
 		if (direction === 'down') {
 			const nextFile = activeChanges[idx + 1];
 			if (!nextFile) return;
 
 			const isNextCollapsed = isFileCollapsed(nextFile.filepath);
-
 			if (isNextCollapsed) {
-				const header = document.getElementById(`diff-header-${nextFile.filepath}`);
-				if (header) {
-					header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-					if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-					setTimeout(() => header.focus(), 0);
-				}
+				focusHeader(nextFile.filepath);
 			} else {
 				const editor = await getOrWaitEditor(nextFile.filepath, viewMode, side);
-				if (editor) {
-					const firstPos = editor.visibleRanges[0]?.from ?? 0;
-					const line1 = editor.state.doc.lineAt(Math.min(firstPos, editor.state.doc.length));
-					editor.dispatch({
-						selection: { anchor: line1.from, head: line1.from },
-						effects: EditorView.scrollIntoView(line1.from, { y: 'center' })
-					});
-					if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-					setTimeout(() => editor.focus(), 0);
-				}
+				if (editor) focusEditorFirstLine(editor);
 			}
 		} else {
 			const prevFile = activeChanges[idx - 1];
 			if (prevFile) {
 				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
-
 				if (isPrevCollapsed) {
-					const header = document.getElementById(`diff-header-${prevFile.filepath}`);
-					if (header) {
-						header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-						if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-						setTimeout(() => header.focus(), 0);
-					}
+					focusHeader(prevFile.filepath);
 				} else {
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode, side);
-					if (editor) {
-						const lastRanges = editor.visibleRanges;
-						const lastPos = lastRanges[lastRanges.length - 1]?.to ?? editor.state.doc.length;
-						const samplePos = Math.max(0, lastPos > 0 ? lastPos - 1 : 0);
-						const lastLine = editor.state.doc.lineAt(samplePos);
-						editor.dispatch({
-							selection: { anchor: lastLine.from, head: lastLine.from },
-							effects: EditorView.scrollIntoView(lastLine.from, { y: 'center' })
-						});
-						if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-						setTimeout(() => editor.focus(), 0);
-					}
+					if (editor) focusEditorLastLine(editor);
 				}
 			} else {
-				const currentHeader = document.getElementById(`diff-header-${filepath}`);
-				if (currentHeader) {
-					currentHeader.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-					if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-					setTimeout(() => currentHeader.focus(), 0);
-				}
+				focusHeader(filepath);
 			}
 		}
 	}
@@ -653,7 +654,7 @@
 
 	function isFileCollapsed(filepath: string): boolean {
 		const activeFile = repo?.activeDiffFile?.filepath;
-		return collapsedFiles[filepath] ?? (activeFile ? (filepath !== activeFile) : true);
+		return collapsedFiles[filepath] ?? (activeFile ? (filepath !== activeFile) : false);
 	}
 
 	function toggleCollapse(filepath: string) {
@@ -904,26 +905,10 @@
 			event.preventDefault();
 			if (!isCollapsed) {
 				const editor = await getOrWaitEditor(filepath, viewMode);
-				if (editor) {
-					const firstPos = editor.visibleRanges[0]?.from ?? 0;
-					const line1 = editor.state.doc.lineAt(Math.min(firstPos, editor.state.doc.length));
-					editor.dispatch({
-						selection: { anchor: line1.from, head: line1.from },
-						effects: EditorView.scrollIntoView(line1.from, { y: 'center' })
-					});
-					if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-					setTimeout(() => editor.focus(), 0);
-				}
+				if (editor) focusEditorFirstLine(editor);
 			} else {
 				const nextFile = activeChanges[idx + 1];
-				if (nextFile) {
-					const nextHeader = document.getElementById(`diff-header-${nextFile.filepath}`);
-					if (nextHeader) {
-						nextHeader.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-						if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-						setTimeout(() => nextHeader.focus(), 0);
-					}
-				}
+				if (nextFile) focusHeader(nextFile.filepath);
 			}
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
@@ -932,25 +917,9 @@
 				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 				if (!isPrevCollapsed) {
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode);
-					if (editor) {
-						const lastRanges = editor.visibleRanges;
-						const lastPos = lastRanges[lastRanges.length - 1]?.to ?? editor.state.doc.length;
-						const samplePos = Math.max(0, lastPos > 0 ? lastPos - 1 : 0);
-						const lastLine = editor.state.doc.lineAt(samplePos);
-						editor.dispatch({
-							selection: { anchor: lastLine.from, head: lastLine.from },
-							effects: EditorView.scrollIntoView(lastLine.from, { y: 'center' })
-						});
-						if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-						setTimeout(() => editor.focus(), 0);
-					}
+					if (editor) focusEditorLastLine(editor);
 				} else {
-					const prevHeader = document.getElementById(`diff-header-${prevFile.filepath}`);
-					if (prevHeader) {
-						prevHeader.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-						if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-						setTimeout(() => prevHeader.focus(), 0);
-					}
+					focusHeader(prevFile.filepath);
 				}
 			}
 		} else if (event.key === 'ArrowRight') {

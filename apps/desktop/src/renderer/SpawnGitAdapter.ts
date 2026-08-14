@@ -7,6 +7,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return await window.electronAPI.gitRun(this.rootOrigin.path, args);
 	}
 
+	private async readGitObject(objectSpec: string): Promise<string> {
+		const res = await this.runGit(['show', objectSpec]);
+		return res.code === 0 ? res.stdout : '';
+	}
+
 	async getCurrentBranch(): Promise<string | null> {
 		const res = await this.runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
 		if (res.code !== 0) {
@@ -240,15 +245,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 				// Fetch original content (from HEAD)
 				let originalContent = '';
 				if (status !== 'A') {
-					const originalRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
-					originalContent = originalRes.code === 0 ? originalRes.stdout : '';
+					originalContent = await this.readGitObject(`HEAD:${origPath || filepath}`);
 				}
 
 				// Fetch modified content (from staged index)
 				let modifiedContent = '';
 				if (status !== 'D') {
-					const modifiedRes = await this.runGit(['show', `:${filepath}`]);
-					modifiedContent = modifiedRes.code === 0 ? modifiedRes.stdout : '';
+					modifiedContent = await this.readGitObject(`:${filepath}`);
 				}
 
 				changes.push({
@@ -270,11 +273,9 @@ export class SpawnGitAdapter implements VCSAdapter {
 				// Fetch original content (from staged index if staged, else from HEAD)
 				let originalContent = '';
 				if (y !== '?') {
-					const originalRes = await this.runGit(['show', `:${filepath}`]);
-					originalContent = originalRes.code === 0 ? originalRes.stdout : '';
+					originalContent = await this.readGitObject(`:${filepath}`);
 					if (!originalContent) {
-						const headRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
-						originalContent = headRes.code === 0 ? headRes.stdout : '';
+						originalContent = await this.readGitObject(`HEAD:${origPath || filepath}`);
 					}
 				}
 
