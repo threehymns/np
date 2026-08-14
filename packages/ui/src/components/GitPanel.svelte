@@ -724,6 +724,7 @@
 			}}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
 					if (isDir) {
 						if (isCollapsed) {
 							collapsedDirs.delete(nodeKey);

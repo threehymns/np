@@ -242,14 +242,6 @@
 					if (pos !== null) {
 						const lineNum = view.state.doc.lineAt(pos).number;
 						openFileInRegularTab(getFilepath(), lineNum);
-						return;
-					}
-				}
-				const lineNumText = gutterElement.textContent?.trim();
-				if (lineNumText) {
-					const lineNum = parseInt(lineNumText, 10);
-					if (!isNaN(lineNum)) {
-						openFileInRegularTab(getFilepath(), lineNum);
 					}
 				}
 			}
