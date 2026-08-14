@@ -27,6 +27,7 @@ export class Workspace {
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 	private restorePromise: Promise<void> | null = null;
+	private latestRestoreId = 0;
 
 	private saveOpenFilesTimeout: any = null;
 
@@ -512,15 +513,25 @@ export class Workspace {
 		}
 	}
 
-	async restoreSession(force = false) {
-		if (force) {
-			this.restorePromise = null;
+	restoreSession(force = false): Promise<void> {
+		if (!force && this.restorePromise) {
+			return this.restorePromise;
 		}
-		if (this.restorePromise) return this.restorePromise;
 
-		this.restorePromise = (async () => {
+		const previousPromise = this.restorePromise;
+		this.isRestoring = true;
+		const currentRestoreId = ++this.latestRestoreId;
+
+		const currentPromise = (async () => {
+			if (previousPromise) {
+				try {
+					await previousPromise;
+				} catch {
+					// Ignore failures from previous restore attempts
+				}
+			}
+
 			console.log('[Workspace] restoreSession start');
-			this.isRestoring = true;
 			try {
 				const all = await this.persistence.loadAll();
 				console.log('[Workspace] loadAll returned:', all);
@@ -563,11 +574,14 @@ export class Workspace {
 				this.tabs = [];
 				await this.newFile();
 			} finally {
-				this.isRestoring = false;
-				console.log('[Workspace] restoreSession finished. isRestoring = false');
+				if (this.latestRestoreId === currentRestoreId) {
+					this.isRestoring = false;
+					console.log('[Workspace] restoreSession finished. isRestoring = false');
+				}
 			}
 		})();
 
-		return this.restorePromise;
+		this.restorePromise = currentPromise;
+		return currentPromise;
 	}
 }
