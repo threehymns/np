@@ -682,12 +682,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		try {
 			const oid = await git.writeBlob({
 				fs: this.fs!,
@@ -726,7 +726,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 			return commits.map(c => {
 				const author = `${c.commit.author.name} <${c.commit.author.email}>`;
-				const date = new Date(c.commit.author.timestamp * 1000).toLocaleString();
+				const date = new Date(c.commit.author.timestamp * 1000).toISOString().split('T')[0];
 				return {
 					hash: c.oid.substring(0, 7),
 					author,
@@ -741,7 +741,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	async stageFile(filepath: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await git.statusMatrix({
 			fs: this.fs!,
 			dir: this.dir,
@@ -758,7 +758,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		try {
 			await git.resetIndex({
 				fs: this.fs!,
@@ -767,11 +767,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 		} catch (e) {
 			console.error('[Git] Failed to unstage file', e);
+			throw e;
 		}
 	}
 
 	async discardChanges(filepath: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		try {
 			await git.checkout({
 				fs: this.fs!,
@@ -786,6 +787,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				await git.remove({ fs: this.fs!, dir: this.dir, filepath }).catch(() => {});
 			} catch (unlinkErr) {
 				console.error('[Git] Failed to unlink file on discard', unlinkErr);
+				throw unlinkErr;
 			}
 		}
 	}
@@ -801,14 +803,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	async commit(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		let author = options?.author;
 		if (!author) {
 			const config = await this.getUserConfig();
 			if (config) {
 				author = config;
 			} else {
-				author = { name: 'You', email: 'you@example.com' };
+				throw new Error('Git author identity (user.name and user.email) is not configured');
 			}
 		}
 		await git.commit({
@@ -821,13 +823,18 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	async createBranch(branchName: string): Promise<void> {
-		if (!await this.ensureInitialized()) return;
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		await git.branch({
 			fs: this.fs!,
 			dir: this.dir,
 			ref: branchName
 		});
-		await this.switchBranch(branchName);
+		const res = await this.switchBranch(branchName);
+		if (res.status === 'error') {
+			throw new Error(res.message || `Failed to switch to created branch ${branchName}`);
+		} else if (res.status === 'blocked') {
+			throw new Error(`Failed to switch to created branch ${branchName}: ${res.reason}`);
+		}
 	}
 
 	reset() {
@@ -919,17 +926,18 @@ function computeDiff(oldStr: string, newStr: string): { diffText: string; additi
 	const subOps: { type: 'keep' | 'add' | 'delete'; line: string; oldLineNum: number; newLineNum: number }[] = [];
 	while (i > 0 || j > 0) {
 		if (i > 0 && j > 0 && subOld[i - 1] === subNew[j - 1]) {
-			subOps.unshift({ type: 'keep', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: prefix + j });
+			subOps.push({ type: 'keep', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: prefix + j });
 			i--;
 			j--;
 		} else if (j > 0 && (i === 0 || trace[i - 1][j] === 2)) {
-			subOps.unshift({ type: 'add', line: subNew[j - 1], oldLineNum: -1, newLineNum: prefix + j });
+			subOps.push({ type: 'add', line: subNew[j - 1], oldLineNum: -1, newLineNum: prefix + j });
 			j--;
 		} else {
-			subOps.unshift({ type: 'delete', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: -1 });
+			subOps.push({ type: 'delete', line: subOld[i - 1], oldLineNum: prefix + i, newLineNum: -1 });
 			i--;
 		}
 	}
+	subOps.reverse();
 
 	const ops: { type: 'keep' | 'add' | 'delete'; line: string; oldLineNum: number; newLineNum: number }[] = [];
 	const contextBefore = Math.min(3, prefix);
@@ -1000,10 +1008,6 @@ function computeDiff(oldStr: string, newStr: string): { diffText: string; additi
 		prevHunkEnd = hunkEnd;
 	}
 
-	return { diffText: diffText.trim(), additions, deletions };
-}
-
-
-if (typeof window !== 'undefined') {
-	(window as any).git = git;
+	const trimmedDiff = diffText.endsWith('\n') ? diffText.slice(0, -1) : diffText;
+	return { diffText: trimmedDiff, additions, deletions };
 }
