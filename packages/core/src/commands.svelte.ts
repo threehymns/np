@@ -717,10 +717,8 @@ export async function applyHunkAction(
 		let stagedContent = change.stagedContent;
 
 		if (typeof origContent !== 'string' || typeof modContent !== 'string') {
-			const diff = repo.getFileDiff
-				? await repo.getFileDiff(change.filepath, { staged: change.staged })
-				: (repo.adapter.getFileDiff ? await repo.adapter.getFileDiff(change.filepath, { staged: change.staged }) : null);
-			if (diff && typeof diff.originalContent === 'string' && typeof diff.modifiedContent === 'string') {
+			const diff = await repo.getFileDiff(change.filepath, change.combined ? undefined : { staged: change.staged });
+			if (diff) {
 				origContent = diff.originalContent;
 				modContent = diff.modifiedContent;
 				if (diff.stagedContent !== undefined) {

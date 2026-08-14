@@ -248,23 +248,44 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 			if (y !== ' ') {
 				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
-				const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
 
-				changes.push({
-					filepath,
-					status,
-					additions: stat.additions,
-					deletions: stat.deletions,
-					diff: '',
-					staged: false
-				});
+				if (y === '?') {
+					// git diff --numstat never includes untracked files, so count lines directly.
+					let additions = 0;
+					try {
+						const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+						const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+						const lines = content.split('\n');
+						if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+						additions = lines.length;
+					} catch (e) {}
+					changes.push({
+						filepath,
+						status,
+						additions,
+						deletions: 0,
+						diff: '',
+						staged: false
+					});
+				} else {
+					const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
+
+					changes.push({
+						filepath,
+						status,
+						additions: stat.additions,
+						deletions: stat.deletions,
+						diff: '',
+						staged: false
+					});
+				}
 			}
 		}
 
 		return changes;
 	}
 
-	private async readStagedOrHead(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string; stagedContent: string }> {
+	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string; stagedContent: string }> {
 		const [headContent, indexContent] = await Promise.all([
 			this.readGitObject(`HEAD:${origPath}`),
 			this.readGitObject(`:${filepath}`)
@@ -277,8 +298,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
+		// renamedOrigPaths is populated during getChanges() from porcelain rename entries,
+		// so the HEAD blob for a renamed file is resolved from its previous path.
 		const origPath = this.renamedOrigPaths.get(filepath) || filepath;
-		const { headContent, indexContent, stagedContent } = await this.readStagedOrHead(filepath, origPath);
+		const { headContent, indexContent, stagedContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		if (options?.staged === true) {
 			return {

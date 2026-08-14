@@ -597,11 +597,28 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 				if (hasUnstaged) {
 					const status = (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
+
+					let additions = 0;
+					let deletions = 0;
+					if (status === 'U') {
+						// statusMatrix carries no line counts; untracked files are cheap to count
+						// directly. Exact counts for tracked files would require reading blobs,
+						// which getChanges() deliberately avoids (see #30) — the tradeoff is that
+						// tracked-file badges show no counts until their diff is loaded.
+						try {
+							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+							const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+							const lines = content.split('\n');
+							if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+							additions = lines.length;
+						} catch (e) {}
+					}
+
 					result.push({
 						filepath: filepath as string,
 						status,
-						additions: 0,
-						deletions: 0,
+						additions,
+						deletions,
 						diff: '',
 						staged: false
 					});
@@ -620,6 +637,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			return { originalContent: '', modifiedContent: '', stagedContent: '' };
 		}
 
+		// isomorphic-git's statusMatrix does not detect renames, so a rename is represented
+		// as a delete + add pair; each side resolves its own blob correctly from HEAD/workdir.
 		let headCommit: string | null = null;
 		try {
 			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
