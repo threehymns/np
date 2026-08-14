@@ -284,15 +284,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return changes;
 	}
 
-	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string; stagedContent: string }> {
+	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string }> {
 		const [headContent, indexContent] = await Promise.all([
 			this.readGitObject(`HEAD:${origPath}`),
 			this.readGitObject(`:${filepath}`)
 		]);
 		return {
 			headContent,
-			indexContent,
-			stagedContent: indexContent || headContent
+			indexContent
 		};
 	}
 
@@ -314,7 +313,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			} catch (e) {}
 		}
 		origPath = origPath || filepath;
-		const { headContent, indexContent, stagedContent } = await this.readHeadAndIndex(filepath, origPath);
+		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		let worktreeContent = '';
 		if (options?.staged !== true) {
