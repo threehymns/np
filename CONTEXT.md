@@ -1,3 +1,6 @@
+# Manual Testing
+- **Git Diff Playground**: The web app route `/playground` (see `apps/web/src/routes/playground/+page.svelte`, scenes in `apps/web/src/lib/git-playground.ts`) mounts the `DiffViewer` over a configurable set of fake `GitChange`s with editable HEAD/worktree content, a "Recreate objects" action that simulates a `repository.refresh()` replacing the `changes` array, and a Reset action. Used to manually exercise DiffViewer's compartment reconfiguration path. Standalone — it never touches a real repository.
+
 # Domain Language
 
 ## Document
