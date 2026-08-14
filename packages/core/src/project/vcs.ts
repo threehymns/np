@@ -63,6 +63,40 @@ export function fileDiffFromChange(change: GitChange): FileDiffDetail | null {
 	};
 }
 
+/**
+ * Resolve original, modified, and staged contents into a `FileDiffDetail`
+ * based on the requested diff options (staged, unstaged, or combined HEAD-vs-worktree).
+ */
+export function resolveDiffDetail(
+	headContent: string,
+	stagedContent: string,
+	workdirContent: string,
+	options?: { staged?: boolean }
+): FileDiffDetail {
+	if (options?.staged === true) {
+		return {
+			originalContent: headContent,
+			modifiedContent: stagedContent,
+			stagedContent
+		};
+	}
+
+	if (options?.staged === false) {
+		return {
+			originalContent: stagedContent,
+			modifiedContent: workdirContent,
+			stagedContent
+		};
+	}
+
+	return {
+		originalContent: headContent,
+		modifiedContent: workdirContent,
+		stagedContent
+	};
+}
+
+
 export interface VCSAdapter {
 	getCurrentBranch(): Promise<string | null>;
 	getBranches(): Promise<string[]>;

@@ -1,5 +1,6 @@
 import { describe, it, expect, mock } from "bun:test";
-import { applyHunkAction, type HunkRange } from "./commands.svelte";
+import { Text } from "@codemirror/state";
+import { applyHunkAction, mapPos, mapRange, spliceText, type HunkRange } from "./commands.svelte";
 import type { GitChange, VCSAdapter } from "./project/vcs";
 
 function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] = []) {
@@ -374,4 +375,22 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 });
+
+describe("hunk text mapping utilities", () => {
+	it("spliceText replaces target range cleanly", () => {
+		const text = Text.of(["hello world"]);
+		expect(spliceText(text, 6, 11, "there")).toBe("hello there");
+	});
+
+	it("mapRange maps positions accurately between two texts", () => {
+		const textA = Text.of(["line 0", "line 1", "line 2", "line 3"]);
+		const textB = Text.of(["line 0", "line 1", "DIFF", "line 3"]);
+		// offset at line 2 in textA (offset 14) mapped to textB (before DIFF at offset 14 -> offset 14)
+		const mapped = mapRange(14, 14, textA, textB);
+		expect(mapped.from).toBe(14);
+		expect(mapped.to).toBe(14);
+	});
+});
+
+
 

@@ -1,6 +1,7 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import { resolveDiffDetail } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 
@@ -687,32 +688,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 
 		let workdirContent = '';
-		try {
-			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-			workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-		} catch (e) {}
-
-		if (options?.staged === true) {
-			return {
-				originalContent: headContent,
-				modifiedContent: stagedContent,
-				stagedContent
-			};
+		if (options?.staged !== true) {
+			try {
+				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+				workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+			} catch (e) {}
 		}
 
-		if (options?.staged === false) {
-			return {
-				originalContent: stagedContent,
-				modifiedContent: workdirContent,
-				stagedContent
-			};
-		}
-
-		return {
-			originalContent: headContent,
-			modifiedContent: workdirContent,
-			stagedContent
-		};
+		return resolveDiffDetail(headContent, stagedContent, workdirContent, options);
 	}
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {

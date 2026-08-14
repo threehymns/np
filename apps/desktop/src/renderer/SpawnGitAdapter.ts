@@ -1,4 +1,4 @@
-import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import { type VCSAdapter, type SwitchResult, type VCSStatus, type FileOrigin, type GitChange, type GitCommit, type FileDiffDetail, resolveDiffDetail } from '@np/core';
 
 export class SpawnGitAdapter implements VCSAdapter {
 	private renamedOrigPaths = new Map<string, string>();
@@ -303,33 +303,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const origPath = this.renamedOrigPaths.get(filepath) || filepath;
 		const { headContent, indexContent, stagedContent } = await this.readHeadAndIndex(filepath, origPath);
 
-		if (options?.staged === true) {
-			return {
-				originalContent: headContent,
-				modifiedContent: indexContent,
-				stagedContent: indexContent
-			};
-		}
-
 		let worktreeContent = '';
-		try {
-			const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
-			worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-		} catch (e) {}
-
-		if (options?.staged === false) {
-			return {
-				originalContent: stagedContent,
-				modifiedContent: worktreeContent,
-				stagedContent
-			};
+		if (options?.staged !== true) {
+			try {
+				const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+				worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+			} catch (e) {}
 		}
 
-		return {
-			originalContent: headContent,
-			modifiedContent: worktreeContent,
-			stagedContent
-		};
+		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
 	}
 
 
