@@ -28,24 +28,32 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return res.stdout.split('\n').map(line => line.trim()).filter(Boolean);
 	}
 
-	async getStatus(): Promise<VCSStatus> {
-		const res = await this.runGit(['status', '--porcelain=v1', '-z']);
-		if (res.code !== 0) {
-			throw new Error(res.stderr || 'Failed to get repository status');
-		}
-		const uncommittedFiles: string[] = [];
-		const entries = res.stdout.split('\0');
+	private parseStatusEntries(stdout: string): Array<{ x: string; y: string; filepath: string; origPath?: string }> {
+		const result: Array<{ x: string; y: string; filepath: string; origPath?: string }> = [];
+		const entries = stdout.split('\0');
 		for (let i = 0; i < entries.length; i++) {
 			const entry = entries[i];
 			if (!entry || entry.length < 3) continue;
 			const x = entry[0];
 			const y = entry[1];
 			const filepath = entry.substring(3);
-			uncommittedFiles.push(filepath);
+			let origPath: string | undefined;
 			if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
-				i++; // skip origPath
+				origPath = entries[++i];
 			}
+			if (filepath.endsWith('/')) continue;
+			result.push({ x, y, filepath, origPath });
 		}
+		return result;
+	}
+
+	async getStatus(): Promise<VCSStatus> {
+		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || 'Failed to get repository status');
+		}
+		const entries = this.parseStatusEntries(res.stdout);
+		const uncommittedFiles = entries.map(e => e.filepath);
 		return {
 			isDirty: uncommittedFiles.length > 0,
 			uncommittedFiles
@@ -208,7 +216,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
-			this.runGit(['status', '--porcelain=v1', '-z']),
+			this.runGit(['status', '--porcelain=v1', '-z', '-uall']),
 			this.runGit(['diff', '--cached', '--numstat']),
 			this.runGit(['diff', '--numstat'])
 		]);
@@ -221,34 +229,27 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const unstagedStats = this.parseNumstat(unstagedNumstatRes.stdout);
 
 		const changes: GitChange[] = [];
-		const entries = statusRes.stdout.split('\0');
+		const entries = this.parseStatusEntries(statusRes.stdout);
 
-		for (let i = 0; i < entries.length; i++) {
-			const entry = entries[i];
-			if (!entry || entry.length < 3) continue;
-
-			const x = entry[0];
-			const y = entry[1];
-			const rawPath = entry.substring(3);
-			let filepath = rawPath;
-			let origPath: string | undefined;
-
-			if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
-				origPath = entries[++i];
-			}
-
+		for (const { x, y, filepath, origPath } of entries) {
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
 				const diffRes = await this.runGit(['diff', '--cached', '--', filepath]);
 				const stat = stagedStats.get(filepath) ?? this.parseDiffStats(diffRes.stdout);
 
 				// Fetch original content (from HEAD)
-				const originalRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
-				const originalContent = originalRes.code === 0 ? originalRes.stdout : '';
+				let originalContent = '';
+				if (status !== 'A') {
+					const originalRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
+					originalContent = originalRes.code === 0 ? originalRes.stdout : '';
+				}
 
 				// Fetch modified content (from staged index)
-				const modifiedRes = await this.runGit(['show', `:${filepath}`]);
-				const modifiedContent = modifiedRes.code === 0 ? modifiedRes.stdout : '';
+				let modifiedContent = '';
+				if (status !== 'D') {
+					const modifiedRes = await this.runGit(['show', `:${filepath}`]);
+					modifiedContent = modifiedRes.code === 0 ? modifiedRes.stdout : '';
+				}
 
 				changes.push({
 					filepath,
@@ -279,10 +280,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 				// Fetch modified content (from filesystem)
 				let modifiedContent = '';
-				try {
-					const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
-					modifiedContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-				} catch (e) {}
+				if (status !== 'D') {
+					try {
+						const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+						modifiedContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+					} catch (e) {}
+				}
 
 				let additions = 0;
 				let deletions = 0;
