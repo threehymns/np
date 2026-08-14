@@ -318,6 +318,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		let worktreeContent = '';
 		if (options?.staged !== true) {
 			try {
+				// EAFP: attempt reading worktree content; file may be deleted or missing
 				const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
 				worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 			} catch (e) {}
