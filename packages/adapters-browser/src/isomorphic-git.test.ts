@@ -228,5 +228,140 @@ describe('IsomorphicGitAdapter', () => {
 			(git as any).walk = origWalk;
 		}
 	});
+
+	it('resolves original content for renamed files via HEAD tree oid matching', async () => {
+		const oldBlobOid = 'renamed-blob-oid-1234';
+		const oldContent = 'export function hello() { return "world"; }';
+		const newContent = 'export function hello() { return "world"; }';
+
+		const readBlobSpy = mock(async ({ filepath, oid }: { filepath?: string; oid?: string }) => {
+			if (filepath === 'new-name.ts') {
+				throw new Error('NotFoundError: Does not exist in HEAD');
+			}
+			if (oid === oldBlobOid) {
+				return { blob: new TextEncoder().encode(oldContent) };
+			}
+			return { blob: new Uint8Array() };
+		});
+
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+
+		const walkSpy = mock(async ({ trees, map }: { trees: any[]; map: Function }) => {
+			// If STAGE() walker
+			if (trees && trees.length === 1 && trees[0] === 'STAGE_WALKER') {
+				await map('new-name.ts', [{
+					type: async () => 'blob',
+					oid: async () => oldBlobOid
+				}]);
+			}
+			// If TREE() walker (HEAD)
+			if (trees && trees.length === 1 && trees[0] === 'HEAD_TREE_WALKER') {
+				await map('old-name.ts', [{
+					type: async () => 'blob',
+					oid: async () => oldBlobOid
+				}]);
+			}
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		const origStage = git.STAGE;
+		const origTree = git.TREE;
+
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+		(git as any).STAGE = () => 'STAGE_WALKER';
+		(git as any).TREE = () => 'HEAD_TREE_WALKER';
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const diff = await adapter.getFileDiff('new-name.ts', { staged: true });
+
+			expect(diff.originalContent).toBe(oldContent);
+			expect(diff.modifiedContent).toBe(oldContent);
+			expect(diff.stagedContent).toBe(oldContent);
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+			(git as any).STAGE = origStage;
+			(git as any).TREE = origTree;
+		}
+	});
+
+	it('resolves original content for unstaged renamed files via workdir hash and HEAD tree oid matching', async () => {
+		const content = 'export const foo = "bar";';
+		const contentOid = 'foo-bar-oid-5678';
+
+		const readBlobSpy = mock(async ({ filepath, oid }: { filepath?: string; oid?: string }) => {
+			if (filepath === 'renamed-workdir.ts') {
+				throw new Error('NotFoundError: Does not exist in HEAD');
+			}
+			if (oid === contentOid) {
+				return { blob: new TextEncoder().encode(content) };
+			}
+			return { blob: new Uint8Array() };
+		});
+
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const hashBlobSpy = mock(async () => ({ oid: contentOid }));
+
+		const walkSpy = mock(async ({ trees, map }: { trees: any[]; map: Function }) => {
+			// STAGE() returns nothing for unstaged rename
+			if (trees && trees.length === 1 && trees[0] === 'STAGE_WALKER') {
+				return;
+			}
+			// TREE() walker (HEAD) returns old path with matching oid
+			if (trees && trees.length === 1 && trees[0] === 'HEAD_TREE_WALKER') {
+				await map('original-file.ts', [{
+					type: async () => 'blob',
+					oid: async () => contentOid
+				}]);
+			}
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origHashBlob = git.hashBlob;
+		const origWalk = git.walk;
+		const origStage = git.STAGE;
+		const origTree = git.TREE;
+
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).hashBlob = hashBlobSpy;
+		(git as any).walk = walkSpy;
+		(git as any).STAGE = () => 'STAGE_WALKER';
+		(git as any).TREE = () => 'HEAD_TREE_WALKER';
+
+		mockDirectoryHandle.getFileHandle = mock(async () => ({
+			kind: 'file',
+			name: 'renamed-workdir.ts',
+			getFile: mock(async () => ({
+				text: mock(async () => content),
+				arrayBuffer: mock(async () => new TextEncoder().encode(content).buffer),
+				size: content.length,
+				lastModified: Date.now()
+			}))
+		}));
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const diff = await adapter.getFileDiff('renamed-workdir.ts', { staged: false });
+
+			expect(diff.originalContent).toBe(content);
+			expect(diff.modifiedContent).toBe(content);
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).hashBlob = origHashBlob;
+			(git as any).walk = origWalk;
+			(git as any).STAGE = origStage;
+			(git as any).TREE = origTree;
+		}
+	});
 });
+
 
