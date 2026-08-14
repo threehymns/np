@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail } from '@np/core';
+	import { fileDiffFromChange } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -735,6 +736,7 @@
 						filepath,
 						status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
 						staged: false,
+						combined: true,
 						diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
 						originalContent: stagedChange.originalContent,
 						modifiedContent: unstagedChange.modifiedContent,
@@ -758,23 +760,16 @@
 		if (loadedDiffs[fileChange.filepath]) {
 			return loadedDiffs[fileChange.filepath];
 		}
-		if (fileChange.originalContent !== undefined || fileChange.modifiedContent !== undefined) {
-			return {
-				originalContent: fileChange.originalContent || '',
-				modifiedContent: fileChange.modifiedContent || '',
-				stagedContent: fileChange.stagedContent
-			};
-		}
-		return null;
+		return fileDiffFromChange(fileChange);
 	}
 
-	async function fetchDiff(filepath: string) {
+	async function fetchDiff(filepath: string, options?: { staged?: boolean }) {
 		if (loadingDiffs[filepath] || loadedDiffs[filepath]) return;
 		loadingDiffs[filepath] = true;
 		try {
 			if (repo) {
-				const diff = await repo.getFileDiff(filepath);
-				loadedDiffs[filepath] = diff;
+				const diff = await repo.getFileDiff(filepath, options);
+				loadedDiffs[filepath] = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
@@ -797,7 +792,7 @@
 		for (const file of activeChanges) {
 			if (!isFileCollapsed(file.filepath)) {
 				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[file.filepath] && !loadingDiffs[file.filepath]) {
-					fetchDiff(file.filepath);
+					fetchDiff(file.filepath, file.combined ? undefined : { staged: file.staged });
 				}
 			}
 		}

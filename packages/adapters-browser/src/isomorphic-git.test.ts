@@ -68,6 +68,35 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
+	it('counts lines for untracked files during getChanges without reading blobs', async () => {
+		const readBlobSpy = mock(async () => ({ blob: new Uint8Array() }));
+		const origReadBlob = git.readBlob;
+		(git as any).readBlob = readBlobSpy;
+
+		const statusMatrixSpy = mock(async () => [
+			['untracked.txt', 0, 1, 0] // Untracked (present in workdir only)
+		]);
+		const origStatusMatrix = git.statusMatrix;
+		(git as any).statusMatrix = statusMatrixSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const changes = await adapter.getChanges();
+
+			expect(changes.length).toBe(1);
+			expect(changes[0].filepath).toBe('untracked.txt');
+			expect(changes[0].status).toBe('U');
+			expect(changes[0].additions).toBe(1);
+			expect(changes[0].deletions).toBe(0);
+
+			// Git blob reads must still be avoided during getChanges
+			expect(readBlobSpy).not.toHaveBeenCalled();
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).statusMatrix = origStatusMatrix;
+		}
+	});
+
 	it('loads on-demand diff content via getFileDiff for staged changes', async () => {
 		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
 			if (oid === 'head-commit-oid') {

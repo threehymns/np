@@ -299,5 +299,79 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
+
+	it("resolves missing diff content for combined changes via getFileDiff without a staged scope", async () => {
+		let updatedFile = "";
+		let updatedContent = "";
+		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
+			expect(options).toBeUndefined();
+			// HEAD vs worktree (full diff), with index content as stagedContent
+			return {
+				originalContent: "line0\nline1\nline2\nline3\n",
+				modifiedContent: "line0\nline1\nline2\nX\nline3\n",
+				stagedContent: "line0\nline1\nDIFF\nline3\n"
+			};
+		});
+		const { appState } = createMockAppState({
+			getFileDiff: getFileDiffMock,
+			updateIndexContent: mock(async (file: string, content: string) => {
+				updatedFile = file;
+				updatedContent = content;
+			})
+		});
+		// Combined change: staged + unstaged entries for the same filepath, no content loaded.
+		const change = createTestChange({
+			staged: false,
+			combined: true,
+			originalContent: undefined,
+			modifiedContent: undefined,
+			stagedContent: undefined
+		});
+		// Hunk inserting "X" after line2 in the worktree (HEAD offsets 18..18).
+		const hunk: HunkRange = { fromA: 18, toA: 18, fromB: 18, toB: 20 };
+
+		await applyHunkAction(appState, change, hunk, "stage");
+		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", undefined);
+		expect(updatedFile).toBe("test.txt");
+		// The hunk is spliced into the index at the offset mapped from HEAD content,
+		// i.e. before DIFF rather than after it (staged offset 12, not 18).
+		expect(updatedContent).toBe("line0\nline1\nX\nDIFF\nline3\n");
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
+
+	it("discards an unstaged hunk in a combined change using the full-diff scope", async () => {
+		let updatedWorktreeFile = "";
+		let updatedWorktreeContent = "";
+		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
+			expect(options).toBeUndefined();
+			return {
+				originalContent: "line0\nline1\nline2\nline3\n",
+				modifiedContent: "line0\nline1\nline2\nX\nline3\n",
+				stagedContent: "line0\nline1\nDIFF\nline3\n"
+			};
+		});
+		const { appState } = createMockAppState({
+			getFileDiff: getFileDiffMock,
+			updateFileContent: mock(async (file: string, content: string) => {
+				updatedWorktreeFile = file;
+				updatedWorktreeContent = content;
+			})
+		});
+		const change = createTestChange({
+			staged: false,
+			combined: true,
+			originalContent: undefined,
+			modifiedContent: undefined,
+			stagedContent: undefined
+		});
+		const hunk: HunkRange = { fromA: 18, toA: 18, fromB: 18, toB: 20 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(updatedWorktreeFile).toBe("test.txt");
+		expect(updatedWorktreeContent).toBe("line0\nline1\nline2\nline3\n");
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
 });
 
