@@ -71,16 +71,12 @@ export class Repository {
 				this.changes = changesRes.value;
 				this.uncommittedFiles = [...new Set(this.changes.map(c => c.filepath))];
 				this.isDirty = this.changes.length > 0;
-			} else if (changesRes.status === 'fulfilled') {
+			} else {
 				const status = await this.adapter.getStatus();
 				if (generation !== this.refreshGeneration) return false;
 				this.changes = [];
 				this.uncommittedFiles = status.uncommittedFiles;
 				this.isDirty = status.isDirty;
-			} else {
-				this.changes = [];
-				this.uncommittedFiles = [];
-				this.isDirty = false;
 			}
 
 			if (commitsRes.status === 'fulfilled') {
