@@ -310,9 +310,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		const gitDirRes = await this.runGit(['rev-parse', '--git-dir']);
+		const gitDir = gitDirRes.code === 0 && gitDirRes.stdout.trim() ? gitDirRes.stdout.trim() : '.git';
+		const resolvedGitDir = gitDir.startsWith('/') ? gitDir : `${this.rootOrigin.path}/${gitDir}`;
 		const tmpFilename = `tmp_hunk_stage_${crypto.randomUUID()}`;
-		const tmpPath = `${this.rootOrigin.path}/.git/${tmpFilename}`;
-		const relTmpPath = `.git/${tmpFilename}`;
+		const tmpPath = `${resolvedGitDir}/${tmpFilename}`;
+		const relTmpPath = `${gitDir}/${tmpFilename}`;
 		try {
 			let mode = '100644';
 			const lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
