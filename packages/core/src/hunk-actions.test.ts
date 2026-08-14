@@ -1,7 +1,7 @@
 import { describe, it, expect, mock } from "bun:test";
 import { Text } from "@codemirror/state";
 import { applyHunkAction, mapPos, mapRange, spliceText, type HunkRange } from "./commands.svelte";
-import type { GitChange, VCSAdapter } from "./project/vcs";
+import { countLines, countDiffStats, diffCacheKey, type GitChange, type VCSAdapter } from "./project/vcs";
 
 function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] = []) {
 	return {
@@ -391,6 +391,40 @@ describe("hunk text mapping utilities", () => {
 		expect(mapped.to).toBe(14);
 	});
 });
+
+describe("VCS utilities (countLines, countDiffStats, diffCacheKey)", () => {
+	it("countLines counts lines accurately", () => {
+		expect(countLines("")).toBe(0);
+		expect(countLines("single line")).toBe(1);
+		expect(countLines("line 1\nline 2\nline 3")).toBe(3);
+		expect(countLines("line 1\nline 2\n")).toBe(2);
+	});
+
+	it("countDiffStats counts additions and deletions from unified diff text", () => {
+		const diff = [
+			"--- a/file.ts",
+			"+++ b/file.ts",
+			"@@ -1,3 +1,4 @@",
+			" unchanged line",
+			"+added line 1",
+			"+added line 2",
+			"-deleted line",
+			" another unchanged line"
+		].join("\n");
+
+		const stats = countDiffStats(diff);
+		expect(stats.additions).toBe(2);
+		expect(stats.deletions).toBe(1);
+	});
+
+	it("diffCacheKey generates appropriate cache keys", () => {
+		expect(diffCacheKey({ filepath: "file.ts", staged: true })).toBe("file.ts:staged");
+		expect(diffCacheKey({ filepath: "file.ts", staged: false })).toBe("file.ts:unstaged");
+		expect(diffCacheKey({ filepath: "file.ts", combined: true })).toBe("file.ts:combined");
+		expect(diffCacheKey({ filepath: "file.ts" })).toBe("file.ts");
+	});
+});
+
 
 
 

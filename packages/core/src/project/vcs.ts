@@ -96,6 +96,50 @@ export function resolveDiffDetail(
 	};
 }
 
+/**
+ * Count lines in a string without creating intermediate arrays.
+ * Handles trailing newlines properly by excluding trailing empty segment.
+ */
+export function countLines(text: string): number {
+	if (!text) return 0;
+	let count = 1;
+	for (let i = 0; i < text.length; i++) {
+		if (text.charCodeAt(i) === 10) {
+			// If newline is at the very end of the text, do not count extra empty line
+			if (i === text.length - 1) break;
+			count++;
+		}
+	}
+	return count;
+}
+
+/**
+ * Parse unified diff text and compute additions and deletions.
+ */
+export function countDiffStats(diffText: string): { additions: number; deletions: number } {
+	let additions = 0;
+	let deletions = 0;
+	if (!diffText) return { additions, deletions };
+
+	const lines = diffText.split('\n');
+	for (const line of lines) {
+		if (line.startsWith('+') && !line.startsWith('+++')) {
+			additions++;
+		} else if (line.startsWith('-') && !line.startsWith('---')) {
+			deletions++;
+		}
+	}
+	return { additions, deletions };
+}
+
+/**
+ * Derives a consistent cache key for a file diff based on its path and staging scope.
+ */
+export function diffCacheKey(fileChange: { filepath: string; staged?: boolean; combined?: boolean }): string {
+	if (fileChange.combined) return `${fileChange.filepath}:combined`;
+	if (fileChange.staged !== undefined) return `${fileChange.filepath}:${fileChange.staged ? 'staged' : 'unstaged'}`;
+	return fileChange.filepath;
+}
 
 export interface VCSAdapter {
 	getCurrentBranch(): Promise<string | null>;

@@ -295,5 +295,27 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.modifiedContent).toBe('renamed to new');
 		expect(mockReadFile).not.toHaveBeenCalled();
 	});
+
+	it('resolves renamed file previous path dynamically in getFileDiff even without prior getChanges call', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'renamed from old on-demand', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 0, stdout: 'renamed to new on-demand', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		// Note: getChanges() is NOT called here
+		const diff = await adapter.getFileDiff('new.txt', { staged: true });
+		expect(diff.originalContent).toBe('renamed from old on-demand');
+		expect(diff.modifiedContent).toBe('renamed to new on-demand');
+	});
 });
 
