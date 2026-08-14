@@ -205,19 +205,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return stats;
 	}
 
-	private parseDiffStats(diffText: string): { additions: number; deletions: number } {
-		let additions = 0;
-		let deletions = 0;
-		const lines = diffText.split('\n');
-		for (const line of lines) {
-			if (line.startsWith('+') && !line.startsWith('+++')) {
-				additions++;
-			} else if (line.startsWith('-') && !line.startsWith('---')) {
-				deletions++;
-			}
-		}
-		return { additions, deletions };
-	}
+	private static readonly EMPTY_STAT = { additions: 0, deletions: 0 };
 
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
@@ -239,8 +227,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		for (const { x, y, filepath, origPath } of entries) {
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
-				const diffRes = await this.runGit(['diff', '--cached', '--', filepath]);
-				const stat = stagedStats.get(filepath) ?? this.parseDiffStats(diffRes.stdout);
+				const stat = stagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
 
 				// Fetch original content (from HEAD)
 				let originalContent = '';
@@ -259,7 +246,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 					status,
 					additions: stat.additions,
 					deletions: stat.deletions,
-					diff: diffRes.stdout,
+					diff: '',
 					staged: true,
 					originalContent,
 					modifiedContent,
@@ -290,18 +277,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 				let additions = 0;
 				let deletions = 0;
-				let diffText = '';
 
 				if (y === '?') {
 					const lines = modifiedContent ? modifiedContent.split('\n') : [];
 					if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 					additions = lines.length;
 					deletions = 0;
-					diffText = `@@ -0,0 +1,${additions} @@\n` + lines.map(l => '+' + l).join('\n');
 				} else {
-					const diffRes = await this.runGit(['diff', '--', filepath]);
-					diffText = diffRes.stdout;
-					const stat = unstagedStats.get(filepath) ?? this.parseDiffStats(diffText);
+					const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
 					additions = stat.additions;
 					deletions = stat.deletions;
 				}
@@ -311,7 +294,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 					status,
 					additions,
 					deletions,
-					diff: diffText,
+					diff: '',
 					staged: false,
 					originalContent,
 					modifiedContent,
