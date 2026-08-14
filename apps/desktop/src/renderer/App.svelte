@@ -12,6 +12,7 @@
   const storage = new MultiSchemeStorage();
   storage.registerProvider("file", new ElectronStorage());
   const persistence = new ElectronSessionPersistence();
+  const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
   const appState = new AppState({
     storage,
     persistence,
