@@ -3,7 +3,6 @@
 	import { AppState, KeymapStorageProvider, Repository, toURI, parseURI } from "@np/core";
 	import { MultiSchemeStorage } from "@np/core/storage";
 	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence, browserHandleRegistry, git } from "@np/adapters-browser";
-	import { onMount } from "svelte";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
