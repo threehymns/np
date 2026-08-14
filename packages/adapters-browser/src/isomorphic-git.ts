@@ -706,6 +706,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 			if (renamedHeadContent !== null) {
 				headContent = renamedHeadContent;
+				if (!stagedOid) {
+					stagedContent = renamedHeadContent;
+				}
 			}
 		}
 

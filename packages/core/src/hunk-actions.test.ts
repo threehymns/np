@@ -1,7 +1,7 @@
 import { describe, it, expect, mock } from "bun:test";
 import { Text } from "@codemirror/state";
 import { applyHunkAction, mapPos, mapRange, spliceText, type HunkRange } from "./commands.svelte";
-import { countLines, countDiffStats, diffCacheKey, type GitChange, type VCSAdapter } from "./project/vcs";
+import { countLines, countDiffStats, diffCacheKey, resolveDiffDetail, type GitChange, type VCSAdapter } from "./project/vcs";
 
 function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] = []) {
 	return {
@@ -424,6 +424,45 @@ describe("VCS utilities (countLines, countDiffStats, diffCacheKey)", () => {
 		expect(diffCacheKey({ filepath: "file.ts" })).toBe("file.ts");
 	});
 });
+
+describe("resolveDiffDetail", () => {
+	it("resolves staged diff correctly (HEAD vs Index)", () => {
+		const diff = resolveDiffDetail("head text", "staged text", "worktree text", { staged: true });
+		expect(diff).toEqual({
+			originalContent: "head text",
+			modifiedContent: "staged text",
+			stagedContent: "staged text"
+		});
+	});
+
+	it("resolves unstaged diff with staged content base", () => {
+		const diff = resolveDiffDetail("head text", "staged text", "worktree text", { staged: false });
+		expect(diff).toEqual({
+			originalContent: "staged text",
+			modifiedContent: "worktree text",
+			stagedContent: "staged text"
+		});
+	});
+
+	it("resolves unstaged diff with empty staged content (staged deletion recreated in worktree) without falling back to headContent", () => {
+		const diff = resolveDiffDetail("head text", "", "recreated worktree text", { staged: false });
+		expect(diff).toEqual({
+			originalContent: "",
+			modifiedContent: "recreated worktree text",
+			stagedContent: ""
+		});
+	});
+
+	it("resolves combined diff when options are omitted or not staged-scoped", () => {
+		const diff = resolveDiffDetail("head text", "staged text", "worktree text");
+		expect(diff).toEqual({
+			originalContent: "head text",
+			modifiedContent: "worktree text",
+			stagedContent: "staged text"
+		});
+	});
+});
+
 
 
 
