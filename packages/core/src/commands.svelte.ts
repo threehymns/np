@@ -784,7 +784,7 @@ export async function applyHunkAction(
 			const unstagedChunks = Chunk.build(stagedText, modText);
 			const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
 			const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
-			const isUnstaged = unstagedChunks.some((uc: any) => {
+			const isUnstaged = unstagedChunks.some((uc: Chunk) => {
 				const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
 				const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
 				return (lineStartB <= ucEndB && lineEndB >= ucStartB);
