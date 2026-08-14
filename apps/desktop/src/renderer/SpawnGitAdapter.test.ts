@@ -100,4 +100,64 @@ describe('SpawnGitAdapter', () => {
 		expect(stagedDeleted?.status).toBe('D');
 		expect(stagedDeleted?.modifiedContent).toBe('');
 	});
+
+	it('uses bulk diff numstat and does not invoke per-file diff commands', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return {
+					code: 0,
+					stdout: 'M  staged.ts\0 M unstaged.ts\0MM both.ts\0',
+					stderr: ''
+				};
+			}
+			if (cmd === 'diff --cached --numstat') {
+				return {
+					code: 0,
+					stdout: '10\t5\tstaged.ts\n3\t1\tboth.ts\n',
+					stderr: ''
+				};
+			}
+			if (cmd === 'diff --numstat') {
+				return {
+					code: 0,
+					stdout: '20\t2\tunstaged.ts\n4\t0\tboth.ts\n',
+					stderr: ''
+				};
+			}
+			if (cmd.startsWith('show')) {
+				return { code: 0, stdout: 'file content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const changes = await adapter.getChanges();
+
+		// Check that no per-file diff commands were executed
+		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
+			const args = call[1];
+			return args[0] === 'diff' && args.includes('--') && !args.includes('--numstat');
+		});
+		expect(perFileDiffCalls.length).toBe(0);
+
+		// Verify additions and deletions match the bulk numstat
+		const stagedChange = changes.find(c => c.filepath === 'staged.ts' && c.staged);
+		expect(stagedChange).toBeDefined();
+		expect(stagedChange?.additions).toBe(10);
+		expect(stagedChange?.deletions).toBe(5);
+
+		const unstagedChange = changes.find(c => c.filepath === 'unstaged.ts' && !c.staged);
+		expect(unstagedChange).toBeDefined();
+		expect(unstagedChange?.additions).toBe(20);
+		expect(unstagedChange?.deletions).toBe(2);
+
+		const bothStaged = changes.find(c => c.filepath === 'both.ts' && c.staged);
+		expect(bothStaged?.additions).toBe(3);
+		expect(bothStaged?.deletions).toBe(1);
+
+		const bothUnstaged = changes.find(c => c.filepath === 'both.ts' && !c.staged);
+		expect(bothUnstaged?.additions).toBe(4);
+		expect(bothUnstaged?.deletions).toBe(0);
+	});
 });
