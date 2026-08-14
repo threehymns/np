@@ -333,4 +333,6 @@ export class BrowserStorage implements StorageProvider {
 
 if (typeof window !== 'undefined') {
 	(window as any).browserHandleRegistry = browserHandleRegistry;
+	(window as any).toURI = toURI;
+	(window as any).parseURI = parseURI;
 }
