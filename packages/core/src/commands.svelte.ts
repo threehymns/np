@@ -715,28 +715,30 @@ export async function applyHunkAction(
 		return lastToB + (posA - lastToA);
 	};
 
+	const mapRange = (posFrom: number, posTo: number, textA: Text, textB: Text) => {
+		const chunks = Chunk.build(textA, textB);
+		return {
+			from: mapPos(posFrom, chunks),
+			to: mapPos(posTo, chunks)
+		};
+	};
+
+	const spliceText = (target: Text, from: number, to: number, replacement: string) => {
+		return target.sliceString(0, from) + replacement + target.sliceString(to);
+	};
+
 	repo.isBusy = true;
 	try {
 		if (action === 'stage') {
-			const chunks = Chunk.build(origText, stagedText);
-			const indexFrom = mapPos(hunk.fromA, chunks);
-			const indexTo = mapPos(hunk.toA, chunks);
-
-			const newIndexContent = stagedText.sliceString(0, indexFrom) +
-				modText.sliceString(hunk.fromB, hunk.toB) +
-				stagedText.sliceString(indexTo);
+			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
+			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB));
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 			}
 		} else if (action === 'unstage') {
-			const chunks = Chunk.build(modText, stagedText);
-			const indexFrom = mapPos(hunk.fromB, chunks);
-			const indexTo = mapPos(hunk.toB, chunks);
-
-			const newIndexContent = stagedText.sliceString(0, indexFrom) +
-				origText.sliceString(hunk.fromA, hunk.toA) +
-				stagedText.sliceString(indexTo);
+			const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
+			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA));
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
@@ -752,29 +754,17 @@ export async function applyHunkAction(
 			});
 
 			if (isUnstaged) {
-				const chunks = Chunk.build(origText, stagedText);
-				const indexFrom = mapPos(hunk.fromA, chunks);
-				const indexTo = mapPos(hunk.toA, chunks);
-
-				const newWorktreeContent = modText.sliceString(0, hunk.fromB) +
-					stagedText.sliceString(indexFrom, indexTo) +
-					modText.sliceString(hunk.toB);
+				const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
+				const newWorktreeContent = spliceText(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to));
 
 				if (repo.adapter.updateFileContent) {
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
 				}
 			} else {
-				const chunks = Chunk.build(modText, stagedText);
-				const indexFrom = mapPos(hunk.fromB, chunks);
-				const indexTo = mapPos(hunk.toB, chunks);
-
-				const newIndexContent = stagedText.sliceString(0, indexFrom) +
-					origText.sliceString(hunk.fromA, hunk.toA) +
-					stagedText.sliceString(indexTo);
-
-				const newWorktreeContent = modText.sliceString(0, hunk.fromB) +
-					origText.sliceString(hunk.fromA, hunk.toA) +
-					modText.sliceString(hunk.toB);
+				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
+				const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
+				const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, origHunkSlice);
+				const newWorktreeContent = spliceText(modText, hunk.fromB, hunk.toB, origHunkSlice);
 
 				if (repo.adapter.updateIndexContent) {
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);

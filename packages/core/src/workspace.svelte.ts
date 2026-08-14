@@ -173,14 +173,6 @@ export class Workspace {
 		this.debouncedSaveOpenFiles();
 	}
 
-	reorderTabs(tabsOrFromIdx: WorkspaceTab[] | number, toIdx?: number) {
-		if (Array.isArray(tabsOrFromIdx)) {
-			this.setTabs(tabsOrFromIdx);
-		} else if (typeof tabsOrFromIdx === 'number' && typeof toIdx === 'number') {
-			this.moveTab(tabsOrFromIdx, toIdx);
-		}
-	}
-
 	reorderDocuments(newDocs: DocumentSession[]) {
 		// Retained for backward-compatibility; reorders documents array matching the documents in tabs
 		this.documents = newDocs;
