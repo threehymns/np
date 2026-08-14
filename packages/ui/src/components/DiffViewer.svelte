@@ -453,10 +453,12 @@
 	) {
 		let view: EditorView | undefined;
 		let currentOptions = options;
+		let disposed = false;
 		const wrapCompartment = new Compartment();
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
+			if (disposed) return;
 			const state = EditorState.create({
 				doc: currentOptions.content,
 				extensions: [
@@ -510,6 +512,7 @@
 				}
 			},
 			destroy() {
+				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
@@ -536,11 +539,13 @@
 		let view: MergeView | undefined;
 		let currentOptions = options;
 		let cleanupSync: (() => void) | undefined;
+		let disposed = false;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
+			if (disposed) return;
 			view = new MergeView({
 				a: {
 					doc: currentOptions.leftContent,
@@ -662,6 +667,7 @@
 				}
 			},
 			destroy() {
+				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
 				const existing = editorViews.get(currentOptions.filepath);
