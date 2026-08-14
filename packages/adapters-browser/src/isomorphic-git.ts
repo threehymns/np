@@ -1,7 +1,7 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
-import { resolveDiffDetail } from '@np/core';
+import { resolveDiffDetail } from '@np/core/project/vcs';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 

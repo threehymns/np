@@ -1,4 +1,5 @@
-import { type VCSAdapter, type SwitchResult, type VCSStatus, type FileOrigin, type GitChange, type GitCommit, type FileDiffDetail, resolveDiffDetail } from '@np/core';
+import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import { resolveDiffDetail } from '@np/core/project/vcs';
 
 export class SpawnGitAdapter implements VCSAdapter {
 	private renamedOrigPaths = new Map<string, string>();

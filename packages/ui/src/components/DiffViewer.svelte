@@ -756,26 +756,34 @@
 	let loadedDiffs = $state<Record<string, FileDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
+	function diffCacheKey(fileChange: GitChange | { filepath: string; staged?: boolean; combined?: boolean }): string {
+		if (fileChange.combined) return `${fileChange.filepath}:combined`;
+		if (fileChange.staged !== undefined) return `${fileChange.filepath}:${fileChange.staged ? 'staged' : 'unstaged'}`;
+		return fileChange.filepath;
+	}
+
 	function resolveFileDiff(fileChange: GitChange): FileDiffDetail | null {
-		if (loadedDiffs[fileChange.filepath]) {
-			return loadedDiffs[fileChange.filepath];
+		const key = diffCacheKey(fileChange);
+		if (loadedDiffs[key]) {
+			return loadedDiffs[key];
 		}
 		return fileDiffFromChange(fileChange);
 	}
 
-	async function fetchDiff(filepath: string, options?: { staged?: boolean }) {
-		if (loadingDiffs[filepath] || loadedDiffs[filepath]) return;
-		loadingDiffs[filepath] = true;
+	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean }) {
+		const key = diffCacheKey({ filepath, staged: options?.staged, combined: options?.combined });
+		if (loadingDiffs[key] || loadedDiffs[key]) return;
+		loadingDiffs[key] = true;
 		try {
 			if (repo) {
-				const diff = await repo.getFileDiff(filepath, options);
-				loadedDiffs[filepath] = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
+				const diff = await repo.getFileDiff(filepath, options?.combined ? undefined : { staged: options?.staged });
+				loadedDiffs[key] = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
-			loadedDiffs[filepath] = { originalContent: '', modifiedContent: '', stagedContent: '' };
+			loadedDiffs[key] = { originalContent: '', modifiedContent: '', stagedContent: '' };
 		} finally {
-			loadingDiffs[filepath] = false;
+			loadingDiffs[key] = false;
 		}
 	}
 
@@ -791,8 +799,9 @@
 	$effect(() => {
 		for (const file of activeChanges) {
 			if (!isFileCollapsed(file.filepath)) {
-				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[file.filepath] && !loadingDiffs[file.filepath]) {
-					fetchDiff(file.filepath, file.combined ? undefined : { staged: file.staged });
+				const key = diffCacheKey(file);
+				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[key] && !loadingDiffs[key]) {
+					fetchDiff(file.filepath, { staged: file.staged, combined: file.combined });
 				}
 			}
 		}
@@ -843,7 +852,7 @@
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
-			const diff = loadedDiffs[change.filepath];
+			const diff = loadedDiffs[diffCacheKey(change)];
 			const origContent = diff?.originalContent ?? change.originalContent ?? '';
 			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
 			if (!origContent && !modContent) return;
