@@ -7,7 +7,7 @@
   
   import { X, GitDiffIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
-  import type { EditorView } from 'codemirror';
+  import type { EditorView } from '@codemirror/view';
 
   import DiffViewer from './DiffViewer.svelte';
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from "svelte";
-	import { EditorView } from "codemirror";
+	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
 	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
