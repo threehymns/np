@@ -362,6 +362,114 @@ describe('IsomorphicGitAdapter', () => {
 			(git as any).TREE = origTree;
 		}
 	});
+
+	it('loads on-demand diff content via getFileDiff for staged deleted files', async () => {
+		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
+			if (oid === 'head-commit-oid') {
+				return { blob: new TextEncoder().encode('deleted head text') };
+			}
+			return { blob: new Uint8Array() };
+		});
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const walkSpy = mock(async ({ map }: { map: Function }) => {});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const diff = await adapter.getFileDiff('deleted.txt', { staged: true });
+
+			expect(diff.originalContent).toBe('deleted head text');
+			expect(diff.modifiedContent).toBe('');
+			expect(diff.stagedContent).toBe('');
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+		}
+	});
+
+	it('resolves original content for renamed and modified files via deleted candidate matching', async () => {
+		const oldContent = 'export function oldFunc() { return 1; }';
+		const newContent = 'export function newFunc() { return 2; }';
+		const oldOid = 'old-blob-oid-9999';
+		const newOid = 'new-blob-oid-8888';
+
+		const readBlobSpy = mock(async ({ filepath, oid }: { filepath?: string; oid?: string }) => {
+			if (filepath === 'renamed-modified.ts') {
+				throw new Error('NotFoundError: Does not exist in HEAD');
+			}
+			if (oid === oldOid) {
+				return { blob: new TextEncoder().encode(oldContent) };
+			}
+			return { blob: new Uint8Array() };
+		});
+
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const hashBlobSpy = mock(async () => ({ oid: newOid }));
+
+		const walkSpy = mock(async ({ trees, map }: { trees: any[]; map: Function }) => {
+			if (trees && trees.length === 1 && trees[0] === 'STAGE_WALKER') {
+				return;
+			}
+			if (trees && trees.length === 1 && trees[0] === 'HEAD_TREE_WALKER') {
+				await map('old-file.ts', [{
+					type: async () => 'blob',
+					oid: async () => oldOid
+				}]);
+			}
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origHashBlob = git.hashBlob;
+		const origWalk = git.walk;
+		const origStage = git.STAGE;
+		const origTree = git.TREE;
+
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).hashBlob = hashBlobSpy;
+		(git as any).walk = walkSpy;
+		(git as any).STAGE = () => 'STAGE_WALKER';
+		(git as any).TREE = () => 'HEAD_TREE_WALKER';
+
+		mockDirectoryHandle.getFileHandle = mock(async (name: string) => {
+			if (name === 'old-file.ts') {
+				throw new Error('NotFoundError: file not found');
+			}
+			return {
+				kind: 'file',
+				name: 'renamed-modified.ts',
+				getFile: mock(async () => ({
+					text: mock(async () => newContent),
+					arrayBuffer: mock(async () => new TextEncoder().encode(newContent).buffer),
+					size: newContent.length,
+					lastModified: Date.now()
+				}))
+			};
+		});
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const diff = await adapter.getFileDiff('renamed-modified.ts', { staged: false });
+
+			expect(diff.originalContent).toBe(oldContent);
+			expect(diff.modifiedContent).toBe(newContent);
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).hashBlob = origHashBlob;
+			(git as any).walk = origWalk;
+			(git as any).STAGE = origStage;
+			(git as any).TREE = origTree;
+		}
+	});
 });
 
 

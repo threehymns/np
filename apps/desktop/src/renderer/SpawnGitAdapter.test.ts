@@ -262,6 +262,25 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.modifiedContent).toBe('');
 	});
 
+	it('loads on-demand diff content via getFileDiff for staged deleted files', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === 'HEAD:staged-deleted.ts') {
+				return { code: 0, stdout: 'content in head', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':staged-deleted.ts') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('staged-deleted.ts', { staged: true });
+
+		expect(diff.originalContent).toBe('content in head');
+		expect(diff.modifiedContent).toBe('');
+		expect(diff.stagedContent).toBe('');
+	});
+
 	it('resolves the original content of a renamed file from its previous path', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');

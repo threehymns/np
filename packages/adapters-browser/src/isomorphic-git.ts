@@ -692,7 +692,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			} catch (e) {}
 		}
 
-		// Exact rename resolution fallback: if filepath was not in HEAD, search HEAD tree for matching blob oid
+		// Rename resolution fallback: if filepath was not in HEAD, search HEAD tree
 		if (headCommit && !headFound) {
 			let targetOid: string | null = stagedOid;
 			if (!targetOid) {
@@ -712,42 +712,60 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				} catch (e) {}
 			}
 
-			if (targetOid) {
-				let matchedHeadOid: string | null = null;
-				try {
-					await git.walk({
-						fs: this.fs!,
-						dir: this.dir,
-						trees: [git.TREE({ ref: headCommit })],
-						map: async (walkPath, entries) => {
-							if (matchedHeadOid || !entries || !entries[0]) return null;
-							const type = await entries[0].type();
-							if (type === 'blob') {
-								const oid = await entries[0].oid();
-								if (oid === targetOid) {
+			let matchedHeadOid: string | null = null;
+			const deletedCandidates: Array<{ path: string; oid: string; score: number }> = [];
+			const targetBasename = filepath.split('/').pop() || filepath;
+			const targetDir = filepath.includes('/') ? filepath.substring(0, filepath.lastIndexOf('/')) : '';
+
+			try {
+				await git.walk({
+					fs: this.fs!,
+					dir: this.dir,
+					trees: [git.TREE({ ref: headCommit })],
+					map: async (walkPath, entries) => {
+						if (!entries || !entries[0]) return null;
+						const type = await entries[0].type();
+						if (type === 'blob') {
+							const oid = await entries[0].oid();
+							if (oid) {
+								if (targetOid && oid === targetOid && !matchedHeadOid) {
 									matchedHeadOid = oid;
-									return null;
+								}
+								try {
+									await this.fs!.promises.stat(`${this.dir}/${walkPath}`);
+								} catch {
+									let score = 0;
+									const walkBasename = walkPath.split('/').pop() || walkPath;
+									const walkDir = walkPath.includes('/') ? walkPath.substring(0, walkPath.lastIndexOf('/')) : '';
+									if (walkBasename === targetBasename) score += 3;
+									if (walkDir === targetDir) score += 2;
+									const walkExt = walkBasename.includes('.') ? walkBasename.substring(walkBasename.lastIndexOf('.')) : '';
+									const targetExt = targetBasename.includes('.') ? targetBasename.substring(targetBasename.lastIndexOf('.')) : '';
+									if (walkExt && walkExt === targetExt) score += 1;
+									deletedCandidates.push({ path: walkPath, oid, score });
 								}
 							}
 						}
-					});
-				} catch (e) {}
+						return null;
+					}
+				});
+			} catch (e) {}
 
-				if (matchedHeadOid) {
-					try {
-						const { blob } = await git.readBlob({
-							fs: this.fs!,
-							dir: this.dir,
-							oid: matchedHeadOid
-						});
-						headContent = new TextDecoder().decode(blob);
-					} catch (e) {}
-				}
+			if (!matchedHeadOid && deletedCandidates.length > 0) {
+				deletedCandidates.sort((a, b) => b.score - a.score);
+				matchedHeadOid = deletedCandidates[0].oid;
 			}
-		}
 
-		if (!stagedContent && headContent) {
-			stagedContent = headContent;
+			if (matchedHeadOid) {
+				try {
+					const { blob } = await git.readBlob({
+						fs: this.fs!,
+						dir: this.dir,
+						oid: matchedHeadOid
+					});
+					headContent = new TextDecoder().decode(blob);
+				} catch (e) {}
+			}
 		}
 
 		return resolveDiffDetail(headContent, stagedContent, workdirContent, options);
