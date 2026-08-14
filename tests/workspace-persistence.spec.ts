@@ -267,12 +267,24 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			});
 			document.dispatchEvent(new Event('visibilitychange'));
 
+			// Wait deterministically for the persistence flush to complete before restoring
+			const startTime = Date.now();
+			let flushed = false;
+			while (Date.now() - startTime < 5000) {
+				const persisted = await appState.workspace.persistence.loadOpenFiles('');
+				if (persisted.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
+					flushed = true;
+					break;
+				}
+				await new Promise(resolve => setTimeout(resolve, 10));
+			}
+			if (!flushed) {
+				throw new Error('Timed out waiting for visibilitychange persistence flush');
+			}
+
 			// 3. Clear workspace documents and restore
 			appState.workspace.documents = [];
 			await appState.workspace.restoreSession(true);
-
-			// Wait for background draft loading/resolving
-			await new Promise(resolve => setTimeout(resolve, 100));
 
 			const docs = appState.workspace.documents.map((d: any) => ({
 				content: d.content,
