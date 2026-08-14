@@ -7,7 +7,7 @@
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
 	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
-	import { MergeView, unifiedMergeView, Chunk } from "@codemirror/merge";
+	import { MergeView, unifiedMergeView, Chunk, getChunks } from "@codemirror/merge";
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
@@ -271,11 +271,46 @@
 		};
 	}
 
+	function getBufferBoundaries(state: EditorState, margin: number = 3, minSize: number = 4): { firstLine: number; lastLine: number } {
+		const doc = state.doc;
+		const chunkInfo = getChunks(state);
+		if (!chunkInfo || chunkInfo.chunks.length === 0) {
+			return { firstLine: 1, lastLine: doc.lines };
+		}
+
+		const { chunks, side } = chunkInfo;
+		const isA = side === 'a';
+
+		// Calculate top boundary (first visible line considering collapsed unchanged lines)
+		let firstLine = 1;
+		const firstChunk = chunks[0];
+		const firstChunkFrom = isA ? firstChunk.fromA : firstChunk.fromB;
+		const firstChunkLine = doc.lineAt(Math.min(firstChunkFrom, doc.length)).number;
+		const topCollapseTo = firstChunkLine - 1 - margin;
+		if (topCollapseTo >= minSize) {
+			firstLine = topCollapseTo + 1;
+		}
+
+		// Calculate bottom boundary (last visible line considering collapsed unchanged lines)
+		let lastLine = doc.lines;
+		const lastChunk = chunks[chunks.length - 1];
+		const lastChunkTo = Math.min(doc.length, isA ? lastChunk.toA : lastChunk.toB);
+		const lastChunkLine = doc.lineAt(lastChunkTo).number;
+		const bottomCollapseFrom = lastChunkLine + margin;
+		const bottomCollapsedLines = doc.lines - bottomCollapseFrom + 1;
+		if (bottomCollapsedLines >= minSize) {
+			lastLine = bottomCollapseFrom - 1;
+		}
+
+		return { firstLine, lastLine };
+	}
+
 	function isAtBufferBoundary(view: EditorView, direction: 'down' | 'up'): boolean {
 		const sel = view.state.selection.main;
 		const doc = view.state.doc;
 		const curLine = doc.lineAt(sel.head).number;
-		return direction === 'up' ? curLine <= 1 : curLine >= doc.lines;
+		const { firstLine, lastLine } = getBufferBoundaries(view.state);
+		return direction === 'up' ? curLine <= firstLine : curLine >= lastLine;
 	}
 
 	async function getOrWaitEditor(filepath: string, mode: 'inline' | 'split', preferSide: 'a' | 'b' = 'b'): Promise<EditorView | undefined> {
@@ -339,24 +374,22 @@
 	}
 
 	function focusEditorFirstLine(editor: EditorView) {
-		const firstPos = editor.visibleRanges[0]?.from ?? 0;
-		const line1 = editor.state.doc.lineAt(Math.min(firstPos, editor.state.doc.length));
+		const { firstLine } = getBufferBoundaries(editor.state);
+		const line = editor.state.doc.line(Math.min(Math.max(1, firstLine), editor.state.doc.lines));
 		editor.dispatch({
-			selection: { anchor: line1.from, head: line1.from },
-			effects: EditorView.scrollIntoView(line1.from, { y: 'center' })
+			selection: { anchor: line.from, head: line.from },
+			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
 		});
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 		setTimeout(() => editor.focus(), 0);
 	}
 
 	function focusEditorLastLine(editor: EditorView) {
-		const lastRanges = editor.visibleRanges;
-		const lastPos = lastRanges[lastRanges.length - 1]?.to ?? editor.state.doc.length;
-		const samplePos = Math.max(0, lastPos > 0 ? lastPos - 1 : 0);
-		const lastLine = editor.state.doc.lineAt(samplePos);
+		const { lastLine } = getBufferBoundaries(editor.state);
+		const line = editor.state.doc.line(Math.min(Math.max(1, lastLine), editor.state.doc.lines));
 		editor.dispatch({
-			selection: { anchor: lastLine.from, head: lastLine.from },
-			effects: EditorView.scrollIntoView(lastLine.from, { y: 'center' })
+			selection: { anchor: line.from, head: line.from },
+			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
 		});
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 		setTimeout(() => editor.focus(), 0);
