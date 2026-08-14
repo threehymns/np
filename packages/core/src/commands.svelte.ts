@@ -8,28 +8,28 @@ import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import type { GitChange } from "./project/vcs";
 
-function safeAlert(msg: string) {
-	if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-		window.alert(msg);
+async function showAlert(appState: AppState, msg: string): Promise<void> {
+	if (appState.dialogService?.alert) {
+		await appState.dialogService.alert(msg);
 	}
 }
 
-function safeConfirm(msg: string): boolean {
-	if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-		return window.confirm(msg);
+async function showConfirm(appState: AppState, msg: string): Promise<boolean> {
+	if (appState.dialogService?.confirm) {
+		return Boolean(await appState.dialogService.confirm(msg));
 	}
 	return false;
 }
 
-async function safeClipboardWrite(text: string): Promise<void> {
-	if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-		await navigator.clipboard.writeText(text);
+async function writeClipboard(appState: AppState, text: string): Promise<void> {
+	if (appState.clipboardService?.writeText) {
+		await appState.clipboardService.writeText(text);
 	}
 }
 
-async function safeClipboardRead(): Promise<string> {
-	if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-		return await navigator.clipboard.readText();
+async function readClipboard(appState: AppState): Promise<string> {
+	if (appState.clipboardService?.readText) {
+		return await appState.clipboardService.readText();
 	}
 	return '';
 }
@@ -144,7 +144,7 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await safeClipboardWrite(text);
+					await writeClipboard(appState, text);
 					view.dispatch({
 						changes: { from, to, insert: "" },
 						selection: { anchor: from }
@@ -165,7 +165,7 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await safeClipboardWrite(text);
+					await writeClipboard(appState, text);
 				}
 				view.focus();
 			}
@@ -181,7 +181,7 @@ export function registerCoreCommands(appState: AppState) {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
 				try {
-					const text = await safeClipboardRead();
+					const text = await readClipboard(appState);
 					if (text) {
 						view.dispatch(view.state.replaceSelection(text));
 						view.focus();
@@ -222,7 +222,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			await safeClipboardWrite(html);
+			await writeClipboard(appState, html);
 		}
 	});
 
@@ -423,7 +423,7 @@ export function registerCoreCommands(appState: AppState) {
 			return true;
 		} catch (e) {
 			console.error(`${label} failed:`, e);
-			safeAlert(`${label} failed: ${(e as Error).message}`);
+			await showAlert(appState, `${label} failed: ${(e as Error).message}`);
 			return false;
 		} finally {
 			repo.isBusy = false;
@@ -469,7 +469,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async (filepath: string, skipConfirm = false) => {
 			if (!filepath) return false;
 			if (!skipConfirm) {
-				const confirmed = safeConfirm(`Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
+				const confirmed = await showConfirm(appState, `Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
 				if (!confirmed) return false;
 			}
 			const repo = appState.workspace.repository;
@@ -492,7 +492,7 @@ export function registerCoreCommands(appState: AppState) {
 			
 			const stagedCount = repo.changes.filter(c => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
-				safeAlert('Cannot commit: No staged changes to commit.');
+				await showAlert(appState, 'Cannot commit: No staged changes to commit.');
 				return false;
 			}
 
@@ -559,7 +559,7 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Git: Discard All Changes',
 		category: 'Source Control',
 		action: async () => {
-			const confirmed = safeConfirm('Are you sure you want to discard ALL uncommitted changes? This action cannot be undone.');
+			const confirmed = await showConfirm(appState, 'Are you sure you want to discard ALL uncommitted changes? This action cannot be undone.');
 			if (!confirmed) return false;
 
 			const repo = appState.workspace.repository;
@@ -787,7 +787,7 @@ export async function applyHunkAction(
 		await repo.refresh();
 	} catch (e) {
 		console.error(`Failed to ${action} hunk:`, e);
-		safeAlert(`Failed to ${action} hunk in '${change.filepath}': ${(e as Error).message}`);
+		await showAlert(appState, `Failed to ${action} hunk in '${change.filepath}': ${(e as Error).message}`);
 	} finally {
 		repo.isBusy = false;
 	}
