@@ -5,7 +5,7 @@ import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
-import { parseURI } from "./storage";
+import { parseURI, toURI, type FileOrigin } from "./storage";
 import type { GitChange } from "./project/vcs";
 
 function safeAlert(msg: string) {
@@ -18,7 +18,7 @@ function safeConfirm(msg: string): boolean {
 	if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
 		return window.confirm(msg);
 	}
-	return true;
+	return false;
 }
 
 async function safeClipboardWrite(text: string): Promise<void> {
@@ -603,6 +603,28 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	appState.commands.register({
+		id: 'editor.open',
+		label: 'File: Open File',
+		category: 'File',
+		action: async (target: string | FileOrigin) => {
+			if (!target) return;
+			if (typeof target !== 'string') {
+				await appState.workspace.openFile(target);
+				return;
+			}
+			if (target.includes('://')) {
+				await appState.workspace.openFile(parseURI(target));
+			} else if (appState.workspace.rootOrigin) {
+				const rootUri = toURI(appState.workspace.rootOrigin);
+				const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
+				await appState.workspace.openFile(parseURI(fileUri));
+			} else {
+				await appState.workspace.openFile(parseURI(target));
+			}
+		}
+	});
+
+	appState.commands.register({
 		id: 'git.stageHunk',
 		label: 'Git: Stage Hunk',
 		category: 'Source Control',
@@ -646,16 +668,29 @@ export async function applyHunkAction(
 	const repo = appState.workspace.repository;
 	if (!repo) return;
 
-	const origContent = change.originalContent || '';
-	const modContent = change.modifiedContent || '';
+	if (action === 'stage' || action === 'unstage') {
+		if (!repo.adapter.updateIndexContent) {
+			throw new Error(`VCS adapter does not support updating index for hunk ${action}`);
+		}
+	} else if (action === 'discard') {
+		if (!repo.adapter.updateFileContent) {
+			throw new Error('VCS adapter does not support updating file content for hunk discard');
+		}
+	}
+
+	if (typeof change.originalContent !== 'string' || typeof change.modifiedContent !== 'string') {
+		throw new Error(`Cannot perform hunk ${action}: missing diff content for ${change.filepath}`);
+	}
+
+	const origContent = change.originalContent;
+	const modContent = change.modifiedContent;
 	const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
 
 	const origText = Text.of(origContent.split(/\r?\n/));
 	const modText = Text.of(modContent.split(/\r?\n/));
 	const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-	const mapPos = (posA: number, textA: Text, textB: Text) => {
-		const chunks = Chunk.build(textA, textB);
+	const mapPos = (posA: number, chunks: readonly Chunk[]) => {
 		let lastToA = 0;
 		let lastToB = 0;
 		for (const c of chunks) {
@@ -674,23 +709,25 @@ export async function applyHunkAction(
 	repo.isBusy = true;
 	try {
 		if (action === 'stage') {
-			const indexFrom = mapPos(hunk.fromA, origText, stagedText);
-			const indexTo = mapPos(hunk.toA, origText, stagedText);
+			const chunks = Chunk.build(origText, stagedText);
+			const indexFrom = mapPos(hunk.fromA, chunks);
+			const indexTo = mapPos(hunk.toA, chunks);
 
-			const newIndexContent = stagedContent.slice(0, indexFrom) +
-				modContent.slice(hunk.fromB, hunk.toB) +
-				stagedContent.slice(indexTo);
+			const newIndexContent = stagedText.sliceString(0, indexFrom) +
+				modText.sliceString(hunk.fromB, hunk.toB) +
+				stagedText.sliceString(indexTo);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 			}
 		} else if (action === 'unstage') {
-			const indexFrom = mapPos(hunk.fromB, modText, stagedText);
-			const indexTo = mapPos(hunk.toB, modText, stagedText);
+			const chunks = Chunk.build(modText, stagedText);
+			const indexFrom = mapPos(hunk.fromB, chunks);
+			const indexTo = mapPos(hunk.toB, chunks);
 
-			const newIndexContent = stagedContent.slice(0, indexFrom) +
-				origContent.slice(hunk.fromA, hunk.toA) +
-				stagedContent.slice(indexTo);
+			const newIndexContent = stagedText.sliceString(0, indexFrom) +
+				origText.sliceString(hunk.fromA, hunk.toA) +
+				stagedText.sliceString(indexTo);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
@@ -706,27 +743,29 @@ export async function applyHunkAction(
 			});
 
 			if (isUnstaged) {
-				const indexFrom = mapPos(hunk.fromA, origText, stagedText);
-				const indexTo = mapPos(hunk.toA, origText, stagedText);
+				const chunks = Chunk.build(origText, stagedText);
+				const indexFrom = mapPos(hunk.fromA, chunks);
+				const indexTo = mapPos(hunk.toA, chunks);
 
-				const newWorktreeContent = modContent.slice(0, hunk.fromB) +
-					stagedContent.slice(indexFrom, indexTo) +
-					modContent.slice(hunk.toB);
+				const newWorktreeContent = modText.sliceString(0, hunk.fromB) +
+					stagedText.sliceString(indexFrom, indexTo) +
+					modText.sliceString(hunk.toB);
 
 				if (repo.adapter.updateFileContent) {
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
 				}
 			} else {
-				const indexFrom = mapPos(hunk.fromB, modText, stagedText);
-				const indexTo = mapPos(hunk.toB, modText, stagedText);
+				const chunks = Chunk.build(modText, stagedText);
+				const indexFrom = mapPos(hunk.fromB, chunks);
+				const indexTo = mapPos(hunk.toB, chunks);
 
-				const newIndexContent = stagedContent.slice(0, indexFrom) +
-					origContent.slice(hunk.fromA, hunk.toA) +
-					stagedContent.slice(indexTo);
+				const newIndexContent = stagedText.sliceString(0, indexFrom) +
+					origText.sliceString(hunk.fromA, hunk.toA) +
+					stagedText.sliceString(indexTo);
 
-				const newWorktreeContent = modContent.slice(0, hunk.fromB) +
-					origContent.slice(hunk.fromA, hunk.toA) +
-					modContent.slice(hunk.toB);
+				const newWorktreeContent = modText.sliceString(0, hunk.fromB) +
+					origText.sliceString(hunk.fromA, hunk.toA) +
+					modText.sliceString(hunk.toB);
 
 				if (repo.adapter.updateIndexContent) {
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
