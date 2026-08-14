@@ -602,26 +602,35 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	const openPathAction = async (target: string | FileOrigin) => {
+		if (!target) return;
+		if (typeof target !== 'string') {
+			await appState.workspace.openFile(target);
+			return;
+		}
+		if (target.includes('://')) {
+			await appState.workspace.openFile(parseURI(target));
+		} else if (appState.workspace.rootOrigin) {
+			const rootUri = toURI(appState.workspace.rootOrigin);
+			const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
+			await appState.workspace.openFile(parseURI(fileUri));
+		} else {
+			await appState.workspace.openFile(parseURI(target));
+		}
+	};
+
+	appState.commands.register({
+		id: 'file.openPath',
+		label: 'File: Open Path',
+		category: 'File',
+		action: openPathAction
+	});
+
 	appState.commands.register({
 		id: 'editor.open',
-		label: 'File: Open File',
+		label: 'File: Open Path (Deprecated)',
 		category: 'File',
-		action: async (target: string | FileOrigin) => {
-			if (!target) return;
-			if (typeof target !== 'string') {
-				await appState.workspace.openFile(target);
-				return;
-			}
-			if (target.includes('://')) {
-				await appState.workspace.openFile(parseURI(target));
-			} else if (appState.workspace.rootOrigin) {
-				const rootUri = toURI(appState.workspace.rootOrigin);
-				const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
-				await appState.workspace.openFile(parseURI(fileUri));
-			} else {
-				await appState.workspace.openFile(parseURI(target));
-			}
-		}
+		action: openPathAction
 	});
 
 	appState.commands.register({
