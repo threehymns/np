@@ -10,6 +10,7 @@
 	import Icon from './Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
+	import * as Tooltip from './ui/tooltip/index';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -55,11 +56,9 @@
 		return parts.length > 0 ? `Commit (${parts.join(', ')})` : 'Commit';
 	});
 
-	// Group staged changes by path
-	let stagedChangesGrouped = $derived.by((): GroupedChange[] => {
-		if (!repo) return [];
+	function groupChanges(changes: GitChange[]): GroupedChange[] {
 		const map = new SvelteMap<string, GroupedChange>();
-		repo.changes.filter(c => c.staged).forEach(c => {
+		for (const c of changes) {
 			let existing = map.get(c.filepath);
 			if (!existing) {
 				existing = {
@@ -67,8 +66,8 @@
 					status: c.status,
 					additions: 0,
 					deletions: 0,
-					hasStaged: true,
-					hasUnstaged: false,
+					hasStaged: c.staged,
+					hasUnstaged: !c.staged,
 					changes: []
 				};
 				map.set(c.filepath, existing);
@@ -76,58 +75,28 @@
 			existing.additions += c.additions;
 			existing.deletions += c.deletions;
 			existing.changes.push(c);
-		});
+			if (c.staged) existing.hasStaged = true;
+			if (!c.staged) existing.hasUnstaged = true;
+		}
 		return Array.from(map.values());
+	}
+
+	// Group staged changes by path
+	let stagedChangesGrouped = $derived.by((): GroupedChange[] => {
+		if (!repo) return [];
+		return groupChanges(repo.changes.filter(c => c.staged));
 	});
 
 	// Group unstaged tracked changes by path
 	let unstagedChangesGrouped = $derived.by((): GroupedChange[] => {
 		if (!repo) return [];
-		const map = new SvelteMap<string, GroupedChange>();
-		repo.changes.filter(c => !c.staged && c.status !== 'U').forEach(c => {
-			let existing = map.get(c.filepath);
-			if (!existing) {
-				existing = {
-					filepath: c.filepath,
-					status: c.status,
-					additions: 0,
-					deletions: 0,
-					hasStaged: false,
-					hasUnstaged: true,
-					changes: []
-				};
-				map.set(c.filepath, existing);
-			}
-			existing.additions += c.additions;
-			existing.deletions += c.deletions;
-			existing.changes.push(c);
-		});
-		return Array.from(map.values());
+		return groupChanges(repo.changes.filter(c => !c.staged && c.status !== 'U'));
 	});
 
 	// Group untracked files by path
 	let untrackedChangesGrouped = $derived.by((): GroupedChange[] => {
 		if (!repo) return [];
-		const map = new SvelteMap<string, GroupedChange>();
-		repo.changes.filter(c => !c.staged && c.status === 'U').forEach(c => {
-			let existing = map.get(c.filepath);
-			if (!existing) {
-				existing = {
-					filepath: c.filepath,
-					status: 'U',
-					additions: 0,
-					deletions: 0,
-					hasStaged: false,
-					hasUnstaged: true,
-					changes: []
-				};
-				map.set(c.filepath, existing);
-			}
-			existing.additions += c.additions;
-			existing.deletions += c.deletions;
-			existing.changes.push(c);
-		});
-		return Array.from(map.values());
+		return groupChanges(repo.changes.filter(c => !c.staged && c.status === 'U'));
 	});
 
 	// Tree structure node definition
@@ -242,15 +211,19 @@
 	}
 
 	// Directory checkbox handler
-	function handleFolderCheckboxClick(node: TreeNode) {
+	async function handleFolderCheckboxClick(node: TreeNode) {
 		if (!repo) return;
 		const files = getDescendantFiles(node);
 		const { checked } = getFolderStagingState(node);
 
 		if (checked) {
-			files.forEach(f => appState.commands.execute('git.unstage', f.filepath));
+			for (const f of files) {
+				await appState.commands.execute('git.unstage', f.filepath);
+			}
 		} else {
-			files.forEach(f => appState.commands.execute('git.stage', f.filepath));
+			for (const f of files) {
+				await appState.commands.execute('git.stage', f.filepath);
+			}
 		}
 	}
 
@@ -336,7 +309,7 @@
 		showContextMenu = true;
 	}
 
-	function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff') {
+	async function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff') {
 		if (!repo || !contextTargetFile) return;
 		showContextMenu = false;
 
@@ -345,11 +318,17 @@
 			: [contextTargetFile.filepath];
 
 		if (action === 'stage') {
-			targets.forEach(path => appState.commands.execute('git.stage', path));
+			for (const path of targets) {
+				await appState.commands.execute('git.stage', path);
+			}
 		} else if (action === 'unstage') {
-			targets.forEach(path => appState.commands.execute('git.unstage', path));
+			for (const path of targets) {
+				await appState.commands.execute('git.unstage', path);
+			}
 		} else if (action === 'discard') {
-			targets.forEach(path => appState.commands.execute('git.discard', path));
+			for (const path of targets) {
+				await appState.commands.execute('git.discard', path);
+			}
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', contextTargetFile.filepath);
 		}
@@ -380,6 +359,7 @@
 {:else}
 	<div class="flex flex-col h-full bg-sidebar border-r border-border select-none relative font-sans text-xs">
 		<!-- File List / Main Area -->
+		<Tooltip.Provider delayDuration={400}>
 		<div class="flex-1 overflow-y-auto p-2 space-y-4">
 			<!-- Commit View Actions -->
 			<div class="flex items-center justify-between px-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
@@ -416,32 +396,33 @@
 			<!-- STAGED CHANGES -->
 			{#if stagedChangesGrouped.length > 0}
 				<div class="space-y-1">
-					<div
-						role="button"
-						tabindex="0"
-						onclick={() => stagedExpanded = !stagedExpanded}
-						onkeydown={(e) => e.key === 'Enter' && (stagedExpanded = !stagedExpanded)}
-						class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80"
-					>
-						<span class="flex items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground">
+					<div class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80">
+						<button
+							type="button"
+							aria-expanded={stagedExpanded}
+							aria-controls="git-staged-section"
+							onclick={() => stagedExpanded = !stagedExpanded}
+							class="flex flex-1 items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground text-left cursor-pointer"
+						>
 							Staged Changes
 							<span class="px-1.5 py-0.5 text-[9px] rounded-full bg-primary/10 text-primary font-mono">{stagedChangesGrouped.length}</span>
-						</span>
+							<CaretDownIcon size={11} class="transition-transform duration-200 {!stagedExpanded ? 'rotate-180' : ''}" />
+						</button>
 						<div class="flex items-center gap-1">
 							<button
 								type="button"
-								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstageAll'); }}
-								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+								onclick={() => appState.commands.execute('git.unstageAll')}
+								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
 								title="Unstage all"
+								aria-label="Unstage all"
 							>
 								<MinusIcon size={11} />
 							</button>
-							<CaretDownIcon size={11} class="transition-transform duration-200 {!stagedExpanded ? 'rotate-180' : ''}" />
 						</div>
 					</div>
 
 					{#if stagedExpanded}
-						<div transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
+						<div id="git-staged-section" transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
 							{#if viewMode === 'list'}
 								{#each stagedChangesGrouped as change (change.filepath)}
 									<GitFileItem
@@ -467,40 +448,42 @@
 			<!-- UNSTAGED CHANGES -->
 			{#if unstagedChangesGrouped.length > 0}
 				<div class="space-y-1">
-					<div
-						role="button"
-						tabindex="0"
-						onclick={() => changesExpanded = !changesExpanded}
-						onkeydown={(e) => e.key === 'Enter' && (changesExpanded = !changesExpanded)}
-						class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80"
-					>
-						<span class="flex items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground">
+					<div class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80">
+						<button
+							type="button"
+							aria-expanded={changesExpanded}
+							aria-controls="git-changes-section"
+							onclick={() => changesExpanded = !changesExpanded}
+							class="flex flex-1 items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground text-left cursor-pointer"
+						>
 							Changes
 							<span class="px-1.5 py-0.5 text-[9px] rounded-full bg-amber-500/10 text-amber-500 font-mono">{unstagedChangesGrouped.length}</span>
-						</span>
+							<CaretDownIcon size={11} class="transition-transform duration-200 {!changesExpanded ? 'rotate-180' : ''}" />
+						</button>
 						<div class="flex items-center gap-1">
 							<button
 								type="button"
-								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stageAll'); }}
-								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+								onclick={() => appState.commands.execute('git.stageAll')}
+								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
 								title="Stage all changes"
+								aria-label="Stage all changes"
 							>
 								<PlusIcon size={11} />
 							</button>
 							<button
 								type="button"
-								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discardAll'); }}
-								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive"
+								onclick={() => appState.commands.execute('git.discardAll')}
+								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive cursor-pointer"
 								title="Discard all changes"
+								aria-label="Discard all changes"
 							>
 								<ArrowCounterClockwiseIcon size={11} />
 							</button>
-							<CaretDownIcon size={11} class="transition-transform duration-200 {!changesExpanded ? 'rotate-180' : ''}" />
 						</div>
 					</div>
 
 					{#if changesExpanded}
-						<div transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
+						<div id="git-changes-section" transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
 							{#if viewMode === 'list'}
 								{#each unstagedChangesGrouped as change (change.filepath)}
 									<GitFileItem
@@ -526,46 +509,50 @@
 			<!-- UNTRACKED FILES -->
 			{#if untrackedChangesGrouped.length > 0}
 				<div class="space-y-1">
-					<div
-						role="button"
-						tabindex="0"
-						onclick={() => untrackedExpanded = !untrackedExpanded}
-						onkeydown={(e) => e.key === 'Enter' && (untrackedExpanded = !untrackedExpanded)}
-						class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80"
-					>
-						<span class="flex items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground">
+					<div class="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-muted/20 font-medium text-foreground/80">
+						<button
+							type="button"
+							aria-expanded={untrackedExpanded}
+							aria-controls="git-untracked-section"
+							onclick={() => untrackedExpanded = !untrackedExpanded}
+							class="flex flex-1 items-center gap-1.5 font-semibold text-[10px] uppercase text-muted-foreground text-left cursor-pointer"
+						>
 							Untracked Files
 							<span class="px-1.5 py-0.5 text-[9px] rounded-full bg-emerald-500/10 text-emerald-500 font-mono">{untrackedChangesGrouped.length}</span>
-						</span>
+							<CaretDownIcon size={11} class="transition-transform duration-200 {!untrackedExpanded ? 'rotate-180' : ''}" />
+						</button>
 						<div class="flex items-center gap-1">
 							<button
 								type="button"
-								onclick={(e) => {
-									e.stopPropagation();
-									untrackedChangesGrouped.forEach(f => appState.commands.execute('git.stage', f.filepath));
+								onclick={async () => {
+									for (const f of untrackedChangesGrouped) {
+										await appState.commands.execute('git.stage', f.filepath);
+									}
 								}}
-								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
 								title="Stage all untracked files"
+								aria-label="Stage all untracked files"
 							>
 								<PlusIcon size={11} />
 							</button>
 							<button
 								type="button"
-								onclick={(e) => {
-									e.stopPropagation();
-									untrackedChangesGrouped.forEach(f => appState.commands.execute('git.discard', f.filepath));
+								onclick={async () => {
+									for (const f of untrackedChangesGrouped) {
+										await appState.commands.execute('git.discard', f.filepath);
+									}
 								}}
-								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive"
+								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive cursor-pointer"
 								title="Discard all untracked files"
+								aria-label="Discard all untracked files"
 							>
 								<ArrowCounterClockwiseIcon size={11} />
 							</button>
-							<CaretDownIcon size={11} class="transition-transform duration-200 {!untrackedExpanded ? 'rotate-180' : ''}" />
 						</div>
 					</div>
 
 					{#if untrackedExpanded}
-						<div transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
+						<div id="git-untracked-section" transition:slide={{ duration: 150 }} class="pl-1 space-y-0.5">
 							{#if viewMode === 'list'}
 								{#each untrackedChangesGrouped as change (change.filepath)}
 									<GitFileItem
@@ -588,6 +575,7 @@
 				</div>
 			{/if}
 		</div>
+		</Tooltip.Provider>
 
 		<!-- Footer/Commit Area -->
 		<div class="p-3 border-t border-border shrink-0 bg-sidebar/95 backdrop-blur-sm">
@@ -713,7 +701,7 @@
 {#snippet renderTreeNode(node: TreeNode, isStagedSection: boolean)}
 	{@const isDir = node.kind === 'directory'}
 	{@const sectionPrefix = isStagedSection ? 'staged:' : 'unstaged:'}
-	{@const nodeKey = isDir ? `${sectionPrefix}${node.path}` : node.path}
+	{@const nodeKey = `${sectionPrefix}${node.path}`}
 	{@const isCollapsed = collapsedDirs.has(nodeKey)}
 
 	<div class="space-y-0.5">
