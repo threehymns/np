@@ -9,6 +9,7 @@
 	const storage = new MultiSchemeStorage();
 	storage.registerProvider('browser', new BrowserStorage());
 	const persistence = new IndexedDBSessionPersistence();
+	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
 	const appState = new AppState({
 		storage,
 		persistence,
