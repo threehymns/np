@@ -10,6 +10,8 @@
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
+	import { mount } from 'svelte';
+
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
 		hunkRange: { fromA: number; toA: number; fromB: number; toB: number };
@@ -56,7 +58,8 @@
 				unstageBtn.type = 'button';
 				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
-				unstageBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8H40a8 8 0 0 1 0-16h176a8 8 0 0 1 8 8Z"></path></svg>`;
+				unstageBtn.setAttribute('aria-label', `Unstage Hunk #${this.hunkIndex + 1}`);
+				mount(MinusIcon, { target: unstageBtn, props: { size: 10 } });
 				unstageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -68,7 +71,8 @@
 				discardBtn.type = 'button';
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
-				discardBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M216 48h-40V36a16 16 0 0 0-16-16h-64a16 16 0 0 0-16 16v12H40a8 8 0 0 0 0 16h8v144a16 16 0 0 0 16 16h128a16 16 0 0 0 16-16V64h8a8 8 0 0 0 0-16ZM96 36h64v12H96Zm96 172H64V64h128Z"></path></svg>`;
+				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
+				mount(TrashIcon, { target: discardBtn, props: { size: 10 } });
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -81,7 +85,7 @@
 				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
 				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
-				stageBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8h-80v80a8 8 0 0 1-16 0v-80H40a8 8 0 0 1 0-16h80V40a8 8 0 0 1 16 0v80h80a8 8 0 0 1 8 8Z"></path></svg>`;
+				mount(PlusIcon, { target: stageBtn, props: { size: 10 } });
 				stageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -94,7 +98,7 @@
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
 				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				discardBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a96 96 0 0 1-152.12 78.59 8 8 0 0 1 9.42-13 80 80 0 0 0 126.7-65.59 80 80 0 0 0-141.24-51.41L80 96H40a8 8 0 0 1-8-8V48a8 8 0 0 1 16 0v24.69l18.59-18.59A96 96 0 0 1 224 128Z"></path></svg>`;
+				mount(ArrowCounterClockwiseIcon, { target: discardBtn, props: { size: 10 } });
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -158,7 +162,7 @@
 				}
 
 				update(update: ViewUpdate) {
-					if (update.docChanged || update.viewportChanged) {
+					if (update.docChanged) {
 						this.decorations = this.buildDecorations(update.view);
 					}
 				}
@@ -215,6 +219,31 @@
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, { inline?: EditorView; split?: MergeView }>();
 	let editorResolvers = new Map<string, Array<(views: { inline?: EditorView; split?: MergeView }) => void>>();
+
+	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
+		return (event: MouseEvent) => {
+			const target = event.target as HTMLElement;
+			const gutterElement = target.closest('.cm-gutterElement');
+			if (gutterElement && gutterElement.closest('.cm-lineNumbers')) {
+				const view = getView();
+				if (view) {
+					const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+					if (pos !== null) {
+						const lineNum = view.state.doc.lineAt(pos).number;
+						openFileInRegularTab(getFilepath(), lineNum);
+						return;
+					}
+				}
+				const lineNumText = gutterElement.textContent?.trim();
+				if (lineNumText) {
+					const lineNum = parseInt(lineNumText, 10);
+					if (!isNaN(lineNum)) {
+						openFileInRegularTab(getFilepath(), lineNum);
+					}
+				}
+			}
+		};
+	}
 
 	function isAtBufferBoundary(view: EditorView, direction: 'down' | 'up'): boolean {
 		const sel = view.state.selection.main;
@@ -415,19 +444,7 @@
 			registerEditorView(currentOptions.filepath, { inline: view });
 		});
 
-		const clickHandler = (event: MouseEvent) => {
-			const target = event.target as HTMLElement;
-			const gutterElement = target.closest('.cm-gutterElement');
-			if (gutterElement && gutterElement.closest('.cm-lineNumbers')) {
-				const lineNumText = gutterElement.textContent?.trim();
-				if (lineNumText) {
-					const lineNum = parseInt(lineNumText, 10);
-					if (!isNaN(lineNum)) {
-						openFileInRegularTab(currentOptions.filepath, lineNum);
-					}
-				}
-			}
-		};
+		const clickHandler = makeGutterClickHandler(() => view, () => currentOptions.filepath);
 		node.addEventListener('click', clickHandler);
 
 		return {
@@ -564,19 +581,7 @@
 			registerEditorView(currentOptions.filepath, { split: view });
 		});
 
-		const clickHandler = (event: MouseEvent) => {
-			const target = event.target as HTMLElement;
-			const gutterElement = target.closest('.cm-gutterElement');
-			if (gutterElement && gutterElement.closest('.cm-lineNumbers')) {
-				const lineNumText = gutterElement.textContent?.trim();
-				if (lineNumText) {
-					const lineNum = parseInt(lineNumText, 10);
-					if (!isNaN(lineNum)) {
-						openFileInRegularTab(currentOptions.filepath, lineNum);
-					}
-				}
-			}
-		};
+		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
 		node.addEventListener('click', clickHandler);
 
 		return {
@@ -974,22 +979,27 @@
 	<!-- Pane Header -->
 	<div class="flex items-center justify-between mb-2 border-b border-border shrink-0 h-11 px-4 select-none">
 		<div class="flex items-center gap-2">
-			<Button
-				variant=ghost
-				size=icon-sm
-				aria-label="Expand All Files"
-				onclick={() => {
-					for (const file of activeChanges) {
-						collapsedFiles[file.filepath] = false;
-					}
-				}}
-			>
-				{#if Object.values(collapsedFiles).every((v) => v)}
-					<CaretDownIcon class="h-4 w-4" />
-				{:else}
-					<CaretUpDownIcon class="h-4 w-4" />
-				{/if}
-			</Button>
+			{#if activeChanges.length > 0}
+				{@const allCollapsed = activeChanges.every(f => collapsedFiles[f.filepath] ?? (repo?.activeDiffFile?.filepath ? (f.filepath !== repo?.activeDiffFile?.filepath) : true))}
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					aria-label={allCollapsed ? "Expand All Files" : "Collapse All Files"}
+					title={allCollapsed ? "Expand All Files" : "Collapse All Files"}
+					onclick={() => {
+						const nextState = !allCollapsed;
+						for (const file of activeChanges) {
+							collapsedFiles[file.filepath] = nextState;
+						}
+					}}
+				>
+					{#if allCollapsed}
+						<CaretDownIcon class="h-4 w-4" />
+					{:else}
+						<CaretUpDownIcon class="h-4 w-4" />
+					{/if}
+				</Button>
+			{/if}
 			<!-- Toggle Split/Inline modes -->
 			<div class="flex items-center rounded-md border border-border bg-background p-0.5">
 				<button
@@ -1162,7 +1172,7 @@
 									<div use:setupEditor={{
 										content: fileChange.modifiedContent || '',
 										originalContent: fileChange.originalContent || '',
-										readOnly: false,
+										readOnly: true,
 										filepath: fileChange.filepath,
 										fileChange: fileChange,
 										wrap: appState.prefs.wordWrap

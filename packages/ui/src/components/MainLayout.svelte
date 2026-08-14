@@ -5,7 +5,7 @@
   import * as Tabs from "../components/ui/tabs/index";
   import Icon from "./Icon.svelte";
   
-  import { X } from 'phosphor-svelte';
+  import { X, GitDiffIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from 'codemirror';
 
@@ -19,10 +19,18 @@
   let GitPanel = $state<any>(null);
 
   let draggedId = $state<string | null>(null);
+  let initialTabIds: string[] | null = null;
+  let didDrop = false;
   let editorViews = $state<Record<string, EditorView | undefined>>({});
+
+  $effect(() => {
+    appState.activeEditorView = appState.activeTabId ? editorViews[appState.activeTabId] : undefined;
+  });
 
   function handleDragStart(e: DragEvent, id: string) {
     draggedId = id;
+    didDrop = false;
+    initialTabIds = appState.workspace.tabs.map(t => t.id);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.dropEffect = 'move';
@@ -37,13 +45,26 @@
     const toIdx = tabs.findIndex(t => t.id === targetId);
 
     if (fromIdx !== -1 && toIdx !== -1) {
-      const [movedTab] = tabs.splice(fromIdx, 1);
-      tabs.splice(toIdx, 0, movedTab);
+      appState.workspace.reorderTabs(fromIdx, toIdx);
     }
   }
 
+  function handleDrop() {
+    didDrop = true;
+    initialTabIds = null;
+  }
+
   function handleDragEnd() {
+    if (!didDrop && initialTabIds) {
+      const tabMap = new Map(appState.workspace.tabs.map(t => [t.id, t]));
+      const restored = initialTabIds.map(id => tabMap.get(id)).filter(Boolean) as typeof appState.workspace.tabs;
+      if (restored.length === appState.workspace.tabs.length) {
+        appState.workspace.reorderTabs(restored);
+      }
+    }
     draggedId = null;
+    initialTabIds = null;
+    didDrop = false;
   }
 
   onMount(() => {
@@ -140,11 +161,12 @@
             animate:flip={{ duration: 150 }}
             class="group relative flex items-center h-full shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
             draggable="true"
+            role="presentation"
             ondragstart={(e) => handleDragStart(e, tab.id)}
             ondragover={(e) => e.preventDefault()}
             ondragenter={() => handleDragEnter(tab.id)}
+            ondrop={handleDrop}
             ondragend={handleDragEnd}
-            role="listitem"
           >
             <Tabs.Trigger
               value={tab.id}
@@ -152,7 +174,7 @@
               title={deletedOnDisk ? `${title} (deleted on disk)` : title}
             >
               {#if tab.type === 'diff'}
-                <span class="size-3.5 opacity-90 text-primary font-bold">Δ</span>
+                <GitDiffIcon class="size-3.5 opacity-90 text-primary shrink-0" />
               {:else}
                 <Icon 
                   resource={title}
