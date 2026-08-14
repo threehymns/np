@@ -38,13 +38,27 @@
 			}
 		};
 
+		const handleVisibilityChange = () => {
+			if (typeof document === 'undefined') return;
+			if (document.visibilityState === 'hidden') {
+				appState.workspace.flushSaveOpenFiles();
+			} else if (document.visibilityState === 'visible') {
+				handleFocus();
+			}
+		};
+
+		const handlePageHide = () => {
+			appState.workspace.flushSaveOpenFiles();
+		};
+
 		const handleBeforeUnload = () => {
 			appState.workspace.flushSaveOpenFiles();
 		};
 
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 		window.addEventListener('focus', handleFocus);
-		document.addEventListener('visibilitychange', handleFocus);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('pagehide', handlePageHide);
 		window.addEventListener('beforeunload', handleBeforeUnload);
 
 		// Lazy load secondary UI
@@ -63,7 +77,8 @@
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
 			window.removeEventListener('focus', handleFocus);
-			document.removeEventListener('visibilitychange', handleFocus);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('pagehide', handlePageHide);
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
 	});

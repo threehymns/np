@@ -250,4 +250,40 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 		expect(results.docsA).toContain('Folder A Draft');
 		expect(results.docsA).not.toContain('Folder B Draft');
 	});
+
+	test('should flush open-file persistence on visibilitychange hidden event', async ({ page }) => {
+		const restoredData = await page.evaluate(async () => {
+			const appState = (window as any).appState;
+
+			// 1. Create a draft in an Untitled file
+			const doc = appState.workspace.documents[0];
+			doc.content = 'Auto-persisted via visibilitychange hidden';
+
+			// 2. Mock document.visibilityState to 'hidden' and dispatch visibilitychange
+			Object.defineProperty(document, 'visibilityState', {
+				value: 'hidden',
+				writable: true,
+				configurable: true
+			});
+			document.dispatchEvent(new Event('visibilitychange'));
+
+			// 3. Clear workspace documents and restore
+			appState.workspace.documents = [];
+			await appState.workspace.restoreSession(true);
+
+			// Wait for background draft loading/resolving
+			await new Promise(resolve => setTimeout(resolve, 100));
+
+			const docs = appState.workspace.documents.map((d: any) => ({
+				content: d.content,
+				isModified: d.isModified
+			}));
+
+			return docs;
+		});
+
+		expect(restoredData.length).toBe(1);
+		expect(restoredData[0].content).toBe('Auto-persisted via visibilitychange hidden');
+		expect(restoredData[0].isModified).toBe(true);
+	});
 });
