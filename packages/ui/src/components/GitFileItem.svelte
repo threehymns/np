@@ -35,17 +35,16 @@
 	let fileName = $derived(change.filepath.split('/').pop());
 	let folderPath = $derived(change.filepath.substring(0, change.filepath.lastIndexOf('/')));
 
-	function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff' | 'open') {
+	async function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff' | 'open') {
 		const targets = selectedPaths?.has(change.filepath) 
 			? Array.from(selectedPaths) 
 			: [change.filepath];
 
-		if (action === 'stage') {
-			targets.forEach(path => appState.commands.execute('git.stage', path));
-		} else if (action === 'unstage') {
-			targets.forEach(path => appState.commands.execute('git.unstage', path));
-		} else if (action === 'discard') {
-			targets.forEach(path => appState.commands.execute('git.discard', path));
+		if (action === 'stage' || action === 'unstage' || action === 'discard') {
+			const commandId = `git.${action}`;
+			for (const path of targets) {
+				await appState.commands.execute(commandId, path);
+			}
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', change.filepath);
 		} else if (action === 'open') {
@@ -60,7 +59,12 @@
 			role="button"
 			tabindex="0"
 			{onclick}
-			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onclick?.(e)}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					onclick?.(e);
+				}
+			}}
 			class="group flex items-center justify-between px-2 py-1 rounded transition-colors border border-transparent {dense ? 'py-0.5' : ''} {isSelected || isActive ? 'bg-sidebar-accent' : ''} {isActive ? 'border-border' : ''}"
 		>
 			<div class="flex items-center gap-1.5 min-w-0">
@@ -76,71 +80,72 @@
 				{/if}
 			</div>
 			
-			<div class="flex items-center gap-1.5 shrink-0">
+			<div class="relative flex items-center gap-1.5 shrink-0">
 				{#if change.additions > 0 || change.deletions > 0}
-					<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 group-hover:hidden group-focus:hidden">
+					<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
 						{#if change.additions > 0}<span class="text-primary">+{change.additions}</span>{/if}
 						{#if change.deletions > 0}<span class="text-destructive">-{change.deletions}</span>{/if}
 					</div>
 				{/if}
 				
-				<div class="hidden group-hover:flex items-center gap-1">
-					<Tooltip.Provider delayDuration={400}>
-						{#if isStaged}
-							<Tooltip.Root>
-								<Tooltip.Trigger>
-									{#snippet child({ props })}
-										<button 
-											{...props}
-											type="button"
-											onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', change.filepath); }}
-											class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
-										>
-											<MinusIcon size={10} />
-										</button>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-									Unstage change
-								</Tooltip.Content>
-							</Tooltip.Root>
-						{:else}
-							<Tooltip.Root>
-								<Tooltip.Trigger>
-									{#snippet child({ props })}
-										<button 
-											{...props}
-											type="button"
-											onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', change.filepath); }}
-											class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-destructive transition-opacity"
-										>
-											<ArrowUDownLeftIcon size={10} />
-										</button>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-									Discard changes
-								</Tooltip.Content>
-							</Tooltip.Root>
-							<Tooltip.Root>
-								<Tooltip.Trigger>
-									{#snippet child({ props })}
-										<button 
-											{...props}
-											type="button"
-											onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', change.filepath); }}
-											class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
-										>
-											<PlusIcon size={10} />
-										</button>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-									Stage change
-								</Tooltip.Content>
-							</Tooltip.Root>
-						{/if}
-					</Tooltip.Provider>
+				<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+					{#if isStaged}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button 
+										{...props}
+										type="button"
+										aria-label="Unstage change"
+										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', change.filepath); }}
+										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
+									>
+										<MinusIcon size={10} />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Unstage change
+							</Tooltip.Content>
+						</Tooltip.Root>
+					{:else}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button 
+										{...props}
+										type="button"
+										aria-label="Discard changes"
+										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', change.filepath); }}
+										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-destructive transition-opacity"
+									>
+										<ArrowUDownLeftIcon size={10} />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Discard changes
+							</Tooltip.Content>
+						</Tooltip.Root>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button 
+										{...props}
+										type="button"
+										aria-label="Stage change"
+										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', change.filepath); }}
+										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
+									>
+										<PlusIcon size={10} />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
+								Stage change
+							</Tooltip.Content>
+						</Tooltip.Root>
+					{/if}
 				</div>
 			</div>
 		</div>
