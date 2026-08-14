@@ -226,7 +226,7 @@
 				doc.pendingLineToScroll = null;
 			});
 			// Wait a tick for editor rendering to ensure DOM and dimensions are correct
-			setTimeout(() => {
+			const timer = setTimeout(() => {
 				if (!view) return;
 				try {
 					const lineCount = view.state.doc.lines;
@@ -241,6 +241,9 @@
 					console.error("Failed to scroll/select line", e);
 				}
 			}, 50);
+			return () => {
+				clearTimeout(timer);
+			};
 		}
 	});
 </script>
