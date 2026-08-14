@@ -271,7 +271,9 @@
 		};
 	}
 
-	function getBufferBoundaries(state: EditorState, margin: number = 3, minSize: number = 4): { firstLine: number; lastLine: number } {
+	const DIFF_COLLAPSE_CONFIG = { margin: 3, minSize: 4 } as const;
+
+	function getBufferBoundaries(state: EditorState): { firstLine: number; lastLine: number } {
 		const doc = state.doc;
 		const chunkInfo = getChunks(state);
 		if (!chunkInfo || chunkInfo.chunks.length === 0) {
@@ -286,8 +288,8 @@
 		const firstChunk = chunks[0];
 		const firstChunkFrom = isA ? firstChunk.fromA : firstChunk.fromB;
 		const firstChunkLine = doc.lineAt(Math.min(firstChunkFrom, doc.length)).number;
-		const topCollapseTo = firstChunkLine - 1 - margin;
-		if (topCollapseTo >= minSize) {
+		const topCollapseTo = firstChunkLine - 1 - DIFF_COLLAPSE_CONFIG.margin;
+		if (topCollapseTo >= DIFF_COLLAPSE_CONFIG.minSize) {
 			firstLine = topCollapseTo + 1;
 		}
 
@@ -296,9 +298,9 @@
 		const lastChunk = chunks[chunks.length - 1];
 		const lastChunkTo = Math.min(doc.length, isA ? lastChunk.toA : lastChunk.toB);
 		const lastChunkLine = doc.lineAt(lastChunkTo).number;
-		const bottomCollapseFrom = lastChunkLine + margin;
+		const bottomCollapseFrom = lastChunkLine + DIFF_COLLAPSE_CONFIG.margin;
 		const bottomCollapsedLines = doc.lines - bottomCollapseFrom + 1;
-		if (bottomCollapsedLines >= minSize) {
+		if (bottomCollapsedLines >= DIFF_COLLAPSE_CONFIG.minSize) {
 			lastLine = bottomCollapseFrom - 1;
 		}
 
@@ -373,9 +375,9 @@
 		}
 	}
 
-	function focusEditorFirstLine(editor: EditorView) {
-		const { firstLine } = getBufferBoundaries(editor.state);
-		const line = editor.state.doc.line(Math.min(Math.max(1, firstLine), editor.state.doc.lines));
+	function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
+		const clampedLine = Math.min(Math.max(1, targetLineNum), editor.state.doc.lines);
+		const line = editor.state.doc.line(clampedLine);
 		editor.dispatch({
 			selection: { anchor: line.from, head: line.from },
 			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
@@ -384,15 +386,14 @@
 		setTimeout(() => editor.focus(), 0);
 	}
 
+	function focusEditorFirstLine(editor: EditorView) {
+		const { firstLine } = getBufferBoundaries(editor.state);
+		focusEditorAtLine(editor, firstLine);
+	}
+
 	function focusEditorLastLine(editor: EditorView) {
 		const { lastLine } = getBufferBoundaries(editor.state);
-		const line = editor.state.doc.line(Math.min(Math.max(1, lastLine), editor.state.doc.lines));
-		editor.dispatch({
-			selection: { anchor: line.from, head: line.from },
-			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
-		});
-		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-		setTimeout(() => editor.focus(), 0);
+		focusEditorAtLine(editor, lastLine);
 	}
 
 	async function navigateFromFileEditor(filepath: string, direction: 'down' | 'up', side: 'a' | 'b' = 'b') {
@@ -462,7 +463,7 @@
 					EditorState.readOnly.of(currentOptions.readOnly),
 					unifiedMergeView({
 						original: currentOptions.originalContent,
-						collapseUnchanged: { margin: 3, minSize: 4 }
+						collapseUnchanged: DIFF_COLLAPSE_CONFIG
 					}),
 					createHunkWidgetExtension(currentOptions.fileChange, appState),
 					...langExtensions,
@@ -573,7 +574,7 @@
 				},
 				parent: node,
 				orientation: "a-b",
-				collapseUnchanged: { margin: 3, minSize: 4 }
+				collapseUnchanged: DIFF_COLLAPSE_CONFIG
 			});
 
 			const editors = node.querySelectorAll('.cm-mergeViewEditor');
