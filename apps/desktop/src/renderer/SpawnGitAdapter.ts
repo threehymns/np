@@ -1,5 +1,5 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
-import { resolveDiffDetail } from '@np/core/project/vcs';
+import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 
 export class SpawnGitAdapter implements VCSAdapter {
 	private renamedOrigPaths = new Map<string, string>();
@@ -256,9 +256,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 					try {
 						const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
 						const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-						const lines = content.split('\n');
-						if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-						additions = lines.length;
+						additions = countLines(content);
 					} catch (e) {}
 					changes.push({
 						filepath,
@@ -299,9 +297,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
-		// renamedOrigPaths is populated during getChanges() from porcelain rename entries,
-		// so the HEAD blob for a renamed file is resolved from its previous path.
-		const origPath = this.renamedOrigPaths.get(filepath) || filepath;
+		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
+		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
+		let origPath = this.renamedOrigPaths.get(filepath);
+		if (!origPath) {
+			try {
+				const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '--', filepath]);
+				if (statusRes.code === 0 && statusRes.stdout) {
+					const entries = this.parseStatusEntries(statusRes.stdout);
+					const match = entries.find(e => e.filepath === filepath && e.origPath);
+					if (match?.origPath) {
+						origPath = match.origPath;
+						this.renamedOrigPaths.set(filepath, origPath);
+					}
+				}
+			} catch (e) {}
+		}
+		origPath = origPath || filepath;
 		const { headContent, indexContent, stagedContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		let worktreeContent = '';

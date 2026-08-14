@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail } from '@np/core';
-	import { fileDiffFromChange } from '@np/core';
+	import { fileDiffFromChange, diffCacheKey } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -756,12 +756,6 @@
 	let loadedDiffs = $state<Record<string, FileDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
-	function diffCacheKey(fileChange: GitChange | { filepath: string; staged?: boolean; combined?: boolean }): string {
-		if (fileChange.combined) return `${fileChange.filepath}:combined`;
-		if (fileChange.staged !== undefined) return `${fileChange.filepath}:${fileChange.staged ? 'staged' : 'unstaged'}`;
-		return fileChange.filepath;
-	}
-
 	function resolveFileDiff(fileChange: GitChange): FileDiffDetail | null {
 		const key = diffCacheKey(fileChange);
 		if (loadedDiffs[key]) {
@@ -789,9 +783,23 @@
 
 	let lastChangesRef: GitChange[] | null = null;
 	$effect(() => {
-		if (repo?.changes !== lastChangesRef) {
-			lastChangesRef = repo?.changes ?? null;
-			loadedDiffs = {};
+		const currentChanges = repo?.changes ?? null;
+		if (currentChanges !== lastChangesRef) {
+			// When repo changes reference updates, prune cached entries that are no longer active
+			// instead of wiping all loaded diffs unconditionally on rapid status polls.
+			if (currentChanges && lastChangesRef) {
+				const currentKeys = new Set(currentChanges.map(c => diffCacheKey(c)));
+				const nextLoaded: Record<string, FileDiffDetail> = {};
+				for (const [k, v] of Object.entries(loadedDiffs)) {
+					if (currentKeys.has(k)) {
+						nextLoaded[k] = v;
+					}
+				}
+				loadedDiffs = nextLoaded;
+			} else {
+				loadedDiffs = {};
+			}
+			lastChangesRef = currentChanges;
 			loadingDiffs = {};
 		}
 	});

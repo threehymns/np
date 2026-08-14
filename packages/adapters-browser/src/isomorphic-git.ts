@@ -1,7 +1,7 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
-import { resolveDiffDetail } from '@np/core/project/vcs';
+import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 
@@ -609,9 +609,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						try {
 							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
 							const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-							const lines = content.split('\n');
-							if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-							additions = lines.length;
+							additions = countLines(content);
 						} catch (e) {}
 					}
 
