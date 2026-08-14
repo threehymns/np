@@ -1,14 +1,13 @@
 import { describe, it, expect, mock } from "bun:test";
 import { applyHunkAction, type HunkRange } from "./commands.svelte";
-import type { GitChange } from "./project/vcs";
+import type { GitChange, VCSAdapter } from "./project/vcs";
 
-describe("applyHunkAction error handling", () => {
-	it("handles missing adapter.updateIndexContent on stage via showAlert instead of throwing", async () => {
-		const alerts: string[] = [];
-		const appState: any = {
+function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] = []) {
+	return {
+		appState: {
 			workspace: {
 				repository: {
-					adapter: {},
+					adapter,
 					isBusy: false,
 					refresh: mock(async () => {})
 				}
@@ -18,18 +17,29 @@ describe("applyHunkAction error handling", () => {
 					alerts.push(msg);
 				})
 			}
-		};
+		} as any,
+		alerts
+	};
+}
 
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
-			originalContent: "a",
-			modifiedContent: "b"
-		};
+function createTestChange(overrides: Partial<GitChange> = {}): GitChange {
+	return {
+		filepath: "test.txt",
+		status: "M",
+		additions: 1,
+		deletions: 0,
+		diff: "",
+		staged: false,
+		originalContent: "a",
+		modifiedContent: "b",
+		...overrides
+	};
+}
+
+describe("applyHunkAction error handling", () => {
+	it("handles missing adapter.updateIndexContent on stage via showAlert instead of throwing", async () => {
+		const { appState, alerts } = createMockAppState();
+		const change = createTestChange();
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
@@ -39,32 +49,8 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("handles missing adapter.updateIndexContent on unstage via showAlert instead of throwing", async () => {
-		const alerts: string[] = [];
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {},
-					isBusy: false,
-					refresh: mock(async () => {})
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: true,
-			originalContent: "a",
-			modifiedContent: "b"
-		};
+		const { appState, alerts } = createMockAppState();
+		const change = createTestChange({ staged: true });
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "unstage")).resolves.toBeUndefined();
@@ -74,34 +60,10 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("handles missing originalContent via showAlert instead of throwing", async () => {
-		const alerts: string[] = [];
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateIndexContent: mock(async () => {})
-					},
-					isBusy: false,
-					refresh: mock(async () => {})
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
-			originalContent: undefined,
-			modifiedContent: "b"
-		};
+		const { appState, alerts } = createMockAppState({
+			updateIndexContent: mock(async () => {})
+		});
+		const change = createTestChange({ originalContent: undefined });
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
@@ -111,34 +73,10 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("handles missing modifiedContent via showAlert instead of throwing", async () => {
-		const alerts: string[] = [];
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateIndexContent: mock(async () => {})
-					},
-					isBusy: false,
-					refresh: mock(async () => {})
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
-			originalContent: "a",
-			modifiedContent: undefined
-		};
+		const { appState, alerts } = createMockAppState({
+			updateIndexContent: mock(async () => {})
+		});
+		const change = createTestChange({ modifiedContent: undefined });
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
@@ -148,32 +86,8 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("handles missing adapter.updateFileContent on discard via showAlert", async () => {
-		const alerts: string[] = [];
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {},
-					isBusy: false,
-					refresh: mock(async () => {})
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
-			originalContent: "a",
-			modifiedContent: "b"
-		};
+		const { appState, alerts } = createMockAppState();
+		const change = createTestChange();
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "discard")).resolves.toBeUndefined();
@@ -183,38 +97,18 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("handles missing adapter.updateIndexContent on staged hunk discard via showAlert", async () => {
-		const alerts: string[] = [];
 		let updateFileCalled = false;
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateFileContent: mock(async () => {
-							updateFileCalled = true;
-						})
-					},
-					isBusy: false,
-					refresh: mock(async () => {})
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
+		const { appState, alerts } = createMockAppState({
+			updateFileContent: mock(async () => {
+				updateFileCalled = true;
+			})
+		});
+		const change = createTestChange({
 			staged: true,
 			originalContent: "line1\n",
 			modifiedContent: "line1\nline2\n",
 			stagedContent: "line1\nline2\n"
-		};
+		});
 		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
 
 		await expect(applyHunkAction(appState, change, hunk, "discard")).resolves.toBeUndefined();
@@ -227,89 +121,45 @@ describe("applyHunkAction error handling", () => {
 	it("successfully applies unstaged hunk discard when adapter only supports updateFileContent", async () => {
 		let updatedWorktreeFile = "";
 		let updatedWorktreeContent = "";
-		let refreshed = false;
-
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateFileContent: mock(async (file: string, content: string) => {
-							updatedWorktreeFile = file;
-							updatedWorktreeContent = content;
-						})
-					},
-					isBusy: false,
-					refresh: mock(async () => {
-						refreshed = true;
-					})
-				}
-			},
-			dialogService: {
-				alert: mock(async () => {})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
+		const { appState } = createMockAppState({
+			updateFileContent: mock(async (file: string, content: string) => {
+				updatedWorktreeFile = file;
+				updatedWorktreeContent = content;
+			})
+		});
+		const change = createTestChange({
 			originalContent: "line1\n",
 			modifiedContent: "line1\nline2\n",
 			stagedContent: "line1\n"
-		};
+		});
 		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
 
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line1\n");
-		expect(refreshed).toBe(true);
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
 	it("successfully applies hunk stage action when adapter and content are valid", async () => {
 		let updatedFile = "";
 		let updatedContent = "";
-		let refreshed = false;
-
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateIndexContent: mock(async (file: string, content: string) => {
-							updatedFile = file;
-							updatedContent = content;
-						})
-					},
-					isBusy: false,
-					refresh: mock(async () => {
-						refreshed = true;
-					})
-				}
-			},
-			dialogService: {
-				alert: mock(async () => {})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
-			staged: false,
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (file: string, content: string) => {
+				updatedFile = file;
+				updatedContent = content;
+			})
+		});
+		const change = createTestChange({
 			originalContent: "line1\n",
 			modifiedContent: "line1\nline2\n"
-		};
+		});
 		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
 
 		await applyHunkAction(appState, change, hunk, "stage");
 		expect(updatedFile).toBe("test.txt");
 		expect(updatedContent).toBe("line1\nline2\n");
-		expect(refreshed).toBe(true);
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
@@ -318,43 +168,22 @@ describe("applyHunkAction error handling", () => {
 		let updatedIndexContent = "";
 		let updatedWorktreeFile = "";
 		let updatedWorktreeContent = "";
-		let refreshed = false;
-
-		const appState: any = {
-			workspace: {
-				repository: {
-					adapter: {
-						updateIndexContent: mock(async (file: string, content: string) => {
-							updatedIndexFile = file;
-							updatedIndexContent = content;
-						}),
-						updateFileContent: mock(async (file: string, content: string) => {
-							updatedWorktreeFile = file;
-							updatedWorktreeContent = content;
-						})
-					},
-					isBusy: false,
-					refresh: mock(async () => {
-						refreshed = true;
-					})
-				}
-			},
-			dialogService: {
-				alert: mock(async () => {})
-			}
-		};
-
-		const change: GitChange = {
-			filepath: "test.txt",
-			status: "M",
-			additions: 1,
-			deletions: 0,
-			diff: "",
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (file: string, content: string) => {
+				updatedIndexFile = file;
+				updatedIndexContent = content;
+			}),
+			updateFileContent: mock(async (file: string, content: string) => {
+				updatedWorktreeFile = file;
+				updatedWorktreeContent = content;
+			})
+		});
+		const change = createTestChange({
 			staged: true,
 			originalContent: "line1\n",
 			modifiedContent: "line1\nline2\n",
 			stagedContent: "line1\nline2\n"
-		};
+		});
 		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
 
 		await applyHunkAction(appState, change, hunk, "discard");
@@ -362,7 +191,7 @@ describe("applyHunkAction error handling", () => {
 		expect(updatedIndexContent).toBe("line1\n");
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line1\n");
-		expect(refreshed).toBe(true);
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 });
