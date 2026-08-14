@@ -275,23 +275,7 @@
 		const sel = view.state.selection.main;
 		const doc = view.state.doc;
 		const curLine = doc.lineAt(sel.head).number;
-
-		const ranges = view.visibleRanges;
-		if (!ranges || ranges.length === 0) {
-			return direction === 'up' ? curLine <= 1 : curLine >= doc.lines;
-		}
-
-		if (direction === 'up') {
-			const firstPos = ranges[0].from;
-			const samplePos = Math.min(firstPos + 1, doc.length);
-			const firstLine = doc.lineAt(samplePos).number;
-			return curLine <= firstLine;
-		} else {
-			const lastPos = ranges[ranges.length - 1].to;
-			const samplePos = Math.max(0, lastPos > 0 ? lastPos - 1 : 0);
-			const lastLine = doc.lineAt(samplePos).number;
-			return curLine >= lastLine;
-		}
+		return direction === 'up' ? curLine <= 1 : curLine >= doc.lines;
 	}
 
 	async function getOrWaitEditor(filepath: string, mode: 'inline' | 'split', preferSide: 'a' | 'b' = 'b'): Promise<EditorView | undefined> {
