@@ -174,37 +174,52 @@
 		return ViewPlugin.fromClass(
 			class {
 				decorations: DecorationSet;
+				cachedHunks: HunkCoordinates[] = [];
+				cachedUnstagedChunks: readonly Chunk[] = [];
+				cachedModText: Text = Text.empty;
+				cachedOrigContent: string = '';
+				cachedStagedContent: string = '';
 
 				constructor(view: EditorView) {
+					this.computeDiff(view);
 					this.decorations = this.buildDecorations(view);
+				}
+
+				computeDiff(view: EditorView) {
+					const origContent = change.originalContent || '';
+					const modText = view.state.doc;
+					const stagedContent = change.stagedContent ?? (change.staged ? modText.toString() : origContent);
+
+					const origText = Text.of(origContent.split(/\r?\n/));
+					const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+					this.cachedHunks = getUnifiedHunks(origText, modText);
+					this.cachedUnstagedChunks = Chunk.build(stagedText, modText);
+					this.cachedModText = modText;
+					this.cachedOrigContent = origContent;
+					this.cachedStagedContent = stagedContent;
 				}
 
 				update(update: ViewUpdate) {
 					if (update.docChanged) {
+						this.computeDiff(update.view);
+						this.decorations = this.buildDecorations(update.view);
+					} else if (update.viewportChanged) {
 						this.decorations = this.buildDecorations(update.view);
 					}
 				}
 
 				buildDecorations(view: EditorView): DecorationSet {
 					const builder = new RangeSetBuilder<Decoration>();
-					const origContent = change.originalContent || '';
-					const modContent = view.state.doc.toString();
-					const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+					const modText = this.cachedModText;
 
-					const origText = Text.of(origContent.split(/\r?\n/));
-					const modText = Text.of(modContent.split(/\r?\n/));
-					const stagedText = Text.of(stagedContent.split(/\r?\n/));
-
-					const hunks = getUnifiedHunks(origText, modText);
-					const unstagedChunks = Chunk.build(stagedText, modText);
-
-					hunks.forEach((hunk, hunkIdx) => {
+					this.cachedHunks.forEach((hunk, hunkIdx) => {
 						let isHunkStaged = change.staged;
-						if (change.stagedContent !== undefined || (!change.staged && origContent !== stagedContent)) {
+						if (change.stagedContent !== undefined || (!change.staged && this.cachedOrigContent !== this.cachedStagedContent)) {
 							const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
 							const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
 
-							const overlapsUnstaged = unstagedChunks.some(uc => {
+							const overlapsUnstaged = this.cachedUnstagedChunks.some(uc => {
 								const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
 								const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
 								if (hunk.fromB === hunk.toB && uc.fromB === uc.toB) {
