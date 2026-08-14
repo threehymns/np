@@ -726,7 +726,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 			return commits.map(c => {
 				const author = `${c.commit.author.name} <${c.commit.author.email}>`;
-				const date = new Date(c.commit.author.timestamp * 1000).toISOString().split('T')[0];
+				const d = new Date(c.commit.author.timestamp * 1000);
+				const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 				return {
 					hash: c.oid.substring(0, 7),
 					author,
