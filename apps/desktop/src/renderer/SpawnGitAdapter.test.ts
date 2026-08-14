@@ -29,7 +29,7 @@ describe('SpawnGitAdapter', () => {
 		};
 	});
 
-	it('passes -uall to git status and does not invoke readFile on untracked directories', async () => {
+	it('passes -uall to git status and does not invoke readFile or git show on getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
@@ -57,17 +57,18 @@ describe('SpawnGitAdapter', () => {
 		expect(statusCall).toBeDefined();
 		expect(statusCall![1]).toContain('-uall');
 
-		// Should not have called readFile for the directory '.agents/'
-		const readFilePaths = mockReadFile.mock.calls.map((call: [string]) => call[0]);
-		expect(readFilePaths).not.toContain('/test/repo/.agents/');
-		expect(readFilePaths).toContain('/test/repo/file.txt');
+		// Should not have called readFile or git show at all during getChanges
+		expect(mockReadFile).not.toHaveBeenCalled();
+		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		expect(showCalls.length).toBe(0);
 
 		// Only file.txt should be in changes
 		expect(changes.length).toBe(1);
 		expect(changes[0].filepath).toBe('file.txt');
+		expect(changes[0].status).toBe('U');
 	});
 
-	it('does not invoke readFile on deleted files', async () => {
+	it('does not invoke readFile or git show on deleted files during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
@@ -89,19 +90,19 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const changes = await adapter.getChanges();
 
-		// Should not call readFile for deleted files
+		// Should not call readFile or git show for deleted files during getChanges
 		expect(mockReadFile).not.toHaveBeenCalled();
+		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		expect(showCalls.length).toBe(0);
 		expect(changes.length).toBe(2);
 		const unstagedDeleted = changes.find(c => c.filepath === 'deleted.txt');
 		expect(unstagedDeleted?.status).toBe('D');
-		expect(unstagedDeleted?.modifiedContent).toBe('');
 
 		const stagedDeleted = changes.find(c => c.filepath === 'staged_deleted.txt');
 		expect(stagedDeleted?.status).toBe('D');
-		expect(stagedDeleted?.modifiedContent).toBe('');
 	});
 
-	it('uses bulk diff numstat and does not invoke per-file diff commands', async () => {
+	it('uses bulk diff numstat and does not invoke per-file diff or show commands during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
@@ -134,12 +135,15 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const changes = await adapter.getChanges();
 
-		// Check that no per-file diff commands were executed
+		// Check that no per-file diff or show commands were executed
 		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
 			const args = call[1];
 			return args[0] === 'diff' && args.includes('--') && !args.includes('--numstat');
 		});
 		expect(perFileDiffCalls.length).toBe(0);
+		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		expect(showCalls.length).toBe(0);
+		expect(mockReadFile).not.toHaveBeenCalled();
 
 		// Verify additions and deletions match the bulk numstat
 		const stagedChange = changes.find(c => c.filepath === 'staged.ts' && c.staged);
@@ -160,4 +164,91 @@ describe('SpawnGitAdapter', () => {
 		expect(bothUnstaged?.additions).toBe(4);
 		expect(bothUnstaged?.deletions).toBe(0);
 	});
+
+	it('loads on-demand diff content via getFileDiff for staged changes', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === 'HEAD:staged.ts') {
+				return { code: 0, stdout: 'head content', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':staged.ts') {
+				return { code: 0, stdout: 'staged content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('staged.ts', { staged: true });
+
+		expect(diff.originalContent).toBe('head content');
+		expect(diff.modifiedContent).toBe('staged content');
+		expect(diff.stagedContent).toBe('staged content');
+		expect(mockReadFile).not.toHaveBeenCalled();
+	});
+
+	it('loads on-demand diff content via getFileDiff for unstaged changes', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === ':unstaged.ts') {
+				return { code: 0, stdout: 'staged content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/unstaged.ts') {
+				return 'worktree content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('unstaged.ts', { staged: false });
+
+		expect(diff.originalContent).toBe('staged content');
+		expect(diff.modifiedContent).toBe('worktree content');
+		expect(diff.stagedContent).toBe('staged content');
+		expect(mockReadFile).toHaveBeenCalledWith('/test/repo/unstaged.ts');
+	});
+
+	it('loads on-demand diff content via getFileDiff for untracked files', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/untracked.ts') {
+				return 'new file content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('untracked.ts');
+
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('new file content');
+		expect(mockReadFile).toHaveBeenCalledWith('/test/repo/untracked.ts');
+	});
+
+	it('loads on-demand diff content via getFileDiff for deleted files without disk reads', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === 'HEAD:deleted.ts') {
+				return { code: 0, stdout: 'deleted content from head', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':deleted.ts') {
+				return { code: 0, stdout: 'deleted content from head', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async () => {
+			throw new Error('ENOENT: no such file');
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('deleted.ts', { staged: false });
+
+		expect(diff.originalContent).toBe('deleted content from head');
+		expect(diff.modifiedContent).toBe('');
+	});
 });
+
