@@ -11,11 +11,23 @@ import { iconRegistry } from './editor/icons.svelte';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
+export interface DialogService {
+	alert?(message: string): Promise<void> | void;
+	confirm?(message: string): Promise<boolean> | boolean;
+}
+
+export interface ClipboardService {
+	readText?(): Promise<string>;
+	writeText?(text: string): Promise<void>;
+}
+
 export interface AppStateOptions {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
 	persistence?: SessionPersistence;
 	prefsStorage?: PreferenceStorage;
+	dialogService?: DialogService;
+	clipboardService?: ClipboardService;
 }
 
 export class AppState {
@@ -28,6 +40,8 @@ export class AppState {
 	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
 	settingsOpen = $state(false);
+	dialogService?: DialogService;
+	clipboardService?: ClipboardService;
 	
 	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
 	activeEditorView = $state<any>(undefined);
@@ -35,6 +49,8 @@ export class AppState {
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
 		this.prefs = new Preferences(options.prefsStorage);
+		this.dialogService = options.dialogService;
+		this.clipboardService = options.clipboardService;
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
 		registerCoreCommands(this);
