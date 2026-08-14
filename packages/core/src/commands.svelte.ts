@@ -687,58 +687,58 @@ export async function applyHunkAction(
 	const repo = appState.workspace.repository;
 	if (!repo) return;
 
-	if (action === 'stage' || action === 'unstage') {
-		if (!repo.adapter.updateIndexContent) {
-			throw new Error(`VCS adapter does not support updating index for hunk ${action}`);
-		}
-	} else if (action === 'discard') {
-		if (!repo.adapter.updateFileContent) {
-			throw new Error('VCS adapter does not support updating file content for hunk discard');
-		}
-	}
-
-	if (typeof change.originalContent !== 'string' || typeof change.modifiedContent !== 'string') {
-		throw new Error(`Cannot perform hunk ${action}: missing diff content for ${change.filepath}`);
-	}
-
-	const origContent = change.originalContent;
-	const modContent = change.modifiedContent;
-	const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
-
-	const origText = Text.of(origContent.split(/\r?\n/));
-	const modText = Text.of(modContent.split(/\r?\n/));
-	const stagedText = Text.of(stagedContent.split(/\r?\n/));
-
-	const mapPos = (posA: number, chunks: readonly Chunk[]) => {
-		let lastToA = 0;
-		let lastToB = 0;
-		for (const c of chunks) {
-			if (posA <= c.fromA) {
-				return lastToB + (posA - lastToA);
-			}
-			if (posA <= c.toA) {
-				return c.fromB;
-			}
-			lastToA = c.toA;
-			lastToB = c.toB;
-		}
-		return lastToB + (posA - lastToA);
-	};
-
-	const mapRange = (posFrom: number, posTo: number, textA: Text, textB: Text) => {
-		const chunks = Chunk.build(textA, textB);
-		return {
-			from: mapPos(posFrom, chunks),
-			to: mapPos(posTo, chunks)
-		};
-	};
-
-	const spliceText = (target: Text, from: number, to: number, replacement: string) => {
-		return target.sliceString(0, from) + replacement + target.sliceString(to);
-	};
-
 	repo.isBusy = true;
 	try {
+		if (action === 'stage' || action === 'unstage') {
+			if (!repo.adapter.updateIndexContent) {
+				throw new Error(`VCS adapter does not support updating index for hunk ${action}`);
+			}
+		} else if (action === 'discard') {
+			if (!repo.adapter.updateFileContent) {
+				throw new Error('VCS adapter does not support updating file content for hunk discard');
+			}
+		}
+
+		if (typeof change.originalContent !== 'string' || typeof change.modifiedContent !== 'string') {
+			throw new Error(`Cannot perform hunk ${action}: missing diff content for ${change.filepath}`);
+		}
+
+		const origContent = change.originalContent;
+		const modContent = change.modifiedContent;
+		const stagedContent = change.stagedContent ?? (change.staged ? modContent : origContent);
+
+		const origText = Text.of(origContent.split(/\r?\n/));
+		const modText = Text.of(modContent.split(/\r?\n/));
+		const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+		const mapPos = (posA: number, chunks: readonly Chunk[]) => {
+			let lastToA = 0;
+			let lastToB = 0;
+			for (const c of chunks) {
+				if (posA <= c.fromA) {
+					return lastToB + (posA - lastToA);
+				}
+				if (posA <= c.toA) {
+					return c.fromB;
+				}
+				lastToA = c.toA;
+				lastToB = c.toB;
+			}
+			return lastToB + (posA - lastToA);
+		};
+
+		const mapRange = (posFrom: number, posTo: number, textA: Text, textB: Text) => {
+			const chunks = Chunk.build(textA, textB);
+			return {
+				from: mapPos(posFrom, chunks),
+				to: mapPos(posTo, chunks)
+			};
+		};
+
+		const spliceText = (target: Text, from: number, to: number, replacement: string) => {
+			return target.sliceString(0, from) + replacement + target.sliceString(to);
+		};
+
 		if (action === 'stage') {
 			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
 			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB));
