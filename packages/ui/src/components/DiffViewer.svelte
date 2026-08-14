@@ -427,6 +427,17 @@
 		}
 	}
 
+	function hasGitChangeChanged(prev: GitChange, next: GitChange): boolean {
+		return (
+			prev !== next ||
+			prev.staged !== next.staged ||
+			prev.stagedContent !== next.stagedContent ||
+			prev.originalContent !== next.originalContent ||
+			prev.modifiedContent !== next.modifiedContent ||
+			prev.diff !== next.diff
+		);
+	}
+
 	function registerEditorView(filepath: string, entry: { inline?: EditorView; split?: MergeView }) {
 		const current = editorViews.get(filepath) || {};
 		const updated = { ...current, ...entry };
@@ -455,6 +466,8 @@
 		let currentOptions = options;
 		let disposed = false;
 		const wrapCompartment = new Compartment();
+		const diffCompartment = new Compartment();
+		const hunkCompartment = new Compartment();
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -463,11 +476,15 @@
 				doc: currentOptions.content,
 				extensions: [
 					EditorState.readOnly.of(currentOptions.readOnly),
-					unifiedMergeView({
-						original: currentOptions.originalContent,
-						collapseUnchanged: DIFF_COLLAPSE_CONFIG
-					}),
-					createHunkWidgetExtension(currentOptions.fileChange, appState),
+					diffCompartment.of(
+						unifiedMergeView({
+							original: currentOptions.originalContent,
+							collapseUnchanged: DIFF_COLLAPSE_CONFIG
+						})
+					),
+					hunkCompartment.of(
+						createHunkWidgetExtension(currentOptions.fileChange, appState)
+					),
 					...langExtensions,
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
@@ -493,20 +510,44 @@
 				currentOptions = newOptions;
 				if (view) {
 					const currentDoc = view.state.doc.toString();
-					if (currentOptions.content !== currentDoc) {
-						view.dispatch({
-							changes: {
-								from: 0,
-								to: view.state.doc.length,
-								insert: currentOptions.content
-							}
-						});
-					}
+					const hasDocChange = currentOptions.content !== currentDoc;
+					const effects = [];
+
 					if (currentOptions.wrap !== oldOptions.wrap) {
-						view.dispatch({
-							effects: wrapCompartment.reconfigure(
+						effects.push(
+							wrapCompartment.reconfigure(
 								currentOptions.wrap ? EditorView.lineWrapping : []
 							)
+						);
+					}
+					if (currentOptions.originalContent !== oldOptions.originalContent) {
+						effects.push(
+							diffCompartment.reconfigure(
+								unifiedMergeView({
+									original: currentOptions.originalContent,
+									collapseUnchanged: DIFF_COLLAPSE_CONFIG
+								})
+							)
+						);
+					}
+					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
+						effects.push(
+							hunkCompartment.reconfigure(
+								createHunkWidgetExtension(currentOptions.fileChange, appState)
+							)
+						);
+					}
+
+					if (hasDocChange || effects.length > 0) {
+						view.dispatch({
+							changes: hasDocChange
+								? {
+										from: 0,
+										to: view.state.doc.length,
+										insert: currentOptions.content
+								  }
+								: undefined,
+							effects: effects.length > 0 ? effects : undefined
 						});
 					}
 				}
@@ -542,6 +583,7 @@
 		let disposed = false;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
+		const hunkCompartmentB = new Compartment();
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -563,7 +605,9 @@
 					doc: currentOptions.rightContent,
 					extensions: [
 						EditorState.readOnly.of(true),
-						createHunkWidgetExtension(currentOptions.fileChange, appState),
+						hunkCompartmentB.of(
+							createHunkWidgetExtension(currentOptions.fileChange, appState)
+						),
 						...langExtensions,
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
@@ -633,35 +677,55 @@
 				currentOptions = newOptions;
 				if (view) {
 					const leftDoc = view.a.state.doc.toString();
-					if (currentOptions.leftContent !== leftDoc) {
-						view.a.dispatch({
-							changes: {
-								from: 0,
-								to: view.a.state.doc.length,
-								insert: currentOptions.leftContent
-							}
-						});
-					}
-					const rightDoc = view.b.state.doc.toString();
-					if (currentOptions.rightContent !== rightDoc) {
-						view.b.dispatch({
-							changes: {
-								from: 0,
-								to: view.b.state.doc.length,
-								insert: currentOptions.rightContent
-							}
-						});
-					}
+					const hasLeftDocChange = currentOptions.leftContent !== leftDoc;
+					const effectsA = [];
 					if (currentOptions.wrap !== oldOptions.wrap) {
+						effectsA.push(
+							wrapCompartmentA.reconfigure(
+								currentOptions.wrap ? EditorView.lineWrapping : []
+							)
+						);
+					}
+					if (hasLeftDocChange || effectsA.length > 0) {
 						view.a.dispatch({
-							effects: wrapCompartmentA.reconfigure(
-								currentOptions.wrap ? EditorView.lineWrapping : []
-							)
+							changes: hasLeftDocChange
+								? {
+										from: 0,
+										to: view.a.state.doc.length,
+										insert: currentOptions.leftContent
+								  }
+								: undefined,
+							effects: effectsA.length > 0 ? effectsA : undefined
 						});
-						view.b.dispatch({
-							effects: wrapCompartmentB.reconfigure(
+					}
+
+					const rightDoc = view.b.state.doc.toString();
+					const hasRightDocChange = currentOptions.rightContent !== rightDoc;
+					const effectsB = [];
+					if (currentOptions.wrap !== oldOptions.wrap) {
+						effectsB.push(
+							wrapCompartmentB.reconfigure(
 								currentOptions.wrap ? EditorView.lineWrapping : []
 							)
+						);
+					}
+					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
+						effectsB.push(
+							hunkCompartmentB.reconfigure(
+								createHunkWidgetExtension(currentOptions.fileChange, appState)
+							)
+						);
+					}
+					if (hasRightDocChange || effectsB.length > 0) {
+						view.b.dispatch({
+							changes: hasRightDocChange
+								? {
+										from: 0,
+										to: view.b.state.doc.length,
+										insert: currentOptions.rightContent
+								  }
+								: undefined,
+							effects: effectsB.length > 0 ? effectsB : undefined
 						});
 					}
 				}
