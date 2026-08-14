@@ -21,18 +21,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getStatus(): Promise<VCSStatus> {
-		const res = await this.runGit(['status', '--porcelain']);
+		const res = await this.runGit(['status', '--porcelain=v1', '-z']);
 		if (res.code !== 0) {
 			return { isDirty: false, uncommittedFiles: [] };
 		}
-		const lines = res.stdout.split('\n').filter(Boolean);
-		const uncommittedFiles = lines.map(line => {
-			let file = line.substring(3).trim();
-			if (file.startsWith('"') && file.endsWith('"')) {
-				file = file.substring(1, file.length - 1);
+		const uncommittedFiles: string[] = [];
+		const entries = res.stdout.split('\0');
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (!entry || entry.length < 3) continue;
+			const x = entry[0];
+			const y = entry[1];
+			const filepath = entry.substring(3);
+			uncommittedFiles.push(filepath);
+			if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+				i++; // skip origPath
 			}
-			return file;
-		});
+		}
 		return {
 			isDirty: uncommittedFiles.length > 0,
 			uncommittedFiles
@@ -83,18 +88,27 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async stageFile(filepath: string): Promise<void> {
-		await this.runGit(['add', '--', filepath]);
+		const res = await this.runGit(['add', '--', filepath]);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || `Failed to stage file: ${filepath}`);
+		}
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
-		await this.runGit(['reset', 'HEAD', '--', filepath]);
+		const res = await this.runGit(['reset', 'HEAD', '--', filepath]);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || `Failed to unstage file: ${filepath}`);
+		}
 	}
 
 	async discardChanges(filepath: string): Promise<void> {
 		const res = await this.runGit(['checkout', 'HEAD', '--', filepath]);
 		if (res.code !== 0) {
 			await this.runGit(['reset', 'HEAD', '--', filepath]);
-			await this.runGit(['clean', '-fd', '--', filepath]);
+			const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
+			if (cleanRes.code !== 0) {
+				throw new Error(cleanRes.stderr || res.stderr || `Failed to discard changes for ${filepath}`);
+			}
 		}
 	}
 
@@ -123,7 +137,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async createBranch(branchName: string): Promise<void> {
-		await this.runGit(['checkout', '-b', branchName]);
+		const res = await this.runGit(['checkout', '-b', branchName]);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || `Failed to create branch ${branchName}`);
+		}
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
@@ -134,6 +151,32 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const message = rest.join('|');
 			return { hash, author, date, message, files: [] };
 		});
+	}
+
+	private parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
+		const stats = new Map<string, { additions: number; deletions: number }>();
+		if (!output) return stats;
+		const lines = output.split('\n').filter(Boolean);
+		for (const line of lines) {
+			const parts = line.split('\t');
+			if (parts.length >= 3) {
+				const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
+				const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
+				const rawPath = parts.slice(2).join('\t').trim();
+				let targetPath = rawPath;
+				if (targetPath.includes(' => ')) {
+					if (targetPath.includes('{') && targetPath.includes('}')) {
+						targetPath = targetPath.replace(/\{.*? => (.*?)\}/, '$1');
+					} else {
+						const arrowIdx = targetPath.indexOf(' => ');
+						targetPath = targetPath.substring(arrowIdx + 4);
+					}
+				}
+				stats.set(targetPath, { additions, deletions });
+				stats.set(rawPath, { additions, deletions });
+			}
+		}
+		return stats;
 	}
 
 	private parseDiffStats(diffText: string): { additions: number; deletions: number } {
@@ -151,27 +194,43 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getChanges(): Promise<GitChange[]> {
-		const statusRes = await this.runGit(['status', '--porcelain=v1']);
+		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
+			this.runGit(['status', '--porcelain=v1', '-z']),
+			this.runGit(['diff', '--cached', '--numstat']),
+			this.runGit(['diff', '--numstat'])
+		]);
+
 		if (statusRes.code !== 0) return [];
+
+		const stagedStats = this.parseNumstat(stagedNumstatRes.stdout);
+		const unstagedStats = this.parseNumstat(unstagedNumstatRes.stdout);
+
 		const changes: GitChange[] = [];
-		const lines = statusRes.stdout.split('\n').filter(Boolean);
-		for (const line of lines) {
-			const x = line[0];
-			const y = line[1];
-			const rawPath = line.substring(3).trim();
-			const arrowIdx = rawPath.indexOf(' -> ');
-			const targetPath = arrowIdx === -1 ? rawPath : rawPath.slice(arrowIdx + 4);
-			const filepath = targetPath.trim().replace(/^"(.*)"$/, '$1');
+		const entries = statusRes.stdout.split('\0');
+
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (!entry || entry.length < 3) continue;
+
+			const x = entry[0];
+			const y = entry[1];
+			const rawPath = entry.substring(3);
+			let filepath = rawPath;
+			let origPath: string | undefined;
+
+			if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+				origPath = entries[++i];
+			}
 
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
 				const diffRes = await this.runGit(['diff', '--cached', '--', filepath]);
-				const { additions, deletions } = this.parseDiffStats(diffRes.stdout);
-				
+				const stat = stagedStats.get(filepath) ?? this.parseDiffStats(diffRes.stdout);
+
 				// Fetch original content (from HEAD)
-				const originalRes = await this.runGit(['show', `HEAD:${filepath}`]);
+				const originalRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
 				const originalContent = originalRes.code === 0 ? originalRes.stdout : '';
-				
+
 				// Fetch modified content (from staged index)
 				const modifiedRes = await this.runGit(['show', `:${filepath}`]);
 				const modifiedContent = modifiedRes.code === 0 ? modifiedRes.stdout : '';
@@ -179,8 +238,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 				changes.push({
 					filepath,
 					status,
-					additions,
-					deletions,
+					additions: stat.additions,
+					deletions: stat.deletions,
 					diff: diffRes.stdout,
 					staged: true,
 					originalContent,
@@ -188,17 +247,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 					stagedContent: modifiedContent
 				});
 			}
+
 			if (y !== ' ') {
 				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
-				const diffRes = await this.runGit(['diff', '--', filepath]);
-				
+
 				// Fetch original content (from staged index if staged, else from HEAD)
 				let originalContent = '';
 				if (y !== '?') {
 					const originalRes = await this.runGit(['show', `:${filepath}`]);
 					originalContent = originalRes.code === 0 ? originalRes.stdout : '';
 					if (!originalContent) {
-						const headRes = await this.runGit(['show', `HEAD:${filepath}`]);
+						const headRes = await this.runGit(['show', `HEAD:${origPath || filepath}`]);
 						originalContent = headRes.code === 0 ? headRes.stdout : '';
 					}
 				}
@@ -212,18 +271,20 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 				let additions = 0;
 				let deletions = 0;
-				let diffText = diffRes.stdout;
+				let diffText = '';
 
 				if (y === '?') {
-					const lines = modifiedContent.split('\n');
+					const lines = modifiedContent ? modifiedContent.split('\n') : [];
 					if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 					additions = lines.length;
 					deletions = 0;
 					diffText = `@@ -0,0 +1,${additions} @@\n` + lines.map(l => '+' + l).join('\n');
 				} else {
-					const stats = this.parseDiffStats(diffText);
-					additions = stats.additions;
-					deletions = stats.deletions;
+					const diffRes = await this.runGit(['diff', '--', filepath]);
+					diffText = diffRes.stdout;
+					const stat = unstagedStats.get(filepath) ?? this.parseDiffStats(diffText);
+					additions = stat.additions;
+					deletions = stat.deletions;
 				}
 
 				changes.push({
@@ -239,6 +300,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				});
 			}
 		}
+
 		return changes;
 	}
 
@@ -248,29 +310,29 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
-		const tmpPath = this.rootOrigin.path + '/.git/tmp_hunk_stage';
+		const tmpFilename = `tmp_hunk_stage_${crypto.randomUUID()}`;
+		const tmpPath = `${this.rootOrigin.path}/.git/${tmpFilename}`;
+		const relTmpPath = `.git/${tmpFilename}`;
 		try {
+			let mode = '100644';
+			const lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
+			if (lsRes.code === 0 && lsRes.stdout.trim()) {
+				const parts = lsRes.stdout.trim().split(/\s+/);
+				if (parts[0] && /^[0-7]+$/.test(parts[0])) {
+					mode = parts[0];
+				}
+			}
+
 			await window.electronAPI.writeFile(tmpPath, content);
-			const hashRes = await this.runGit(['hash-object', '-w', '.git/tmp_hunk_stage']);
+			const hashRes = await this.runGit(['hash-object', '-w', relTmpPath]);
 			const hash = hashRes.stdout.trim();
 			if (hashRes.code === 0 && hash && hash.length === 40) {
-				await this.runGit(['update-index', '--cacheinfo', '100644', hash, filepath]);
+				const updateRes = await this.runGit(['update-index', '--cacheinfo', mode, hash, filepath]);
+				if (updateRes.code !== 0) {
+					throw new Error(updateRes.stderr || 'Failed to update index');
+				}
 			} else {
-				throw new Error('Failed to obtain blob hash');
-			}
-		} catch (e) {
-			const fullPath = this.rootOrigin.path + '/' + filepath;
-			let originalWorktree: string | null = null;
-			try {
-				const buf = await window.electronAPI.readFile(fullPath);
-				originalWorktree = typeof buf === 'string' ? buf : new TextDecoder().decode(buf);
-			} catch (err) {}
-
-			await this.updateFileContent(filepath, content);
-			await this.stageFile(filepath);
-
-			if (originalWorktree !== null && originalWorktree !== content) {
-				await this.updateFileContent(filepath, originalWorktree);
+				throw new Error(hashRes.stderr || 'Failed to obtain blob hash');
 			}
 		} finally {
 			try {
