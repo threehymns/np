@@ -9,21 +9,29 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async getCurrentBranch(): Promise<string | null> {
 		const res = await this.runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
-		if (res.code !== 0) return null;
+		if (res.code !== 0) {
+			const symRes = await this.runGit(['symbolic-ref', '--short', 'HEAD']);
+			if (symRes.code === 0) {
+				return symRes.stdout.trim() || null;
+			}
+			throw new Error(res.stderr || symRes.stderr || 'Failed to determine current branch');
+		}
 		const branch = res.stdout.trim();
 		return branch === 'HEAD' ? null : branch;
 	}
 
 	async getBranches(): Promise<string[]> {
 		const res = await this.runGit(['branch', '--format=%(refname:short)']);
-		if (res.code !== 0) return [];
+		if (res.code !== 0) {
+			throw new Error(res.stderr || 'Failed to get branch list');
+		}
 		return res.stdout.split('\n').map(line => line.trim()).filter(Boolean);
 	}
 
 	async getStatus(): Promise<VCSStatus> {
 		const res = await this.runGit(['status', '--porcelain=v1', '-z']);
 		if (res.code !== 0) {
-			return { isDirty: false, uncommittedFiles: [] };
+			throw new Error(res.stderr || 'Failed to get repository status');
 		}
 		const uncommittedFiles: string[] = [];
 		const entries = res.stdout.split('\0');
@@ -145,7 +153,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async getCommits(): Promise<GitCommit[]> {
 		const res = await this.runGit(['log', '-n', '50', '--pretty=format:%h|%an <%ae>|%ad|%s', '--date=short']);
-		if (res.code !== 0) return [];
+		if (res.code !== 0) {
+			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
+				return [];
+			}
+			throw new Error(res.stderr || 'Failed to retrieve git commit log');
+		}
 		return res.stdout.split('\n').filter(Boolean).map(line => {
 			const [hash, author, date, ...rest] = line.split('|');
 			const message = rest.join('|');
@@ -200,7 +213,9 @@ export class SpawnGitAdapter implements VCSAdapter {
 			this.runGit(['diff', '--numstat'])
 		]);
 
-		if (statusRes.code !== 0) return [];
+		if (statusRes.code !== 0) {
+			throw new Error(statusRes.stderr || 'Failed to get git status for changes');
+		}
 
 		const stagedStats = this.parseNumstat(stagedNumstatRes.stdout);
 		const unstagedStats = this.parseNumstat(unstagedNumstatRes.stdout);
