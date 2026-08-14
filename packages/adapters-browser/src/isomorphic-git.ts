@@ -628,7 +628,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			return result;
 		} catch (e) {
 			console.error('[Git] getChanges failed', e);
-			return [];
+			throw e;
 		}
 	}
 

@@ -97,6 +97,21 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
+	it('propagates error when statusMatrix fails in getChanges', async () => {
+		const statusMatrixSpy = mock(async () => {
+			throw new Error('Status matrix failed');
+		});
+		const origStatusMatrix = git.statusMatrix;
+		(git as any).statusMatrix = statusMatrixSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await expect(adapter.getChanges()).rejects.toThrow('Status matrix failed');
+		} finally {
+			(git as any).statusMatrix = origStatusMatrix;
+		}
+	});
+
 	it('loads on-demand diff content via getFileDiff for staged changes', async () => {
 		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
 			if (oid === 'head-commit-oid') {
