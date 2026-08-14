@@ -16,7 +16,7 @@
 	data-slot="button-group-separator"
 	{orientation}
 	class={cn(
-		"bg-input relative self-stretch data-[orientation=vertical]:mx-px data-[orientation=vertical]:w-auto data-[orientation=horizontal]:my-px data-[orientation=horizontal]:h-auto",
+		"bg-input relative self-stretch data-[orientation=vertical]:mx-px data-[orientation=vertical]:w-px data-[orientation=vertical]:h-auto data-[orientation=horizontal]:my-px data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-auto",
 		className
 	)}
 	{...restProps}
