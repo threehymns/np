@@ -447,6 +447,51 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.stagedContent).toBe('');
 	});
 
+	it('discardChanges reverts a staged rename by restoring the original path and removing the new path', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			if (args[0] === 'reset' || args[0] === 'checkout' || args[0] === 'clean') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('new.txt');
+
+		// Reset must target both the original and the new path so the index reverts the rename.
+		const reset = calls.find(c => c[0] === 'reset');
+		expect(reset).toEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+		// The original path is restored from HEAD rather than the (absent) new path.
+		const checkout = calls.find(c => c[0] === 'checkout');
+		expect(checkout).toEqual(['checkout', 'HEAD', '--', 'old.txt']);
+		// Only the new path is cleaned from the worktree; the original is never removed.
+		const clean = calls.filter(c => c[0] === 'clean');
+		expect(clean).toEqual([['clean', '-fd', '--', 'new.txt']]);
+	});
+
+	it('discardChanges reverts a staged rename even without a prior getChanges call', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('new.txt');
+
+		// No getChanges() was called, so origPath must be resolved on-demand from status.
+		expect(mockGitRun.mock.calls.some((call: [string, string[]]) =>
+			call[1][0] === 'reset' && call[1].includes('old.txt'))).toBe(true);
+	});
+
 	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'checkout') {
