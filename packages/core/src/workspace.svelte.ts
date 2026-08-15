@@ -241,6 +241,7 @@ export class Workspace {
 		this.hasRootPermission = true;
 
 		this.repository = new Repository(origin, this.vcsFactory);
+		await this.repository.adapter.detect(origin.path);
 		await this.repository.refresh();
 		
 		// Add to recent folders
@@ -285,6 +286,7 @@ export class Workspace {
 				adapter.reset();
 			}
 			
+			await this.repository.adapter.detect(this.rootOrigin.path);
 			const success = await this.repository.refresh();
 			console.log('[Workspace] Repository initialized after permission:', success);
 			

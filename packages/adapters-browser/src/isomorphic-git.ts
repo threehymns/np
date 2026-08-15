@@ -231,44 +231,43 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (this.initPromise) return this.initPromise;
 
 		this.initPromise = (async () => {
-			try {
-				const uri = toURI(this.rootOrigin);
-				const handle = await browserHandleRegistry.resolve(uri);
-				if (!handle || handle.kind !== 'directory') {
-					return false;
-				}
-				this.rootHandle = handle as FileSystemDirectoryHandle;
-
-				// Verify permission first.
-				const permission = await this.rootHandle.queryPermission({ mode: 'readwrite' });
-				if (permission !== 'granted') {
-					return false;
-				}
-
-				// Check if it's a git repo
-				try {
-					await this.rootHandle.getDirectoryHandle('.git');
-				} catch (e: any) {
-					if (e.name === 'NotReadableError') {
-						console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
-						return false;
-					}
-					return false;
-				}
-				
-				this.fs = new BrowserGitFS(this.rootHandle);
-				this.initialized = true;
-				console.log('[Git] Initialization successful');
-				return true;
-			} catch (e: any) {
-				console.error('[Git] Unexpected initialization error:', e);
-				return false;
-			} finally {
-				this.initPromise = null;
-			}
-		})();
+			const detected = await this.detect(this.rootOrigin.path);
+			this.initialized = detected;
+			return detected;
+		})().finally(() => {
+			this.initPromise = null;
+		});
 
 		return this.initPromise;
+	}
+
+	async detect(rootPath: string): Promise<boolean> {
+		try {
+			const origin: FileOrigin = { scheme: this.rootOrigin.scheme, path: rootPath, name: this.rootOrigin.name };
+			const handle = await browserHandleRegistry.resolve(toURI(origin));
+			if (!handle || handle.kind !== 'directory') {
+				return false;
+			}
+			this.rootHandle = handle as FileSystemDirectoryHandle;
+
+			// Verify permission first.
+			const permission = await this.rootHandle.queryPermission({ mode: 'readwrite' });
+			if (permission !== 'granted') {
+				return false;
+			}
+
+			// Probe the filesystem shim for a .git directory.
+			this.fs = new BrowserGitFS(this.rootHandle);
+			const names = await this.fs.readdir(REPO_DIR);
+			return names.includes('.git');
+		} catch (e: any) {
+			if (e?.name === 'NotReadableError') {
+				console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
+			} else {
+				console.error('[Git] Unexpected detection error:', e);
+			}
+			return false;
+		}
 	}
 
 	private async readStatusMatrix() {

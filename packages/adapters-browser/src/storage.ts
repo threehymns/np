@@ -248,7 +248,10 @@ export class BrowserStorage implements StorageProvider {
 		if (readWrite) {
 			options.mode = 'readwrite';
 		}
-		const state = await handle.queryPermission(options);
+		return BrowserStorage.toPermissionState(await handle.queryPermission(options));
+	}
+
+	private static toPermissionState(state: PermissionState): 'granted' | 'prompt' | 'denied' {
 		return state === 'granted' ? 'granted' : state === 'prompt' ? 'prompt' : 'denied';
 	}
 

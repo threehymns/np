@@ -142,6 +142,7 @@ export function diffCacheKey(fileChange: { filepath: string; staged?: boolean; c
 }
 
 export interface VCSAdapter {
+	detect(rootPath: string): Promise<boolean>;
 	getCurrentBranch(): Promise<string | null>;
 	getBranches(): Promise<string[]>;
 	getStatus(): Promise<VCSStatus>;
