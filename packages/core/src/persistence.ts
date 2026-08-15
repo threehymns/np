@@ -6,6 +6,7 @@ export interface SerializedDocument {
 	untitledTitle?: string;
 	draftContent?: string;
 	isModified: boolean;
+	virtualTabType?: 'diff' | 'document';
 }
 
 export interface SessionPersistence {
