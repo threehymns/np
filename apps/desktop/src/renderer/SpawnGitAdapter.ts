@@ -10,9 +10,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return await window.electronAPI.gitRun(this.rootOrigin.path, args);
 	}
 
+	private static readonly PATH_NOT_FOUND_MARKERS = [
+		'not in index',
+		'does not exist in',
+		'does not have an entry in index',
+		'exists on disk, but not in'
+	];
+
+	private isPathNotFoundError(stderr: string): boolean {
+		return SpawnGitAdapter.PATH_NOT_FOUND_MARKERS.some(marker => stderr.includes(marker));
+	}
+
 	private async readGitObject(objectSpec: string): Promise<string> {
 		const res = await this.runGit(['show', objectSpec]);
-		return res.code === 0 ? res.stdout : '';
+		if (res.code === 0) return res.stdout;
+		if (this.isPathNotFoundError(res.stderr)) return '';
+		throw new Error(res.stderr || `Failed to read git object ${objectSpec}`);
 	}
 
 	async getCurrentBranch(): Promise<string | null> {
@@ -128,7 +141,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async discardChanges(filepath: string): Promise<void> {
 		const res = await this.runGit(['checkout', 'HEAD', '--', filepath]);
 		if (res.code !== 0) {
-			await this.runGit(['reset', 'HEAD', '--', filepath]);
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
+			if (resetRes.code !== 0) {
+				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
+			}
 			const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
 			if (cleanRes.code !== 0) {
 				throw new Error(cleanRes.stderr || res.stderr || `Failed to discard changes for ${filepath}`);
@@ -318,10 +334,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		let worktreeContent = '';
 		if (options?.staged !== true) {
 			try {
-				// EAFP: attempt reading worktree content; file may be deleted or missing
+				// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
 				const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
 				worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-			} catch (e) {}
+			} catch (e) {
+				if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+					throw e;
+				}
+			}
 		}
 
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
