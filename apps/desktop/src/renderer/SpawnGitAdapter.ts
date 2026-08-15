@@ -10,6 +10,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return await window.electronAPI.gitRun(this.rootOrigin.path, args);
 	}
 
+	async detect(rootPath: string): Promise<boolean> {
+		const res = await this.runGit(['-C', rootPath, 'rev-parse', '--is-inside-work-tree']);
+		return res.code === 0 && res.stdout.trim() === 'true';
+	}
+
 	private static readonly PATH_NOT_FOUND_MARKERS = [
 		'not in index',
 		'does not exist in',
