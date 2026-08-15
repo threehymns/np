@@ -152,6 +152,9 @@ export interface VCSAdapter {
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
 	discardChanges?(filepath: string): Promise<void>;
+	stageAll?(): Promise<void>;
+	unstageAll?(): Promise<void>;
+	discardAll?(): Promise<void>;
 	commit?(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void>;
 	createBranch?(branchName: string): Promise<void>;
 	getUserConfig?(): Promise<{ name: string; email: string } | null>;

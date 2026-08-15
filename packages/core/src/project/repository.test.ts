@@ -97,3 +97,73 @@ describe('Repository.refresh', () => {
 		expect(repo.isDirty).toBe(true);
 	});
 });
+
+describe('Repository bulk actions', () => {
+	function createRepoWithBulk(overrides: Partial<VCSAdapter> = {}) {
+		const stageAll = mock(async () => {});
+		const unstageAll = mock(async () => {});
+		const discardAll = mock(async () => {});
+		const adapter = createMockAdapter({
+			stageAll,
+			unstageAll,
+			discardAll,
+			...overrides
+		});
+		const repo = new Repository(mockOrigin, () => adapter);
+		return { repo, adapter, stageAll, unstageAll, discardAll };
+	}
+
+	it('stageAll delegates to the adapter and refreshes, returning true', async () => {
+		const { repo, adapter, stageAll } = createRepoWithBulk();
+		const result = await repo.stageAll();
+
+		expect(result).toBe(true);
+		expect(stageAll).toHaveBeenCalled();
+		expect(adapter.getCurrentBranch).toHaveBeenCalled(); // refresh happened
+	});
+
+	it('unstageAll delegates to the adapter and refreshes, returning true', async () => {
+		const { repo, unstageAll } = createRepoWithBulk();
+		const result = await repo.unstageAll();
+
+		expect(result).toBe(true);
+		expect(unstageAll).toHaveBeenCalled();
+	});
+
+	it('discardAll delegates to the adapter and refreshes, returning true', async () => {
+		const { repo, discardAll } = createRepoWithBulk();
+		const result = await repo.discardAll();
+
+		expect(result).toBe(true);
+		expect(discardAll).toHaveBeenCalled();
+	});
+
+	it('returns false when the adapter does not implement stageAll', async () => {
+		const adapter = createMockAdapter(); // no stageAll
+		const repo = new Repository(mockOrigin, () => adapter);
+		const result = await repo.stageAll();
+
+		expect(result).toBe(false);
+		expect(repo.isBusy).toBe(false);
+	});
+
+	it('manages the busy state cleanly around bulk operations', async () => {
+		let busyDuringOp: boolean | undefined;
+		const adapter = createMockAdapter({
+			stageAll: mock(async () => { busyDuringOp = repo.isBusy; })
+		});
+		const repo = new Repository(mockOrigin, () => adapter);
+
+		await repo.stageAll();
+
+		expect(busyDuringOp).toBe(true);
+		expect(repo.isBusy).toBe(false);
+	});
+
+	it('propagates adapter errors so the caller can surface them', async () => {
+		const stageAll = mock(async () => { throw new Error('boom'); });
+		const { repo } = createRepoWithBulk({ stageAll });
+		await expect(repo.stageAll()).rejects.toThrow('boom');
+		expect(repo.isBusy).toBe(false);
+	});
+});

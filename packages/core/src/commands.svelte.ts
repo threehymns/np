@@ -537,15 +537,14 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Source Control',
 		action: async () => {
 			const repo = appState.workspace.repository;
-			if (repo?.adapter.stageFile) {
-				return await runGitOp('Failed to stage all changes', async (r) => {
-					const unstaged = r.changes.filter(c => !c.staged);
-					for (const u of unstaged) {
-						await r.adapter.stageFile!(u.filepath);
-					}
-				});
+			if (!repo?.adapter.stageAll) return false;
+			try {
+				return await repo.stageAll();
+			} catch (e) {
+				console.error('Failed to stage all changes', e);
+				await showAlert(appState, `Failed to stage all changes: ${(e as Error).message}`);
+				return false;
 			}
-			return false;
 		}
 	});
 
@@ -555,15 +554,14 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Source Control',
 		action: async () => {
 			const repo = appState.workspace.repository;
-			if (repo?.adapter.unstageFile) {
-				return await runGitOp('Failed to unstage all changes', async (r) => {
-					const staged = r.changes.filter(c => c.staged);
-					for (const s of staged) {
-						await r.adapter.unstageFile!(s.filepath);
-					}
-				});
+			if (!repo?.adapter.unstageAll) return false;
+			try {
+				return await repo.unstageAll();
+			} catch (e) {
+				console.error('Failed to unstage all changes', e);
+				await showAlert(appState, `Failed to unstage all changes: ${(e as Error).message}`);
+				return false;
 			}
-			return false;
 		}
 	});
 
@@ -576,21 +574,14 @@ export function registerCoreCommands(appState: AppState) {
 			if (!confirmed) return false;
 
 			const repo = appState.workspace.repository;
-			if (repo?.adapter.discardChanges) {
-				return await runGitOp('Failed to discard all changes', async (r) => {
-					if (r.adapter.unstageFile) {
-						const staged = r.changes.filter(c => c.staged);
-						for (const s of staged) {
-							await r.adapter.unstageFile(s.filepath);
-						}
-					}
-					const paths = [...new Set(r.changes.map(c => c.filepath))];
-					for (const filepath of paths) {
-						await r.adapter.discardChanges!(filepath);
-					}
-				});
+			if (!repo?.adapter.discardAll) return false;
+			try {
+				return await repo.discardAll();
+			} catch (e) {
+				console.error('Failed to discard all changes', e);
+				await showAlert(appState, `Failed to discard all changes: ${(e as Error).message}`);
+				return false;
 			}
-			return false;
 		}
 	});
 

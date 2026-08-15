@@ -1,8 +1,18 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { IsomorphicGitAdapter } from './isomorphic-git';
 import type { FileOrigin } from '@np/core';
-import git from 'isomorphic-git';
+import git, { type StatusRow } from 'isomorphic-git';
 import { browserHandleRegistry } from './storage';
+
+// Mutable, typed view of the isomorphic-git module so tests can swap functions
+// in/out without resorting to `any`.
+const mockGit = git as unknown as {
+	statusMatrix: typeof git.statusMatrix;
+	add: typeof git.add;
+	remove: typeof git.remove;
+	resetIndex: typeof git.resetIndex;
+	checkout: typeof git.checkout;
+};
 
 describe('IsomorphicGitAdapter', () => {
 	const rootOrigin: FileOrigin = { scheme: 'browser', path: '/test/repo', name: 'repo' };
@@ -28,7 +38,8 @@ describe('IsomorphicGitAdapter', () => {
 						lastModified: Date.now()
 					}))
 				};
-			})
+			}),
+			removeEntry: mock(async () => {})
 		};
 
 		browserHandleRegistry.register('browser:///test/repo', mockDirectoryHandle);
@@ -45,7 +56,7 @@ describe('IsomorphicGitAdapter', () => {
 			['clean.txt', 1, 1, 1] // Unmodified
 		]);
 		const origStatusMatrix = git.statusMatrix;
-		(git as any).statusMatrix = statusMatrixSpy;
+		mockGit.statusMatrix = statusMatrixSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
@@ -64,7 +75,7 @@ describe('IsomorphicGitAdapter', () => {
 			expect(readBlobSpy).not.toHaveBeenCalled();
 		} finally {
 			(git as any).readBlob = origReadBlob;
-			(git as any).statusMatrix = origStatusMatrix;
+			mockGit.statusMatrix = origStatusMatrix;
 		}
 	});
 
@@ -77,7 +88,7 @@ describe('IsomorphicGitAdapter', () => {
 			['untracked.txt', 0, 1, 0] // Untracked (present in workdir only)
 		]);
 		const origStatusMatrix = git.statusMatrix;
-		(git as any).statusMatrix = statusMatrixSpy;
+		mockGit.statusMatrix = statusMatrixSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
@@ -93,7 +104,7 @@ describe('IsomorphicGitAdapter', () => {
 			expect(readBlobSpy).not.toHaveBeenCalled();
 		} finally {
 			(git as any).readBlob = origReadBlob;
-			(git as any).statusMatrix = origStatusMatrix;
+			mockGit.statusMatrix = origStatusMatrix;
 		}
 	});
 
@@ -102,13 +113,13 @@ describe('IsomorphicGitAdapter', () => {
 			throw new Error('Status matrix failed');
 		});
 		const origStatusMatrix = git.statusMatrix;
-		(git as any).statusMatrix = statusMatrixSpy;
+		mockGit.statusMatrix = statusMatrixSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			await expect(adapter.getChanges()).rejects.toThrow('Status matrix failed');
 		} finally {
-			(git as any).statusMatrix = origStatusMatrix;
+			mockGit.statusMatrix = origStatusMatrix;
 		}
 	});
 
@@ -530,6 +541,96 @@ describe('IsomorphicGitAdapter', () => {
 			(git as any).walk = origWalk;
 			(git as any).STAGE = origStage;
 			(git as any).TREE = origTree;
+		}
+	});
+
+	it('stageAll does a single statusMatrix pass and stages every change in one batch', async () => {
+		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
+			['new.txt', 0, 2, 0], // Untracked
+			['mod.txt', 1, 2, 1], // Modified unstaged
+			['del.txt', 1, 0, 1], // Deleted from worktree
+			['clean.txt', 1, 1, 1] // Unmodified
+		]);
+		const addSpy = mock(async (_args: { filepath: string }) => {});
+		const removeSpy = mock(async (_args: { filepath: string }) => {});
+		const origStatusMatrix = git.statusMatrix;
+		const origAdd = git.add;
+		const origRemove = git.remove;
+		mockGit.statusMatrix = statusMatrixSpy;
+		mockGit.add = addSpy;
+		mockGit.remove = removeSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await adapter.stageAll();
+
+			expect(statusMatrixSpy).toHaveBeenCalledTimes(1);
+			expect(addSpy).toHaveBeenCalledTimes(2);
+			expect(addSpy.mock.calls.map(([args]: [{ filepath: string }]) => args.filepath).sort()).toEqual(['mod.txt', 'new.txt']);
+			expect(removeSpy).toHaveBeenCalledTimes(1);
+			expect(removeSpy.mock.calls[0][0].filepath).toBe('del.txt');
+		} finally {
+			mockGit.statusMatrix = origStatusMatrix;
+			mockGit.add = origAdd;
+			mockGit.remove = origRemove;
+		}
+	});
+
+	it('unstageAll does a single statusMatrix pass and resets only staged entries', async () => {
+		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
+			['staged.txt', 1, 2, 2], // Staged modification
+			['both.txt', 1, 2, 2], // Staged + unstaged
+			['untracked.txt', 0, 2, 0], // Untracked (not staged)
+			['clean.txt', 1, 1, 1] // Unmodified
+		]);
+		const resetIndexSpy = mock(async (_args: { filepath: string }) => {});
+		const origStatusMatrix = git.statusMatrix;
+		const origResetIndex = git.resetIndex;
+		mockGit.statusMatrix = statusMatrixSpy;
+		mockGit.resetIndex = resetIndexSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await adapter.unstageAll();
+
+			expect(statusMatrixSpy).toHaveBeenCalledTimes(1);
+			expect(resetIndexSpy).toHaveBeenCalledTimes(2);
+			expect(resetIndexSpy.mock.calls.map(([args]: [{ filepath: string }]) => args.filepath).sort()).toEqual(['both.txt', 'staged.txt']);
+		} finally {
+			mockGit.statusMatrix = origStatusMatrix;
+			mockGit.resetIndex = origResetIndex;
+		}
+	});
+
+	it('discardAll does a single statusMatrix pass, unlinks untracked and restores tracked', async () => {
+		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
+			['new.txt', 0, 2, 0], // Untracked
+			['mod.txt', 1, 2, 2], // Staged + unstaged tracked change
+			['clean.txt', 1, 1, 1] // Unmodified
+		]);
+		const checkoutSpy = mock(async (_args: { filepaths: string[]; force: boolean }) => {});
+		const removeSpy = mock(async (_args: { filepath: string }) => {});
+		const origStatusMatrix = git.statusMatrix;
+		const origCheckout = git.checkout;
+		const origRemove = git.remove;
+		mockGit.statusMatrix = statusMatrixSpy;
+		mockGit.checkout = checkoutSpy;
+		mockGit.remove = removeSpy;
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await adapter.discardAll();
+
+			expect(statusMatrixSpy).toHaveBeenCalledTimes(1);
+			expect(checkoutSpy).toHaveBeenCalledTimes(1);
+			expect(checkoutSpy.mock.calls[0][0].filepaths).toEqual(['mod.txt']);
+			expect(checkoutSpy.mock.calls[0][0].force).toBe(true);
+			expect(removeSpy).toHaveBeenCalledTimes(1);
+			expect(removeSpy.mock.calls[0][0].filepath).toBe('new.txt');
+		} finally {
+			mockGit.statusMatrix = origStatusMatrix;
+			mockGit.checkout = origCheckout;
+			mockGit.remove = origRemove;
 		}
 	});
 });

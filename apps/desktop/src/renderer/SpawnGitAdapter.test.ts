@@ -407,5 +407,42 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.originalContent).toBe('renamed from old on-demand');
 		expect(diff.modifiedContent).toBe('renamed to new on-demand');
 	});
+
+	it('stageAll issues a single native git add -A command', async () => {
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.stageAll();
+
+		const addCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'add');
+		expect(addCalls.length).toBe(1);
+		expect(addCalls[0][1]).toEqual(['add', '-A']);
+	});
+
+	it('unstageAll issues a single native git restore --staged command', async () => {
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageAll();
+
+		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		expect(restoreCalls.length).toBe(1);
+		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '.']);
+	});
+
+	it('discardAll issues native git restore and git clean commands', async () => {
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardAll();
+
+		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		expect(restoreCalls.length).toBe(1);
+		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '--worktree', '.']);
+
+		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		expect(cleanCalls.length).toBe(1);
+		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '.']);
+	});
+
+	it('stageAll throws when git add fails', async () => {
+		mockGitRun.mockImplementation(async () => ({ code: 128, stdout: '', stderr: 'fatal: index file corrupt' }));
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.stageAll()).rejects.toThrow(/index file corrupt/);
+	});
 });
 
