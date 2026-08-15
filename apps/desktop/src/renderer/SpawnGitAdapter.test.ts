@@ -341,6 +341,51 @@ describe('SpawnGitAdapter', () => {
 		expect(mockReadFile).not.toHaveBeenCalled();
 	});
 
+	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'checkout') {
+				return { code: 1, stdout: '', stderr: 'checkout failed' };
+			}
+			if (args[0] === 'reset') {
+				return { code: 128, stdout: '', stderr: 'fatal: index file corrupt' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.discardChanges('file.txt')).rejects.toThrow(/index file corrupt/);
+	});
+
+	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show') {
+				return { code: 128, stdout: '', stderr: 'fatal: bad index file sha1 signature' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.getFileDiff('file.txt', { staged: true })).rejects.toThrow(/bad index file/);
+	});
+
+	it('getFileDiff propagates worktree read failures instead of returning an empty diff', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === 'HEAD:file.txt') {
+				return { code: 0, stdout: 'head content', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':file.txt') {
+				return { code: 0, stdout: 'staged content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async () => {
+			throw new Error('EACCES: permission denied, open file.txt');
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.getFileDiff('file.txt', { staged: false })).rejects.toThrow(/permission denied/);
+	});
+
 	it('resolves renamed file previous path dynamically in getFileDiff even without prior getChanges call', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
