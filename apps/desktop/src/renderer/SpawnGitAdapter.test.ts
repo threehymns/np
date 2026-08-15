@@ -341,6 +341,112 @@ describe('SpawnGitAdapter', () => {
 		expect(mockReadFile).not.toHaveBeenCalled();
 	});
 
+	it('uses the old path index content as the unstaged baseline for a worktree-only rename', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// worktree-only rename: " D old.txt" + "?? new.txt" (no porcelain R entry)
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:new.txt') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'baseline from old path', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'baseline from old path', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'baseline from old path';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt', { staged: false });
+
+		expect(diff.originalContent).toBe('baseline from old path');
+		expect(diff.modifiedContent).toBe('baseline from old path');
+		expect(diff.stagedContent).toBe('');
+	});
+
+	it('uses the old path head content as the combined baseline for a worktree-only rename', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:new.txt') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'index content', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'head content from old path', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'index content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt');
+
+		expect(diff.originalContent).toBe('head content from old path');
+		expect(diff.modifiedContent).toBe('index content');
+		expect(diff.stagedContent).toBe('');
+	});
+
+	it('does not treat a genuinely untracked file as a worktree rename', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: '?? brand_new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'show') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/brand_new.txt') {
+				return 'new file content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('brand_new.txt', { staged: false });
+
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('new file content');
+		expect(diff.stagedContent).toBe('');
+	});
+
 	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'checkout') {
