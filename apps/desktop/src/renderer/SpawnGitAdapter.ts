@@ -152,6 +152,31 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	async stageAll(): Promise<void> {
+		const res = await this.runGit(['add', '-A']);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || 'Failed to stage all changes');
+		}
+	}
+
+	async unstageAll(): Promise<void> {
+		const res = await this.runGit(['restore', '--staged', '.']);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || 'Failed to unstage all changes');
+		}
+	}
+
+	async discardAll(): Promise<void> {
+		const restoreRes = await this.runGit(['restore', '--staged', '--worktree', '.']);
+		if (restoreRes.code !== 0) {
+			throw new Error(restoreRes.stderr || 'Failed to discard all changes');
+		}
+		const cleanRes = await this.runGit(['clean', '-fd', '.']);
+		if (cleanRes.code !== 0) {
+			throw new Error(cleanRes.stderr || 'Failed to discard all changes');
+		}
+	}
+
 	async getUserConfig(): Promise<{ name: string; email: string } | null> {
 		const nameRes = await this.runGit(['config', 'user.name']);
 		const emailRes = await this.runGit(['config', 'user.email']);

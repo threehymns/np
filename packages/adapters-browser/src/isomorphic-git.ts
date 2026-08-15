@@ -271,6 +271,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return this.initPromise;
 	}
 
+	private async readStatusMatrix() {
+		return await git.statusMatrix({
+			fs: this.fs!,
+			dir: this.dir,
+			filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+		});
+	}
+
 	async getCurrentBranch(): Promise<string | null> {
 		if (!await this.ensureInitialized()) return null;
 		try {
@@ -300,11 +308,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	async getStatus(): Promise<VCSStatus> {
 		if (!this.initialized && !await this.ensureInitialized()) return { isDirty: false, uncommittedFiles: [] };
 		try {
-			const matrix = await git.statusMatrix({ 
-				fs: this.fs!,
-				dir: this.dir,
-				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
-			});
+			const matrix = await this.readStatusMatrix();
 			
 			const uncommittedFiles = matrix
 				.filter(([file, head, workdir, stage]) => {
@@ -424,11 +428,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		// 1. Take a snapshot of all dirty files
 		const snapshots: FileSnapshot[] = [];
 		try {
-			const matrix = await git.statusMatrix({ 
-				fs: this.fs!,
-				dir: this.dir,
-				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
-			});
+			const matrix = await this.readStatusMatrix();
 
 			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
 				return head !== 1 || workdir !== 1 || stage !== 1;
@@ -571,11 +571,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	async getChanges(): Promise<GitChange[]> {
 		if (!await this.ensureInitialized()) return [];
 		try {
-			const matrix = await git.statusMatrix({ 
-				fs: this.fs!,
-				dir: this.dir,
-				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
-			});
+			const matrix = await this.readStatusMatrix();
 
 			const result: GitChange[] = [];
 
@@ -823,6 +819,57 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				console.error('[Git] Failed to unlink file on discard', unlinkErr);
 				throw unlinkErr;
 			}
+		}
+	}
+
+	async stageAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		for (const [filepath, head, workdir, stage] of matrix) {
+			const isClean = head === 1 && workdir === 1 && stage === 1;
+			if (isClean) continue;
+			if (workdir === 0) {
+				if (stage !== 0 || head !== 0) {
+					await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+				}
+			} else {
+				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+			}
+		}
+	}
+
+	async unstageAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		for (const [filepath, head, , stage] of matrix) {
+			const hasStaged = (head === 0 && stage !== 0) || (head === 1 && stage !== 1);
+			if (!hasStaged) continue;
+			await git.resetIndex({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+		}
+	}
+
+	async discardAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		const trackedToRestore: string[] = [];
+		for (const [filepath, head, workdir, stage] of matrix) {
+			const isClean = head === 1 && workdir === 1 && stage === 1;
+			if (isClean) continue;
+			if (head === 0) {
+				await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+				await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string }).catch(() => {});
+			} else {
+				trackedToRestore.push(filepath as string);
+			}
+		}
+		if (trackedToRestore.length > 0) {
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: trackedToRestore,
+				force: true
+			});
 		}
 	}
 

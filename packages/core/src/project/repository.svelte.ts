@@ -163,6 +163,34 @@ export class Repository {
 		}
 	}
 
+	async stageAll(): Promise<boolean> {
+		if (!this.adapter.stageAll) return false;
+		await this.runBulkOp(() => this.adapter.stageAll!());
+		return true;
+	}
+
+	async unstageAll(): Promise<boolean> {
+		if (!this.adapter.unstageAll) return false;
+		await this.runBulkOp(() => this.adapter.unstageAll!());
+		return true;
+	}
+
+	async discardAll(): Promise<boolean> {
+		if (!this.adapter.discardAll) return false;
+		await this.runBulkOp(() => this.adapter.discardAll!());
+		return true;
+	}
+
+	private async runBulkOp(op: () => Promise<void>): Promise<void> {
+		this.isBusy = true;
+		try {
+			await op();
+			await this.refresh();
+		} finally {
+			this.isBusy = false;
+		}
+	}
+
 }
 
 
