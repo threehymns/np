@@ -143,7 +143,45 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	private async resolveOrigPath(filepath: string): Promise<string | undefined> {
+		const cached = this.renamedOrigPaths.get(filepath);
+		if (cached) return cached;
+		try {
+			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '--', filepath]);
+			if (statusRes.code === 0 && statusRes.stdout) {
+				const entries = this.parseStatusEntries(statusRes.stdout);
+				const match = entries.find(e => e.filepath === filepath && e.origPath);
+				if (match?.origPath) {
+					this.renamedOrigPaths.set(filepath, match.origPath);
+					return match.origPath;
+				}
+			}
+		} catch (e) {}
+		return undefined;
+	}
+
 	async discardChanges(filepath: string): Promise<void> {
+		const origPath = await this.resolveOrigPath(filepath);
+		if (origPath && origPath !== filepath) {
+			// Staged rename: revert the whole rename. `checkout HEAD -- newPath` fails
+			// because the new path is absent from HEAD, so restore the original path from
+			// HEAD in index and worktree and remove the new path, instead of dropping the
+			// original tracked file.
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
+			if (resetRes.code !== 0) {
+				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
+			}
+			const checkoutRes = await this.runGit(['checkout', 'HEAD', '--', origPath]);
+			if (checkoutRes.code !== 0) {
+				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
+			}
+			const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
+			if (cleanRes.code !== 0) {
+				throw new Error(cleanRes.stderr || `Failed to discard changes for ${filepath}`);
+			}
+			return;
+		}
+
 		const res = await this.runGit(['checkout', 'HEAD', '--', filepath]);
 		if (res.code !== 0) {
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
@@ -359,20 +397,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
 		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
 		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
-		let origPath = this.renamedOrigPaths.get(filepath);
-		if (!origPath) {
-			try {
-				const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '--', filepath]);
-				if (statusRes.code === 0 && statusRes.stdout) {
-					const entries = this.parseStatusEntries(statusRes.stdout);
-					const match = entries.find(e => e.filepath === filepath && e.origPath);
-					if (match?.origPath) {
-						origPath = match.origPath;
-						this.renamedOrigPaths.set(filepath, origPath);
-					}
-				}
-			} catch (e) {}
-		}
+		let origPath = await this.resolveOrigPath(filepath);
 
 		let worktreeContent = '';
 		if (options?.staged !== true) {
