@@ -1,6 +1,6 @@
 import { describe, it, expect, mock } from "bun:test";
-import { EditorState, Compartment } from "@codemirror/state";
-import { unifiedMergeView } from "@codemirror/merge";
+import { EditorState, Compartment, StateField } from "@codemirror/state";
+import { unifiedMergeView, getOriginalDoc } from "@codemirror/merge";
 import type { GitChange } from "@np/core";
 
 describe("DiffViewer extension compartments", () => {
@@ -21,6 +21,7 @@ describe("DiffViewer extension compartments", () => {
 		});
 
 		expect(state.doc.toString()).toBe("modified content 1");
+		expect(getOriginalDoc(state).toString()).toBe("original content 1");
 
 		// Reconfigure with updated original content
 		const tr = state.update({
@@ -31,7 +32,10 @@ describe("DiffViewer extension compartments", () => {
 			)
 		});
 		state = tr.state;
-		expect(state).toBeDefined();
+
+		// The reconfigured extension is derived from the new original content,
+		// not just present in the state.
+		expect(getOriginalDoc(state).toString()).toBe("original content 2");
 	});
 
 	it("allows reconfiguring hunk extensions within a hunk Compartment", () => {
@@ -54,8 +58,12 @@ describe("DiffViewer extension compartments", () => {
 			stagedContent: "b"
 		};
 
-		let currentChange = change1;
-		const createPlugin = (c: GitChange) => EditorState.transactionExtender.of(() => null);
+		const stagedField = StateField.define<boolean>({
+			create: () => false,
+			update: (value) => value
+		});
+
+		const createPlugin = (c: GitChange) => stagedField.init(() => c.staged);
 
 		let state = EditorState.create({
 			doc: "b",
@@ -64,10 +72,15 @@ describe("DiffViewer extension compartments", () => {
 			]
 		});
 
+		// The plugin is derived from change1 (unstaged).
+		expect(state.field(stagedField)).toBe(false);
+
 		const tr = state.update({
 			effects: hunkCompartment.reconfigure(createPlugin(change2))
 		});
 		state = tr.state;
-		expect(state).toBeDefined();
+
+		// Reconfiguring with change2 (staged) yields a distinct observable value.
+		expect(state.field(stagedField)).toBe(true);
 	});
 });
