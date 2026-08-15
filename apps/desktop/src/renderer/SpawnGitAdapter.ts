@@ -341,6 +341,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
+	private async findWorktreeRenameSource(filepath: string, worktreeContent: string): Promise<string | null> {
+		// A rename that exists only in the worktree (e.g. `mv old.txt new.txt` without
+		// staging) is reported by porcelain as ` D old.txt` + `?? new.txt` — no `R` entry.
+		// Detect it by matching the untracked file's worktree content against the index
+		// content of every file deleted in the worktree.
+		const res = await this.runGit(['ls-files', '--deleted']);
+		if (res.code !== 0 || !res.stdout.trim()) return null;
+		const deletedPaths = res.stdout.split('\n').map(s => s.trim()).filter(Boolean).filter(p => p !== filepath);
+		const candidates = await Promise.all(
+			deletedPaths.map(async p => ({ path: p, content: await this.readGitObject(`:${p}`) }))
+		);
+		const match = candidates.find(c => c.content === worktreeContent);
+		return match ? match.path : null;
+	}
+
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
 		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
 		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
@@ -358,8 +373,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 				}
 			} catch (e) {}
 		}
-		origPath = origPath || filepath;
-		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		let worktreeContent = '';
 		if (options?.staged !== true) {
@@ -374,9 +387,32 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 		}
 
+		// Unstaged rename in the worktree: no porcelain R entry exists, so fall back to
+		// content matching so the old path becomes the diff baseline instead of an empty one.
+		if (!origPath && options?.staged !== true && worktreeContent) {
+			origPath = await this.findWorktreeRenameSource(filepath, worktreeContent) ?? undefined;
+			if (origPath) {
+				this.renamedOrigPaths.set(filepath, origPath);
+			}
+		}
+		origPath = origPath || filepath;
+		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
+
+		// Resolve the unstaged baseline from the rename source's index entry. When the
+		// file was renamed in the worktree, the new path has no index entry of its own, so
+		// the old path's index content is the correct "original" to diff against. Nothing
+		// is staged at the new path, so stagedContent stays empty.
+		if (origPath !== filepath && options?.staged === false && indexContent === '' && headContent !== '') {
+			const sourceIndexContent = await this.readGitObject(`:${origPath}`);
+			return {
+				originalContent: sourceIndexContent,
+				modifiedContent: worktreeContent,
+				stagedContent: ''
+			};
+		}
+
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
 	}
-
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		const fullPath = this.rootOrigin.path + '/' + filepath;
