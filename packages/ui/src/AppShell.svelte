@@ -54,8 +54,6 @@
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 		window.addEventListener('focus', handleFocus);
 		document.addEventListener('visibilitychange', handleVisibilityChange);
-		window.addEventListener('pagehide', handleFlushPending);
-		window.addEventListener('beforeunload', handleFlushPending);
 
 		// Lazy load secondary UI
 		Promise.all([
@@ -74,8 +72,6 @@
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
 			window.removeEventListener('focus', handleFocus);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
-			window.removeEventListener('pagehide', handleFlushPending);
-			window.removeEventListener('beforeunload', handleFlushPending);
 		};
 	});
 
