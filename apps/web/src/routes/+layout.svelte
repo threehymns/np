@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState, KeymapStorageProvider, Repository, toURI, parseURI } from "@np/core";
+	import { AppState, KeymapStorageProvider } from "@np/core";
 	import { MultiSchemeStorage } from "@np/core/storage";
-	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence, browserHandleRegistry, git } from "@np/adapters-browser";
+	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence } from "@np/adapters-browser";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
@@ -46,11 +46,6 @@
 
 	if (typeof window !== "undefined") {
 		(window as any).appState = appState;
-		(window as any).toURI = toURI;
-		(window as any).parseURI = parseURI;
-		(window as any).browserHandleRegistry = browserHandleRegistry;
-		(window as any).Repository = Repository;
-		(window as any).git = git;
 		console.log('[Layout] AppState exposed on window. documents count:', appState.documents.length);
 	}
 
