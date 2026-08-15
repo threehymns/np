@@ -48,7 +48,7 @@ export class Workspace {
 					origin: null,
 					isModified: false,
 					virtualTabType: 'diff'
-				} as any;
+				};
 			}
 			const doc = this.documents.find(d => d.id === tab.id);
 			if (!doc) return null;
@@ -463,7 +463,7 @@ export class Workspace {
 					
 					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
-						if ((serialized as any).virtualTabType === 'diff') {
+						if (serialized.virtualTabType === 'diff') {
 							restoredTabs.push({
 								id: serialized.id,
 								type: 'diff'
