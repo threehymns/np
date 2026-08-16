@@ -341,6 +341,146 @@ describe('SpawnGitAdapter', () => {
 		expect(mockReadFile).not.toHaveBeenCalled();
 	});
 
+	it('resolves the original index content as baseline for unstaged worktree-only renames', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// porcelain -z unstaged rename entry: " R new.txt\0old.txt\0"
+				return { code: 0, stdout: ' R new.txt\0old.txt\0', stderr: '' };
+			}
+			if (cmd === 'diff --cached --numstat') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (cmd === 'diff --numstat') {
+				return { code: 0, stdout: '1\t1\told.txt => new.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'line 1\nline 2\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 128, stdout: '', stderr: "fatal: path 'new.txt' does not have an entry in index" };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'line 1\nline 2 staged modified\n', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'line 1\nline 2 staged modified\nline 3 added in worktree\n';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const changes = await adapter.getChanges();
+		const renamed = changes.find(c => c.filepath === 'new.txt');
+		expect(renamed).toBeDefined();
+		expect(renamed?.staged).toBe(false);
+
+		// Unstaged diff baseline must be :old.txt from the index, not an empty baseline
+		const unstagedDiff = await adapter.getFileDiff('new.txt', { staged: false });
+		expect(unstagedDiff.originalContent).toBe('line 1\nline 2 staged modified\n');
+		expect(unstagedDiff.modifiedContent).toBe('line 1\nline 2 staged modified\nline 3 added in worktree\n');
+		expect(unstagedDiff.stagedContent).toBe('line 1\nline 2 staged modified\n');
+
+		// Combined diff baseline must be HEAD:old.txt
+		const combinedDiff = await adapter.getFileDiff('new.txt');
+		expect(combinedDiff.originalContent).toBe('line 1\nline 2\n');
+		expect(combinedDiff.modifiedContent).toBe('line 1\nline 2 staged modified\nline 3 added in worktree\n');
+	});
+
+	it('resolves HEAD baseline for unstaged worktree-only rename when origPath is not in index', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.txt\0old.txt\0', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'head content of old', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === ':new.txt' || args[1] === ':old.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'worktree content of new';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const unstagedDiff = await adapter.getFileDiff('new.txt', { staged: false });
+		expect(unstagedDiff.originalContent).toBe('head content of old');
+		expect(unstagedDiff.modifiedContent).toBe('worktree content of new');
+	});
+
+	it('resolves unstaged worktree-only rename baseline dynamically in getFileDiff without prior getChanges call', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.txt\0old.txt\0', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'head content of old', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'index content of old', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'worktree content of new';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const unstagedDiff = await adapter.getFileDiff('new.txt', { staged: false });
+		expect(unstagedDiff.originalContent).toBe('index content of old');
+		expect(unstagedDiff.modifiedContent).toBe('worktree content of new');
+	});
+
+	it('updateIndexContent preserves mode from origPath when destination path is not in index', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+				return { code: 0, stdout: '.git', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('new.sh')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('old.sh')) {
+				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
+			}
+			if (args[0] === 'hash-object') {
+				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
+			}
+			if (args[0] === 'update-index') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n');
+
+		const updateIndexCall = commands.find(c => c[0] === 'update-index');
+		expect(updateIndexCall).toBeDefined();
+		expect(updateIndexCall).toEqual(['update-index', '--cacheinfo', '100755', 'abcdef1234567890abcdef1234567890abcdef12', 'new.sh']);
+	});
+
 	it('does not treat an untracked file as a rename even when a deleted file has identical content', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');

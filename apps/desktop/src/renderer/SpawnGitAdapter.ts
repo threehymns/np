@@ -29,10 +29,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return SpawnGitAdapter.PATH_NOT_FOUND_MARKERS.some(marker => stderr.includes(marker));
 	}
 
-	private async readGitObject(objectSpec: string): Promise<string> {
+	private async readGitObject(objectSpec: string): Promise<string | null> {
 		const res = await this.runGit(['show', objectSpec]);
 		if (res.code === 0) return res.stdout;
-		if (this.isPathNotFoundError(res.stderr)) return '';
+		if (this.isPathNotFoundError(res.stderr)) return null;
 		throw new Error(res.stderr || `Failed to read git object ${objectSpec}`);
 	}
 
@@ -150,12 +150,16 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const cached = this.renamedOrigPaths.get(filepath);
 		if (cached) return cached;
 		try {
-			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '--', filepath]);
+			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
 			if (statusRes.code === 0 && statusRes.stdout) {
 				const entries = this.parseStatusEntries(statusRes.stdout);
+				for (const e of entries) {
+					if (e.origPath) {
+						this.renamedOrigPaths.set(e.filepath, e.origPath);
+					}
+				}
 				const match = entries.find(e => e.filepath === filepath && e.origPath);
 				if (match?.origPath) {
-					this.renamedOrigPaths.set(filepath, match.origPath);
 					return match.origPath;
 				}
 			}
@@ -391,13 +395,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string }> {
-		const [headContent, indexContent] = await Promise.all([
+		const [headObj, indexObj] = await Promise.all([
 			this.readGitObject(`HEAD:${origPath}`),
 			this.readGitObject(`:${filepath}`)
 		]);
+
+		const headContent = headObj ?? '';
+		let indexContent = indexObj;
+
+		if (indexContent === null && origPath !== filepath) {
+			const origIndexObj = await this.readGitObject(`:${origPath}`);
+			indexContent = origIndexObj ?? headContent;
+		}
+
 		return {
 			headContent,
-			indexContent
+			indexContent: indexContent ?? ''
 		};
 	}
 
@@ -438,7 +451,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const relTmpPath = `${gitDir}/${tmpFilename}`;
 		try {
 			let mode = '100644';
-			const lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
+			let lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
+			if (lsRes.code !== 0 || !lsRes.stdout.trim()) {
+				const origPath = await this.resolveOrigPath(filepath);
+				if (origPath && origPath !== filepath) {
+					lsRes = await this.runGit(['ls-files', '-s', '--', origPath]);
+				}
+			}
 			if (lsRes.code === 0 && lsRes.stdout.trim()) {
 				const parts = lsRes.stdout.trim().split(/\s+/);
 				if (parts[0] && /^[0-7]+$/.test(parts[0])) {
