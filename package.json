@@ -17,7 +17,9 @@
 		"dev:desktop": "bun --filter desktop dev",
 		"build:desktop": "bun --filter desktop build",
 		"start:desktop": "bun --filter desktop start",
-		"check:desktop": "bun --filter desktop check"
+		"check:desktop": "bun --filter desktop check",
+		"test": "bun test",
+		"test:e2e": "playwright test"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",
