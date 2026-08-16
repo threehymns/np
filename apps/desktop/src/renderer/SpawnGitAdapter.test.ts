@@ -507,6 +507,202 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.discardChanges('file.txt')).rejects.toThrow(/index file corrupt/);
 	});
 
+	it('discardChanges with an unstaged scope resets only the worktree copy of a rename destination', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('new.txt', { staged: false });
+
+		// The staged rename stays intact: only the worktree copy is reset from the index,
+		// and the original path is never touched.
+		expect(calls).toEqual([['restore', '--worktree', '--', 'new.txt']]);
+	});
+
+	it('discardChanges with an unstaged scope leaves a git-reported staged rename with unstaged edits intact', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// staged rename plus unstaged edits at the destination: "RM new.txt"
+				return { code: 0, stdout: 'RM new.txt\0old.txt\0', stderr: '' };
+			}
+			if (cmd.startsWith('diff')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		// getChanges records the porcelain rename source for new.txt and emits both entries.
+		const changes = await adapter.getChanges();
+		expect(changes.filter(c => c.filepath === 'new.txt').length).toBe(2);
+		expect(changes.find(c => c.filepath === 'new.txt' && c.staged)?.staged).toBe(true);
+		expect(changes.find(c => c.filepath === 'new.txt' && !c.staged)?.staged).toBe(false);
+
+		await adapter.discardChanges('new.txt', { staged: false });
+
+		// Unstaged discard resets only the worktree copy; the staged rename is untouched.
+		const badCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) =>
+			call[1][0] === 'reset' || call[1][0] === 'checkout' || call[1].includes('old.txt'));
+		expect(badCalls.length).toBe(0);
+		const restore = mockGitRun.mock.calls.find((call: [string, string[]]) => call[1][0] === 'restore');
+		expect(restore?.[1]).toEqual(['restore', '--worktree', '--', 'new.txt']);
+	});
+
+	it('discardChanges with an unstaged scope keeps staged changes while resetting the worktree copy', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			if (args[0] === 'restore') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('both.ts', { staged: false });
+
+		expect(calls).toEqual([['restore', '--worktree', '--', 'both.ts']]);
+	});
+
+	it('discardChanges with an unstaged scope cleans an untracked file instead of restoring a content-matched rename source', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (cmd === 'restore --worktree -- new.txt') {
+				return { code: 1, stdout: '', stderr: "error: pathspec 'new.txt' did not match any file(s) known to git" };
+			}
+			if (cmd === 'clean -fd -- new.txt') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'identical content', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'identical content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		// Viewing the diff caches the heuristic rename source for new.txt.
+		await adapter.getFileDiff('new.txt', { staged: false });
+		await adapter.discardChanges('new.txt', { staged: false });
+
+		// Only the untracked file is cleaned; the unrelated deleted path is never restored.
+		const renameRestore = mockGitRun.mock.calls.find((call: [string, string[]]) =>
+			(call[1][0] === 'restore' || call[1][0] === 'checkout' || call[1][0] === 'reset') && call[1].includes('old.txt'));
+		expect(renameRestore).toBeUndefined();
+		const clean = mockGitRun.mock.calls.find((call: [string, string[]]) =>
+			call[1][0] === 'clean' && call[1].includes('new.txt'));
+		expect(clean).toBeDefined();
+	});
+
+	it('discardChanges without a scope never reverts a content-matched worktree rename', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (cmd === 'checkout HEAD -- new.txt' || cmd === 'reset HEAD -- new.txt') {
+				return { code: 1, stdout: '', stderr: "error: pathspec 'new.txt' did not match any file(s) known to git" };
+			}
+			if (cmd === 'clean -fd -- new.txt') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'identical content', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'identical content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getFileDiff('new.txt', { staged: false });
+		await adapter.discardChanges('new.txt');
+
+		// The unrelated deleted path is never restored, and the untracked file is cleaned.
+		const touchesOldPath = mockGitRun.mock.calls.find((call: [string, string[]]) =>
+			(call[1][0] === 'restore' || call[1][0] === 'checkout' || call[1][0] === 'reset' || call[1][0] === 'clean') && call[1].includes('old.txt'));
+		expect(touchesOldPath).toBeUndefined();
+		const clean = mockGitRun.mock.calls.find((call: [string, string[]]) =>
+			call[1][0] === 'clean' && call[1].includes('new.txt'));
+		expect(clean).toBeDefined();
+	});
+
+	it('discardChanges without a scope prefers a live porcelain rename over a stale content-matched source', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'identical content', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'identical content';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		// Content match caches a heuristic source for new.txt...
+		await adapter.getFileDiff('new.txt', { staged: false });
+
+		// ...then the user stages both halves so git itself now reports a rename.
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			if (args[0] === 'reset' || args[0] === 'checkout' || args[0] === 'clean') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		await adapter.discardChanges('new.txt');
+
+		// The live porcelain rename wins: the revert restores the original path.
+		const reset = mockGitRun.mock.calls.find((call: [string, string[]]) =>
+			call[1][0] === 'reset' && call[1].includes('old.txt'));
+		expect(reset?.[1]).toEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+	});
+
 	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'show') {

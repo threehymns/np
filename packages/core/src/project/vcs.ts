@@ -152,7 +152,7 @@ export interface VCSAdapter {
 	getFileDiff?(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail>;
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
-	discardChanges?(filepath: string): Promise<void>;
+	discardChanges?(filepath: string, options?: { staged?: boolean }): Promise<void>;
 	stageAll?(): Promise<void>;
 	unstageAll?(): Promise<void>;
 	discardAll?(): Promise<void>;

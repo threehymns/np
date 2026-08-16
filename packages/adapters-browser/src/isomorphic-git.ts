@@ -800,7 +800,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	async discardChanges(filepath: string): Promise<void> {
+	async discardChanges(filepath: string, _options?: { staged?: boolean }): Promise<void> {
+		// The staged scope is accepted for interface compatibility; the browser adapter
+		// always discards the whole file state. The desktop adapter scopes by staged.
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		try {
 			await git.checkout({
