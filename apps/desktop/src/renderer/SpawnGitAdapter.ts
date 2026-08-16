@@ -410,13 +410,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 	// Approximates git's default rename detection threshold (-M50%): content
 	// similarity below this is not strong enough to even qualify as a candidate
 	// source for the untracked file.
-	private static readonly RENAME_SIMILARITY_THRESHOLD = 0.5;
+	private static readonly RENAME_CANDIDATE_SIMILARITY_THRESHOLD = 0.5;
 	// The top candidate must clear this stronger bar to be accepted as the
 	// baseline. Uniqueness alone is not confidence: a lone deleted file that
 	// merely shares ~half its lines with the untracked file (e.g. both derived
 	// from a template) would otherwise become the baseline, and the resulting
 	// diff and hunk coordinates would reference an unrelated file.
-	private static readonly RENAME_CONFIDENCE_THRESHOLD = 0.8;
+	private static readonly RENAME_ACCEPT_SIMILARITY_THRESHOLD = 0.8;
 
 	private static lineSimilarity(a: string, b: string): number {
 		if (a === b) return 1;
@@ -461,11 +461,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		);
 		const scored = candidates
 			.map(c => ({ path: c.path, similarity: SpawnGitAdapter.lineSimilarity(c.content, worktreeContent) }))
-			.filter(c => c.similarity >= SpawnGitAdapter.RENAME_SIMILARITY_THRESHOLD)
+			.filter(c => c.similarity >= SpawnGitAdapter.RENAME_CANDIDATE_SIMILARITY_THRESHOLD)
 			.sort((a, b) => b.similarity - a.similarity);
 		if (scored.length === 0) return null;
 		const top = scored[0];
-		if (top.similarity < SpawnGitAdapter.RENAME_CONFIDENCE_THRESHOLD) return null;
+		if (top.similarity < SpawnGitAdapter.RENAME_ACCEPT_SIMILARITY_THRESHOLD) return null;
 		if (scored.length === 1) return top.path;
 		return top.similarity > scored[1].similarity ? top.path : null;
 	}
