@@ -473,7 +473,7 @@ describe('SpawnGitAdapter', () => {
 		expect(unstagedDiff.modifiedContent).toBe('worktree content of new');
 	});
 
-	it('updateIndexContent preserves mode from origPath when destination path is not in index', async () => {
+	it('updateIndexContent preserves mode from origPath and removes origPath in a single atomic update-index command when destination path is an unstaged worktree rename', async () => {
 		const commands: string[][] = [];
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			commands.push(args);
@@ -502,46 +502,22 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n');
 
-		const updateIndexCall = commands.find(c => c[0] === 'update-index');
-		expect(updateIndexCall).toBeDefined();
-		expect(updateIndexCall).toEqual(['update-index', '--cacheinfo', '100755', 'abcdef1234567890abcdef1234567890abcdef12', 'new.sh']);
+		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
+		expect(updateIndexCalls).toHaveLength(1);
+		expect(updateIndexCalls[0]).toEqual([
+			'update-index',
+			'--add',
+			'--cacheinfo',
+			'100755',
+			'abcdef1234567890abcdef1234567890abcdef12',
+			'new.sh',
+			'--force-remove',
+			'--',
+			'old.sh'
+		]);
 	});
 
-	it('updateIndexContent removes origPath from index when destination path is an unstaged worktree rename', async () => {
-		const commands: string[][] = [];
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
-				return { code: 0, stdout: '.git', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('new.sh')) {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('old.sh')) {
-				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
-			}
-			if (args[0] === 'hash-object') {
-				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
-			}
-			if (args[0] === 'update-index') {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n');
-
-		const removeCall = commands.find(c => c[0] === 'update-index' && c.includes('--force-remove'));
-		expect(removeCall).toBeDefined();
-		expect(removeCall).toEqual(['update-index', '--force-remove', '--', 'old.sh']);
-	});
-
-	it('updateIndexContent throws when update-index --force-remove fails for origPath', async () => {
+	it('updateIndexContent throws when atomic update-index fails for rename staging', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
@@ -559,20 +535,17 @@ describe('SpawnGitAdapter', () => {
 			if (args[0] === 'hash-object') {
 				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
 			}
-			if (args[0] === 'update-index' && args.includes('--force-remove')) {
-				return { code: 1, stdout: '', stderr: 'fatal: unable to remove old.sh from index' };
-			}
 			if (args[0] === 'update-index') {
-				return { code: 0, stdout: '', stderr: '' };
+				return { code: 1, stdout: '', stderr: 'fatal: unable to process update-index' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
-		await expect(adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n')).rejects.toThrow('unable to remove old.sh');
+		await expect(adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n')).rejects.toThrow('unable to process update-index');
 	});
 
-	it('updateIndexContent does not remove origPath when destination path is already in index', async () => {
+	it('updateIndexContent does not include --force-remove when destination path is already in index', async () => {
 		const commands: string[][] = [];
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			commands.push(args);
@@ -594,8 +567,16 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.updateIndexContent('existing.txt', 'updated content\n');
 
-		const removeCall = commands.find(c => c[0] === 'update-index' && c.includes('--force-remove'));
-		expect(removeCall).toBeUndefined();
+		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
+		expect(updateIndexCalls).toHaveLength(1);
+		expect(updateIndexCalls[0]).toEqual([
+			'update-index',
+			'--add',
+			'--cacheinfo',
+			'100644',
+			'abcdef1234567890abcdef1234567890abcdef12',
+			'existing.txt'
+		]);
 	});
 
 	it('does not treat an untracked file as a rename even when a deleted file has identical content', async () => {
