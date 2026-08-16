@@ -407,19 +407,56 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
+	// Approximates git's default rename detection threshold (-M50%): content
+	// similarity below this is not strong enough to treat the untracked file as
+	// a moved file.
+	private static readonly RENAME_SIMILARITY_THRESHOLD = 0.5;
+
+	private static lineSimilarity(a: string, b: string): number {
+		if (a === b) return 1;
+		const lineCounts = (text: string): Map<string, number> => {
+			const counts = new Map<string, number>();
+			for (const line of text.split('\n')) {
+				counts.set(line, (counts.get(line) ?? 0) + 1);
+			}
+			return counts;
+		};
+		const aCounts = lineCounts(a);
+		const bCounts = lineCounts(b);
+		let shared = 0;
+		for (const [line, count] of aCounts) {
+			shared += Math.min(count, bCounts.get(line) ?? 0);
+		}
+		let total = 0;
+		for (const count of aCounts.values()) total += count;
+		for (const count of bCounts.values()) total += count;
+		return (2 * shared) / total;
+	}
+
 	private async findWorktreeRenameSource(filepath: string, worktreeContent: string): Promise<string | null> {
 		// A rename that exists only in the worktree (e.g. `mv old.txt new.txt` without
 		// staging) is reported by porcelain as ` D old.txt` + `?? new.txt` — no `R` entry.
-		// Detect it by matching the untracked file's worktree content against the index
-		// content of every file deleted in the worktree.
+		// Detect it by scoring the untracked file's worktree content against the index
+		// content of every file deleted in the worktree. Exact content equality alone is
+		// not evidence of a rename, so the best match is used only when it is unique:
+		// several candidates tying at the top score (e.g. unrelated deleted files with
+		// identical content) are ambiguous and leave the file genuinely untracked instead
+		// of committing to an arbitrary first source. A single identical-content match is
+		// kept: it is observationally indistinguishable from an unedited move, and git's
+		// own rename detection reports the same pair as a rename.
 		const res = await this.runGit(['ls-files', '--deleted']);
 		if (res.code !== 0 || !res.stdout.trim()) return null;
 		const deletedPaths = res.stdout.split('\n').map(s => s.trim()).filter(Boolean).filter(p => p !== filepath);
 		const candidates = await Promise.all(
 			deletedPaths.map(async p => ({ path: p, content: await this.readGitObject(`:${p}`) }))
 		);
-		const match = candidates.find(c => c.content === worktreeContent);
-		return match ? match.path : null;
+		const scored = candidates
+			.map(c => ({ path: c.path, similarity: SpawnGitAdapter.lineSimilarity(c.content, worktreeContent) }))
+			.filter(c => c.similarity >= SpawnGitAdapter.RENAME_SIMILARITY_THRESHOLD)
+			.sort((a, b) => b.similarity - a.similarity);
+		if (scored.length === 0) return null;
+		if (scored.length === 1) return scored[0].path;
+		return scored[0].similarity > scored[1].similarity ? scored[0].path : null;
 	}
 
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {

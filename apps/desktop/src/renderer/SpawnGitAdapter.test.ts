@@ -447,6 +447,110 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.stagedContent).toBe('');
 	});
 
+	it('uses the old path as the unstaged baseline when a worktree-only rename is edited after the move', async () => {
+		const baseline = 'line1\nline2\nline3\nline4\nline5\n';
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// worktree-only rename plus unstaged edits: " D old.txt" + "?? new.txt"
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			if (args[0] === 'show' && (args[1] === ':old.txt' || args[1] === 'HEAD:old.txt')) {
+				return { code: 0, stdout: baseline, stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'line1\nline2\nline3\nchanged line\nline5\n';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt', { staged: false });
+
+		// The edited rename still resolves to the old path's index content as the
+		// baseline, so the diff shows the edit instead of treating the file as new.
+		expect(diff.originalContent).toBe(baseline);
+		expect(diff.modifiedContent).toBe('line1\nline2\nline3\nchanged line\nline5\n');
+		expect(diff.stagedContent).toBe('');
+	});
+
+	it('does not treat an untracked file as a rename when several deleted files tie on content', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// two unrelated deleted files with identical content plus an untracked
+				// file carrying the same content: no candidate is a unique best match
+				return { code: 0, stdout: ' D a.txt\0 D b.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'a.txt\nb.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === ':a.txt' || args[1] === ':b.txt')) {
+				return { code: 0, stdout: 'candidate content\n', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'candidate content\n';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt', { staged: false });
+
+		// The tie is ambiguous, so no arbitrary first source becomes the baseline and
+		// the file stays genuinely untracked instead of showing an empty diff.
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('candidate content\n');
+		expect(diff.stagedContent).toBe('');
+	});
+
+	it('does not treat an untracked file as a rename when its content is too dissimilar to the deleted file', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':old.txt') {
+				return { code: 0, stdout: 'totally unrelated abandoned content\n', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'brand new file content\n';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt', { staged: false });
+
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('brand new file content\n');
+		expect(diff.stagedContent).toBe('');
+	});
+
 	it('discardChanges reverts a staged rename by restoring the original path and removing the new path', async () => {
 		const calls: string[][] = [];
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
