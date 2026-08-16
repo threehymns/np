@@ -171,6 +171,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return undefined;
 	}
 
+	// Fresh porcelain probe of the rename destination at discard time: the cached rename
+	// state can predate worktree edits, so the Y column is read from a new status call
+	// rather than from renamedOrigPaths. True when the worktree copy at the destination
+	// differs from the index (Y = M). If the state cannot be confirmed, preserve the
+	// worktree copy rather than risk deleting edits.
+	private async destinationHasEdits(filepath: string): Promise<boolean> {
+		try {
+			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+			if (statusRes.code === 0 && statusRes.stdout) {
+				const match = this.parseStatusEntries(statusRes.stdout)
+					.find(e => e.filepath === filepath && e.origPath);
+				if (match) return match.y === 'M';
+			}
+		} catch (e) {}
+		return true;
+	}
+
 	private async cleanIfPresent(filepath: string): Promise<void> {
 		const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
 		if (cleanRes.code !== 0) {
@@ -207,6 +224,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// fails because the new path is absent from HEAD, so restore the original path from
 			// HEAD in index and worktree and remove the new path, instead of dropping the
 			// original tracked file.
+			const preserveDestination = await this.destinationHasEdits(filepath);
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
@@ -215,7 +233,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (checkoutRes.code !== 0) {
 				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
-			await this.cleanIfPresent(filepath);
+			// An RM rename (staged rename plus unstaged edits at the destination) keeps its
+			// worktree copy: after the reset it is untracked, so it is left in place instead
+			// of being cleaned away with the user's edits in it.
+			if (!preserveDestination) {
+				await this.cleanIfPresent(filepath);
+			}
 			this.renamedOrigPaths.delete(filepath);
 			return;
 		}
