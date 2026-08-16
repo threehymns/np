@@ -1029,6 +1029,42 @@ describe('SpawnGitAdapter', () => {
 		expect(addCalls[0][1]).toEqual(['add', '-A']);
 	});
 
+	it('unstageFile unstages normal file via git reset HEAD', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageFile('file.txt');
+
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'file.txt']);
+	});
+
+	it('unstageFile resets both origPath and destination path when unstaging a staged rename', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'R  new.txt\0old.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageFile('new.txt');
+
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+	});
+
+	it('unstageFile throws when git reset fails', async () => {
+		mockGitRun.mockImplementation(async () => ({ code: 1, stdout: '', stderr: 'fatal: reset failed' }));
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('reset failed');
+	});
+
 	it('unstageAll issues a single native git restore --staged command', async () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageAll();
