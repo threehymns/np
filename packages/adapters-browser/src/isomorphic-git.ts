@@ -686,7 +686,11 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				// EAFP: attempt reading worktree content; file may be deleted or missing
 				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
 				workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-			} catch (e) {}
+			} catch (e: any) {
+				// Only genuinely absent files yield empty worktree content;
+				// anything else (permissions, I/O failures) must reach the caller.
+				if (!isENOENT(e)) throw e;
+			}
 		}
 
 		// Rename resolution fallback: if filepath was not in HEAD, search HEAD tree
