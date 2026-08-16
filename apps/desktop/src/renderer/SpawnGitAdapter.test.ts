@@ -507,6 +507,97 @@ describe('SpawnGitAdapter', () => {
 		expect(updateIndexCall).toEqual(['update-index', '--cacheinfo', '100755', 'abcdef1234567890abcdef1234567890abcdef12', 'new.sh']);
 	});
 
+	it('updateIndexContent removes origPath from index when destination path is an unstaged worktree rename', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+				return { code: 0, stdout: '.git', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('new.sh')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('old.sh')) {
+				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
+			}
+			if (args[0] === 'hash-object') {
+				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
+			}
+			if (args[0] === 'update-index') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n');
+
+		const removeCall = commands.find(c => c[0] === 'update-index' && c.includes('--force-remove'));
+		expect(removeCall).toBeDefined();
+		expect(removeCall).toEqual(['update-index', '--force-remove', '--', 'old.sh']);
+	});
+
+	it('updateIndexContent throws when update-index --force-remove fails for origPath', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+				return { code: 0, stdout: '.git', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('new.sh')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('old.sh')) {
+				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
+			}
+			if (args[0] === 'hash-object') {
+				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
+			}
+			if (args[0] === 'update-index' && args.includes('--force-remove')) {
+				return { code: 1, stdout: '', stderr: 'fatal: unable to remove old.sh from index' };
+			}
+			if (args[0] === 'update-index') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n')).rejects.toThrow('unable to remove old.sh');
+	});
+
+	it('updateIndexContent does not remove origPath when destination path is already in index', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+				return { code: 0, stdout: '.git', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('existing.txt')) {
+				return { code: 0, stdout: '100644 1234567890123456789012345678901234567890 0\texisting.txt', stderr: '' };
+			}
+			if (args[0] === 'hash-object') {
+				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
+			}
+			if (args[0] === 'update-index') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.updateIndexContent('existing.txt', 'updated content\n');
+
+		const removeCall = commands.find(c => c[0] === 'update-index' && c.includes('--force-remove'));
+		expect(removeCall).toBeUndefined();
+	});
+
 	it('does not treat an untracked file as a rename even when a deleted file has identical content', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
