@@ -861,7 +861,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const isClean = head === 1 && workdir === 1 && stage === 1;
 			if (isClean) continue;
 			if (head === 0) {
-				await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+				await this.fs!.promises.unlink(`${this.dir}/${filepath}`).catch(() => {});
 				await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string }).catch(() => {});
 			} else {
 				trackedToRestore.push(filepath as string);
