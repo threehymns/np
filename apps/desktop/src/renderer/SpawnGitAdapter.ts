@@ -3,11 +3,8 @@ import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 
 export class SpawnGitAdapter implements VCSAdapter {
 	// Rename sources reported by git itself (porcelain R entries). Authoritative: the
-	// only source that may drive rename reverts during discard.
+	// only source that drives rename diff baselines and reverts during discard.
 	private renamedOrigPaths = new Map<string, string>();
-	// Content-matched worktree "renames" (heuristic diff baselines only). Never
-	// consulted by discardChanges: identical content is not evidence of a rename.
-	private heuristicRenameSources = new Map<string, string>();
 
 	constructor(private rootOrigin: FileOrigin) {}
 
@@ -193,9 +190,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// Staged rename reported by git itself: revert the whole rename. `checkout HEAD -- newPath`
 			// fails because the new path is absent from HEAD, so restore the original path from
 			// HEAD in index and worktree and remove the new path, instead of dropping the
-			// original tracked file. Content-matched worktree "renames" never reach this branch:
-			// identical content is not evidence of a rename, so discarding an untracked file must
-			// not restore an unrelated deleted path.
+			// original tracked file.
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
@@ -338,7 +333,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const changes: GitChange[] = [];
 		const entries = this.parseStatusEntries(statusRes.stdout);
 		this.renamedOrigPaths.clear();
-		this.heuristicRenameSources.clear();
 
 		for (const { x, y, filepath, origPath } of entries) {
 			if (origPath) {
@@ -407,74 +401,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
-	// Approximates git's default rename detection threshold (-M50%): content
-	// similarity below this is not strong enough to even qualify as a candidate
-	// source for the untracked file.
-	private static readonly RENAME_CANDIDATE_SIMILARITY_THRESHOLD = 0.5;
-	// The top candidate must clear this stronger bar to be accepted as the
-	// baseline. Uniqueness alone is not confidence: a lone deleted file that
-	// merely shares ~half its lines with the untracked file (e.g. both derived
-	// from a template) would otherwise become the baseline, and the resulting
-	// diff and hunk coordinates would reference an unrelated file.
-	private static readonly RENAME_ACCEPT_SIMILARITY_THRESHOLD = 0.8;
-
-	private static lineSimilarity(a: string, b: string): number {
-		if (a === b) return 1;
-		const lineCounts = (text: string): Map<string, number> => {
-			const counts = new Map<string, number>();
-			for (const line of text.split('\n')) {
-				counts.set(line, (counts.get(line) ?? 0) + 1);
-			}
-			return counts;
-		};
-		const aCounts = lineCounts(a);
-		const bCounts = lineCounts(b);
-		let shared = 0;
-		for (const [line, count] of aCounts) {
-			shared += Math.min(count, bCounts.get(line) ?? 0);
-		}
-		let total = 0;
-		for (const count of aCounts.values()) total += count;
-		for (const count of bCounts.values()) total += count;
-		return (2 * shared) / total;
-	}
-
-	private async findWorktreeRenameSource(filepath: string, worktreeContent: string): Promise<string | null> {
-		// A rename that exists only in the worktree (e.g. `mv old.txt new.txt` without
-		// staging) is reported by porcelain as ` D old.txt` + `?? new.txt` — no `R` entry.
-		// Detect it by scoring the untracked file's worktree content against the index
-		// content of every file deleted in the worktree. Exact content equality alone is
-		// not evidence of a rename, so the best match is accepted only when it is unique
-		// AND clears the confidence threshold: a candidate tied at the top score (e.g.
-		// unrelated deleted files with identical content) is ambiguous, and a unique
-		// candidate that only clears the loose -M50% filter (e.g. an unrelated file
-		// sharing half its lines) is too weak. Both cases leave the file genuinely
-		// untracked instead of committing to an arbitrary source. A single strongly
-		// similar or identical match is kept: it is observationally indistinguishable
-		// from a move with light edits, and git's own rename detection reports the
-		// same pair as a rename.
-		const res = await this.runGit(['ls-files', '--deleted']);
-		if (res.code !== 0 || !res.stdout.trim()) return null;
-		const deletedPaths = res.stdout.split('\n').map(s => s.trim()).filter(Boolean).filter(p => p !== filepath);
-		const candidates = await Promise.all(
-			deletedPaths.map(async p => ({ path: p, content: await this.readGitObject(`:${p}`) }))
-		);
-		const scored = candidates
-			.map(c => ({ path: c.path, similarity: SpawnGitAdapter.lineSimilarity(c.content, worktreeContent) }))
-			.filter(c => c.similarity >= SpawnGitAdapter.RENAME_CANDIDATE_SIMILARITY_THRESHOLD)
-			.sort((a, b) => b.similarity - a.similarity);
-		if (scored.length === 0) return null;
-		const top = scored[0];
-		if (top.similarity < SpawnGitAdapter.RENAME_ACCEPT_SIMILARITY_THRESHOLD) return null;
-		if (scored.length === 1) return top.path;
-		return top.similarity > scored[1].similarity ? top.path : null;
-	}
-
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
 		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
 		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
-		const porcelainOrigPath = await this.resolveOrigPath(filepath);
-		let origPath = porcelainOrigPath ?? this.heuristicRenameSources.get(filepath);
+		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 
 		let worktreeContent = '';
 		if (options?.staged !== true) {
@@ -489,30 +419,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 		}
 
-		// Unstaged rename in the worktree: no porcelain R entry exists, so fall back to
-		// content matching so the old path becomes the diff baseline instead of an empty one.
-		// Matches stay in the heuristic map and never influence discard.
-		if (!origPath && options?.staged !== true && worktreeContent) {
-			origPath = await this.findWorktreeRenameSource(filepath, worktreeContent) ?? undefined;
-			if (origPath) {
-				this.heuristicRenameSources.set(filepath, origPath);
-			}
-		}
-		origPath = origPath || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
-
-		// Resolve the unstaged baseline from the rename source's index entry. When the
-		// file was renamed in the worktree, the new path has no index entry of its own, so
-		// the old path's index content is the correct "original" to diff against. Nothing
-		// is staged at the new path, so stagedContent stays empty.
-		if (origPath !== filepath && options?.staged === false && indexContent === '' && headContent !== '') {
-			const sourceIndexContent = await this.readGitObject(`:${origPath}`);
-			return {
-				originalContent: sourceIndexContent,
-				modifiedContent: worktreeContent,
-				stagedContent: ''
-			};
-		}
 
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
 	}
