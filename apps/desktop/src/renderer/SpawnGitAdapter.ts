@@ -148,34 +148,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
-	private async resolveOrigPath(filepath: string): Promise<string | undefined> {
+	private async getRenameEntry(filepath: string): Promise<{ origPath: string; hasWorktreeEdits: boolean } | null> {
 		try {
 			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
 			if (statusRes.code === 0 && statusRes.stdout) {
 				const entries = this.parseStatusEntries(statusRes.stdout);
 				const match = entries.find(e => e.filepath === filepath && e.origPath);
 				if (match?.origPath) {
-					return match.origPath;
+					return { origPath: match.origPath, hasWorktreeEdits: match.y === 'M' };
 				}
 			}
 		} catch (e) {}
-		return undefined;
+		return null;
 	}
 
-	// Fresh porcelain probe of the rename destination at discard time: the destination's
-	// Y column is read from a new status call. True when the worktree copy at the destination
-	// differs from the index (Y = M). If the state cannot be confirmed, preserve the
-	// worktree copy rather than risk deleting edits.
-	private async destinationHasEdits(filepath: string): Promise<boolean> {
-		try {
-			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
-			if (statusRes.code === 0 && statusRes.stdout) {
-				const match = this.parseStatusEntries(statusRes.stdout)
-					.find(e => e.filepath === filepath && e.origPath);
-				if (match) return match.y === 'M';
-			}
-		} catch (e) {}
-		return true;
+	private async resolveOrigPath(filepath: string): Promise<string | undefined> {
+		const entry = await this.getRenameEntry(filepath);
+		return entry?.origPath;
 	}
 
 	private async cleanIfPresent(filepath: string): Promise<void> {
@@ -207,13 +196,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 			return;
 		}
 
-		const origPath = await this.resolveOrigPath(filepath);
+		const renameEntry = await this.getRenameEntry(filepath);
+		const origPath = renameEntry?.origPath;
 		if (origPath && origPath !== filepath) {
 			// Staged rename reported by git itself: revert the whole rename. `checkout HEAD -- newPath`
 			// fails because the new path is absent from HEAD, so restore the original path from
 			// HEAD in index and worktree and remove the new path, instead of dropping the
 			// original tracked file.
-			const preserveDestination = await this.destinationHasEdits(filepath);
+			const preserveDestination = renameEntry.hasWorktreeEdits;
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
