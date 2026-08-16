@@ -43,7 +43,11 @@
 		if (action === 'stage' || action === 'unstage' || action === 'discard') {
 			const commandId = `git.${action}`;
 			for (const path of targets) {
-				await appState.commands.execute(commandId, path);
+				if (action === 'discard') {
+					await appState.commands.execute(commandId, path, { staged: false });
+				} else {
+					await appState.commands.execute(commandId, path);
+				}
 			}
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', change.filepath);
@@ -116,7 +120,7 @@
 										{...props}
 										type="button"
 										aria-label="Discard changes"
-										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', change.filepath); }}
+										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', change.filepath, { staged: false }); }}
 										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-destructive transition-opacity"
 									>
 										<ArrowUDownLeftIcon size={10} />

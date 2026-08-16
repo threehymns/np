@@ -327,7 +327,7 @@
 			}
 		} else if (action === 'discard') {
 			for (const path of targets) {
-				await appState.commands.execute('git.discard', path);
+				await appState.commands.execute('git.discard', path, { staged: contextTargetFile.staged });
 			}
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', contextTargetFile.filepath);
@@ -539,7 +539,7 @@
 								type="button"
 								onclick={async () => {
 									for (const f of untrackedChangesGrouped) {
-										await appState.commands.execute('git.discard', f.filepath);
+										await appState.commands.execute('git.discard', f.filepath, { staged: false });
 									}
 								}}
 								class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-destructive cursor-pointer"
@@ -786,7 +786,7 @@
 							{:else}
 								<button
 									type="button"
-									onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', node.change!.filepath); }}
+									onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', node.change!.filepath, { staged: false }); }}
 									class="p-0.5 rounded bg-muted/40 hover:bg-muted text-destructive"
 									title="Discard"
 								>

@@ -2,7 +2,12 @@ import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCom
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 
 export class SpawnGitAdapter implements VCSAdapter {
+	// Rename sources reported by git itself (porcelain R entries). Authoritative: the
+	// only source that may drive rename reverts during discard.
 	private renamedOrigPaths = new Map<string, string>();
+	// Content-matched worktree "renames" (heuristic diff baselines only). Never
+	// consulted by discardChanges: identical content is not evidence of a rename.
+	private heuristicRenameSources = new Map<string, string>();
 
 	constructor(private rootOrigin: FileOrigin) {}
 
@@ -19,7 +24,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'not in index',
 		'does not exist in',
 		'does not have an entry in index',
-		'exists on disk, but not in'
+		'exists on disk, but not in',
+		'did not match any file(s)'
 	];
 
 	private isPathNotFoundError(stderr: string): boolean {
@@ -160,13 +166,36 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return undefined;
 	}
 
-	async discardChanges(filepath: string): Promise<void> {
+	private async cleanIfPresent(filepath: string): Promise<void> {
+		const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
+		if (cleanRes.code !== 0) {
+			throw new Error(cleanRes.stderr || `Failed to discard changes for ${filepath}`);
+		}
+	}
+
+	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
+		if (options?.staged === false) {
+			// Unstaged scope: reset only the worktree copy to the index version. This must
+			// never unstage or restore a rename source, because the same path may also own a
+			// staged rename whose revert belongs to the staged scope only.
+			const res = await this.runGit(['restore', '--worktree', '--', filepath]);
+			if (res.code !== 0) {
+				if (!this.isPathNotFoundError(res.stderr)) {
+					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
+				}
+				await this.cleanIfPresent(filepath);
+			}
+			return;
+		}
+
 		const origPath = await this.resolveOrigPath(filepath);
 		if (origPath && origPath !== filepath) {
-			// Staged rename: revert the whole rename. `checkout HEAD -- newPath` fails
-			// because the new path is absent from HEAD, so restore the original path from
+			// Staged rename reported by git itself: revert the whole rename. `checkout HEAD -- newPath`
+			// fails because the new path is absent from HEAD, so restore the original path from
 			// HEAD in index and worktree and remove the new path, instead of dropping the
-			// original tracked file.
+			// original tracked file. Content-matched worktree "renames" never reach this branch:
+			// identical content is not evidence of a rename, so discarding an untracked file must
+			// not restore an unrelated deleted path.
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
@@ -175,10 +204,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (checkoutRes.code !== 0) {
 				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
-			const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
-			if (cleanRes.code !== 0) {
-				throw new Error(cleanRes.stderr || `Failed to discard changes for ${filepath}`);
-			}
+			await this.cleanIfPresent(filepath);
 			return;
 		}
 
@@ -186,12 +212,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (res.code !== 0) {
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
 			if (resetRes.code !== 0) {
-				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
+				// A trailing "did not match" means the path has no index entry (untracked), so
+				// proceed to clean instead of failing the discard.
+				if (!this.isPathNotFoundError(resetRes.stderr)) {
+					throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
+				}
 			}
-			const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
-			if (cleanRes.code !== 0) {
-				throw new Error(cleanRes.stderr || res.stderr || `Failed to discard changes for ${filepath}`);
-			}
+			await this.cleanIfPresent(filepath);
 		}
 	}
 
@@ -311,6 +338,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const changes: GitChange[] = [];
 		const entries = this.parseStatusEntries(statusRes.stdout);
 		this.renamedOrigPaths.clear();
+		this.heuristicRenameSources.clear();
 
 		for (const { x, y, filepath, origPath } of entries) {
 			if (origPath) {
@@ -397,7 +425,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
 		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
 		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
-		let origPath = await this.resolveOrigPath(filepath);
+		const porcelainOrigPath = await this.resolveOrigPath(filepath);
+		let origPath = porcelainOrigPath ?? this.heuristicRenameSources.get(filepath);
 
 		let worktreeContent = '';
 		if (options?.staged !== true) {
@@ -414,10 +443,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		// Unstaged rename in the worktree: no porcelain R entry exists, so fall back to
 		// content matching so the old path becomes the diff baseline instead of an empty one.
+		// Matches stay in the heuristic map and never influence discard.
 		if (!origPath && options?.staged !== true && worktreeContent) {
 			origPath = await this.findWorktreeRenameSource(filepath, worktreeContent) ?? undefined;
 			if (origPath) {
-				this.renamedOrigPaths.set(filepath, origPath);
+				this.heuristicRenameSources.set(filepath, origPath);
 			}
 		}
 		origPath = origPath || filepath;

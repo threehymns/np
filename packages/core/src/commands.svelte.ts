@@ -479,7 +479,7 @@ export function registerCoreCommands(appState: AppState) {
 		id: 'git.discard',
 		label: 'Git: Discard Changes',
 		category: 'Source Control',
-		action: async (filepath: string, skipConfirm = false) => {
+		action: async (filepath: string, options?: { staged?: boolean }, skipConfirm = false) => {
 			if (!filepath) return false;
 			if (!skipConfirm) {
 				const confirmed = await showConfirm(appState, `Are you sure you want to discard changes in '${filepath}'? This action cannot be undone.`);
@@ -488,7 +488,7 @@ export function registerCoreCommands(appState: AppState) {
 			const repo = appState.workspace.repository;
 			if (repo?.adapter.discardChanges) {
 				return await runGitOp(`Failed to discard changes in '${filepath}'`, async (r) => {
-					await r.adapter.discardChanges!(filepath);
+					await r.adapter.discardChanges!(filepath, options);
 				});
 			}
 			return false;
