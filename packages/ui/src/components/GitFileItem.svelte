@@ -5,7 +5,7 @@
 		GitDiffIcon, FileArrowUpIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
-	import type { GitChange, GroupedChange } from '@np/core';
+	import { resolveDiscardOptions, type GitChange, type GroupedChange } from '@np/core';
 	import * as ContextMenu from './ui/context-menu';
 	import * as Tooltip from './ui/tooltip/index';
 	import GitStatusChip from './GitStatusChip.svelte';
@@ -42,9 +42,12 @@
 
 		if (action === 'stage' || action === 'unstage' || action === 'discard') {
 			const commandId = `git.${action}`;
+			const changes = appState.workspace.repository?.changes;
 			for (const path of targets) {
 				if (action === 'discard') {
-					await appState.commands.execute(commandId, path, { staged: false });
+					const options = resolveDiscardOptions(path, isStaged, changes);
+					const success = await appState.commands.execute(commandId, path, options);
+					if (!success) break;
 				} else {
 					await appState.commands.execute(commandId, path);
 				}

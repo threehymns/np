@@ -14,7 +14,7 @@
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import type { GitChange, GroupedChange } from '@np/core';
+	import { resolveDiscardOptions, type GitChange, type GroupedChange } from '@np/core';
 
 	const appState = useAppState();
 	let repo = $derived(appState.workspace.repository);
@@ -327,7 +327,9 @@
 			}
 		} else if (action === 'discard') {
 			for (const path of targets) {
-				await appState.commands.execute('git.discard', path, { staged: contextTargetFile.staged });
+				const options = resolveDiscardOptions(path, contextTargetFile.staged, repo.changes);
+				const success = await appState.commands.execute('git.discard', path, options);
+				if (!success) break;
 			}
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', contextTargetFile.filepath);

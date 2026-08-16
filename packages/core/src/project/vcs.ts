@@ -141,6 +141,34 @@ export function diffCacheKey(fileChange: { filepath: string; staged?: boolean; c
 	return fileChange.filepath;
 }
 
+/**
+ * Resolves the appropriate `{ staged: boolean }` discard option for a given file path,
+ * taking into account its presence in staged and/or unstaged changes and the current context.
+ */
+export function resolveDiscardOptions(
+	filepath: string,
+	contextIsStaged: boolean,
+	changes?: GitChange[]
+): { staged: boolean } {
+	if (!changes || changes.length === 0) {
+		return { staged: contextIsStaged };
+	}
+	const fileChanges = changes.filter((c) => c.filepath === filepath);
+	if (fileChanges.length === 0) {
+		return { staged: contextIsStaged };
+	}
+	const hasStaged = fileChanges.some((c) => c.staged);
+	const hasUnstaged = fileChanges.some((c) => !c.staged);
+
+	if (hasStaged && !hasUnstaged) {
+		return { staged: true };
+	}
+	if (!hasStaged && hasUnstaged) {
+		return { staged: false };
+	}
+	return { staged: contextIsStaged };
+}
+
 export interface VCSAdapter {
 	detect(rootPath: string): Promise<boolean>;
 	getCurrentBranch(): Promise<string | null>;
