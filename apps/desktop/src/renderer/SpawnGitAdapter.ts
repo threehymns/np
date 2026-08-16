@@ -67,8 +67,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const y = entry[1];
 			const filepath = entry.substring(3);
 			let origPath: string | undefined;
-			if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+			if (x === 'R' || y === 'R') {
 				origPath = entries[++i];
+			} else if (x === 'C' || y === 'C') {
+				// Porcelain v1 -z emits the source path as a subsequent NUL token for copies.
+				// Consume it to keep token alignment without recording a rename source.
+				i++;
 			}
 			if (filepath.endsWith('/')) continue;
 			result.push({ x, y, filepath, origPath });
