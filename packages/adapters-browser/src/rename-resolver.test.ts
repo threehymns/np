@@ -6,10 +6,10 @@ describe('resolveRenamedHeadContent', () => {
 	const mockFs = {
 		promises: {
 			readFile: mock(async () => {
-				throw new Error('File not found');
+				throw Object.assign(new Error('NotFoundError: File not found'), { name: 'NotFoundError' });
 			}),
 			stat: mock(async () => {
-				throw new Error('ENOENT');
+				throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
 			})
 		}
 	};
