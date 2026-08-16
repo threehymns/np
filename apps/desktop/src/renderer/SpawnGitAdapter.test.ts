@@ -267,7 +267,7 @@ describe('SpawnGitAdapter', () => {
 		expect(mockReadFile).toHaveBeenCalledWith('/test/repo/untracked.ts');
 	});
 
-	it('loads on-demand diff content via getFileDiff for deleted files without disk reads', async () => {
+	it('reports a deleted file as empty modified content when the worktree read reports ENOENT', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'show' && args[1] === 'HEAD:deleted.ts') {
 				return { code: 0, stdout: 'deleted content from head', stderr: '' };
@@ -936,4 +936,3 @@ describe('SpawnGitAdapter', () => {
 		expect(result).toBe(false);
 	});
 });
-
