@@ -261,6 +261,81 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
+	it('propagates raw NotReadableError when reading worktree content in getFileDiff', async () => {
+		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
+			if (oid === 'head-commit-oid') {
+				return { blob: new TextEncoder().encode('head text') };
+			}
+			return { blob: new Uint8Array() };
+		});
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			await map('blocked.txt', [{
+				type: async () => 'blob',
+				oid: async () => 'head-commit-oid'
+			}]);
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+
+		mockDirectoryHandle.getFileHandle = mock(async () => ({
+			kind: 'file',
+			name: 'blocked.txt',
+			getFile: mock(async () => {
+				throw Object.assign(new Error('NotReadableError: file is locked'), { name: 'NotReadableError' });
+			})
+		}));
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await expect(adapter.getFileDiff('blocked.txt', { staged: false })).rejects.toMatchObject({
+				name: 'NotReadableError'
+			});
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+		}
+	});
+
+	it('propagates permission (EACCES) errors when reading worktree content in getFileDiff', async () => {
+		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
+			return { blob: new TextEncoder().encode('head text') };
+		});
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			await map('blocked.txt', [{
+				type: async () => 'blob',
+				oid: async () => 'head-commit-oid'
+			}]);
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+
+		mockDirectoryHandle.getFileHandle = mock(async () => {
+			throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+		});
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await expect(adapter.getFileDiff('blocked.txt', { staged: false })).rejects.toThrow('EACCES');
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+		}
+	});
+
 	it('resolves original content for renamed files via HEAD tree oid matching', async () => {
 		const oldBlobOid = 'renamed-blob-oid-1234';
 		const oldContent = 'export function hello() { return "world"; }';
