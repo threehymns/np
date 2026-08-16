@@ -408,9 +408,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	// Approximates git's default rename detection threshold (-M50%): content
-	// similarity below this is not strong enough to treat the untracked file as
-	// a moved file.
+	// similarity below this is not strong enough to even qualify as a candidate
+	// source for the untracked file.
 	private static readonly RENAME_SIMILARITY_THRESHOLD = 0.5;
+	// The top candidate must clear this stronger bar to be accepted as the
+	// baseline. Uniqueness alone is not confidence: a lone deleted file that
+	// merely shares ~half its lines with the untracked file (e.g. both derived
+	// from a template) would otherwise become the baseline, and the resulting
+	// diff and hunk coordinates would reference an unrelated file.
+	private static readonly RENAME_CONFIDENCE_THRESHOLD = 0.8;
 
 	private static lineSimilarity(a: string, b: string): number {
 		if (a === b) return 1;
@@ -438,12 +444,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// staging) is reported by porcelain as ` D old.txt` + `?? new.txt` — no `R` entry.
 		// Detect it by scoring the untracked file's worktree content against the index
 		// content of every file deleted in the worktree. Exact content equality alone is
-		// not evidence of a rename, so the best match is used only when it is unique:
-		// several candidates tying at the top score (e.g. unrelated deleted files with
-		// identical content) are ambiguous and leave the file genuinely untracked instead
-		// of committing to an arbitrary first source. A single identical-content match is
-		// kept: it is observationally indistinguishable from an unedited move, and git's
-		// own rename detection reports the same pair as a rename.
+		// not evidence of a rename, so the best match is accepted only when it is unique
+		// AND clears the confidence threshold: a candidate tied at the top score (e.g.
+		// unrelated deleted files with identical content) is ambiguous, and a unique
+		// candidate that only clears the loose -M50% filter (e.g. an unrelated file
+		// sharing half its lines) is too weak. Both cases leave the file genuinely
+		// untracked instead of committing to an arbitrary source. A single strongly
+		// similar or identical match is kept: it is observationally indistinguishable
+		// from a move with light edits, and git's own rename detection reports the
+		// same pair as a rename.
 		const res = await this.runGit(['ls-files', '--deleted']);
 		if (res.code !== 0 || !res.stdout.trim()) return null;
 		const deletedPaths = res.stdout.split('\n').map(s => s.trim()).filter(Boolean).filter(p => p !== filepath);
@@ -455,8 +464,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 			.filter(c => c.similarity >= SpawnGitAdapter.RENAME_SIMILARITY_THRESHOLD)
 			.sort((a, b) => b.similarity - a.similarity);
 		if (scored.length === 0) return null;
-		if (scored.length === 1) return scored[0].path;
-		return scored[0].similarity > scored[1].similarity ? scored[0].path : null;
+		const top = scored[0];
+		if (top.similarity < SpawnGitAdapter.RENAME_CONFIDENCE_THRESHOLD) return null;
+		if (scored.length === 1) return top.path;
+		return top.similarity > scored[1].similarity ? top.path : null;
 	}
 
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
