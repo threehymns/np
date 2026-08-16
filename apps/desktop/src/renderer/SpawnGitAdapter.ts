@@ -144,10 +144,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
-		const res = await this.runGit(['reset', 'HEAD', '--', filepath]);
+		const origPath = await this.resolveOrigPath(filepath);
+		const paths = origPath && origPath !== filepath ? [origPath, filepath] : [filepath];
+		const res = await this.runGit(['reset', 'HEAD', '--', ...paths]);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to unstage file: ${filepath}`);
 		}
+		this.renamedOrigPaths.delete(filepath);
 	}
 
 	private async resolveOrigPath(filepath: string): Promise<string | undefined> {
