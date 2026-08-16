@@ -511,15 +511,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const hashRes = await this.runGit(['hash-object', '-w', relTmpPath]);
 			const hash = hashRes.stdout.trim();
 			if (hashRes.code === 0 && hash && hash.length === 40) {
-				const updateRes = await this.runGit(['update-index', '--cacheinfo', mode, hash, filepath]);
+				const updateArgs = ['update-index', '--add', '--cacheinfo', mode, hash, filepath];
+				if (origPathToRemove) {
+					updateArgs.push('--force-remove', '--', origPathToRemove);
+				}
+				const updateRes = await this.runGit(updateArgs);
 				if (updateRes.code !== 0) {
 					throw new Error(updateRes.stderr || 'Failed to update index');
 				}
 				if (origPathToRemove) {
-					const removeRes = await this.runGit(['update-index', '--force-remove', '--', origPathToRemove]);
-					if (removeRes.code !== 0) {
-						throw new Error(removeRes.stderr || `Failed to remove ${origPathToRemove} from index`);
-					}
 					this.renamedOrigPaths.delete(filepath);
 				}
 			} else {
