@@ -133,4 +133,155 @@ describe('resolveRenamedHeadContent', () => {
 		});
 		expect(res).toBeNull();
 	});
+
+	it('ignores ENOENT when reading workdir file and proceeds with candidate resolution', async () => {
+		const fsWithEnoent = {
+			promises: {
+				readFile: mock(async () => {
+					const err = new Error('ENOENT: no such file or directory');
+					(err as any).code = 'ENOENT';
+					throw err;
+				}),
+				stat: mock(async () => {
+					const err = new Error('ENOENT');
+					(err as any).code = 'ENOENT';
+					throw err;
+				})
+			}
+		};
+
+		(git as any).walk = mock(async ({ map }: { map: Function }) => {
+			await map('src/old-file.ts', [{
+				type: async () => 'blob',
+				oid: async () => 'candidate-oid-1'
+			}]);
+		});
+		(git as any).readBlob = mock(async () => {
+			return { blob: new TextEncoder().encode('old content') };
+		});
+
+		const res = await resolveRenamedHeadContent({
+			fs: fsWithEnoent,
+			dir: '/repo',
+			headCommit: 'head-oid',
+			filepath: 'src/old-file.ts'
+		});
+		expect(res).toBe('old content');
+	});
+
+	it('rethrows non-ENOENT filesystem errors when reading workdir file', async () => {
+		const fsWithEacces = {
+			promises: {
+				readFile: mock(async () => {
+					const err = new Error('EACCES: permission denied');
+					(err as any).code = 'EACCES';
+					throw err;
+				}),
+				stat: mock(async () => {
+					throw new Error('ENOENT');
+				})
+			}
+		};
+
+		await expect(
+			resolveRenamedHeadContent({
+				fs: fsWithEacces,
+				dir: '/repo',
+				headCommit: 'head-oid',
+				filepath: 'src/file.ts'
+			})
+		).rejects.toThrow('EACCES: permission denied');
+	});
+
+	it('rethrows non-ENOENT filesystem errors during worktree stat probing', async () => {
+		const fsWithStatError = {
+			promises: {
+				readFile: mock(async () => {
+					const err = new Error('ENOENT');
+					(err as any).code = 'ENOENT';
+					throw err;
+				}),
+				stat: mock(async () => {
+					const err = new Error('EIO: i/o error');
+					(err as any).code = 'EIO';
+					throw err;
+				})
+			}
+		};
+
+		(git as any).walk = mock(async ({ map }: { map: Function }) => {
+			await map('src/old-file.ts', [{
+				type: async () => 'blob',
+				oid: async () => 'candidate-oid-1'
+			}]);
+		});
+
+		await expect(
+			resolveRenamedHeadContent({
+				fs: fsWithStatError,
+				dir: '/repo',
+				headCommit: 'head-oid',
+				filepath: 'src/new-file.ts'
+			})
+		).rejects.toThrow('EIO: i/o error');
+	});
+
+	it('rethrows git.walk failures', async () => {
+		(git as any).walk = mock(async () => {
+			throw new Error('Git walk failed: corrupt commit');
+		});
+
+		await expect(
+			resolveRenamedHeadContent({
+				fs: mockFs,
+				dir: '/repo',
+				headCommit: 'head-oid',
+				filepath: 'src/new-file.ts'
+			})
+		).rejects.toThrow('Git walk failed: corrupt commit');
+	});
+
+	it('rethrows git.readBlob failures', async () => {
+		const targetOid = 'blob-oid-123';
+		(git as any).walk = mock(async ({ map }: { map: Function }) => {
+			await map('old/path.ts', [{
+				type: async () => 'blob',
+				oid: async () => targetOid
+			}]);
+		});
+		(git as any).readBlob = mock(async () => {
+			throw new Error('Git readBlob failed: missing blob');
+		});
+
+		await expect(
+			resolveRenamedHeadContent({
+				fs: mockFs,
+				dir: '/repo',
+				headCommit: 'head-oid',
+				filepath: 'new/path.ts',
+				stagedOid: targetOid
+			})
+		).rejects.toThrow('Git readBlob failed: missing blob');
+	});
+
+	it('rethrows git.hashBlob failures', async () => {
+		const origHashBlob = git.hashBlob;
+		(git as any).hashBlob = mock(async () => {
+			throw new Error('Git hashBlob failed');
+		});
+
+		try {
+			await expect(
+				resolveRenamedHeadContent({
+					fs: mockFs,
+					dir: '/repo',
+					headCommit: 'head-oid',
+					filepath: 'src/file.ts',
+					workdirContent: 'some content'
+				})
+			).rejects.toThrow('Git hashBlob failed');
+		} finally {
+			(git as any).hashBlob = origHashBlob;
+		}
+	});
 });

@@ -4,7 +4,7 @@ import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCom
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
-import { resolveRenamedHeadContent } from './rename-resolver';
+import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
@@ -104,7 +104,7 @@ class BrowserGitFS {
 				try {
 					return await current.getFileHandle(part);
 				} catch (fileError: any) {
-					if (fileError.name !== 'TypeMismatchError' && fileError.name !== 'NotFoundError') {
+					if (fileError.name !== 'TypeMismatchError' && !isENOENT(fileError)) {
 						throw this.convertError(fileError, path);
 					}
 				}
@@ -124,9 +124,9 @@ class BrowserGitFS {
 	private convertError(error: any, path: string): Error {
 		const code = error?.name === 'TypeMismatchError'
 			? 'ENOTDIR'
-			: error?.name === 'NotFoundError'
+			: isENOENT(error)
 				? 'ENOENT'
-				: error?.name === 'NotAllowedError' || error?.name === 'NotReadableError'
+				: error?.name === 'NotAllowedError' || error?.name === 'NotReadableError' || error?.code === 'EACCES'
 					? 'EACCES'
 					: 'EIO';
 
