@@ -25,7 +25,7 @@ describe('IsomorphicGitAdapter', () => {
 			queryPermission: mock(async () => 'granted'),
 			getDirectoryHandle: mock(async (name: string) => {
 				if (name === '.git') return { kind: 'directory', name: '.git' };
-				throw new Error('Directory not found');
+				throw Object.assign(new Error('NotFoundError: directory not found'), { name: 'NotFoundError' });
 			}),
 			keys: async function* () { yield '.git'; yield 'file.txt'; },
 			getFileHandle: mock(async (name: string) => {
@@ -245,7 +245,7 @@ describe('IsomorphicGitAdapter', () => {
 
 		// Mock file not found in workdir
 		mockDirectoryHandle.getFileHandle = mock(async () => {
-			throw new Error('NotFoundError: file not found');
+			throw Object.assign(new Error('NotFoundError: file not found'), { name: 'NotFoundError' });
 		});
 
 		try {
@@ -329,6 +329,45 @@ describe('IsomorphicGitAdapter', () => {
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			await expect(adapter.getFileDiff('blocked.txt', { staged: false })).rejects.toThrow('EACCES');
+		} finally {
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).walk = origWalk;
+		}
+	});
+
+	it('does not treat message-only ENOENT errors as missing files in getFileDiff', async () => {
+		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
+			return { blob: new TextEncoder().encode('head text') };
+		});
+		const resolveRefSpy = mock(async () => 'head-commit-oid');
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			await map('blocked.txt', [{
+				type: async () => 'blob',
+				oid: async () => 'head-commit-oid'
+			}]);
+		});
+
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origWalk = git.walk;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).walk = walkSpy;
+
+		mockDirectoryHandle.getFileHandle = mock(async () => ({
+			kind: 'file',
+			name: 'blocked.txt',
+			getFile: mock(async () => {
+				throw new Error('ENOENT: no such file or directory');
+			})
+		}));
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			await expect(adapter.getFileDiff('blocked.txt', { staged: false })).rejects.toThrow(
+				'ENOENT: no such file or directory'
+			);
 		} finally {
 			(git as any).readBlob = origReadBlob;
 			(git as any).resolveRef = origResolveRef;
@@ -590,7 +629,7 @@ describe('IsomorphicGitAdapter', () => {
 
 		mockDirectoryHandle.getFileHandle = mock(async (name: string) => {
 			if (name === 'old-file.ts') {
-				throw new Error('NotFoundError: file not found');
+				throw Object.assign(new Error('NotFoundError: file not found'), { name: 'NotFoundError' });
 			}
 			return {
 				kind: 'file',

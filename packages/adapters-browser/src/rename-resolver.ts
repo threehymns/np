@@ -14,15 +14,6 @@ export function isENOENT(err: any): boolean {
 	if (err.code === 'ENOENT') return true;
 	if (err.name === 'NotFoundError') return true;
 	if (err.name === 'ENOENT') return true;
-	if (typeof err.message === 'string') {
-		const msg = err.message.toLowerCase();
-		return (
-			msg.includes('enoent') ||
-			msg.includes('notfounderror') ||
-			msg.includes('not found') ||
-			msg.includes('no such file')
-		);
-	}
 	return false;
 }
 
