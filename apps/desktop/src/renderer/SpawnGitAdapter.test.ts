@@ -644,6 +644,38 @@ describe('SpawnGitAdapter', () => {
 		expect(calls).toEqual([['restore', '--worktree', '--', 'new.txt']]);
 	});
 
+	it('discardChanges with an unstaged scope reverts a worktree-only rename by restoring original path and cleaning new path', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' R new.txt\0old.txt\0', stderr: '' };
+			}
+			if (cmd === 'restore --worktree -- new.txt') {
+				return { code: 1, stdout: '', stderr: "error: pathspec 'new.txt' did not match any file(s) known to git" };
+			}
+			if (cmd === 'restore --worktree -- old.txt') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (cmd === 'clean -fd -- new.txt') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('new.txt', { staged: false });
+
+		const restoreOld = calls.find(c => c[0] === 'restore' && c.includes('old.txt'));
+		expect(restoreOld).toBeDefined();
+		expect(restoreOld).toEqual(['restore', '--worktree', '--', 'old.txt']);
+
+		const cleanNew = calls.find(c => c[0] === 'clean' && c.includes('new.txt'));
+		expect(cleanNew).toBeDefined();
+		expect(cleanNew).toEqual(['clean', '-fd', '--', 'new.txt']);
+	});
+
 	it('discardChanges with an unstaged scope leaves a git-reported staged rename with unstaged edits intact', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
