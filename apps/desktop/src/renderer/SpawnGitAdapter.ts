@@ -176,16 +176,24 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (options?.staged === false) {
-			// Unstaged scope: reset only the worktree copy to the index version. This must
-			// never unstage or restore a rename source, because the same path may also own a
-			// staged rename whose revert belongs to the staged scope only.
+			// Unstaged scope: reset only the worktree copy to the index version. If the
+			// destination path is not in the index (e.g. an unstaged worktree rename),
+			// restore the original source path from the index and clean the destination.
 			const res = await this.runGit(['restore', '--worktree', '--', filepath]);
 			if (res.code !== 0) {
 				if (!this.isPathNotFoundError(res.stderr)) {
 					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
 				}
+				const origPath = await this.resolveOrigPath(filepath);
+				if (origPath && origPath !== filepath) {
+					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', origPath]);
+					if (restoreOrigRes.code !== 0) {
+						throw new Error(restoreOrigRes.stderr || `Failed to discard changes for ${filepath}`);
+					}
+				}
 				await this.cleanIfPresent(filepath);
 			}
+			this.renamedOrigPaths.delete(filepath);
 			return;
 		}
 
@@ -204,6 +212,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
 			await this.cleanIfPresent(filepath);
+			this.renamedOrigPaths.delete(filepath);
 			return;
 		}
 
@@ -219,6 +228,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 			await this.cleanIfPresent(filepath);
 		}
+		this.renamedOrigPaths.delete(filepath);
 	}
 
 	async stageAll(): Promise<void> {
