@@ -489,9 +489,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		try {
 			let mode = '100644';
 			let lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
+			let origPathToRemove: string | undefined;
 			if (lsRes.code !== 0 || !lsRes.stdout.trim()) {
 				const origPath = await this.resolveOrigPath(filepath);
 				if (origPath && origPath !== filepath) {
+					origPathToRemove = origPath;
 					lsRes = await this.runGit(['ls-files', '-s', '--', origPath]);
 				}
 			}
@@ -509,6 +511,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 				const updateRes = await this.runGit(['update-index', '--cacheinfo', mode, hash, filepath]);
 				if (updateRes.code !== 0) {
 					throw new Error(updateRes.stderr || 'Failed to update index');
+				}
+				if (origPathToRemove) {
+					const removeRes = await this.runGit(['update-index', '--force-remove', '--', origPathToRemove]);
+					if (removeRes.code !== 0) {
+						throw new Error(removeRes.stderr || `Failed to remove ${origPathToRemove} from index`);
+					}
+					this.renamedOrigPaths.delete(filepath);
 				}
 			} else {
 				throw new Error(hashRes.stderr || 'Failed to obtain blob hash');
