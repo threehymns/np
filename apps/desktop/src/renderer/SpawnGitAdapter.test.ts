@@ -113,6 +113,32 @@ describe('SpawnGitAdapter', () => {
 		expect(stagedDeleted?.status).toBe('D');
 	});
 
+	it('parses porcelain status entries with copy operations without desynchronizing subsequent entries', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return {
+					code: 0,
+					stdout: 'C  copy.txt\0src.txt\0 M other.txt\0',
+					stderr: ''
+				};
+			}
+			if (cmd.startsWith('diff')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const changes = await adapter.getChanges();
+
+		expect(changes.length).toBe(2);
+		expect(changes[0].filepath).toBe('copy.txt');
+		expect(changes[0].staged).toBe(true);
+		expect(changes[1].filepath).toBe('other.txt');
+		expect(changes[1].staged).toBe(false);
+	});
+
 	it('uses bulk diff numstat and does not invoke per-file diff or show commands during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
@@ -612,6 +638,32 @@ describe('SpawnGitAdapter', () => {
 		// No getChanges() was called, so origPath must be resolved on-demand from status.
 		expect(mockGitRun.mock.calls.some((call: [string, string[]]) =>
 			call[1][0] === 'reset' && call[1].includes('old.txt'))).toBe(true);
+	});
+
+	it('discardChanges on a staged copy removes the copy without touching or resetting the source file', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'C  dest.txt\0src.txt\0', stderr: '' };
+			}
+			if (args[0] === 'checkout' && args.includes('dest.txt')) {
+				return { code: 1, stdout: '', stderr: 'error: pathspec dest.txt did not match any file(s) known to git' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('dest.txt');
+
+		// Discarding a copy must not reset or checkout the source file.
+		expect(calls.some(c => c.includes('src.txt'))).toBe(false);
+		// It should unstage and clean the destination file.
+		const reset = calls.find(c => c[0] === 'reset');
+		expect(reset).toEqual(['reset', 'HEAD', '--', 'dest.txt']);
+		const clean = calls.find(c => c[0] === 'clean');
+		expect(clean).toEqual(['clean', '-fd', '--', 'dest.txt']);
 	});
 
 	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {
