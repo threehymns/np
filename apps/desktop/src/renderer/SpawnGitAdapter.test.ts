@@ -744,6 +744,158 @@ describe('SpawnGitAdapter', () => {
 		expect(discardCalls.some(c => c[0] === 'clean')).toBe(false);
 	});
 
+	it('getFileDiff uses fresh porcelain status instead of stale cached rename source when rename source changes', async () => {
+		let statusOutput = 'R  new.txt\0old.txt\0';
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:another.txt') {
+				return { code: 0, stdout: 'content of another', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === 'HEAD:old.txt') {
+				return { code: 0, stdout: 'stale content of old', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':new.txt') {
+				return { code: 0, stdout: 'new content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getChanges();
+
+		// Repository status changes: old.txt -> new.txt is replaced by another.txt -> new.txt
+		statusOutput = 'R  new.txt\0another.txt\0';
+		const diff = await adapter.getFileDiff('new.txt', { staged: true });
+
+		expect(diff.originalContent).toBe('content of another');
+		expect(diff.modifiedContent).toBe('new content');
+	});
+
+	it('unstageFile uses fresh porcelain status instead of stale cached rename source when rename source changes', async () => {
+		let statusOutput = 'R  new.txt\0old.txt\0';
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getChanges();
+
+		// Repository status changes: old.txt -> new.txt is replaced by another.txt -> new.txt
+		statusOutput = 'R  new.txt\0another.txt\0';
+		await adapter.unstageFile('new.txt');
+
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'another.txt', 'new.txt']);
+		expect(commands.some(c => c[0] === 'reset' && c.includes('old.txt'))).toBe(false);
+	});
+
+	it('discardChanges uses fresh porcelain status instead of stale cached rename source when rename source changes', async () => {
+		let statusOutput = 'R  new.txt\0old.txt\0';
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getChanges();
+
+		// Repository status changes: old.txt -> new.txt is replaced by another.txt -> new.txt
+		statusOutput = 'R  new.txt\0another.txt\0';
+		await adapter.discardChanges('new.txt');
+
+		const reset = commands.find(c => c[0] === 'reset');
+		expect(reset).toEqual(['reset', 'HEAD', '--', 'another.txt', 'new.txt']);
+		const checkout = commands.find(c => c[0] === 'checkout');
+		expect(checkout).toEqual(['checkout', 'HEAD', '--', 'another.txt']);
+		expect(commands.some(c => c.includes('old.txt'))).toBe(false);
+	});
+
+	it('discardChanges uses fresh porcelain status instead of stale cached rename source when rename is reverted', async () => {
+		let statusOutput = 'R  new.txt\0old.txt\0';
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getChanges();
+
+		// Rename was reverted; new.txt is now a normal tracked modified file
+		statusOutput = 'M  new.txt\0';
+		await adapter.discardChanges('new.txt');
+
+		const checkout = commands.find(c => c[0] === 'checkout');
+		expect(checkout).toEqual(['checkout', 'HEAD', '--', 'new.txt']);
+		expect(commands.some(c => c.includes('old.txt'))).toBe(false);
+	});
+
+	it('updateIndexContent uses fresh porcelain status instead of stale cached rename source when worktree rename source changes', async () => {
+		let statusOutput = ' R new.txt\0old.txt\0';
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+				return { code: 0, stdout: '.git', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('new.txt')) {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'ls-files' && args.includes('another.txt')) {
+				return { code: 0, stdout: '100644 1234567890123456789012345678901234567890 0\tanother.txt', stderr: '' };
+			}
+			if (args[0] === 'hash-object') {
+				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
+			}
+			if (args[0] === 'update-index') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.getChanges();
+
+		// Worktree rename changes from old.txt -> new.txt to another.txt -> new.txt
+		statusOutput = ' R new.txt\0another.txt\0';
+		await adapter.updateIndexContent('new.txt', 'updated content\n');
+
+		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
+		expect(updateIndexCalls).toHaveLength(1);
+		expect(updateIndexCalls[0]).toEqual([
+			'update-index',
+			'--add',
+			'--cacheinfo',
+			'100644',
+			'abcdef1234567890abcdef1234567890abcdef12',
+			'new.txt',
+			'--force-remove',
+			'--',
+			'another.txt'
+		]);
+	});
+
 	it('discardChanges reverts a staged rename even without a prior getChanges call', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
