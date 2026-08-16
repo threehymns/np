@@ -623,6 +623,55 @@ describe('SpawnGitAdapter', () => {
 		expect(clean).toEqual([['clean', '-fd', '--', 'new.txt']]);
 	});
 
+	it('discardChanges keeps unstaged edits at the destination when discarding a staged rename with worktree edits (RM)', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				// staged rename plus unstaged edits at the destination: "RM new.txt"
+				return { code: 0, stdout: 'RM new.txt\0old.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('new.txt', { staged: true });
+
+		// The staged rename is still reverted in the index...
+		const reset = calls.find(c => c[0] === 'reset');
+		expect(reset).toEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+		// ...and the original path is restored from HEAD.
+		const checkout = calls.find(c => c[0] === 'checkout');
+		expect(checkout).toEqual(['checkout', 'HEAD', '--', 'old.txt']);
+		// But the destination holding unstaged edits must NOT be cleaned away.
+		expect(calls.some(c => c[0] === 'clean')).toBe(false);
+	});
+
+	it('discardChanges probes the destination fresh so a staged-rename cache cannot clean real edits', async () => {
+		let statusOutput = 'R  new.txt\0old.txt\0';
+		const discardCalls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			discardCalls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: statusOutput, stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		// getChanges caches new.txt as a pure staged rename (no worktree edits)...
+		await adapter.getChanges();
+		// ...then the destination gains unstaged edits before the discard runs.
+		statusOutput = 'RM new.txt\0old.txt\0';
+		await adapter.discardChanges('new.txt', { staged: true });
+
+		const reset = discardCalls.find(c => c[0] === 'reset');
+		expect(reset).toEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+		expect(discardCalls.some(c => c[0] === 'clean')).toBe(false);
+	});
+
 	it('discardChanges reverts a staged rename even without a prior getChanges call', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
