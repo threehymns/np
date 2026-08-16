@@ -2,10 +2,6 @@ import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCom
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 
 export class SpawnGitAdapter implements VCSAdapter {
-	// Rename sources reported by git itself (porcelain R entries). Authoritative: the
-	// only source that drives rename diff baselines and reverts during discard.
-	private renamedOrigPaths = new Map<string, string>();
-
 	constructor(private rootOrigin: FileOrigin) {}
 
 	private async runGit(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -150,21 +146,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to unstage file: ${filepath}`);
 		}
-		this.renamedOrigPaths.delete(filepath);
 	}
 
 	private async resolveOrigPath(filepath: string): Promise<string | undefined> {
-		const cached = this.renamedOrigPaths.get(filepath);
-		if (cached) return cached;
 		try {
 			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
 			if (statusRes.code === 0 && statusRes.stdout) {
 				const entries = this.parseStatusEntries(statusRes.stdout);
-				for (const e of entries) {
-					if (e.origPath) {
-						this.renamedOrigPaths.set(e.filepath, e.origPath);
-					}
-				}
 				const match = entries.find(e => e.filepath === filepath && e.origPath);
 				if (match?.origPath) {
 					return match.origPath;
@@ -174,9 +162,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return undefined;
 	}
 
-	// Fresh porcelain probe of the rename destination at discard time: the cached rename
-	// state can predate worktree edits, so the Y column is read from a new status call
-	// rather than from renamedOrigPaths. True when the worktree copy at the destination
+	// Fresh porcelain probe of the rename destination at discard time: the destination's
+	// Y column is read from a new status call. True when the worktree copy at the destination
 	// differs from the index (Y = M). If the state cannot be confirmed, preserve the
 	// worktree copy rather than risk deleting edits.
 	private async destinationHasEdits(filepath: string): Promise<boolean> {
@@ -217,7 +204,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 				}
 				await this.cleanIfPresent(filepath);
 			}
-			this.renamedOrigPaths.delete(filepath);
 			return;
 		}
 
@@ -242,7 +228,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (!preserveDestination) {
 				await this.cleanIfPresent(filepath);
 			}
-			this.renamedOrigPaths.delete(filepath);
 			return;
 		}
 
@@ -258,7 +243,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 			await this.cleanIfPresent(filepath);
 		}
-		this.renamedOrigPaths.delete(filepath);
 	}
 
 	async stageAll(): Promise<void> {
@@ -376,12 +360,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const changes: GitChange[] = [];
 		const entries = this.parseStatusEntries(statusRes.stdout);
-		this.renamedOrigPaths.clear();
 
-		for (const { x, y, filepath, origPath } of entries) {
-			if (origPath) {
-				this.renamedOrigPaths.set(filepath, origPath);
-			}
+		for (const { x, y, filepath } of entries) {
 
 			if (x !== ' ' && x !== '?') {
 				const status = x === 'A' ? 'A' : (x === 'D' ? 'D' : 'M');
@@ -455,8 +435,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
-		// renamedOrigPaths is populated during getChanges() from porcelain rename entries.
-		// If getFileDiff is called directly without a prior getChanges() call, check status on-demand.
 		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 
 		let worktreeContent = '';
@@ -518,9 +496,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 				const updateRes = await this.runGit(updateArgs);
 				if (updateRes.code !== 0) {
 					throw new Error(updateRes.stderr || 'Failed to update index');
-				}
-				if (origPathToRemove) {
-					this.renamedOrigPaths.delete(filepath);
 				}
 			} else {
 				throw new Error(hashRes.stderr || 'Failed to obtain blob hash');
