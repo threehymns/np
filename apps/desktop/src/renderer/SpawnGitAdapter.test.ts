@@ -551,6 +551,42 @@ describe('SpawnGitAdapter', () => {
 		expect(diff.stagedContent).toBe('');
 	});
 
+	it('does not treat an untracked file as a rename when the sole deleted candidate matches only loosely', async () => {
+		const baseline = 'line1\nline2\nline3\nline4\nline5\n';
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: ' D old.txt\0?? new.txt\0', stderr: '' };
+			}
+			if (cmd === 'ls-files --deleted') {
+				return { code: 0, stdout: 'old.txt\n', stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === ':old.txt' || args[1] === 'HEAD:old.txt')) {
+				return { code: 0, stdout: baseline, stderr: '' };
+			}
+			if (args[0] === 'show' && (args[1] === 'HEAD:new.txt' || args[1] === ':new.txt')) {
+				return { code: 128, stdout: '', stderr: 'fatal: path not in index' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.txt') {
+				return 'line1\nline2\nline3\nnew line 4\nnew line 5\n';
+			}
+			return '';
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('new.txt', { staged: false });
+
+		// The sole deleted candidate shares 3 of 5 lines (0.6 similarity): above the 0.5
+		// candidate threshold but too weak to be a move, so the unrelated deleted file
+		// must not become the baseline.
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('line1\nline2\nline3\nnew line 4\nnew line 5\n');
+		expect(diff.stagedContent).toBe('');
+	});
+
 	it('discardChanges reverts a staged rename by restoring the original path and removing the new path', async () => {
 		const calls: string[][] = [];
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
