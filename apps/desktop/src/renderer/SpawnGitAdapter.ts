@@ -1,11 +1,25 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 
-export class SpawnGitAdapter implements VCSAdapter {
-	constructor(private rootOrigin: FileOrigin) {}
+export interface GitRunResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
 
-	private async runGit(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-		return await window.electronAPI.gitRun(this.rootOrigin.path, args);
+/** A function that runs git in a working directory, returning code + captured output. */
+export type GitRunner = (workingDir: string, args: string[]) => Promise<GitRunResult>;
+
+const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
+
+export class SpawnGitAdapter implements VCSAdapter {
+	constructor(
+		private rootOrigin: FileOrigin,
+		private readonly gitRunner: GitRunner = ipcGitRunner
+	) {}
+
+	private async runGit(args: string[]): Promise<GitRunResult> {
+		return await this.gitRunner(this.rootOrigin.path, args);
 	}
 
 	async detect(rootPath: string): Promise<boolean> {

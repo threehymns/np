@@ -1,13 +1,12 @@
-import { afterAll, expect, describe as bunDescribe, test as bunTest } from 'bun:test';
+import { expect, describe as bunDescribe, test as bunTest } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { sep } from 'node:path';
 import {
 	GIT_FLOOR,
 	TEST_IDENTITY,
-	TestRepo,
 	atLeastGit,
-	createTestRepo,
+	createTrackedRepo,
 	currentBranch,
 	describe,
 	gitFloorSkipReason,
@@ -20,22 +19,10 @@ import {
 	worktreeContents
 } from './harness';
 
-const created: TestRepo[] = [];
-
-afterAll(async () => {
-	await Promise.all(created.map(repo => repo.cleanup()));
-});
-
-async function repo(): Promise<TestRepo> {
-	const r = await createTestRepo();
-	created.push(r);
-	return r;
-}
-
 describe('contract harness', () => {
 	it('creates a fresh repository per test with its own temp root and .git', async () => {
-		const a = await repo();
-		const b = await repo();
+		const a = await createTrackedRepo();
+		const b = await createTrackedRepo();
 
 		expect(a.path).not.toBe(b.path);
 		expect(a.path.startsWith(tmpdir() + sep)).toBe(true);
@@ -45,8 +32,8 @@ describe('contract harness', () => {
 	});
 
 	it('never shares or mutates another test repository', async () => {
-		const a = await repo();
-		const b = await repo();
+		const a = await createTrackedRepo();
+		const b = await createTrackedRepo();
 
 		await a.write('a-only.txt', 'contents of a');
 		await a.git(['add', 'a-only.txt']);
@@ -61,7 +48,7 @@ describe('contract harness', () => {
 	});
 
 	it('commits with the synthetic identity, isolated from developer git config', async () => {
-		const r = await repo();
+		const r = await createTrackedRepo();
 
 		const globalConfig = await r.git(['config', '--global', '--list']);
 		expect(globalConfig.stdout.trim()).toBe('');
@@ -74,7 +61,7 @@ describe('contract harness', () => {
 	});
 
 	it('oracle helpers report index contents, worktree contents, and porcelain status', async () => {
-		const r = await repo();
+		const r = await createTrackedRepo();
 		await r.write('tracked.txt', 'worktree v1\n');
 		await r.git(['add', 'tracked.txt']);
 

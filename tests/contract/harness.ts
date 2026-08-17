@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { describe as bunDescribe, test as bunTest } from 'bun:test';
+import { afterAll as bunAfterAll, describe as bunDescribe, test as bunTest } from 'bun:test';
 
 export interface GitOutput {
 	code: number;
@@ -31,7 +31,8 @@ export interface PorcelainEntry {
 	origPath?: string;
 }
 
-function runGit(cwd: string, env: Record<string, string>, args: string[]): Promise<GitOutput> {
+/** Spawn real `git` in `cwd` with a hermetic environment; the runner the contract suite hands adapters. */
+export function runGit(cwd: string, env: Record<string, string>, args: string[]): Promise<GitOutput> {
 	return new Promise((resolve, reject) => {
 		const child = spawn('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
 		let stdout = '';
@@ -131,6 +132,27 @@ export async function createTestRepo(): Promise<TestRepo> {
 	} catch (error) {
 		await repo.cleanup();
 		throw error;
+	}
+}
+
+const registeredRepos: TestRepo[] = [];
+
+bunAfterAll(async () => {
+	await Promise.all(registeredRepos.map(repo => repo.cleanup()));
+});
+
+/** Like `createTestRepo`, but registers the repository for cleanup at suite end. */
+export async function createTrackedRepo(): Promise<TestRepo> {
+	const repo = await createTestRepo();
+	registeredRepos.push(repo);
+	return repo;
+}
+
+/** Create an empty commit on the default branch so HEAD resolves to a real branch. */
+export async function seedCommit(repo: TestRepo): Promise<void> {
+	const res = await repo.git(['commit', '--allow-empty', '-m', 'seed']);
+	if (res.code !== 0) {
+		throw new Error(`git commit --allow-empty failed: ${res.stderr}`);
 	}
 }
 
