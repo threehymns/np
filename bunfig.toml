@@ -1,2 +1,2 @@
 [test]
-pathIgnorePatterns = ["tests/**"]
+pathIgnorePatterns = ["tests/e2e/**"]
