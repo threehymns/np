@@ -39,6 +39,15 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
 - **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
 
+## Version Control
+- **VCSAdapter**: The interface through which the app performs version-control operations, abstracting the underlying engine (system git, isomorphic-git) behind one contract. _Avoid_: git adapter, SimpleGitAdapter
+- **Carry-Forward**: The property of a branch switch that preserves modified and staged files instead of overwriting them. _Avoid_: auto-merge, preserve
+- **Hunk Action**: A partial-file edit applied by text-splicing a single diff hunk (stage, unstage, or discard), requiring direct index/worktree writes beyond file-level git commands.
+
+## Testing
+- **Contract Test**: A behavior test that exercises a module through its public interface against a real engine (system git, isomorphic-git) in throwaway repositories, asserting semantic outcomes (contents, status, branch) rather than command construction. _Avoid_: integration test, end-to-end test
+- **Unit Test**: A test of pure logic with the engine and platform replaced at the boundary (mocked adapter, mocked IPC).
+
 ## Keymap
 - **Keymap**: A configuration file or preference (e.g. `keymap.json`) mapping keyboard input sequences (including chords) to Command IDs, scoped to active Contexts.
 - **Context Registry**: A registry tracking active focus states and environment tags (e.g. `editor`, `vim_mode == normal`) to evaluate whether keybindings are active.
