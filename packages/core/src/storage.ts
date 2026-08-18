@@ -139,7 +139,3 @@ export class MultiSchemeStorage implements Storage {
 	}
 }
 
-if (typeof window !== 'undefined') {
-	(window as any).toURI = toURI;
-	(window as any).parseURI = parseURI;
-}

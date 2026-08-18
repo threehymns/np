@@ -1,4 +1,4 @@
-import { toURI, parseURI } from '@np/core';
+import { toURI, parseURI } from '@np/core/storage';
 import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
 import { openDB } from './persistence';
 
@@ -88,7 +88,11 @@ export class BrowserHandleRegistry {
 
 		for (let i = pathParts.length - 1; i >= 1; i--) {
 			const parentPath = pathParts.slice(0, i).join('/');
-			const parentUri = `${parsed.scheme}://${parentPath}`;
+			const parentUri = toURI({
+				scheme: parsed.scheme,
+				path: `${parsed.path.startsWith('/') ? '/' : ''}${parentPath}`,
+				name: ''
+			});
 			const parentHandle = await this.get(parentUri);
 			if (parentHandle && parentHandle.kind === 'directory') {
 				const remainingParts = pathParts.slice(i);
@@ -333,4 +337,6 @@ export class BrowserStorage implements StorageProvider {
 
 if (typeof window !== 'undefined') {
 	(window as any).browserHandleRegistry = browserHandleRegistry;
+	(window as any).toURI = toURI;
+	(window as any).parseURI = parseURI;
 }

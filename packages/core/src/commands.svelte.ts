@@ -5,11 +5,38 @@ import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI } from "./storage";
 
+async function showAlert(appState: AppState, msg: string): Promise<void> {
+	if (appState.dialogService?.alert) {
+		await appState.dialogService.alert(msg);
+	}
+}
+
+async function showConfirm(appState: AppState, msg: string): Promise<boolean> {
+	if (appState.dialogService?.confirm) {
+		return Boolean(await appState.dialogService.confirm(msg));
+	}
+	return false;
+}
+
+async function writeClipboard(appState: AppState, text: string): Promise<void> {
+	if (!appState.clipboardService?.writeText) {
+		throw new Error('Clipboard service is unavailable');
+	}
+	await appState.clipboardService.writeText(text);
+}
+
+async function readClipboard(appState: AppState): Promise<string> {
+	if (appState.clipboardService?.readText) {
+		return await appState.clipboardService.readText();
+	}
+	return '';
+}
+
 export interface Command {
 	id: string;
 	label: string;
 	category: string;
-	action: () => void | Promise<void>;
+	action: (...args: any[]) => any;
 	isVisible?: () => boolean;
 	isEnabled?: () => boolean;
 }
@@ -33,10 +60,10 @@ export class CommandRegistry {
 		return this.commands.filter(c => c.category === category);
 	}
 
-	execute(id: string) {
+	execute(id: string, ...args: any[]) {
 		const command = this.get(id);
 		if (command && (!command.isEnabled || command.isEnabled())) {
-			command.action();
+			return command.action(...args);
 		}
 	}
 }
@@ -112,14 +139,23 @@ export function registerCoreCommands(appState: AppState) {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
 				view.focus();
-				const { from, to } = view.state.selection.main;
+				const state = view.state;
+				const { from, to } = state.selection.main;
 				if (from !== to) {
-					const text = view.state.doc.sliceString(from, to);
-					await navigator.clipboard.writeText(text);
-					view.dispatch({
-						changes: { from, to, insert: "" },
-						selection: { anchor: from }
-					});
+					const text = state.doc.sliceString(from, to);
+					try {
+						await writeClipboard(appState, text);
+						// Only delete the selection if the editor state hasn't
+						// changed while the clipboard write was in flight.
+						if (view.state === state) {
+							view.dispatch({
+								changes: { from, to, insert: "" },
+								selection: { anchor: from }
+							});
+						}
+					} catch (err) {
+						console.error("Failed to cut to clipboard:", err);
+					}
 				}
 			}
 		},
@@ -136,7 +172,11 @@ export function registerCoreCommands(appState: AppState) {
 				const { from, to } = view.state.selection.main;
 				if (from !== to) {
 					const text = view.state.doc.sliceString(from, to);
-					await navigator.clipboard.writeText(text);
+					try {
+						await writeClipboard(appState, text);
+					} catch (err) {
+						console.error("Failed to copy to clipboard:", err);
+					}
 				}
 				view.focus();
 			}
@@ -152,9 +192,11 @@ export function registerCoreCommands(appState: AppState) {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
 				try {
-					const text = await navigator.clipboard.readText();
-					view.dispatch(view.state.replaceSelection(text));
-					view.focus();
+					const text = await readClipboard(appState);
+					if (text) {
+						view.dispatch(view.state.replaceSelection(text));
+						view.focus();
+					}
 				} catch (err) {
 					console.error("Failed to read clipboard:", err);
 				}
@@ -191,7 +233,11 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			await navigator.clipboard.writeText(html);
+			try {
+				await writeClipboard(appState, html);
+			} catch (err) {
+				console.error("Failed to copy HTML to clipboard:", err);
+			}
 		}
 	});
 

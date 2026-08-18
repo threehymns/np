@@ -18,6 +18,7 @@ const mockOrigin: FileOrigin = { scheme: 'browser', path: '/test', name: 'test' 
 
 function createMockAdapter(overrides: Partial<VCSAdapter> = {}): VCSAdapter {
 	return {
+		detect: mock(async () => true),
 		getCurrentBranch: mock(async () => 'main'),
 		getBranches: mock(async () => ['main']),
 		getStatus: mock(async (): Promise<VCSStatus> => ({
