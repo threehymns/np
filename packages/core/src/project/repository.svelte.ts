@@ -1,5 +1,6 @@
 import type { FileOrigin } from '../storage';
-import type { VCSAdapter, SwitchResult } from './vcs';
+import { fileDiffFromChange } from './vcs';
+import type { VCSAdapter, SwitchResult, GitChange, GitCommit, FileDiffDetail } from './vcs';
 
 export interface RepositorySafetyReport {
 	canSwitch: boolean;
@@ -13,21 +14,43 @@ export class Repository {
 	isDirty = $state(false);
 	uncommittedFiles = $state<string[]>([]);
 	isBusy = $state(false);
+	changes = $state<GitChange[]>([]);
+	commits = $state<GitCommit[]>([]);
+	activeDiffFile = $state<GitChange | null>(null);
+	selectedPaths = $state<string[]>([]);
 
-	private adapter: VCSAdapter;
+	public adapter: VCSAdapter;
+	private refreshGeneration = 0;
 
 	constructor(rootOrigin: FileOrigin, vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter) {
 		this.adapter = vcsFactory(rootOrigin);
 	}
 
+	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail | null> {
+		if (this.adapter.getFileDiff) {
+			return await this.adapter.getFileDiff(filepath, options);
+		}
+		const change = this.changes.find(c => c.filepath === filepath && (options?.staged === undefined || c.staged === options.staged));
+		if (!change) {
+			return null;
+		}
+		return fileDiffFromChange(change);
+	}
+
+
 	async refresh(): Promise<boolean> {
+		const generation = ++this.refreshGeneration;
 		this.isBusy = true;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
-			const [branchRes, branchesRes] = await Promise.allSettled([
+			const [branchRes, branchesRes, changesRes, commitsRes] = await Promise.allSettled([
 				this.adapter.getCurrentBranch(),
-				this.adapter.getBranches()
+				this.adapter.getBranches(),
+				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
+				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([])
 			]);
+
+			if (generation !== this.refreshGeneration) return false;
 
 			let success = false;
 			if (branchRes.status === 'fulfilled' && branchRes.value !== null) {
@@ -43,18 +66,56 @@ export class Repository {
 			} else {
 				this.branches = [];
 			}
-			
-			// Defer status check as it is very expensive
-			this.isDirty = false;
-			this.uncommittedFiles = [];
+
+			if (changesRes.status === 'fulfilled' && changesRes.value !== null) {
+				this.changes = changesRes.value;
+				this.uncommittedFiles = [...new Set(this.changes.map(c => c.filepath))];
+				this.isDirty = this.changes.length > 0;
+			} else {
+				const status = await this.adapter.getStatus();
+				if (generation !== this.refreshGeneration) return false;
+				this.changes = [];
+				this.uncommittedFiles = status.uncommittedFiles;
+				this.isDirty = status.isDirty;
+			}
+
+			if (commitsRes.status === 'fulfilled') {
+				this.commits = commitsRes.value;
+			} else {
+				this.commits = [];
+			}
+
+			// Ensure activeDiffFile points to a valid entry or reset it
+			if (this.activeDiffFile) {
+				let stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath && c.staged === this.activeDiffFile!.staged);
+				if (!stillExists) {
+					stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath);
+				}
+				if (!stillExists) {
+					this.activeDiffFile = this.changes[0] || null;
+				} else {
+					this.activeDiffFile = stillExists;
+				}
+			} else if (this.changes.length > 0) {
+				this.activeDiffFile = this.changes[0];
+			}
+
 			return success;
 		} catch (e) {
+			if (generation !== this.refreshGeneration) return false;
 			console.error('Failed to refresh repository metadata', e);
 			this.currentBranch = null;
 			this.branches = [];
+			this.changes = [];
+			this.commits = [];
+			this.uncommittedFiles = [];
+			this.isDirty = false;
+			this.activeDiffFile = null;
 			return false;
 		} finally {
-			this.isBusy = false;
+			if (generation === this.refreshGeneration) {
+				this.isBusy = false;
+			}
 		}
 	}
 
@@ -101,8 +162,36 @@ export class Repository {
 			this.isBusy = false;
 		}
 	}
+
+	async stageAll(): Promise<boolean> {
+		if (!this.adapter.stageAll) return false;
+		await this.runBulkOp(() => this.adapter.stageAll!());
+		return true;
+	}
+
+	async unstageAll(): Promise<boolean> {
+		if (!this.adapter.unstageAll) return false;
+		await this.runBulkOp(() => this.adapter.unstageAll!());
+		return true;
+	}
+
+	async discardAll(): Promise<boolean> {
+		if (!this.adapter.discardAll) return false;
+		await this.runBulkOp(() => this.adapter.discardAll!());
+		return true;
+	}
+
+	private async runBulkOp(op: () => Promise<void>): Promise<void> {
+		this.isBusy = true;
+		try {
+			await op();
+			await this.refresh();
+		} finally {
+			this.isBusy = false;
+		}
+	}
+
 }
 
-if (typeof window !== 'undefined') {
-	(window as any).Repository = Repository;
-}
+
+

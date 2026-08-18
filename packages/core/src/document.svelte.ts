@@ -12,6 +12,7 @@ export class DocumentSession {
 	permissionState = $state<PermissionState>('granted');
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
+	pendingLineToScroll = $state<number | null>(null);
 	
 	private savedContent = $state('');
 	private storage: Storage;
@@ -135,6 +136,9 @@ export class DocumentSession {
 			this.savedContent = this.content;
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
+			if (this.workspace?.repository) {
+				this.workspace.repository.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+			}
 			return true;
 		}
 		return false;
