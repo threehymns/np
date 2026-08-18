@@ -307,13 +307,13 @@ describe('IsomorphicGitAdapter', () => {
 			['clean.txt', 1, 1, 1] // Unmodified
 		]);
 		const checkoutSpy = mock(async (_args: { filepaths: string[]; force: boolean }) => {});
-		const removeSpy = mock(async (_args: { filepath: string }) => {});
+		const removeIndexSpy = mock(async (_args: { filepath: string; remove: boolean; force: boolean }) => {});
 		const origStatusMatrix = git.statusMatrix;
 		const origCheckout = git.checkout;
-		const origRemove = git.remove;
+		const origUpdateIndex = git.updateIndex;
 		mockGit.statusMatrix = statusMatrixSpy;
 		mockGit.checkout = checkoutSpy;
-		mockGit.remove = removeSpy;
+		mockGit.updateIndex = removeIndexSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
@@ -323,12 +323,15 @@ describe('IsomorphicGitAdapter', () => {
 			expect(checkoutSpy).toHaveBeenCalledTimes(1);
 			expect(checkoutSpy.mock.calls[0][0].filepaths).toEqual(['mod.txt']);
 			expect(checkoutSpy.mock.calls[0][0].force).toBe(true);
-			expect(removeSpy).toHaveBeenCalledTimes(1);
-			expect(removeSpy.mock.calls[0][0].filepath).toBe('new.txt');
+			expect(removeIndexSpy).toHaveBeenCalledTimes(1);
+			expect(removeIndexSpy.mock.calls[0][0].filepath).toBe('new.txt');
+			// Index-only removal: the worktree is never touched by discardAll.
+			expect(removeIndexSpy.mock.calls[0][0].remove).toBe(true);
+			expect(removeIndexSpy.mock.calls[0][0].force).toBe(true);
 		} finally {
 			mockGit.statusMatrix = origStatusMatrix;
 			mockGit.checkout = origCheckout;
-			mockGit.remove = origRemove;
+			mockGit.updateIndex = origUpdateIndex;
 		}
 	});
 

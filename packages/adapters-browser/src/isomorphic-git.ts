@@ -1129,8 +1129,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const isClean = head === 1 && workdir === 1 && stage === 1;
 			if (isClean) continue;
 			if (head === 0) {
-				await this.fs!.promises.unlink(`${this.dir}/${filepath}`).catch(() => {});
-				await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string }).catch(() => {});
+				// Absent from HEAD: remove the worktree copy and the index entry. The
+				// unlink tolerates an already-gone file and `removeFromIndex` never
+				// touches the worktree, but any real failure surfaces instead of being
+				// swallowed: a silent discardAll must not report success on failure.
+				await this.unlinkIfPresent(filepath as string);
+				await this.removeFromIndex(filepath as string);
 			} else {
 				trackedToRestore.push(filepath as string);
 			}
