@@ -48,11 +48,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'does not have an entry in index',
 		'exists on disk, but not in',
 		'did not match any file(s)',
+		'did not match any files',
 		'neither on disk nor in the index'
+	];
+
+	/** Markers for the unborn-HEAD failure: `git reset`/`git restore` resolving `HEAD` on a repository with no commits yet. */
+	private static readonly UNBORN_HEAD_MARKERS = [
+		"ambiguous argument 'HEAD'",
+		'could not resolve',
+		'as a valid ref'
 	];
 
 	private isPathNotFoundError(stderr: string): boolean {
 		return SpawnGitAdapter.PATH_NOT_FOUND_MARKERS.some(marker => stderr.includes(marker));
+	}
+
+	private isUnbornHeadError(stderr: string): boolean {
+		return SpawnGitAdapter.UNBORN_HEAD_MARKERS.some(marker => stderr.includes(marker));
 	}
 
 	private async readGitObject(objectSpec: string): Promise<string | null> {
@@ -174,6 +186,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const paths = origPath && origPath !== filepath ? [origPath, filepath] : [filepath];
 		const res = await this.runGit(['reset', 'HEAD', '--', ...paths]);
 		if (res.code !== 0) {
+			// An unborn HEAD (no commits yet) cannot resolve 'HEAD' as a revision
+			// (older git rejects the explicit reset outright; newer git accepts it).
+			// Fall back to removing the index entries directly, leaving the worktree
+			// untouched — the same outcome reset produces once a first commit exists.
+			if (this.isUnbornHeadError(res.stderr)) {
+				const rmRes = await this.runGit(['rm', '--cached', '-q', '--', ...paths]);
+				if (rmRes.code !== 0) {
+					throw new Error(rmRes.stderr || `Failed to unstage file: ${filepath}`);
+				}
+				return;
+			}
 			throw new Error(res.stderr || `Failed to unstage file: ${filepath}`);
 		}
 	}
@@ -301,6 +324,16 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async unstageAll(): Promise<void> {
 		const res = await this.runGit(['restore', '--staged', '.']);
 		if (res.code !== 0) {
+			// Unborn HEAD: `git restore --staged` cannot resolve its default source.
+			// Empty the index with `rm --cached` instead, leaving the worktree
+			// untouched; a trailing "did not match" means nothing was staged.
+			if (this.isUnbornHeadError(res.stderr)) {
+				const rmRes = await this.runGit(['rm', '--cached', '-q', '-r', '--', '.']);
+				if (rmRes.code !== 0 && !this.isPathNotFoundError(rmRes.stderr)) {
+					throw new Error(rmRes.stderr || 'Failed to unstage all changes');
+				}
+				return;
+			}
 			throw new Error(res.stderr || 'Failed to unstage all changes');
 		}
 	}
