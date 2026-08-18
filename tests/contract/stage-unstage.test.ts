@@ -298,10 +298,15 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([]);
+		});
 
-			// The literal-empty leg is the regression pin: an empty→empty replace
-			// renders a `+0,0` hunk that `git apply --cached` rejects as corrupt,
-			// so the second write must be skipped without throwing.
+		it('writes empty content to an already empty index entry as a no-op without throwing', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			// An empty→empty replace renders a `+0,0` hunk that `git apply --cached`
+			// rejects as corrupt, so sequential empty writes must be skipped cleanly.
 			await adapter.updateIndexContent('hello.ts', '');
 			await adapter.updateIndexContent('hello.ts', '');
 
