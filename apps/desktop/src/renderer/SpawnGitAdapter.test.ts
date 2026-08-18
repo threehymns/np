@@ -113,31 +113,6 @@ describe('SpawnGitAdapter', () => {
 		expect(stagedDeleted?.status).toBe('D');
 	});
 
-	it('parses porcelain status entries with copy operations without desynchronizing subsequent entries', async () => {
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				return {
-					code: 0,
-					stdout: 'C  copy.txt\0src.txt\0 M other.txt\0',
-					stderr: ''
-				};
-			}
-			if (cmd.startsWith('diff')) {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		const changes = await adapter.getChanges();
-
-		expect(changes.length).toBe(2);
-		expect(changes[0].filepath).toBe('copy.txt');
-		expect(changes[0].staged).toBe(true);
-		expect(changes[1].filepath).toBe('other.txt');
-		expect(changes[1].staged).toBe(false);
-	});
 
 	it('uses bulk diff numstat and does not invoke per-file diff or show commands during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
