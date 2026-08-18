@@ -24,7 +24,6 @@ export interface SessionPersistence {
 }
 
 export type WorkspacePersistence = SessionPersistence;
-export const MemoryWorkspacePersistence = MemorySessionPersistence;
 
 export class MemorySessionPersistence implements SessionPersistence {
 	private states = new Map<string, {
@@ -111,3 +110,6 @@ export class MemorySessionPersistence implements SessionPersistence {
 		return this.getOrCreateState(folderUri).activeDocumentId;
 	}
 }
+
+export { MemorySessionPersistence as MemoryWorkspacePersistence };
+
