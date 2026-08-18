@@ -6,7 +6,7 @@ The suite uses real `git` (floor 2.23, `skipIf` guard below it) and real isomorp
 
 ## Considered Options
 
-- **Keep the mocked boundary only**: rejected — fake outputs can drift from real git semantics (the rename/copy/procelain bug classes) and destructive outcomes are unverifiable.
+- **Keep the mocked boundary only**: rejected — fake outputs can drift from real git semantics (the rename/copy/porcelain bug classes) and destructive outcomes are unverifiable.
 - **Pin git via Docker**: rejected — a documented floor with `skipIf` is enough; an exact pin fights local dev and adds CI machinery that doesn't exist yet.
 - **Share `tests/` with both runners unchanged**: rejected — bun ignores `tests/**` and Playwright's `testDir` is that directory; contract tests there would need both configs altered. Playwright to `tests/e2e/` instead.
 
