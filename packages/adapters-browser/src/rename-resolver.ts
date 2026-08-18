@@ -57,13 +57,27 @@ export async function resolveRenamedHeadContent(params: RenameResolutionParams):
 		dir,
 		trees: [git.TREE({ ref: headCommit })],
 		map: async (walkPath, entries) => {
+			// Absent entry: signal the walker that the entry is gone (unlike the bare
+			// `return` below, null marks the entry absent — for the root that prunes
+			// the entire descent, so the two returns must never be conflated).
 			if (!entries || !entries[0]) return null;
 			const type = await entries[0].type();
 			if (type === 'blob') {
 				const oid = await entries[0].oid();
 				if (oid) {
+					// Exact OID match: only meaningful when the candidate source is
+					// actually gone from the worktree. A still-present blob (e.g. an
+					// identical-content copy) is an addition, not a rename, and must
+					// not supply a baseline.
 					if (targetOid && oid === targetOid && !matchedHeadOid) {
-						matchedHeadOid = oid;
+						try {
+							await fs.promises.stat(`${dir}/${walkPath}`);
+						} catch (e: any) {
+							if (!isENOENT(e)) {
+								throw e;
+							}
+							matchedHeadOid = oid;
+						}
 					}
 					try {
 						await fs.promises.stat(`${dir}/${walkPath}`);
@@ -83,7 +97,9 @@ export async function resolveRenamedHeadContent(params: RenameResolutionParams):
 					}
 				}
 			}
-			return null;
+			// Returning null would mark the entry as absent and prune the walk (for the
+			// root that aborts the whole descent); undefined keeps the walk descending.
+			return;
 		}
 	});
 

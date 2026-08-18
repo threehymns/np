@@ -10,12 +10,26 @@ export interface GitRunResult {
 /** A function that runs git in a working directory, returning code + captured output. */
 export type GitRunner = (workingDir: string, args: string[]) => Promise<GitRunResult>;
 
+/** File operations the adapter needs beyond git itself: worktree reads and temp-file writes. */
+export interface GitFileAccess {
+	readFile(path: string): Promise<Uint8Array | string>;
+	writeFile(path: string, content: string): Promise<void>;
+	deleteEntry(path: string): Promise<void>;
+}
+
 const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
+
+const ipcFileAccess: GitFileAccess = {
+	readFile: (path) => window.electronAPI.readFile(path),
+	writeFile: (path, content) => window.electronAPI.writeFile(path, content),
+	deleteEntry: (path) => window.electronAPI.deleteEntry(path)
+};
 
 export class SpawnGitAdapter implements VCSAdapter {
 	constructor(
 		private rootOrigin: FileOrigin,
-		private readonly gitRunner: GitRunner = ipcGitRunner
+		private readonly gitRunner: GitRunner = ipcGitRunner,
+		private readonly fileAccess: GitFileAccess = ipcFileAccess
 	) {}
 
 	private async runGit(args: string[]): Promise<GitRunResult> {
@@ -32,7 +46,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'does not exist in',
 		'does not have an entry in index',
 		'exists on disk, but not in',
-		'did not match any file(s)'
+		'did not match any file(s)',
+		'neither on disk nor in the index'
 	];
 
 	private isPathNotFoundError(stderr: string): boolean {
@@ -388,7 +403,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 					// git diff --numstat never includes untracked files, so count lines directly.
 					let additions = 0;
 					try {
-						const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+						const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 						const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 						additions = countLines(content);
 					} catch (e) {}
@@ -445,7 +460,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (options?.staged !== true) {
 			try {
 				// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
-				const buffer = await window.electronAPI.readFile(this.rootOrigin.path + '/' + filepath);
+				const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 				worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 			} catch (e) {
 				if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
@@ -461,7 +476,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		const fullPath = this.rootOrigin.path + '/' + filepath;
-		await window.electronAPI.writeFile(fullPath, content);
+		await this.fileAccess.writeFile(fullPath, content);
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
@@ -489,7 +504,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				}
 			}
 
-			await window.electronAPI.writeFile(tmpPath, content);
+			await this.fileAccess.writeFile(tmpPath, content);
 			const hashRes = await this.runGit(['hash-object', '-w', relTmpPath]);
 			const hash = hashRes.stdout.trim();
 			if (hashRes.code === 0 && hash && hash.length === 40) {
@@ -506,9 +521,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 		} finally {
 			try {
-				await window.electronAPI.deleteEntry(tmpPath);
+				await this.fileAccess.deleteEntry(tmpPath);
 			} catch (err) {}
 		}
 	}
 }
-
