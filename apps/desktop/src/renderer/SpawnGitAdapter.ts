@@ -484,6 +484,131 @@ export class SpawnGitAdapter implements VCSAdapter {
 		await this.fileAccess.writeFile(fullPath, content);
 	}
 
+	/**
+	 * Worktree content for a path, or null when the file does not exist on disk.
+	 * Used by rename-source discovery: the destination must match the source on disk.
+	 */
+	private async readWorktreeText(filepath: string): Promise<string | null> {
+		try {
+			const buffer = await this.fileAccess.readFile(`${this.rootOrigin.path}/${filepath}`);
+			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e) {
+			if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+				throw e;
+			}
+			return null;
+		}
+	}
+
+	/** Index mode of a path (`git ls-files -s`), or null when the path has no index entry. */
+	private async indexModeOf(filepath: string): Promise<string | null> {
+		const res = await this.runGit(['ls-files', '-s', '--', filepath]);
+		if (res.code !== 0 || !res.stdout.trim()) return null;
+		const parts = res.stdout.trim().split(/\s+/);
+		return parts[0] && /^[0-7]+$/.test(parts[0]) ? parts[0] : null;
+	}
+
+	private static readonly DEFAULT_INDEX_MODE = '100644';
+
+	/** Line count of text in unified-diff terms: a trailing newline is not a line. */
+	private static textLineCount(text: string): number {
+		if (text === '') return 0;
+		const newlines = text.match(/\n/g)?.length ?? 0;
+		return newlines + (text.endsWith('\n') ? 0 : 1);
+	}
+
+	private static hunkRange(count: number): string {
+		if (count === 0) return '0,0';
+		return count === 1 ? '1' : `1,${count}`;
+	}
+
+	private static hunkBody(text: string, prefix: '+' | '-'): string {
+		const body = text === '' ? '' : text.endsWith('\n') ? text.slice(0, -1) : text;
+		if (body === '') return '';
+		const lines = body.split('\n').map(line => `${prefix}${line}`);
+		// A file without a trailing newline needs the no-newline marker, or git
+		// apply would silently add one and the index would not hold exact content.
+		if (!text.endsWith('\n')) {
+			lines.push('\\ No newline at end of file');
+		}
+		return lines.join('\n');
+	}
+
+	/**
+	 * Fresh discovery + patch rendering for `updateIndexContent`. The rename source
+	 * is resolved from live porcelain at call time: `git status` never reports
+	 * worktree renames (verified empirically), so an untracked destination whose
+	 * worktree content matches a tracked path deleted from the worktree is the
+	 * rename source. The patch is applied literally against the current index, so
+	 * any change between probe and apply fails loudly instead of mis-targeting.
+	 */
+	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
+		const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		const entries = statusRes.code === 0 ? this.parseStatusEntries(statusRes.stdout) : [];
+
+		let renameSource: string | null = null;
+		const destEntry = entries.find(e => e.filepath === filepath);
+		if (destEntry?.x === '?' && destEntry?.y === '?') {
+			const worktreeText = await this.readWorktreeText(filepath);
+			if (worktreeText !== null) {
+				for (const entry of entries) {
+					if (entry.y !== 'D') continue;
+					const indexText = await this.readGitObject(`:${entry.filepath}`);
+					if (indexText === worktreeText) {
+						renameSource = entry.filepath;
+						break;
+					}
+				}
+			}
+		}
+
+		// The destination mode is the rename source's preserved mode; otherwise the
+		// destination's own index mode; otherwise the regular-file default.
+		const mode =
+			(await this.indexModeOf(renameSource ?? filepath)) ?? SpawnGitAdapter.DEFAULT_INDEX_MODE;
+
+		if (renameSource) {
+			const oldContent = (await this.readGitObject(`:${renameSource}`)) ?? '';
+			// Worktree rename staging: delete the source and add the destination in one
+			// patch, so a single `git apply --cached` atomically rewrites the index.
+			const header = `diff --git a/${renameSource} b/${filepath}`;
+			const parts = [header, `deleted file mode ${mode}`, `--- a/${renameSource}`, '+++ /dev/null'];
+			const oldCount = SpawnGitAdapter.textLineCount(oldContent);
+			if (oldCount > 0) {
+				parts.push(`@@ -${SpawnGitAdapter.hunkRange(oldCount)} +0,0 @@`, SpawnGitAdapter.hunkBody(oldContent, '-'));
+			}
+			parts.push('', header, `new file mode ${mode}`, '--- /dev/null', `+++ b/${filepath}`);
+			const newCount = SpawnGitAdapter.textLineCount(content);
+			if (newCount > 0) {
+				parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
+			}
+			return parts.join('\n');
+		}
+
+		const oldContent = await this.readGitObject(`:${filepath}`);
+		const header = `diff --git a/${filepath} b/${filepath}`;
+		if (oldContent !== null) {
+			// Replace the full index content; the index mode is preserved without headers.
+			return [
+				header,
+				`--- a/${filepath}`,
+				`+++ b/${filepath}`,
+				`@@ -${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(oldContent))} +${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(content))} @@`,
+				SpawnGitAdapter.hunkBody(oldContent, '-'),
+				SpawnGitAdapter.hunkBody(content, '+')
+			].join('\n');
+		}
+
+		// The destination has no index entry: stage it as a new file. Empty content is
+		// emitted without a hunk, which is what `git diff` produces for empty files.
+		const parts = [header, `new file mode ${mode}`, '--- /dev/null', `+++ b/${filepath}`];
+		const newCount = SpawnGitAdapter.textLineCount(content);
+		if (newCount > 0) {
+			parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
+		}
+		return parts.join('\n');
+	}
+
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
 		const gitDirRes = await this.runGit(['rev-parse', '--git-dir']);
 		const gitDir = gitDirRes.code === 0 && gitDirRes.stdout.trim() ? gitDirRes.stdout.trim() : '.git';
@@ -492,37 +617,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const tmpPath = `${resolvedGitDir}/${tmpFilename}`;
 		const relTmpPath = `${gitDir}/${tmpFilename}`;
 		try {
-			let mode = '100644';
-			let lsRes = await this.runGit(['ls-files', '-s', '--', filepath]);
-			let origPathToRemove: string | undefined;
-			if (lsRes.code !== 0 || !lsRes.stdout.trim()) {
-				const origPath = await this.resolveOrigPath(filepath);
-				if (origPath && origPath !== filepath) {
-					origPathToRemove = origPath;
-					lsRes = await this.runGit(['ls-files', '-s', '--', origPath]);
-				}
-			}
-			if (lsRes.code === 0 && lsRes.stdout.trim()) {
-				const parts = lsRes.stdout.trim().split(/\s+/);
-				if (parts[0] && /^[0-7]+$/.test(parts[0])) {
-					mode = parts[0];
-				}
-			}
-
-			await this.fileAccess.writeFile(tmpPath, content);
-			const hashRes = await this.runGit(['hash-object', '-w', relTmpPath]);
-			const hash = hashRes.stdout.trim();
-			if (hashRes.code === 0 && hash && hash.length === 40) {
-				const updateArgs = ['update-index', '--add', '--cacheinfo', mode, hash, filepath];
-				if (origPathToRemove) {
-					updateArgs.push('--force-remove', '--', origPathToRemove);
-				}
-				const updateRes = await this.runGit(updateArgs);
-				if (updateRes.code !== 0) {
-					throw new Error(updateRes.stderr || 'Failed to update index');
-				}
-			} else {
-				throw new Error(hashRes.stderr || 'Failed to obtain blob hash');
+			// git apply rejects a patch file that does not end with a newline, so the
+			// rendered patch always gets a trailing newline.
+			const patch = `${await this.renderIndexPatch(filepath, content)}\n`;
+			await this.fileAccess.writeFile(tmpPath, patch);
+			const applyRes = await this.runGit(['apply', '--cached', relTmpPath]);
+			if (applyRes.code !== 0) {
+				throw new Error(applyRes.stderr || 'Failed to update index');
 			}
 		} finally {
 			try {

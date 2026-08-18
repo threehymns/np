@@ -750,34 +750,101 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
 	}
 
-	async updateIndexContent(filepath: string, content: string): Promise<void> {
-		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+	/** The oid and mode of a path in the index (STAGE tree), or null when it has no entry. */
+	private async readStageEntry(filepath: string): Promise<{ oid: string; mode: number } | null> {
+		let result: { oid: string; mode: number } | null = null;
 		try {
-			const oid = await git.writeBlob({
+			await git.walk({
 				fs: this.fs!,
 				dir: this.dir,
-				blob: new TextEncoder().encode(content)
+				trees: [git.STAGE()],
+				map: async (walkPath, entries) => {
+					if (walkPath === filepath && entries && entries[0]) {
+						const type = await entries[0].type();
+						if (type === 'blob') {
+							const oid = await entries[0].oid();
+							const mode = await entries[0].mode();
+							if (oid) result = { oid, mode };
+						}
+					}
+				}
 			});
+		} catch (e) {}
+		return result;
+	}
+
+	private async readBlobText(oid: string): Promise<string | null> {
+		try {
+			const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid });
+			return new TextDecoder().decode(blob);
+		} catch (e) {
+			return null;
+		}
+	}
+
+	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+
+		// Fresh rename-source discovery: an untracked destination whose worktree content
+		// matches a tracked path deleted from the worktree is a worktree rename.
+		let renameSource: string | null = null;
+		const destRow = matrix.find(([p]) => p === filepath);
+		if (destRow && destRow[1] === 0 && destRow[3] === 0) {
+			let worktreeText: string | null = null;
+			try {
+				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+				worktreeText = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+			} catch (e: any) {
+				if (!isENOENT(e)) throw e;
+			}
+			if (worktreeText !== null) {
+				for (const [candidate, head, workdir, stage] of matrix) {
+					if (candidate !== filepath && head === 1 && workdir === 0 && stage === 1) {
+						const entry = await this.readStageEntry(candidate);
+						if (entry && (await this.readBlobText(entry.oid)) === worktreeText) {
+							renameSource = candidate;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		const oid = await git.writeBlob({
+			fs: this.fs!,
+			dir: this.dir,
+			blob: new TextEncoder().encode(content)
+		});
+
+		if (renameSource) {
+			const sourceEntry = await this.readStageEntry(renameSource);
+			await this.removeFromIndex(renameSource);
+			// Note: this engine rewrites the index file once per updateIndex call
+			// (no patch-apply exists in isomorphic-git), so the rename is not a
+			// single index-file write like the spawn engine's `git apply --cached`.
+			// A failure between the two calls leaves the source staged as deleted
+			// and the destination untracked — recoverable, never mis-targeting.
 			await git.updateIndex({
 				fs: this.fs!,
 				dir: this.dir,
 				filepath,
-				oid
+				oid,
+				add: true,
+				mode: sourceEntry?.mode ?? 0o100644
 			});
-		} catch (e) {
-			let originalWorktree: string | null = null;
-			try {
-				const buf = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-				originalWorktree = typeof buf === 'string' ? buf : new TextDecoder().decode(buf);
-			} catch (err) {}
-
-			await this.updateFileContent(filepath, content);
-			await this.stageFile(filepath);
-
-			if (originalWorktree !== null && originalWorktree !== content) {
-				await this.updateFileContent(filepath, originalWorktree);
-			}
+			return;
 		}
+
+		const destEntry = await this.readStageEntry(filepath);
+		await git.updateIndex({
+			fs: this.fs!,
+			dir: this.dir,
+			filepath,
+			oid,
+			add: true,
+			mode: destEntry?.mode ?? 0o100644
+		});
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
@@ -845,6 +912,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return files;
 	}
 
+	/**
+	 * Remove a path from the index only, never touching the worktree. `force` is
+	 * safe because the shim's lstat would otherwise throw for a missing file.
+	 */
+	private async removeFromIndex(filepath: string): Promise<void> {
+		await git.updateIndex({ fs: this.fs!, dir: this.dir, filepath, remove: true, force: true });
+	}
+
 	async stageFile(filepath: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await git.statusMatrix({
@@ -855,7 +930,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (matrix.length > 0) {
 			const [,, workdir] = matrix[0];
 			if (workdir === 0) {
-				await git.remove({ fs: this.fs!, dir: this.dir, filepath });
+				// Staging a deletion must not touch the worktree: the file may already
+				// be gone, which `git.remove` would fail on.
+				await this.removeFromIndex(filepath);
 				return;
 			}
 		}
@@ -865,11 +942,43 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	async unstageFile(filepath: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		try {
-			await git.resetIndex({
-				fs: this.fs!,
-				dir: this.dir,
-				filepath
-			});
+			// statusMatrix has no rename notion: a staged rename is a staged addition
+			// plus a staged deletion. Unstaging the destination alone would leave the
+			// source staged-deleted, so pair the two via content match, like `git reset
+			// HEAD -- <source> <dest>` does on the desktop engine.
+			const matrix = await this.readStatusMatrix();
+			const paths: string[] = [filepath];
+			const dest = matrix.find(([p]) => p === filepath);
+			if (dest && dest[1] === 0 && dest[3] === 2) {
+				const staged = await this.readStageEntry(filepath);
+				if (staged) {
+					const stagedText = await this.readBlobText(staged.oid);
+					let headCommit: string | null = null;
+					try {
+						headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+					} catch (e) {}
+					for (const [candidate, head, workdir, stage] of matrix) {
+						if (candidate !== filepath && head === 1 && workdir === 0 && stage === 0) {
+							if (stagedText !== null && headCommit) {
+								try {
+									const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
+									if (new TextDecoder().decode(blob) === stagedText) {
+										paths.push(candidate);
+										break;
+									}
+								} catch (e) {}
+							}
+						}
+					}
+				}
+			}
+			for (const path of paths) {
+				await git.resetIndex({
+					fs: this.fs!,
+					dir: this.dir,
+					filepath: path
+				});
+			}
 		} catch (e) {
 			console.error('[Git] Failed to unstage file', e);
 			throw e;
@@ -907,7 +1016,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (isClean) continue;
 			if (workdir === 0) {
 				if (stage !== 0 || head !== 0) {
-					await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+					// Index-only removal: `git.remove` would also unlink the worktree
+					// file, which fails when it is already gone.
+					await this.removeFromIndex(filepath as string);
 				}
 			} else {
 				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });

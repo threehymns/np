@@ -9,6 +9,7 @@ import { browserHandleRegistry } from './storage';
 const mockGit = git as unknown as {
 	statusMatrix: typeof git.statusMatrix;
 	add: typeof git.add;
+	updateIndex: typeof git.updateIndex;
 	remove: typeof git.remove;
 	resetIndex: typeof git.resetIndex;
 	checkout: typeof git.checkout;
@@ -246,13 +247,13 @@ describe('IsomorphicGitAdapter', () => {
 			['clean.txt', 1, 1, 1] // Unmodified
 		]);
 		const addSpy = mock(async (_args: { filepath: string }) => {});
-		const removeSpy = mock(async (_args: { filepath: string }) => {});
+		const removeIndexSpy = mock(async (_args: { filepath: string; remove: boolean; force: boolean }) => {});
 		const origStatusMatrix = git.statusMatrix;
 		const origAdd = git.add;
-		const origRemove = git.remove;
+		const origUpdateIndex = git.updateIndex;
 		mockGit.statusMatrix = statusMatrixSpy;
 		mockGit.add = addSpy;
-		mockGit.remove = removeSpy;
+		mockGit.updateIndex = removeIndexSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
@@ -261,12 +262,15 @@ describe('IsomorphicGitAdapter', () => {
 			expect(statusMatrixSpy).toHaveBeenCalledTimes(1);
 			expect(addSpy).toHaveBeenCalledTimes(2);
 			expect(addSpy.mock.calls.map(([args]: [{ filepath: string }]) => args.filepath).sort()).toEqual(['mod.txt', 'new.txt']);
-			expect(removeSpy).toHaveBeenCalledTimes(1);
-			expect(removeSpy.mock.calls[0][0].filepath).toBe('del.txt');
+			expect(removeIndexSpy).toHaveBeenCalledTimes(1);
+			expect(removeIndexSpy.mock.calls[0][0].filepath).toBe('del.txt');
+			// Index-only removal: the worktree is never touched by staging.
+			expect(removeIndexSpy.mock.calls[0][0].remove).toBe(true);
+			expect(removeIndexSpy.mock.calls[0][0].force).toBe(true);
 		} finally {
 			mockGit.statusMatrix = origStatusMatrix;
 			mockGit.add = origAdd;
-			mockGit.remove = origRemove;
+			mockGit.updateIndex = origUpdateIndex;
 		}
 	});
 

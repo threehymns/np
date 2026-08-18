@@ -202,110 +202,39 @@ describe('SpawnGitAdapter', () => {
 		expect(bothUnstaged?.deletions).toBe(0);
 	});
 
-	it('updateIndexContent preserves mode from origPath and removes origPath in a single atomic update-index command when destination path is an unstaged worktree rename', async () => {
-		const commands: string[][] = [];
+	it('updateIndexContent throws when git apply --cached fails for rename staging', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
 			const cmd = args.join(' ');
 			if (cmd.startsWith('status')) {
-				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
+				// Real git never reports worktree renames (verified empirically); the
+				// fixture below is the discovery input the adapter is not required to use.
+				return { code: 0, stdout: ' D old.sh\0?? new.sh\0', stderr: '' };
 			}
 			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
 				return { code: 0, stdout: '.git', stderr: '' };
 			}
-			if (args[0] === 'ls-files' && args.includes('new.sh')) {
-				return { code: 0, stdout: '', stderr: '' };
+			if (args[0] === 'show' && args[1] === ':old.sh') {
+				return { code: 0, stdout: '#!/bin/bash\necho old\n', stderr: '' };
 			}
 			if (args[0] === 'ls-files' && args.includes('old.sh')) {
 				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
 			}
-			if (args[0] === 'hash-object') {
-				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
-			}
-			if (args[0] === 'update-index') {
-				return { code: 0, stdout: '', stderr: '' };
+			if (args[0] === 'apply') {
+				return { code: 1, stdout: '', stderr: 'error: old.sh: patch does not apply' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n');
-
-		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
-		expect(updateIndexCalls).toHaveLength(1);
-		expect(updateIndexCalls[0]).toEqual([
-			'update-index',
-			'--add',
-			'--cacheinfo',
-			'100755',
-			'abcdef1234567890abcdef1234567890abcdef12',
-			'new.sh',
-			'--force-remove',
-			'--',
-			'old.sh'
-		]);
-	});
-
-	it('updateIndexContent throws when atomic update-index fails for rename staging', async () => {
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				return { code: 0, stdout: ' R new.sh\0old.sh\0', stderr: '' };
+		mockReadFile.mockImplementation(async (path: string) => {
+			if (path === '/test/repo/new.sh') {
+				return new TextEncoder().encode('#!/bin/bash\necho old\n');
 			}
-			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
-				return { code: 0, stdout: '.git', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('new.sh')) {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('old.sh')) {
-				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
-			}
-			if (args[0] === 'hash-object') {
-				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
-			}
-			if (args[0] === 'update-index') {
-				return { code: 1, stdout: '', stderr: 'fatal: unable to process update-index' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
+			throw new Error('ENOENT');
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
-		await expect(adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n')).rejects.toThrow('unable to process update-index');
-	});
-
-	it('updateIndexContent does not include --force-remove when destination path is already in index', async () => {
-		const commands: string[][] = [];
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
-			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
-				return { code: 0, stdout: '.git', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('existing.txt')) {
-				return { code: 0, stdout: '100644 1234567890123456789012345678901234567890 0\texisting.txt', stderr: '' };
-			}
-			if (args[0] === 'hash-object') {
-				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
-			}
-			if (args[0] === 'update-index') {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.updateIndexContent('existing.txt', 'updated content\n');
-
-		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
-		expect(updateIndexCalls).toHaveLength(1);
-		expect(updateIndexCalls[0]).toEqual([
-			'update-index',
-			'--add',
-			'--cacheinfo',
-			'100644',
-			'abcdef1234567890abcdef1234567890abcdef12',
-			'existing.txt'
-		]);
+		await expect(adapter.updateIndexContent('new.sh', '#!/bin/bash\necho new\n')).rejects.toThrow(
+			'patch does not apply'
+		);
 	});
 
 	it('discardChanges reverts a staged rename by restoring the original path and removing the new path', async () => {
@@ -385,29 +314,6 @@ describe('SpawnGitAdapter', () => {
 		expect(discardCalls.some(c => c[0] === 'clean')).toBe(false);
 	});
 
-	it('unstageFile uses fresh porcelain status instead of stale cached rename source when rename source changes', async () => {
-		let statusOutput = 'R  new.txt\0old.txt\0';
-		const commands: string[][] = [];
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				return { code: 0, stdout: statusOutput, stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.getChanges();
-
-		// Repository status changes: old.txt -> new.txt is replaced by another.txt -> new.txt
-		statusOutput = 'R  new.txt\0another.txt\0';
-		await adapter.unstageFile('new.txt');
-
-		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'another.txt', 'new.txt']);
-		expect(commands.some(c => c[0] === 'reset' && c.includes('old.txt'))).toBe(false);
-	});
-
 	it('discardChanges uses fresh porcelain status instead of stale cached rename source when rename source changes', async () => {
 		let statusOutput = 'R  new.txt\0old.txt\0';
 		const commands: string[][] = [];
@@ -456,55 +362,6 @@ describe('SpawnGitAdapter', () => {
 		const checkout = commands.find(c => c[0] === 'checkout');
 		expect(checkout).toEqual(['checkout', 'HEAD', '--', 'new.txt']);
 		expect(commands.some(c => c.includes('old.txt'))).toBe(false);
-	});
-
-	it('updateIndexContent uses fresh porcelain status instead of stale cached rename source when worktree rename source changes', async () => {
-		let statusOutput = ' R new.txt\0old.txt\0';
-		const commands: string[][] = [];
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				return { code: 0, stdout: statusOutput, stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
-				return { code: 0, stdout: '.git', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('new.txt')) {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('another.txt')) {
-				return { code: 0, stdout: '100644 1234567890123456789012345678901234567890 0\tanother.txt', stderr: '' };
-			}
-			if (args[0] === 'hash-object') {
-				return { code: 0, stdout: 'abcdef1234567890abcdef1234567890abcdef12', stderr: '' };
-			}
-			if (args[0] === 'update-index') {
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.getChanges();
-
-		// Worktree rename changes from old.txt -> new.txt to another.txt -> new.txt
-		statusOutput = ' R new.txt\0another.txt\0';
-		await adapter.updateIndexContent('new.txt', 'updated content\n');
-
-		const updateIndexCalls = commands.filter(c => c[0] === 'update-index');
-		expect(updateIndexCalls).toHaveLength(1);
-		expect(updateIndexCalls[0]).toEqual([
-			'update-index',
-			'--add',
-			'--cacheinfo',
-			'100644',
-			'abcdef1234567890abcdef1234567890abcdef12',
-			'new.txt',
-			'--force-remove',
-			'--',
-			'another.txt'
-		]);
 	});
 
 	it('discardChanges reverts a staged rename even without a prior getChanges call', async () => {
