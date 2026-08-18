@@ -6,15 +6,17 @@ import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter
 import { NodeDirectoryHandle } from './node-fs-handle';
 import {
 	TestRepo,
+	checkedGit,
 	createTrackedRepo,
 	currentBranch,
 	describe,
 	headAuthor,
 	it,
+	nodeFileAccess,
 	porcelainStatus,
 	runGit,
-	worktreeContents,
-	TEST_IDENTITY
+	TEST_IDENTITY,
+	worktreeContents
 } from './harness';
 
 function origin(r: TestRepo): FileOrigin {
@@ -38,7 +40,7 @@ interface Engine {
 const spawnEngine: Engine = {
 	name: 'SpawnGitAdapter (real git)',
 	adapter(r) {
-		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args));
+		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args), nodeFileAccess);
 	}
 };
 
@@ -169,7 +171,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			);
 
 			await r.write('second.txt', 'second\n');
-			await r.git(['add', 'second.txt']);
+			await checkedGit(r, ['add', 'second.txt']);
 			await adapter.commit('second commit');
 			const secondRev = await headRev(r);
 
@@ -191,7 +193,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			const r = await createTrackedRepo();
 			await setUserConfig(r);
 			await r.write('file.txt', 'content\n');
-			await r.git(['add', 'file.txt']);
+			await checkedGit(r, ['add', 'file.txt']);
 
 			const customAuthor = { name: 'Grace Hopper', email: 'grace@navy.mil' };
 			const adapter = engine.adapter(r);
@@ -216,7 +218,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			// Stage an additional file and amend the commit
 			await r.write('b.txt', 'v2\n');
-			await r.git(['add', 'b.txt']);
+			await checkedGit(r, ['add', 'b.txt']);
 
 			const newAuthor = { name: 'Ada Lovelace', email: 'ada@analytical.org' };
 			await adapter.commit('amended initial message', { amend: true, author: newAuthor });
@@ -246,13 +248,13 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			);
 
 			await r.write('second.txt', 'v1\n');
-			await r.git(['add', 'second.txt']);
+			await checkedGit(r, ['add', 'second.txt']);
 			await adapter.commit('second commit');
 			const secondRev = await headRev(r);
 
 			// Modify second.txt and amend
 			await r.write('second.txt', 'v2\n');
-			await r.git(['add', 'second.txt']);
+			await checkedGit(r, ['add', 'second.txt']);
 			await adapter.commit('amended second commit', { amend: true });
 
 			const amendedRev = await headRev(r);
@@ -271,7 +273,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			const r = await createTrackedRepo();
 			await setUserConfig(r);
 			await r.write('note.txt', 'note\n');
-			await r.git(['add', 'note.txt']);
+			await checkedGit(r, ['add', 'note.txt']);
 
 			const multilineMsg = 'feat(core): subject line\n\nDetailed explanation of the change.';
 			const adapter = engine.adapter(r);
