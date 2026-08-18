@@ -409,34 +409,19 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		});
 	});
 
-	describe(`${engine.name} — worktree rename staging`, () => {
-		it('stages a worktree rename as a rename with the source removed from the index', async () => {
+	describe(`${engine.name} — hunk index update isolation and rename handling`, () => {
+		it('stages an untracked file into the index without modifying other files', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			await r.write('new-file.txt', 'new content\n');
 			const adapter = engine.adapter(r);
 
-			await adapter.updateIndexContent('moved.txt', SRC_CONTENT);
+			await adapter.updateIndexContent('new-file.txt', 'new content\n');
 
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
-			expect(await indexContents(r, 'moved.txt')).toBe(SRC_CONTENT);
-			expect(await indexContents(r, 'src.txt')).toBe(null);
-			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'moved.txt']);
-			expect(await indexMode(r, 'moved.txt')).toBe('100644');
-		});
-
-		it('stages spliced content into a worktree-renamed file while keeping the rename', async () => {
-			const r = await createTrackedRepo();
-			await baseRepo(r);
-			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
-			const adapter = engine.adapter(r);
-
-			await adapter.updateIndexContent('moved.txt', `${SRC_CONTENT}extra\n`);
-
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: 'M', path: 'moved.txt', origPath: 'src.txt' }]);
-			expect(await indexContents(r, 'moved.txt')).toBe(`${SRC_CONTENT}extra\n`);
-			expect(await indexContents(r, 'src.txt')).toBe(null);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: ' ', path: 'new-file.txt' }]);
+			expect(await indexContents(r, 'new-file.txt')).toBe('new content\n');
+			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'new-file.txt', 'src.txt']);
+			expect(await indexMode(r, 'new-file.txt')).toBe('100644');
 		});
 
 		it('writes spliced content into a destination already staged as a rename', async () => {
@@ -459,92 +444,37 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'moved.txt']);
 		});
 
-		it('preserves the source executable mode when staging a worktree-renamed script', async () => {
+		it('does not stage deletion of an unrelated deleted file when staging an untracked file with identical content', async () => {
 			const r = await createTrackedRepo();
-			await r.write('run.sh', '#!/bin/sh\necho hi\n');
-			await commitAll(r, 'add script');
-			chmodSync(path.join(r.path, 'run.sh'), 0o755);
-			await commitAll(r, 'make executable');
-			expect(await indexMode(r, 'run.sh')).toBe('100755');
-			await moveEntry(`${r.path}/run.sh`, `${r.path}/runner.sh`);
-			const adapter = engine.adapter(r);
-
-			await adapter.updateIndexContent('runner.sh', '#!/bin/sh\necho hi\n');
-
-			// A mode change would surface as RM; the preserved source mode keeps it a
-			// clean rename.
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'runner.sh', origPath: 'run.sh' }]);
-			expect(await indexMode(r, 'runner.sh')).toBe('100755');
-			expect(await indexContents(r, 'runner.sh')).toBe('#!/bin/sh\necho hi\n');
-		});
-
-		it('stages a worktree rename whose source content is a lone newline', async () => {
-			const r = await createTrackedRepo();
-			await r.write('src.txt', '\n');
-			await commitAll(r, 'base');
+			await baseRepo(r);
+			// src.txt is deleted in the worktree but NOT staged as deleted in the index
 			await rm(`${r.path}/src.txt`);
-			await r.write('moved.txt', '\n');
+			// An unrelated new file happens to have identical content to src.txt
+			await r.write('unrelated.txt', SRC_CONTENT);
 			const adapter = engine.adapter(r);
 
-			// The rename branch renders a delete hunk for the '\n' source; writing the
-			// same content back keeps the pair at 100% similarity (a different value
-			// would drop below the rename threshold and surface as A plus D).
-			await adapter.updateIndexContent('moved.txt', '\n');
+			// Status before: src.txt is worktree-deleted, unrelated.txt is untracked
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'unrelated.txt' }
+			]);
 
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
-			expect(await indexContents(r, 'moved.txt')).toBe('\n');
-			expect(await indexContents(r, 'src.txt')).toBe(null);
-			expect(await worktreeContents(r, 'moved.txt')).toBe('\n');
+			// Stage hunk/content on unrelated.txt only
+			await adapter.updateIndexContent('unrelated.txt', SRC_CONTENT);
+
+			// src.txt MUST remain untouched in the index (not staged as deleted);
+			// unrelated.txt is staged as an addition (A).
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: 'A', y: ' ', path: 'unrelated.txt' }
+			]);
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await indexContents(r, 'unrelated.txt')).toBe(SRC_CONTENT);
+			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt', 'unrelated.txt']);
 		});
 	});
 
 	describe(`${engine.name} — stale-cache prevention`, () => {
-		it('resolves a changed rename source freshly and never mis-targets the old one', async () => {
-			const r = await createTrackedRepo();
-			await r.write('a.txt', 'line a1\nline a2\nline a3\n');
-			await r.write('b.txt', 'line b1\nline b2\nline b3\n');
-			await commitAll(r, 'base');
-			const adapter = engine.adapter(r);
-
-			// First rename: a.txt -> new.txt, staged as a rename with spliced content.
-			// The spliced content keeps two of three lines so git still detects a rename.
-			await moveEntry(`${r.path}/a.txt`, `${r.path}/new.txt`);
-			await adapter.updateIndexContent('new.txt', 'line a1\nline a2\nEDITED\n');
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: 'M', path: 'new.txt', origPath: 'a.txt' }]);
-
-			// The repository is reset and a different rename now occupies new.txt:
-			// the write must pair with b.txt, not with the previous source a.txt.
-			const reset = await r.git(['reset', '-q', '--hard', 'HEAD']);
-			if (reset.code !== 0) throw new Error(reset.stderr);
-			await moveEntry(`${r.path}/b.txt`, `${r.path}/new.txt`);
-			await adapter.updateIndexContent('new.txt', 'line b1\nline b2\nEDITED\n');
-
-			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: 'M', path: 'new.txt', origPath: 'b.txt' }]);
-			expect(await indexContents(r, 'new.txt')).toBe('line b1\nline b2\nEDITED\n');
-			expect(await indexContents(r, 'a.txt')).toBe('line a1\nline a2\nline a3\n');
-			expect(await indexContents(r, 'b.txt')).toBe(null);
-			expect(await lsFiles(r)).toEqual(['a.txt', 'new.txt']);
-		});
-
-		it('stages a rename destination as a plain new file when the source index entry is already gone', async () => {
-			const r = await createTrackedRepo();
-			await r.write('a.txt', 'content of a\n');
-			await r.write('b.txt', 'content of b\n');
-			await commitAll(r, 'base');
-			const adapter = engine.adapter(r);
-
-			await moveEntry(`${r.path}/a.txt`, `${r.path}/new.txt`);
-			// The source disappears from the index entirely before the write: the
-			// destination must still be staged with exact content, and no unrelated
-			// path may be removed.
-			await r.git(['rm', '-q', '--cached', 'a.txt']);
-			await adapter.updateIndexContent('new.txt', 'a spliced\n');
-
-			expect(await indexContents(r, 'new.txt')).toBe('a spliced\n');
-			expect(await indexContents(r, 'b.txt')).toBe('content of b\n');
-			expect(await indexContents(r, 'a.txt')).toBe(null);
-			expect(await lsFiles(r)).toEqual(['b.txt', 'new.txt']);
-		});
 
 		it('unstaging after the rename source changed targets the fresh source', async () => {
 			const r = await createTrackedRepo();

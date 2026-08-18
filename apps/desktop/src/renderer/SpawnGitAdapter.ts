@@ -508,21 +508,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 		await this.fileAccess.writeFile(fullPath, content);
 	}
 
-	/**
-	 * Worktree content for a path, or null when the file does not exist on disk.
-	 * Used by rename-source discovery: the destination must match the source on disk.
-	 */
-	private async readWorktreeText(filepath: string): Promise<string | null> {
-		try {
-			const buffer = await this.fileAccess.readFile(`${this.rootOrigin.path}/${filepath}`);
-			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-		} catch (e) {
-			if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
-				throw e;
-			}
-			return null;
-		}
-	}
 
 	/** Index mode of a path (`git ls-files -s`), or null when the path has no index entry. */
 	private async indexModeOf(filepath: string): Promise<string | null> {
@@ -563,56 +548,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Fresh discovery + patch rendering for `updateIndexContent`. The rename source
-	 * is resolved from live porcelain at call time: `git status` never reports
-	 * worktree renames (verified empirically), so an untracked destination whose
-	 * worktree content matches a tracked path deleted from the worktree is the
-	 * rename source. The patch is applied literally against the current index, so
-	 * any change between probe and apply fails loudly instead of mis-targeting.
+	 * Fresh patch rendering for `updateIndexContent`. The patch is applied literally
+	 * against the current index for the target filepath only, so it never modifies
+	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
-		const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
-		const entries = statusRes.code === 0 ? this.parseStatusEntries(statusRes.stdout) : [];
-
-		let renameSource: string | null = null;
-		const destEntry = entries.find(e => e.filepath === filepath);
-		if (destEntry?.x === '?' && destEntry?.y === '?') {
-			const worktreeText = await this.readWorktreeText(filepath);
-			if (worktreeText !== null) {
-				for (const entry of entries) {
-					if (entry.y !== 'D') continue;
-					const indexText = await this.readGitObject(`:${entry.filepath}`);
-					if (indexText === worktreeText) {
-						renameSource = entry.filepath;
-						break;
-					}
-				}
-			}
-		}
-
-		// The destination mode is the rename source's preserved mode; otherwise the
-		// destination's own index mode; otherwise the regular-file default.
-		const mode =
-			(await this.indexModeOf(renameSource ?? filepath)) ?? SpawnGitAdapter.DEFAULT_INDEX_MODE;
-
-		if (renameSource) {
-			const oldContent = (await this.readGitObject(`:${renameSource}`)) ?? '';
-			// Worktree rename staging: delete the source and add the destination in one
-			// patch, so a single `git apply --cached` atomically rewrites the index.
-			const header = `diff --git a/${renameSource} b/${filepath}`;
-			const parts = [header, `deleted file mode ${mode}`, `--- a/${renameSource}`, '+++ /dev/null'];
-			const oldCount = SpawnGitAdapter.textLineCount(oldContent);
-			if (oldCount > 0) {
-				parts.push(`@@ -${SpawnGitAdapter.hunkRange(oldCount)} +0,0 @@`, SpawnGitAdapter.hunkBody(oldContent, '-'));
-			}
-			parts.push('', header, `new file mode ${mode}`, '--- /dev/null', `+++ b/${filepath}`);
-			const newCount = SpawnGitAdapter.textLineCount(content);
-			if (newCount > 0) {
-				parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
-			}
-			return parts.join('\n');
-		}
-
+		const mode = (await this.indexModeOf(filepath)) ?? SpawnGitAdapter.DEFAULT_INDEX_MODE;
 		const oldContent = await this.readGitObject(`:${filepath}`);
 		const header = `diff --git a/${filepath} b/${filepath}`;
 		if (oldContent !== null) {

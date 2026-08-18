@@ -791,32 +791,6 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
-		const matrix = await this.readStatusMatrix();
-
-		// Fresh rename-source discovery: an untracked destination whose worktree content
-		// matches a tracked path deleted from the worktree is a worktree rename.
-		let renameSource: string | null = null;
-		const destRow = matrix.find(([p]) => p === filepath);
-		if (destRow && destRow[1] === 0 && destRow[3] === 0) {
-			let worktreeText: string | null = null;
-			try {
-				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-				worktreeText = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-			} catch (e: any) {
-				if (!isENOENT(e)) throw e;
-			}
-			if (worktreeText !== null) {
-				for (const [candidate, head, workdir, stage] of matrix) {
-					if (candidate !== filepath && head === 1 && workdir === 0 && stage === 1) {
-						const entry = await this.readStageEntry(candidate);
-						if (entry && (await this.readBlobText(entry.oid)) === worktreeText) {
-							renameSource = candidate;
-							break;
-						}
-					}
-				}
-			}
-		}
 
 		// A literal no-op: the destination already holds exactly this content, so the
 		// write is skipped entirely. Only an identical write reaches the empty→empty
@@ -831,25 +805,6 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			dir: this.dir,
 			blob: new TextEncoder().encode(content)
 		});
-
-		if (renameSource) {
-			const sourceEntry = await this.readStageEntry(renameSource);
-			await this.removeFromIndex(renameSource);
-			// Note: this engine rewrites the index file once per updateIndex call
-			// (no patch-apply exists in isomorphic-git), so the rename is not a
-			// single index-file write like the spawn engine's `git apply --cached`.
-			// A failure between the two calls leaves the source staged as deleted
-			// and the destination untracked — recoverable, never mis-targeting.
-			await git.updateIndex({
-				fs: this.fs!,
-				dir: this.dir,
-				filepath,
-				oid,
-				add: true,
-				mode: sourceEntry?.mode ?? 0o100644
-			});
-			return;
-		}
 
 		await git.updateIndex({
 			fs: this.fs!,

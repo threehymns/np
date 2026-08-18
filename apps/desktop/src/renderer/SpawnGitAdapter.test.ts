@@ -177,33 +177,15 @@ describe('SpawnGitAdapter', () => {
 		expect(bothUnstaged?.deletions).toBe(0);
 	});
 
-	it('updateIndexContent throws when git apply --cached fails for rename staging', async () => {
+	it('updateIndexContent throws when git apply --cached fails', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			const cmd = args.join(' ');
-			if (cmd.startsWith('status')) {
-				// Real git never reports worktree renames (verified empirically); the
-				// fixture below is the discovery input the adapter is not required to use.
-				return { code: 0, stdout: ' D old.sh\0?? new.sh\0', stderr: '' };
-			}
 			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
 				return { code: 0, stdout: '.git', stderr: '' };
 			}
-			if (args[0] === 'show' && args[1] === ':old.sh') {
-				return { code: 0, stdout: '#!/bin/bash\necho old\n', stderr: '' };
-			}
-			if (args[0] === 'ls-files' && args.includes('old.sh')) {
-				return { code: 0, stdout: '100755 1234567890123456789012345678901234567890 0\told.sh', stderr: '' };
-			}
 			if (args[0] === 'apply') {
-				return { code: 1, stdout: '', stderr: 'error: old.sh: patch does not apply' };
+				return { code: 1, stdout: '', stderr: 'error: patch does not apply' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
-		});
-		mockReadFile.mockImplementation(async (path: string) => {
-			if (path === '/test/repo/new.sh') {
-				return new TextEncoder().encode('#!/bin/bash\necho old\n');
-			}
-			throw new Error('ENOENT');
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
