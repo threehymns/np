@@ -588,6 +588,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const oldContent = await this.readGitObject(`:${filepath}`);
 		const header = `diff --git a/${filepath} b/${filepath}`;
 		if (oldContent !== null) {
+			// A literal no-op: the index already holds exactly this content, so the
+			// write is skipped entirely. An empty→empty replace would render a
+			// `+0,0` hunk that `git apply --cached` rejects as corrupt, and no
+			// other shape can reach identical content.
+			if (oldContent === content) return '';
 			// Replace the full index content; the index mode is preserved without headers.
 			return [
 				header,
@@ -617,10 +622,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const tmpPath = `${resolvedGitDir}/${tmpFilename}`;
 		const relTmpPath = `${gitDir}/${tmpFilename}`;
 		try {
+			// An empty patch means the index already holds exactly the requested
+			// content; nothing to apply, and writing the patch file would be pointless.
+			const patch = await this.renderIndexPatch(filepath, content);
+			if (patch === '') return;
 			// git apply rejects a patch file that does not end with a newline, so the
 			// rendered patch always gets a trailing newline.
-			const patch = `${await this.renderIndexPatch(filepath, content)}\n`;
-			await this.fileAccess.writeFile(tmpPath, patch);
+			await this.fileAccess.writeFile(tmpPath, `${patch}\n`);
 			const applyRes = await this.runGit(['apply', '--cached', relTmpPath]);
 			if (applyRes.code !== 0) {
 				throw new Error(applyRes.stderr || 'Failed to update index');

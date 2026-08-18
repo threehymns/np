@@ -769,7 +769,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					}
 				}
 			});
-		} catch (e) {}
+		} catch (e: any) {
+			// Only an absent index (hollowed repo) yields ENOENT and means "no
+			// entry"; anything else (corrupt index, permission failure) must reach
+			// the caller instead of being silently treated as absent, which would
+			// mis-stage with default mode. Mirrors the desktop adapter's
+			// `readGitObject` carve-out.
+			if (!isENOENT(e)) throw e;
+		}
 		return result;
 	}
 
@@ -811,6 +818,14 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			}
 		}
 
+		// A literal no-op: the destination already holds exactly this content, so the
+		// write is skipped entirely. Only an identical write reaches the empty→empty
+		// shape, and writing a new blob + index rewrite would be pointless work.
+		const destEntry = await this.readStageEntry(filepath);
+		if (destEntry && (await this.readBlobText(destEntry.oid)) === content) {
+			return;
+		}
+
 		const oid = await git.writeBlob({
 			fs: this.fs!,
 			dir: this.dir,
@@ -836,7 +851,6 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			return;
 		}
 
-		const destEntry = await this.readStageEntry(filepath);
 		await git.updateIndex({
 			fs: this.fs!,
 			dir: this.dir,
