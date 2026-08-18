@@ -13,6 +13,7 @@
 		"./state.svelte": "./src/state.svelte.ts",
 		"./storage": "./src/storage.ts",
 		"./persistence": "./src/persistence.ts",
+		"./utils": "./src/utils.ts",
 		"./project/vcs": "./src/project/vcs.ts"
 	},
 	"dependencies": {

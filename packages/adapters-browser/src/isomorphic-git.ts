@@ -2,6 +2,7 @@ import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
+import { mapBounded } from '@np/core/utils';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
@@ -826,17 +827,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 			const result: GitCommit[] = [];
 			// Walk every commit's tree with bounded concurrency: 50 commits read in
-			// one unbounded Promise.all would fan out against the FS shim. Indexed
-			// assignment keeps the per-commit file lists in log order.
-			const filesPerCommit: string[][] = new Array(commits.length);
-			let next = 0;
-			const workers = Array.from({ length: Math.min(8, commits.length) }, async () => {
-				while (next < commits.length) {
-					const i = next++;
-					filesPerCommit[i] = await this.commitFileNames(commits[i]);
-				}
-			});
-			await Promise.all(workers);
+			// one unbounded Promise.all would fan out against the FS shim.
+			const filesPerCommit = await mapBounded(commits, 8, (c) => this.commitFileNames(c));
 			for (let i = 0; i < commits.length; i++) {
 				const c = commits[i];
 				result.push({

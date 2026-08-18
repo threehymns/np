@@ -1,5 +1,6 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
+import { mapBounded } from '@np/core/utils';
 
 export interface GitRunResult {
 	code: number;
@@ -456,28 +457,25 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 		}
 
-		for (let i = 0; i < untrackedPaths.length; i += SpawnGitAdapter.UNTRACKED_READ_CONCURRENCY) {
-			const chunk = untrackedPaths.slice(i, i + SpawnGitAdapter.UNTRACKED_READ_CONCURRENCY);
-			const counts = await Promise.all(chunk.map(async (filepath) => {
-				// git diff --numstat never includes untracked files, so count lines directly.
-				let additions = 0;
-				try {
-					const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
-					const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-					additions = countLines(content);
-				} catch (e) {}
-				return { filepath, additions };
-			}));
-			for (const { filepath, additions } of counts) {
-				changes.push({
-					filepath,
-					status: 'U',
-					additions,
-					deletions: 0,
-					diff: '',
-					staged: false
-				});
-			}
+		// git diff --numstat never includes untracked files, so count lines directly.
+		const counts = await mapBounded(untrackedPaths, SpawnGitAdapter.UNTRACKED_READ_CONCURRENCY, async (filepath) => {
+			let additions = 0;
+			try {
+				const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+				const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+				additions = countLines(content);
+			} catch (e) {}
+			return { filepath, additions };
+		});
+		for (const { filepath, additions } of counts) {
+			changes.push({
+				filepath,
+				status: 'U',
+				additions,
+				deletions: 0,
+				diff: '',
+				staged: false
+			});
 		}
 
 		return changes;
