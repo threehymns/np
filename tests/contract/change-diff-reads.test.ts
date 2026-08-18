@@ -492,9 +492,11 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		await r.write('README.md', `${README_HEAD}delta\n`);
 		const adapter = spawnEngine.adapter(r);
 
-		// Even with status.renames=copies, git status never emits 'C' (verified against
-		// git 2.55.0, human and porcelain output): an identical-content staged copy
-		// surfaces as a plain staged addition.
+		// With status.renames=copies but an unchanged index source, git status still
+		// emits plain 'A' (verified against git 2.55.0, human and porcelain output):
+		// copy detection only fires when the source is part of the index diff, and
+		// this fixture's source (src.txt) is untouched. 'C'/'CM' appears only when
+		// the source is itself staged-modified (see the CM fixture below).
 		const porcelain = await porcelainStatus(r);
 		expect(porcelain).toEqual([
 			{ x: ' ', y: 'M', path: 'README.md' },
@@ -510,6 +512,41 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		const diff = await adapter.getFileDiff('copy.txt', { staged: true });
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe(await indexContents(r, 'copy.txt'));
+	});
+
+	it('reports a staged copy with unstaged destination edits (CM) as staged plus unstaged entries with an empty copy baseline', async () => {
+		const r = await createTrackedRepo();
+		await baseRepo(r);
+		const config = await r.git(['config', 'status.renames', 'copies']);
+		if (config.code !== 0) throw new Error(config.stderr);
+		// Copy detection fires only when the source is part of the index diff:
+		// stage a modification to src.txt, then stage an identical-content copy of
+		// the modified version, then append an unstaged edit at the destination.
+		await r.write('src.txt', 'shared\nmore\n');
+		await stageAll(r);
+		await r.write('copy.txt', 'shared\nmore\n');
+		await stageAll(r);
+		await r.write('copy.txt', 'shared\nmore\nedit\n');
+		const adapter = spawnEngine.adapter(r);
+
+		const porcelain = await porcelainStatus(r);
+		expect(porcelain).toEqual([
+			{ x: 'C', y: 'M', path: 'copy.txt' },
+			{ x: 'M', y: ' ', path: 'src.txt' }
+		]);
+
+		const changes = await adapter.getChanges();
+		expect(changes).toEqual([
+			{ filepath: 'copy.txt', status: 'M', additions: 2, deletions: 0, diff: '', staged: true },
+			{ filepath: 'copy.txt', status: 'M', additions: 1, deletions: 0, diff: '', staged: false },
+			{ filepath: 'src.txt', status: 'M', additions: 1, deletions: 0, diff: '', staged: true }
+		]);
+
+		// The copy baseline is empty (a copy is not a rename): the staged diff
+		// compares against nothing, never against the source blob.
+		const stagedDiff = await adapter.getFileDiff('copy.txt', { staged: true });
+		expect(stagedDiff.originalContent).toBe('');
+		expect(stagedDiff.modifiedContent).toBe(await indexContents(r, 'copy.txt'));
 	});
 
 	it('does not treat an untracked file as a rename even when a deleted file has identical content', async () => {

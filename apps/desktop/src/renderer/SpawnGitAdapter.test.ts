@@ -389,9 +389,6 @@ describe('SpawnGitAdapter', () => {
 			if (cmd.startsWith('status')) {
 				return { code: 0, stdout: 'C  dest.txt\0src.txt\0', stderr: '' };
 			}
-			if (args[0] === 'checkout' && args.includes('dest.txt')) {
-				return { code: 1, stdout: '', stderr: 'error: pathspec dest.txt did not match any file(s) known to git' };
-			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
 
@@ -405,6 +402,28 @@ describe('SpawnGitAdapter', () => {
 		expect(reset).toEqual(['reset', 'HEAD', '--', 'dest.txt']);
 		const clean = calls.find(c => c[0] === 'clean');
 		expect(clean).toEqual(['clean', '-fd', '--', 'dest.txt']);
+	});
+
+	it('discardChanges on a staged copy with unstaged destination edits (CM) keeps the edits and never touches the source', async () => {
+		const calls: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			calls.push(args);
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return { code: 0, stdout: 'CM dest.txt\0src.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('dest.txt');
+
+		// Discarding a CM copy must never touch the source file.
+		expect(calls.some(c => c.includes('src.txt'))).toBe(false);
+		// The staged copy is unstaged from the destination path only.
+		expect(calls.filter(c => c[0] === 'reset')).toEqual([['reset', 'HEAD', '--', 'dest.txt']]);
+		// The destination holds unstaged edits, so it must not be cleaned away.
+		expect(calls.some(c => c[0] === 'clean')).toBe(false);
 	});
 
 	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {

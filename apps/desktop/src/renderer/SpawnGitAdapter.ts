@@ -177,14 +177,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
-	private async getRenameEntry(filepath: string): Promise<{ origPath: string; hasWorktreeEdits: boolean } | null> {
+	private async getRenameEntry(filepath: string): Promise<{ origPath?: string; hasWorktreeEdits: boolean; isCopy: boolean } | null> {
 		try {
 			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
 			if (statusRes.code === 0 && statusRes.stdout) {
 				const entries = this.parseStatusEntries(statusRes.stdout);
-				const match = entries.find(e => e.filepath === filepath && e.origPath);
-				if (match?.origPath) {
-					return { origPath: match.origPath, hasWorktreeEdits: match.y === 'M' };
+				const match = entries.find(e => e.filepath === filepath && (e.origPath || e.x === 'C' || e.y === 'C'));
+				if (match) {
+					// Copy entries never record origPath (parseStatusEntries consumes the
+					// copy-source token without recording it): copies are not renames, so
+					// no source path is returned, only the isCopy flag.
+					return {
+						origPath: match.origPath,
+						hasWorktreeEdits: match.y === 'M',
+						isCopy: match.x === 'C' || match.y === 'C'
+					};
 				}
 			}
 		} catch (e) {}
@@ -226,6 +233,23 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 
 		const renameEntry = await this.getRenameEntry(filepath);
+		if (renameEntry?.isCopy) {
+			// Staged copy: unstage the destination only — the source file is never
+			// touched. `checkout HEAD -- dest` fails because the destination is absent
+			// from HEAD, so a plain reset removes the copy from the index. A copy whose
+			// destination also holds unstaged edits (CM) keeps its worktree copy after
+			// the reset: it is left in place instead of being cleaned away with the
+			// user's edits in it.
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
+			if (resetRes.code !== 0) {
+				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
+			}
+			if (!renameEntry.hasWorktreeEdits) {
+				await this.cleanIfPresent(filepath);
+			}
+			return;
+		}
+
 		const origPath = renameEntry?.origPath;
 		if (origPath && origPath !== filepath) {
 			// Staged rename reported by git itself: revert the whole rename. `checkout HEAD -- newPath`
@@ -523,9 +547,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	private static hunkBody(text: string, prefix: '+' | '-'): string {
-		const body = text === '' ? '' : text.endsWith('\n') ? text.slice(0, -1) : text;
-		if (body === '') return '';
-		const lines = body.split('\n').map(line => `${prefix}${line}`);
+		if (text === '') return '';
+		const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+		// Content of exactly "\n" is one line in unified-diff terms but its body is
+		// empty, so emit a lone prefixed line — the same shape git's own diff uses —
+		// instead of a hunk whose claimed line count an empty body cannot fulfill
+		// (git apply rejects that as corrupt).
+		const lines = body === '' ? [prefix] : body.split('\n').map(line => `${prefix}${line}`);
 		// A file without a trailing newline needs the no-newline marker, or git
 		// apply would silently add one and the index would not hold exact content.
 		if (!text.endsWith('\n')) {

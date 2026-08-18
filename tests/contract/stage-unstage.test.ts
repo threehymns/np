@@ -322,6 +322,43 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
 		});
 
+		it('writes a lone-newline file to the index in both directions without a corrupt patch', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			// HELLO_V0 (2 lines) → "\n": the hunk claims one line on each side, so
+			// the newline-only side must render a lone +/- line (as git's own diff
+			// does) or git apply rejects the patch as corrupt.
+			await adapter.updateIndexContent('hello.ts', '\n');
+
+			expect(await indexContents(r, 'hello.ts')).toBe('\n');
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
+
+			// "\n" → HELLO_V0: the reverse transition must round-trip too. HELLO_V0
+			// is the committed content, so the write restores HEAD fully.
+			await adapter.updateIndexContent('hello.ts', HELLO_V0);
+
+			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await porcelainStatus(r)).toEqual([]);
+		});
+
+		it('stages a lone-newline untracked file through the index-content engine', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('added.txt', 'worktree copy\n');
+			const adapter = engine.adapter(r);
+
+			await adapter.updateIndexContent('added.txt', '\n');
+
+			expect(await indexContents(r, 'added.txt')).toBe('\n');
+			expect(await worktreeContents(r, 'added.txt')).toBe('worktree copy\n');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: 'M', path: 'added.txt' }]);
+			expect(await indexMode(r, 'added.txt')).toBe('100644');
+		});
+
 		it('stages an untracked file with exact content without touching the worktree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
@@ -439,6 +476,25 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'runner.sh', origPath: 'run.sh' }]);
 			expect(await indexMode(r, 'runner.sh')).toBe('100755');
 			expect(await indexContents(r, 'runner.sh')).toBe('#!/bin/sh\necho hi\n');
+		});
+
+		it('stages a worktree rename whose source content is a lone newline', async () => {
+			const r = await createTrackedRepo();
+			await r.write('src.txt', '\n');
+			await commitAll(r, 'base');
+			await rm(`${r.path}/src.txt`);
+			await r.write('moved.txt', '\n');
+			const adapter = engine.adapter(r);
+
+			// The rename branch renders a delete hunk for the '\n' source; writing the
+			// same content back keeps the pair at 100% similarity (a different value
+			// would drop below the rename threshold and surface as A plus D).
+			await adapter.updateIndexContent('moved.txt', '\n');
+
+			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
+			expect(await indexContents(r, 'moved.txt')).toBe('\n');
+			expect(await indexContents(r, 'src.txt')).toBe(null);
+			expect(await worktreeContents(r, 'moved.txt')).toBe('\n');
 		});
 	});
 
