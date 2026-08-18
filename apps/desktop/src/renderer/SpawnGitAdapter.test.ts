@@ -201,7 +201,13 @@ describe('SpawnGitAdapter', () => {
 	it('discardChanges throws when git reset fails instead of silently swallowing it', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'checkout') {
-				return { code: 1, stdout: '', stderr: 'checkout failed' };
+				// A staged addition is absent from HEAD, so checkout fails path-not-found
+				// and the discard proceeds to the reset recovery.
+				return {
+					code: 1,
+					stdout: '',
+					stderr: "error: pathspec 'file.txt' did not match any file(s) known to git"
+				};
 			}
 			if (args[0] === 'reset') {
 				return { code: 128, stdout: '', stderr: 'fatal: index file corrupt' };
@@ -211,6 +217,43 @@ describe('SpawnGitAdapter', () => {
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await expect(adapter.discardChanges('file.txt')).rejects.toThrow(/index file corrupt/);
+	});
+
+	it('discardChanges propagates a generic checkout failure without attempting a reset', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'checkout') {
+				return { code: 1, stdout: '', stderr: 'error: unable to unlink old file.txt' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.discardChanges('file.txt')).rejects.toThrow(/unable to unlink/);
+		// The recovery reset must not run for a failure that is not path-not-found.
+		expect(commands.some(cmd => cmd[0] === 'reset')).toBe(false);
+	});
+
+	it('discardChanges recovers a path-not-found checkout with a reset and a clean', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'checkout') {
+				return {
+					code: 1,
+					stdout: '',
+					stderr: "error: pathspec 'file.txt' did not match any file(s) known to git"
+				};
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.discardChanges('file.txt');
+
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'file.txt']);
+		expect(commands).toContainEqual(['clean', '-fd', '--', 'file.txt']);
 	});
 
 	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {

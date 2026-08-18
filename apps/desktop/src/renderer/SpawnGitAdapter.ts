@@ -276,13 +276,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const res = await this.runGit(['checkout', 'HEAD', '--', filepath]);
 		if (res.code !== 0) {
+			// Only a path absent from HEAD (a staged addition or an untracked file)
+			// reaches the reset+clean recovery; any other checkout failure surfaces
+			// as-is instead of being masked by a successful reset.
+			if (!this.isPathNotFoundError(res.stderr)) {
+				throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
+			}
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
-			if (resetRes.code !== 0) {
-				// A trailing "did not match" means the path has no index entry (untracked), so
-				// proceed to clean instead of failing the discard.
-				if (!this.isPathNotFoundError(resetRes.stderr)) {
-					throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
-				}
+			if (resetRes.code !== 0 && !this.isPathNotFoundError(resetRes.stderr)) {
+				// A trailing "did not match" means the path has no index entry either
+				// (untracked), so proceed to clean instead of failing the discard.
+				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
 			await this.cleanIfPresent(filepath);
 		}
