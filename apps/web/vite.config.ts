@@ -30,6 +30,12 @@ export default defineConfig({
 			'@codemirror/autocomplete',
 			'@codemirror/search',
 			'@codemirror/merge',
+			'@codemirror/lang-markdown',
+			'@codemirror/language-data',
+			'@lezer/common',
+			'@lezer/highlight',
+			'@lezer/lr',
+			'@lezer/markdown',
 			'svelte'
 		]
 	},

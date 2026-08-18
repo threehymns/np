@@ -2,18 +2,31 @@
 	import { setContext } from "svelte";
 	import { AppState, KeymapStorageProvider } from "@np/core";
 	import { MultiSchemeStorage } from "@np/core/storage";
-	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBWorkspacePersistence } from "@np/adapters-browser";
+	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence } from "@np/adapters-browser";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
 	const storage = new MultiSchemeStorage();
 	storage.registerProvider('browser', new BrowserStorage());
-	const persistence = new IndexedDBWorkspacePersistence();
+	const persistence = new IndexedDBSessionPersistence();
 	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
 	const appState = new AppState({
 		storage,
 		persistence,
 		vcsFactory,
+		dialogService: {
+			alert: (msg) => {
+				if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+					window.alert(msg);
+				}
+			},
+			confirm: (msg) => {
+				if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+					return window.confirm(msg);
+				}
+				return false;
+			}
+		},
 		clipboardService: {
 			writeText: async (text) => {
 				if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
