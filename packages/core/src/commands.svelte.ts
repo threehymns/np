@@ -139,15 +139,18 @@ export function registerCoreCommands(appState: AppState) {
 			if (appState.activeEditorView) {
 				const view = appState.activeEditorView;
 				view.focus();
-				const { from, to } = view.state.selection.main;
+				const state = view.state;
+				const { from, to } = state.selection.main;
 				if (from !== to) {
-					const text = view.state.doc.sliceString(from, to);
+					const text = state.doc.sliceString(from, to);
 					try {
 						await writeClipboard(appState, text);
-						view.dispatch({
-							changes: { from, to, insert: "" },
-							selection: { anchor: from }
-						});
+						if (view.state === state) {
+							view.dispatch({
+								changes: { from, to, insert: "" },
+								selection: { anchor: from }
+							});
+						}
 					} catch (err) {
 						console.error("Failed to cut to clipboard:", err);
 					}

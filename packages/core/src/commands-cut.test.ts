@@ -21,16 +21,20 @@ function createMockEditorView(initialDoc: string, from: number, to: number) {
 	let doc = initialDoc;
 	let currentSelection = { from, to };
 	const dispatched: any[] = [];
+	const createState = () => ({
+		get selection() {
+			return { main: currentSelection };
+		},
+		get doc() {
+			return {
+				sliceString: (start: number, end: number) => doc.slice(start, end)
+			};
+		}
+	});
+	let state = createState();
 	const view = {
-		state: {
-			get selection() {
-				return { main: currentSelection };
-			},
-			get doc() {
-				return {
-					sliceString: (start: number, end: number) => doc.slice(start, end)
-				};
-			}
+		get state() {
+			return state;
 		},
 		focus: mock(() => {}),
 		dispatch: mock((tr: any) => {
@@ -42,9 +46,18 @@ function createMockEditorView(initialDoc: string, from: number, to: number) {
 			if (tr.selection) {
 				currentSelection = { from: tr.selection.anchor, to: tr.selection.anchor };
 			}
+			state = createState();
 		})
 	};
-	return { view, dispatched, getDoc: () => doc };
+	return {
+		view,
+		dispatched,
+		getDoc: () => doc,
+		setDoc: (nextDoc: string) => {
+			doc = nextDoc;
+			state = createState();
+		}
+	};
 }
 
 describe("Cut command ('edit.cut')", () => {
@@ -124,6 +137,30 @@ describe("Cut command ('edit.cut')", () => {
 		expect(view.dispatch).not.toHaveBeenCalled();
 		expect(dispatched).toHaveLength(0);
 		expect(getDoc()).toBe("Hello World");
+	});
+
+	it("does not delete changed editor content when clipboard write is pending", async () => {
+		let resolveWrite!: () => void;
+		const clipboardService = {
+			writeText: mock(() => new Promise<void>(resolve => {
+				resolveWrite = resolve;
+			}))
+		};
+		const appState = createMockAppState(clipboardService);
+		const { view, dispatched, getDoc, setDoc } = createMockEditorView("Hello World", 0, 5);
+		appState.activeEditorView = view;
+
+		const cutCmd = appState.commands.get("edit.cut");
+		expect(cutCmd).toBeDefined();
+
+		const cutPromise = cutCmd!.action();
+		setDoc("Changed World");
+		resolveWrite();
+		await cutPromise;
+
+		expect(view.dispatch).not.toHaveBeenCalled();
+		expect(dispatched).toHaveLength(0);
+		expect(getDoc()).toBe("Changed World");
 	});
 
 	it("does not write to clipboard or dispatch deletion when selection is empty", async () => {
