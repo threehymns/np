@@ -145,13 +145,13 @@ export class NodeDirectoryHandle {
 			if (!recursive && st.isDirectory() && (await readdir(target)).length > 0) {
 				throw invalidModificationError(target);
 			}
-} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-			throw notFoundError(target);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				throw notFoundError(target);
+			}
+			throw error;
 		}
-		throw error;
-	}
-	await rm(target, { recursive });
+		await rm(target, { recursive });
 	}
 
 	async *keys(): AsyncIterableIterator<string> {
