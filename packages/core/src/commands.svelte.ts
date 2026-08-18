@@ -145,6 +145,8 @@ export function registerCoreCommands(appState: AppState) {
 					const text = state.doc.sliceString(from, to);
 					try {
 						await writeClipboard(appState, text);
+						// Only delete the selection if the editor state hasn't
+						// changed while the clipboard write was in flight.
 						if (view.state === state) {
 							view.dispatch({
 								changes: { from, to, insert: "" },
