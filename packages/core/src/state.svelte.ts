@@ -9,13 +9,25 @@ import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
 import { getContext } from 'svelte';
-import { type WorkspacePersistence, MemoryWorkspacePersistence } from './persistence';
+import { type SessionPersistence, MemorySessionPersistence } from './persistence';
+
+export interface DialogService {
+	alert?(message: string): Promise<void> | void;
+	confirm?(message: string): Promise<boolean> | boolean;
+}
+
+export interface ClipboardService {
+	readText?(): Promise<string>;
+	writeText?(text: string): Promise<void>;
+}
 
 export interface AppStateOptions {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	persistence?: WorkspacePersistence;
+	persistence?: SessionPersistence;
 	prefsStorage?: PreferenceStorage;
+	dialogService?: DialogService;
+	clipboardService?: ClipboardService;
 }
 
 export class AppState {
@@ -28,18 +40,29 @@ export class AppState {
 	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
 	settingsOpen = $state(false);
+	dialogService?: DialogService;
+	clipboardService?: ClipboardService;
 	
+	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
 	activeEditorView = $state<any>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
 		this.prefs = new Preferences(options.prefsStorage);
-		const persistence = options.persistence ?? new MemoryWorkspacePersistence();
+		this.dialogService = options.dialogService;
+		this.clipboardService = options.clipboardService;
+		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
 		registerCoreCommands(this);
 	}
 
 	async init() {
+		try {
+			await this.workspace.restoreSession();
+		} catch (e) {
+			console.error('[AppState] Failed to restore session:', e);
+		}
+
 		// Defer heavy icon initialization until after the first paint
 		const deferredInit = async () => {
 			try {
@@ -73,6 +96,8 @@ export class AppState {
 	get activeDocument() { return this.workspace.activeDocument; }
 	get activeDocumentId() { return this.workspace.activeDocumentId; }
 	set activeDocumentId(value: string) { this.workspace.activeDocumentId = value; }
+	get activeTabId() { return this.workspace.activeTabId; }
+	set activeTabId(value: string) { this.workspace.activeTabId = value; }
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
@@ -80,7 +105,9 @@ export class AppState {
 	async saveFileAs() { await this.activeDocument?.save({ forceNewOrigin: true }); }
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
+	closeTab(id: string) { this.workspace.closeTab(id); }
 	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
+	flushSaveOpenFiles() { this.workspace.flushSaveOpenFiles(); }
 }
 
 export function useAppState(): AppState {
