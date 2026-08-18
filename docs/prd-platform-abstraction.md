@@ -117,7 +117,9 @@ Workspace session restore / save no longer imports `FileSystemHandle` directly. 
 
 ### Permissions: Storage Provider concern, not Workspace concern
 
-`StorageProvider` gains a `checkPermission(path: string): PermissionState` method. `PermissionState` is the existing `'granted' | 'prompt' | 'denied'` type. `BrowserStorage.checkPermission()` wraps `handle.queryPermission({ mode: 'readwrite' })`. `ElectronStorage.checkPermission()` always returns `'granted'`. `Workspace` and `DocumentSession` query the provider rather than touching browser handles directly.
+Permission checks route through the existing origin-aware `queryPermission(origin, readWrite?): PermissionState` method, where `PermissionState` is `'granted' | 'prompt' | 'denied'`. `BrowserStorage.queryPermission()` wraps `handle.queryPermission()`. `ElectronStorage.queryPermission()` always returns `'granted'`. `Workspace` and `DocumentSession` query the provider rather than touching browser handles directly.
+
+A path-only `checkPermission(path)` was considered and rejected: the `StorageCoordinator` (`MultiSchemeStorage`) routes by `Origin` scheme, and a path-only method carries no scheme, forcing the coordinator to guess a provider via the default scheme. Keeping permission checks origin-aware preserves scheme-based routing.
 
 ### Svelte runes (`$state` / `$derived`) remain in core
 
@@ -129,7 +131,7 @@ Both the browser and Electron app shells use SvelteKit to render. Decoupling `$s
 
 ### `DocumentSession` origin simplification
 
-`DocumentSession` no longer stores a `handle` field. It references its file only via its `FileOrigin` URI. Permission checks originate from `storage.checkPermission(origin.path)` rather than `this.origin.handle.queryPermission()`.
+`DocumentSession` no longer stores a `handle` field. It references its file only via its `FileOrigin` URI. Permission checks originate from `storage.queryPermission(origin, readWrite)` rather than `this.origin.handle.queryPermission()`.
 
 ---
 
