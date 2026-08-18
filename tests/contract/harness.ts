@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterAll as bunAfterAll, describe as bunDescribe, test as bunTest } from 'bun:test';
+import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 
 export interface GitOutput {
 	code: number;
@@ -274,3 +275,24 @@ export async function headAuthor(repo: TestRepo): Promise<{ name: string; email:
 	const [name, email] = res.stdout.trim().split('|');
 	return { name, email: email ?? '' };
 }
+
+/** Run git in the repository and throw with the command and stderr on any non-zero exit. */
+export async function checkedGit(repo: TestRepo, args: string[]): Promise<GitOutput> {
+	const res = await repo.git(args);
+	if (res.code !== 0) {
+		throw new Error(`git ${args.join(' ')} failed (exit ${res.code}): ${res.stderr}`);
+	}
+	return res;
+}
+
+/** Check out an existing branch in the repository, throwing on any non-zero exit. */
+export async function checkoutBranch(repo: TestRepo, branch: string): Promise<void> {
+	await checkedGit(repo, ['checkout', branch]);
+}
+
+/** node:fs-backed `GitFileAccess` for SpawnGitAdapter engines in the contract suite. */
+export const nodeFileAccess: GitFileAccess = {
+	readFile: (filePath) => readFile(filePath),
+	writeFile: (filePath, content) => writeFile(filePath, content),
+	deleteEntry: (filePath) => rm(filePath, { force: true })
+};
