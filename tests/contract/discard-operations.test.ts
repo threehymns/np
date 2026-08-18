@@ -8,7 +8,7 @@ import { IsomorphicGitAdapter } from '@np/adapters-browser';
 import { browserHandleRegistry } from '@np/adapters-browser';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
-import { NodeDirectoryHandle } from './node-fs-handle';
+import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
 	TestRepo,
 	createTrackedRepo,
@@ -299,6 +299,34 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+		});
+
+		it.skipIf(
+			true,
+			'untestable: an unstaged worktree rename is not representable in porcelain v1 ' +
+				'(` D src.txt` + `?? moved.txt`, no rename pair), so both adapters treat the discard ' +
+				'as an untracked-file clean and leave the source deleted. Written per review and ' +
+				'verified failing on both engines (2026-08-18): the source would need to return to ' +
+				'the worktree and the destination be removed; SpawnGitAdapter.resolveOrigPath cannot ' +
+				'find a source for an unstaged rename, so the recovery branch in discardChanges ' +
+				'(staged:false) never triggers — fixing that is a behavior change in both adapters, ' +
+				'out of scope for this layer.'
+		)('restores the source and removes the destination of an unstaged worktree rename', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Unstaged worktree rename: git never pairs these, so the adapter sees a
+			// worktree deletion plus an untracked file rather than a rename.
+			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'moved.txt' }
+			]);
+
+			await adapter.discardChanges('moved.txt', { staged: false });
+
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
 		});
 	});
 
