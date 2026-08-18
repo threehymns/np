@@ -285,6 +285,31 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 		});
 
+		it('writes identical content as a no-op, leaving the index and worktree untouched', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([]);
+
+			await adapter.updateIndexContent('hello.ts', HELLO_V0);
+
+			// The index already holds exactly this content: the write must be
+			// skipped entirely, leaving status, index, and worktree untouched.
+			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await porcelainStatus(r)).toEqual([]);
+
+			// The literal-empty leg is the regression pin: an empty→empty replace
+			// renders a `+0,0` hunk that `git apply --cached` rejects as corrupt,
+			// so the second write must be skipped without throwing.
+			await adapter.updateIndexContent('hello.ts', '');
+			await adapter.updateIndexContent('hello.ts', '');
+
+			expect(await indexContents(r, 'hello.ts')).toBe('');
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
+		});
+
 		it('writes content without a trailing newline to the index exactly as given', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
@@ -375,6 +400,26 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'moved.txt')).toBe(`${SRC_CONTENT}extra\n`);
 			expect(await indexContents(r, 'src.txt')).toBe(null);
 			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+		});
+
+		it('writes spliced content into a destination already staged as a rename', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// The rename is already staged when the write arrives (porcelain RM):
+			// the destination is in the index, so the write takes the replace
+			// branch and must keep the rename pair intact.
+			await r.git(['mv', 'src.txt', 'moved.txt']);
+			await stageAll(r);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
+
+			await adapter.updateIndexContent('moved.txt', `${SRC_CONTENT}extra\n`);
+
+			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: 'M', path: 'moved.txt', origPath: 'src.txt' }]);
+			expect(await indexContents(r, 'moved.txt')).toBe(`${SRC_CONTENT}extra\n`);
+			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await indexContents(r, 'src.txt')).toBe(null);
+			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'moved.txt']);
 		});
 
 		it('preserves the source executable mode when staging a worktree-renamed script', async () => {
