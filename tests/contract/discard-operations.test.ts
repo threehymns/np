@@ -402,7 +402,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 	});
 
 	describe(`${engine.name} — error propagation`, () => {
-		it('discardChanges surfaces a failed restore as an error instead of a silent no-op', async () => {
+		it.skipIf(
+			process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
+			'skipped on Windows (no POSIX mode bits) and as root (read-only permissions do not block writes)'
+		)('discardChanges surfaces a failed restore as an error instead of a silent no-op', async () => {
 			const r = await createTrackedRepo();
 			await r.write('sub/mod.txt', 'base line\n');
 			const add = await r.git(['add', '-A']);
