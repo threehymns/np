@@ -18,6 +18,10 @@ function typeMismatchError(path: string): Error {
 	return Object.assign(new Error(`TypeMismatchError: ${path}`), { name: 'TypeMismatchError' });
 }
 
+function invalidModificationError(path: string): Error {
+	return Object.assign(new Error(`InvalidModificationError: ${path}`), { name: 'InvalidModificationError' });
+}
+
 export class NodeFileHandle {
 	readonly kind = 'file' as const;
 
@@ -42,18 +46,25 @@ export class NodeFileHandle {
 	}
 
 	async createWritable(): Promise<{
-		write(chunk: string | ArrayBuffer | ArrayBufferView): Promise<void>;
+		write(chunk: string | ArrayBuffer | ArrayBufferView | Blob): Promise<void>;
 		close(): Promise<void>;
 	}> {
 		const chunks: Uint8Array[] = [];
 		return {
-			write: async (chunk: string | ArrayBuffer | ArrayBufferView) => {
+			write: async (chunk: string | ArrayBuffer | ArrayBufferView | Blob) => {
 				if (typeof chunk === 'string') {
 					chunks.push(Buffer.from(chunk, 'utf8'));
 				} else if (chunk instanceof ArrayBuffer) {
 					chunks.push(new Uint8Array(chunk));
-				} else {
+				} else if (chunk instanceof Blob) {
+					chunks.push(Buffer.from(await chunk.arrayBuffer()));
+				} else if (ArrayBuffer.isView(chunk)) {
 					chunks.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+				} else {
+					throw new Error(
+						`Unsupported write chunk ${String(chunk)}: only string, Blob, ArrayBuffer, and ArrayBufferView are supported. ` +
+							'WriteParams (seek/truncate) are not implemented by this shim.'
+					);
 				}
 			},
 			close: async () => {
@@ -127,7 +138,22 @@ export class NodeDirectoryHandle {
 	}
 
 	async removeEntry(name: string, options?: { recursive?: boolean }): Promise<void> {
-		await rm(join(this.path, name), { recursive: options?.recursive ?? false, force: true });
+		const target = join(this.path, name);
+		const recursive = options?.recursive ?? false;
+		try {
+			const st = await stat(target);
+			if (!recursive && st.isDirectory() && (await readdir(target)).length > 0) {
+				throw invalidModificationError(target);
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				// Removing a missing entry is a no-op, mirroring the browser API's
+				// tolerance for already-gone entries via force:true.
+				return;
+			}
+			throw error;
+		}
+		await rm(target, { recursive, force: true });
 	}
 
 	async *keys(): AsyncIterableIterator<string> {
