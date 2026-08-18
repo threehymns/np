@@ -9,10 +9,12 @@ import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter
 import { NodeDirectoryHandle } from './node-fs-handle';
 import {
 	TestRepo,
+	checkedGit,
 	createTrackedRepo,
 	currentBranch,
 	describe,
 	it,
+	nodeFileAccess,
 	runGit,
 	seedCommit,
 	TEST_IDENTITY
@@ -39,7 +41,7 @@ interface Engine {
 const spawnEngine: Engine = {
 	name: 'SpawnGitAdapter (real git)',
 	adapter(r) {
-		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args));
+		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args), nodeFileAccess);
 	}
 };
 
@@ -106,16 +108,16 @@ async function seededHistory(r: TestRepo): Promise<void> {
 	await r.write('src/app.ts', 'const app = 1;\n');
 	await commitAll(r, 'base commit', '2024-01-02T12:00:00Z');
 	await r.write('README.md', 'alpha\nbeta\n');
-	await r.git(['rm', '-q', 'src/app.ts']);
+	await checkedGit(r, ['rm', '-q', 'src/app.ts']);
 	await r.write('src/main.ts', 'const main = 2;\n');
 	await commitAll(r, 'drop app, add main', '2024-02-03T12:00:00Z');
-	await r.git(['mv', 'src/main.ts', 'src/entry.ts']);
+	await checkedGit(r, ['mv', 'src/main.ts', 'src/entry.ts']);
 	await commitAll(r, 'rename main to entry', '2024-03-04T12:00:00Z');
 	// The source branch and main must both move for the merge to be a real merge commit.
-	await r.git(['checkout', '-q', '-b', 'merge-source']);
+	await checkedGit(r, ['checkout', '-q', '-b', 'merge-source']);
 	await r.write('notes.md', 'notes\n');
 	await commitAll(r, 'notes on source', '2024-04-04T12:00:00Z');
-	await r.git(['checkout', '-q', 'main']);
+	await checkedGit(r, ['checkout', '-q', 'main']);
 	await r.write('README.md', 'alpha\nbeta\ngamma\n');
 	await commitAll(r, 'main-side edit', '2024-04-05T12:00:00Z');
 	const merge = await runGit(r.path, { ...r.env, GIT_AUTHOR_DATE: '2024-04-06T12:00:00Z', GIT_COMMITTER_DATE: '2024-04-06T12:00:00Z' }, ['merge', '-q', '-m', 'merge source', 'merge-source']);
