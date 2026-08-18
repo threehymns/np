@@ -9,14 +9,22 @@ import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdap
 import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
 	TestRepo,
+	atLeastGit,
+	checkedGit,
 	createTrackedRepo,
 	describe,
+	gitVersion,
 	it,
 	indexContents,
 	porcelainStatus,
 	runGit,
 	worktreeContents
 } from './harness';
+
+/** `git status` copy detection (`status.renames=copies`), added in git 2.18. */
+const COPY_DETECTION_FLOOR = { major: 2, minor: 18 };
+
+const copyVersion = await gitVersion();
 
 function origin(r: TestRepo): FileOrigin {
 	return { scheme: 'file', path: r.path, name: 'repo' };
@@ -454,12 +462,12 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		await r.write('a.txt', 'content of a\n');
 		await r.write('b.txt', 'content of b\n');
 		await commitAll(r, 'base');
-		await r.git(['mv', 'a.txt', 'new.txt']);
+		await checkedGit(r, ['mv', 'a.txt', 'new.txt']);
 		const adapter = spawnEngine.adapter(r);
 		await adapter.getChanges();
 
-		await r.git(['reset', '-q', '--hard', 'HEAD']);
-		await r.git(['mv', 'b.txt', 'new.txt']);
+		await checkedGit(r, ['reset', '-q', '--hard', 'HEAD']);
+		await checkedGit(r, ['mv', 'b.txt', 'new.txt']);
 
 		const porcelain = await porcelainStatus(r);
 		expect(porcelain).toEqual([{ x: 'R', y: ' ', path: 'new.txt', origPath: 'b.txt' }]);
@@ -472,7 +480,7 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 	it('resolves a rename baseline from a fresh porcelain probe even without a prior getChanges call', async () => {
 		const r = await createTrackedRepo();
 		await baseRepo(r);
-		await r.git(['mv', 'src.txt', 'moved.txt']);
+		await checkedGit(r, ['mv', 'src.txt', 'moved.txt']);
 		const adapter = spawnEngine.adapter(r);
 
 		// getChanges() is intentionally NOT called: getFileDiff must probe porcelain
@@ -514,7 +522,10 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		expect(diff.modifiedContent).toBe(await indexContents(r, 'copy.txt'));
 	});
 
-	it('reports a staged copy with unstaged destination edits (CM) as staged plus unstaged entries with an empty copy baseline', async () => {
+	it.skipIf(
+		!atLeastGit(copyVersion, COPY_DETECTION_FLOOR),
+		`requires git >= ${COPY_DETECTION_FLOOR.major}.${COPY_DETECTION_FLOOR.minor}.0 for status copy detection (found ${copyVersion.raw})`
+	)('reports a staged copy with unstaged destination edits (CM) as staged plus unstaged entries with an empty copy baseline', async () => {
 		const r = await createTrackedRepo();
 		await baseRepo(r);
 		const config = await r.git(['config', 'status.renames', 'copies']);
