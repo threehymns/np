@@ -529,15 +529,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 		await this.fileAccess.writeFile(fullPath, content);
 	}
 
-
-	/** Index mode of a path (`git ls-files -s`), or null when the path has no index entry. */
-	private async indexModeOf(filepath: string): Promise<string | null> {
-		const res = await this.runGit(['ls-files', '-s', '--', filepath]);
-		if (res.code !== 0 || !res.stdout.trim()) return null;
-		const parts = res.stdout.trim().split(/\s+/);
-		return parts[0] && /^[0-7]+$/.test(parts[0]) ? parts[0] : null;
-	}
-
 	private static readonly DEFAULT_INDEX_MODE = '100644';
 
 	/** Line count of text in unified-diff terms: a trailing newline is not a line. */
@@ -574,7 +565,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
-		const mode = (await this.indexModeOf(filepath)) ?? SpawnGitAdapter.DEFAULT_INDEX_MODE;
 		const oldContent = await this.readGitObject(`:${filepath}`);
 		const header = `diff --git a/${filepath} b/${filepath}`;
 		if (oldContent !== null) {
@@ -594,9 +584,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 			].join('\n');
 		}
 
-		// The destination has no index entry: stage it as a new file. Empty content is
-		// emitted without a hunk, which is what `git diff` produces for empty files.
-		const parts = [header, `new file mode ${mode}`, '--- /dev/null', `+++ b/${filepath}`];
+		// The destination has no index entry: stage it as a new file. A path absent
+		// from the index has no mode to preserve, so this branch always emits the
+		// default index mode. Empty content is emitted without a hunk, which is what
+		// `git diff` produces for empty files.
+		const parts = [header, `new file mode ${SpawnGitAdapter.DEFAULT_INDEX_MODE}`, '--- /dev/null', `+++ b/${filepath}`];
 		const newCount = SpawnGitAdapter.textLineCount(content);
 		if (newCount > 0) {
 			parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
