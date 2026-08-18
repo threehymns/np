@@ -331,6 +331,18 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('reset failed');
 	});
 
+	it('unstageFile propagates a git status failure instead of swallowing it', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'status') {
+				throw new Error('status exploded');
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('status exploded');
+	});
+
 	it('unstageAll issues a single native git restore --staged command', async () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageAll();

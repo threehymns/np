@@ -178,23 +178,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	private async getRenameEntry(filepath: string): Promise<{ origPath?: string; hasWorktreeEdits: boolean; isCopy: boolean } | null> {
-		try {
-			const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
-			if (statusRes.code === 0 && statusRes.stdout) {
-				const entries = this.parseStatusEntries(statusRes.stdout);
-				const match = entries.find(e => e.filepath === filepath && (e.origPath || e.x === 'C' || e.y === 'C'));
-				if (match) {
-					// Copy entries never record origPath (parseStatusEntries consumes the
-					// copy-source token without recording it): copies are not renames, so
-					// no source path is returned, only the isCopy flag.
-					return {
-						origPath: match.origPath,
-						hasWorktreeEdits: match.y === 'M',
-						isCopy: match.x === 'C' || match.y === 'C'
-					};
-				}
+		const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (statusRes.code === 0 && statusRes.stdout) {
+			const entries = this.parseStatusEntries(statusRes.stdout);
+			const match = entries.find(e => e.filepath === filepath && (e.origPath || e.x === 'C' || e.y === 'C'));
+			if (match) {
+				// Copy entries never record origPath (parseStatusEntries consumes the
+				// copy-source token without recording it): copies are not renames, so
+				// no source path is returned, only the isCopy flag.
+				return {
+					origPath: match.origPath,
+					hasWorktreeEdits: match.y === 'M',
+					isCopy: match.x === 'C' || match.y === 'C'
+				};
 			}
-		} catch (e) {}
+		}
 		return null;
 	}
 
