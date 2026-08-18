@@ -88,9 +88,11 @@ export class BrowserHandleRegistry {
 
 		for (let i = pathParts.length - 1; i >= 1; i--) {
 			const parentPath = pathParts.slice(0, i).join('/');
-			// Reconstruct the parent URI the same way toURI does: absolute shim
-			// paths keep their leading slash (browser:///tmp/x, not browser://tmp/x).
-			const parentUri = toURI({ scheme: parsed.scheme, path: `/${parentPath}`, name: '' });
+			const parentUri = toURI({
+				scheme: parsed.scheme,
+				path: `${parsed.path.startsWith('/') ? '/' : ''}${parentPath}`,
+				name: ''
+			});
 			const parentHandle = await this.get(parentUri);
 			if (parentHandle && parentHandle.kind === 'directory') {
 				const remainingParts = pathParts.slice(i);
