@@ -331,6 +331,40 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('reset failed');
 	});
 
+	it('unstageFile falls back to rm --cached when HEAD is unborn', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'reset') {
+				return {
+					code: 1,
+					stdout: '',
+					stderr: "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."
+				};
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageFile('file.txt');
+
+		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
+	});
+
+	it('unstageFile propagates an unborn-HEAD rm --cached failure', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'reset') {
+				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
+			}
+			if (args[0] === 'rm') {
+				return { code: 128, stdout: '', stderr: 'fatal: rm failed' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('rm failed');
+	});
+
 	it('unstageFile propagates a git status failure instead of swallowing it', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'status') {
@@ -350,6 +384,43 @@ describe('SpawnGitAdapter', () => {
 		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
 		expect(restoreCalls.length).toBe(1);
 		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '.']);
+	});
+
+	it('unstageAll falls back to rm --cached -r when HEAD is unborn', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'restore') {
+				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageAll();
+
+		expect(commands).toContainEqual(['rm', '--cached', '-q', '-r', '--', '.']);
+	});
+
+	it('unstageAll treats an empty unborn index as a successful no-op', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'restore') {
+				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
+			}
+			if (args[0] === 'rm') {
+				return { code: 128, stdout: '', stderr: "fatal: pathspec '.' did not match any files" };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageAll();
+	});
+
+	it('unstageAll propagates a non-unborn restore failure', async () => {
+		mockGitRun.mockImplementation(async () => ({ code: 1, stdout: '', stderr: 'fatal: restore failed' }));
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageAll()).rejects.toThrow('restore failed');
 	});
 
 	it('discardAll issues native git restore and git clean commands', async () => {
