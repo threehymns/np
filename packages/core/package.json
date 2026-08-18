@@ -12,7 +12,8 @@
 		},
 		"./state.svelte": "./src/state.svelte.ts",
 		"./storage": "./src/storage.ts",
-		"./persistence": "./src/persistence.ts"
+		"./persistence": "./src/persistence.ts",
+		"./project/vcs": "./src/project/vcs.ts"
 	},
 	"dependencies": {
 		"@codemirror/commands": "^6.6.0",
