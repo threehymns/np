@@ -4,9 +4,9 @@ This document defines the pre-merge confidence check and merge gate for Version 
 
 ## References
 
-- **ADR 0004**: [`docs/adr/0004-contract-tests-with-real-git.md`](file:///home/john/Projects/np/docs/adr/0004-contract-tests-with-real-git.md)
+- **ADR 0004**: [`docs/adr/0004-contract-tests-with-real-git.md`](./adr/0004-contract-tests-with-real-git.md)
 - **Parent Spec**: GitHub Issue [#39](https://github.com/threehymns/np/issues/39) ("Spec: contract test suite for VCS operations with real git engines")
-- **Domain Language**: [`CONTEXT.md`](file:///home/john/Projects/np/CONTEXT.md)
+- **Domain Language**: [`CONTEXT.md`](../CONTEXT.md)
 
 ---
 
@@ -46,18 +46,18 @@ bun test tests/contract/
 
 ## 3. Surface Coverage Map
 
-The contract suite in [`tests/contract/`](file:///home/john/Projects/np/tests/contract) exercises the entire `VCSAdapter` surface:
+The contract suite in [`tests/contract/`](../tests/contract) exercises the entire `VCSAdapter` surface:
 
 | Area | Contract Test File | Key Behaviors Verified |
 | :--- | :--- | :--- |
-| **Change & Diff Reads** | [`change-diff-reads.test.ts`](file:///home/john/Projects/np/tests/contract/change-diff-reads.test.ts) | Untracked, tracked, deleted, modified, renamed, copied, mixed staging states, diff reconstruction on both engines |
-| **Metadata Reads** | [`metadata-reads.test.ts`](file:///home/john/Projects/np/tests/contract/metadata-reads.test.ts) | `getCurrentBranch`, `getBranches`, `getCommits` (author, date, message, file lists, pagination, empty commits), `getUserConfig` |
-| **Staging & Unstaging** | [`stage-unstage.test.ts`](file:///home/john/Projects/np/tests/contract/stage-unstage.test.ts) | `stageFile`, `unstageFile`, `stageAll`, `unstageAll`, `updateIndexContent` for additions, deletions, renames, mode preservation |
-| **Discard Operations** | [`discard-operations.test.ts`](file:///home/john/Projects/np/tests/contract/discard-operations.test.ts) | `discardChanges` (staged, unstaged, mixed), `discardAll`, preserving edits at destination for RM/CM renames and copies |
-| **Branch Switching** | [`branch-switch.test.ts`](file:///home/john/Projects/np/tests/contract/branch-switch.test.ts) | `switchBranch` with atomic carry-forward: clean switch, dirty switch without conflict, dirty switch with collision (blocked), non-existent branch, dryRun |
-| **Commit & Branch Creation** | [`commit-branch-creation.test.ts`](file:///home/john/Projects/np/tests/contract/commit-branch-creation.test.ts) | `commit` with custom author, amend, dirty/clean trees, `createBranch` and checkout verification |
-| **Hunk Action Composition** | [`hunk-actions.test.ts`](file:///home/john/Projects/np/tests/contract/hunk-actions.test.ts) | Real diff -> hunk range -> splice -> index/worktree write pipeline, single/multi-hunk staging, unstaging, discarding |
-| **Runner & Harness** | [`harness.test.ts`](file:///home/john/Projects/np/tests/contract/harness.test.ts) | Hermetic temp repo isolation, synthetic git identity (`GIT_CONFIG_NOSYSTEM=1`), version floor guard |
+| **Change & Diff Reads** | [`change-diff-reads.test.ts`](../tests/contract/change-diff-reads.test.ts) | Untracked, tracked, deleted, modified, renamed, copied, mixed staging states, diff reconstruction on both engines |
+| **Metadata Reads** | [`metadata-reads.test.ts`](../tests/contract/metadata-reads.test.ts) | `getCurrentBranch`, `getBranches`, `getCommits` (author, date, message, file lists, pagination, empty commits), `getUserConfig` |
+| **Staging & Unstaging** | [`stage-unstage.test.ts`](../tests/contract/stage-unstage.test.ts) | `stageFile`, `unstageFile`, `stageAll`, `unstageAll`, `updateIndexContent` for additions, deletions, renames, mode preservation |
+| **Discard Operations** | [`discard-operations.test.ts`](../tests/contract/discard-operations.test.ts) | `discardChanges` (staged, unstaged, mixed), `discardAll`, preserving edits at destination for RM/CM renames and copies |
+| **Branch Switching** | [`branch-switch.test.ts`](../tests/contract/branch-switch.test.ts) | `switchBranch` with atomic carry-forward: clean switch, dirty switch without conflict, dirty switch with collision (blocked), non-existent branch, dryRun |
+| **Commit & Branch Creation** | [`commit-branch-creation.test.ts`](../tests/contract/commit-branch-creation.test.ts) | `commit` with custom author, amend, dirty/clean trees, `createBranch` and checkout verification |
+| **Hunk Action Composition** | [`hunk-actions.test.ts`](../tests/contract/hunk-actions.test.ts) | Real diff -> hunk range -> splice -> index/worktree write pipeline, single/multi-hunk staging, unstaging, discarding |
+| **Runner & Harness** | [`harness.test.ts`](../tests/contract/harness.test.ts) | Hermetic temp repo isolation, synthetic git identity (`GIT_CONFIG_NOSYSTEM=1`), version floor guard |
 
 ---
 
