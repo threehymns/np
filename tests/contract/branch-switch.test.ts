@@ -8,6 +8,7 @@ import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdap
 import { NodeDirectoryHandle } from './node-fs-handle';
 import {
 	TestRepo,
+	checkoutBranch,
 	createTrackedRepo,
 	currentBranch,
 	describe,
@@ -119,9 +120,9 @@ for (const engine of ENGINES) {
 				await createBranch(r, 'feature');
 
 				// Commit on feature branch touching other.txt only
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'other.txt': 'other modified on feature\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				// Make unstaged dirty edit to common.txt on main
 				await r.write('common.txt', 'unstaged dirty edit\n');
@@ -148,9 +149,9 @@ for (const engine of ENGINES) {
 				await createBranch(r, 'feature');
 
 				// Commit on feature branch touching other.txt only
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'other.txt': 'feature other\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				// Stage a modification to common.txt
 				await r.write('common.txt', 'staged dirty edit\n');
@@ -349,9 +350,9 @@ for (const engine of ENGINES) {
 				await createBranch(r, 'feature');
 
 				// Feature branch changes conflict.txt
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'conflict.txt': 'feature modified\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				// Main branch makes local uncommitted edit to conflict.txt
 				await r.write('conflict.txt', 'local uncommitted work\n');
@@ -376,9 +377,9 @@ for (const engine of ENGINES) {
 				await commitFiles(r, 'initial', { 'conflict.txt': 'base\n', 'safe.txt': 'base-safe\n' });
 				await createBranch(r, 'feature');
 
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'conflict.txt': 'feature modified\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				// Main branch has dirty safe.txt (staged) and dirty conflict.txt (unstaged)
 				await r.write('safe.txt', 'safe staged edit\n');
@@ -407,9 +408,9 @@ for (const engine of ENGINES) {
 				await createBranch(r, 'feature');
 
 				// Feature branch creates new file collision.txt
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'collision.txt': 'feature content\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				// Main branch has untracked file at the same path
 				await r.write('collision.txt', 'untracked local content\n');
@@ -433,9 +434,9 @@ for (const engine of ENGINES) {
 				await commitFiles(r, 'initial', { 'c1.txt': 'base1\n', 'c2.txt': 'base2\n', 'ok.txt': 'ok\n' });
 				await createBranch(r, 'feature');
 
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature commit', { 'c1.txt': 'feat1\n', 'c2.txt': 'feat2\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				await r.write('c1.txt', 'dirty1\n');
 				await r.write('c2.txt', 'dirty2\n');
@@ -474,9 +475,9 @@ for (const engine of ENGINES) {
 				await commitFiles(r, 'initial', { 'file.txt': 'base\n' });
 				await createBranch(r, 'feature');
 
-				await r.git(['checkout', 'feature']);
+				await checkoutBranch(r, 'feature');
 				await commitFiles(r, 'feature edit', { 'file.txt': 'feature content\n' });
-				await r.git(['checkout', 'main']);
+				await checkoutBranch(r, 'main');
 
 				await r.write('file.txt', 'local dirty\n');
 
