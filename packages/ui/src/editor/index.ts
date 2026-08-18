@@ -78,8 +78,8 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 		return [
 			lang,
 			markdown({
-				codeLanguages: allLanguages,
-				extensions: [Table, GFM],
+				codeLanguages: allLanguages as any,
+				extensions: [Table, GFM] as any,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
@@ -88,7 +88,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM],
+					extensions: [Table, GFM] as any,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),
@@ -209,6 +209,8 @@ export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/theme";
+export * from "./extensions/diff-theme";
+import "./styles/diff.css";
 export { allLanguages, LanguageSupport } from "@np/core";
 export { SelectionState, selectionState } from "@np/core";
 
