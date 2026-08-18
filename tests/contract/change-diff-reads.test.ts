@@ -8,6 +8,7 @@ import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter
 import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
+	GitFloor,
 	TestRepo,
 	atLeastGit,
 	checkedGit,
@@ -22,7 +23,7 @@ import {
 } from './harness';
 
 /** `git status` copy detection (`status.renames=copies`), added in git 2.18. */
-const COPY_DETECTION_FLOOR = { major: 2, minor: 18 };
+const COPY_DETECTION_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 18 });
 
 const copyVersion = await gitVersion();
 
