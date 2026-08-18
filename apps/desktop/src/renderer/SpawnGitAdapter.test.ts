@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { SpawnGitAdapter } from './SpawnGitAdapter';
 import type { FileOrigin } from '@np/core';
 
@@ -27,6 +27,10 @@ describe('SpawnGitAdapter', () => {
 				deleteEntry: mockDeleteEntry
 			}
 		};
+	});
+
+	afterEach(() => {
+		delete (globalThis as any).window;
 	});
 
 	it('passes -uall to git status and only reads untracked files (no git show) during getChanges', async () => {

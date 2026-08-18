@@ -87,7 +87,7 @@ describe('IsomorphicGitAdapter', () => {
 		(git as any).readBlob = readBlobSpy;
 
 		const statusMatrixSpy = mock(async () => [
-			['untracked.txt', 0, 1, 0] // Untracked (present in workdir only)
+			['untracked.txt', 0, 2, 0] // Untracked (present in workdir only)
 		]);
 		const origStatusMatrix = git.statusMatrix;
 		mockGit.statusMatrix = statusMatrixSpy;
@@ -277,7 +277,7 @@ describe('IsomorphicGitAdapter', () => {
 	it('unstageAll does a single statusMatrix pass and resets only staged entries', async () => {
 		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
 			['staged.txt', 1, 2, 2], // Staged modification
-			['both.txt', 1, 2, 2], // Staged + unstaged
+			['both.txt', 1, 3, 2], // Staged + unstaged
 			['untracked.txt', 0, 2, 0], // Untracked (not staged)
 			['clean.txt', 1, 1, 1] // Unmodified
 		]);
