@@ -172,11 +172,6 @@ export class Workspace {
 		this.debouncedSaveOpenFiles();
 	}
 
-	reorderDocuments(newDocs: DocumentSession[]) {
-		// Retained for backward-compatibility; reorders documents array matching the documents in tabs
-		this.documents = newDocs;
-	}
-
 	async newFile() {
 		console.log('[Workspace] newFile called. Counter:', this.untitledCounter + 1);
 		this.untitledCounter++;
