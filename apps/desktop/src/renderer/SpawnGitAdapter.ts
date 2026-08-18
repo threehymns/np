@@ -321,7 +321,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
-		const res = await this.runGit(['log', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
+		const res = await this.runGit(['-c', 'core.quotepath=false', 'log', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
 				return [];

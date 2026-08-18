@@ -1,4 +1,6 @@
 import { expect } from 'bun:test';
+import { chmodSync } from 'node:fs';
+import path from 'node:path';
 import type { FileOrigin, GitCommit } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { IsomorphicGitAdapter } from '@np/adapters-browser';
@@ -81,7 +83,7 @@ async function oracleBranches(r: TestRepo): Promise<string[]> {
 
 /** Files changed by a commit per `git log --name-only --no-renames`: diff-tree against the empty tree for roots. */
 async function oracleCommitFiles(r: TestRepo, hash: string): Promise<string[]> {
-	const res = await r.git(['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', hash]);
+	const res = await r.git(['-c', 'core.quotepath=false', 'diff-tree', '--no-commit-id', '--name-only', '-r', '--root', hash]);
 	if (res.code !== 0) throw new Error(res.stderr);
 	return res.stdout.split('\n').filter(Boolean);
 }
@@ -258,6 +260,49 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(commits[49].message).toBe('commit 6');
 			expect(commits.some(c => c.message === 'commit 1')).toBe(false);
 			expect(commits.every(c => c.files.length === 0)).toBe(true);
+		});
+
+		it('lists files changed only in mode (executable bit)', async () => {
+			const r = await createTrackedRepo();
+			await r.write('run.sh', '#!/bin/sh\necho hi\n');
+			await commitAll(r, 'add script', '2024-01-02T12:00:00Z');
+			chmodSync(path.join(r.path, 'run.sh'), 0o755);
+			await commitAll(r, 'make executable', '2024-01-03T12:00:00Z');
+			const adapter = engine.adapter(r);
+
+			const commits = await adapter.getCommits();
+			expect(commits[0].files).toEqual(['run.sh']);
+			expect(commits[0].files).toEqual(await oracleCommitFiles(r, commits[0].hash));
+		});
+
+		it('lists non-ASCII file names verbatim, not C-quoted', async () => {
+			const r = await createTrackedRepo();
+			await r.write('café.txt', 'café\n');
+			await r.write('文.txt', '文\n');
+			await commitAll(r, 'unicode files', '2024-01-02T12:00:00Z');
+			const adapter = engine.adapter(r);
+
+			const commits = await adapter.getCommits();
+			expect(commits[0].files).toEqual(await oracleCommitFiles(r, commits[0].hash));
+			expect([...commits[0].files].sort()).toEqual(['café.txt', '文.txt']);
+		});
+
+		it('detects a work tree from a subdirectory inside it', async () => {
+			const r = await createTrackedRepo();
+			await r.write('src/keep.txt', 'k\n');
+			await commitAll(r, 'add src', '2024-01-02T12:00:00Z');
+			const adapter = engine.adapter(r);
+
+			expect(await adapter.detect(path.join(r.path, 'src'))).toBe(true);
+		});
+
+		it('returns null when only part of the user identity is configured', async () => {
+			const r = await createTrackedRepo();
+			const name = await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			if (name.code !== 0) throw new Error(name.stderr);
+			const adapter = engine.adapter(r);
+
+			expect(await adapter.getUserConfig()).toBe(null);
 		});
 
 		it('returns the configured user identity, and null when none is configured', async () => {

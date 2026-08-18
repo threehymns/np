@@ -9,6 +9,14 @@ import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
 
+/** Parent of a shim path: '/a/b/c' → '/a/b', '' when there is none. */
+function parentDirectory(p: string): string {
+	const trimmed = p.replace(/\/+$/, '');
+	const idx = trimmed.lastIndexOf('/');
+	if (idx <= 0) return '';
+	return trimmed.slice(0, idx);
+}
+
 class BrowserStats {
 	ctime: Date;
 	mtime: Date;
@@ -243,23 +251,46 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async detect(rootPath: string): Promise<boolean> {
 		try {
-			const origin: FileOrigin = { scheme: this.rootOrigin.scheme, path: rootPath, name: this.rootOrigin.name };
-			const handle = await browserHandleRegistry.resolve(toURI(origin));
-			if (!handle || handle.kind !== 'directory') {
-				return false;
-			}
-			this.rootHandle = handle as FileSystemDirectoryHandle;
+			// git resolves a work tree from any directory inside it, so probe the
+			// path and each ancestor directory for a .git directory.
+			let path = rootPath;
+			for (;;) {
+				const origin: FileOrigin = { scheme: this.rootOrigin.scheme, path, name: this.rootOrigin.name };
+				const handle = await browserHandleRegistry.resolve(toURI(origin));
+				if (!handle || handle.kind !== 'directory') {
+					return false;
+				}
+				// Verify permission first.
+				const permission = await handle.queryPermission({ mode: 'readwrite' });
+				if (permission !== 'granted') {
+					return false;
+				}
 
-			// Verify permission first.
-			const permission = await this.rootHandle.queryPermission({ mode: 'readwrite' });
-			if (permission !== 'granted') {
-				return false;
-			}
+				// Probe the filesystem shim for a .git directory.
+				const fs = new BrowserGitFS(handle as FileSystemDirectoryHandle);
+				let names: string[];
+				try {
+					names = await fs.readdir(REPO_DIR);
+				} catch (probeError: any) {
+					if (probeError?.code === 'ENOENT' || probeError?.code === 'ENOTDIR') {
+						// No repo subdirectory here; an ancestor may hold it.
+						const parent = parentDirectory(path);
+						if (parent === path) return false;
+						path = parent;
+						continue;
+					}
+					throw probeError;
+				}
+				if (names.includes('.git')) {
+					this.rootHandle = handle as FileSystemDirectoryHandle;
+					this.fs = fs;
+					return true;
+				}
 
-			// Probe the filesystem shim for a .git directory.
-			this.fs = new BrowserGitFS(this.rootHandle);
-			const names = await this.fs.readdir(REPO_DIR);
-			return names.includes('.git');
+				const parent = parentDirectory(path);
+				if (parent === path) return false;
+				path = parent;
+			}
 		} catch (e: any) {
 			if (e?.name === 'NotReadableError') {
 				console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
@@ -801,7 +832,11 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				if (commitType === 'blob' || parentType === 'blob') {
 					const commitBlobOid = commitType === 'blob' ? await commitEntry!.oid() : undefined;
 					const parentBlobOid = parentType === 'blob' ? await parentEntry!.oid() : undefined;
-					if (commitBlobOid !== parentBlobOid) {
+					// A mode-only change (e.g. the executable bit) keeps the blob OID
+					// but still changes the file, like `git log --name-only` reports.
+					const commitMode = commitEntry ? await commitEntry.mode() : undefined;
+					const parentMode = parentEntry ? await parentEntry.mode() : undefined;
+					if (commitBlobOid !== parentBlobOid || commitMode !== parentMode) {
 						files.push(filepath);
 					}
 				}
