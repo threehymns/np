@@ -964,27 +964,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const paths: string[] = [filepath];
 			const dest = matrix.find(([p]) => p === filepath);
 			if (dest && dest[1] === 0 && dest[3] === 2) {
-				const staged = await this.readStageEntry(filepath);
-				if (staged) {
-					const stagedText = await this.readBlobText(staged.oid);
-					let headCommit: string | null = null;
-					try {
-						headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
-					} catch (e) {}
-					for (const [candidate, head, workdir, stage] of matrix) {
-						if (candidate !== filepath && head === 1 && workdir === 0 && stage === 0) {
-							if (stagedText !== null && headCommit) {
-								try {
-									const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
-									if (new TextDecoder().decode(blob) === stagedText) {
-										paths.push(candidate);
-										break;
-									}
-								} catch (e) {}
-							}
-						}
-					}
-				}
+				const renameSource = await this.findRenameSource(matrix, filepath);
+				if (renameSource) paths.push(renameSource);
 			}
 			for (const path of paths) {
 				await git.resetIndex({
@@ -999,11 +980,134 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	async discardChanges(filepath: string, _options?: { staged?: boolean }): Promise<void> {
-		// The staged scope is accepted for interface compatibility; the browser adapter
-		// always discards the whole file state. The desktop adapter scopes by staged.
-		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+	/**
+	 * The source path of a staged rename for `filepath` (the destination): another
+	 * path present in HEAD but removed from both the index and the worktree whose
+	 * HEAD content equals the destination's staged content. Null when the
+	 * destination is not a rename — the statusMatrix analogue of the desktop
+	 * engine's porcelain rename probe.
+	 */
+	private async findRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | null> {
+		const staged = await this.readStageEntry(filepath);
+		if (!staged) return null;
+		const stagedText = await this.readBlobText(staged.oid);
+		if (stagedText === null) return null;
+		let headCommit: string | null = null;
 		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+		if (!headCommit) return null;
+		for (const [candidate, head, workdir, stage] of matrix) {
+			if (candidate !== filepath && head === 1 && workdir === 0 && stage === 0) {
+				try {
+					const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
+					if (new TextDecoder().decode(blob) === stagedText) {
+						return candidate;
+					}
+				} catch (e) {}
+			}
+		}
+		return null;
+	}
+
+	/** The worktree text of a path, or null when the file is absent. */
+	private async readWorktreeText(filepath: string): Promise<string | null> {
+		try {
+			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e: any) {
+			if (!isENOENT(e)) throw e;
+			return null;
+		}
+	}
+
+	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
+	private async unlinkIfPresent(filepath: string): Promise<void> {
+		try {
+			await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+		} catch (e: any) {
+			if (!isENOENT(e)) throw e;
+		}
+	}
+
+	/**
+	 * Whether `content` matches the HEAD content of another path still tracked in
+	 * the index — the statusMatrix analogue of the desktop engine's porcelain copy
+	 * entries, used to keep a staged copy's worktree edits instead of cleaning them.
+	 */
+	private async matchesHeadContentOfTrackedPath(matrix: [string, number, number, number][], filepath: string, content: string): Promise<boolean> {
+		let headCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+		if (!headCommit) return false;
+		for (const [candidate, head, , stage] of matrix) {
+			if (candidate !== filepath && head === 1 && stage === 2) {
+				try {
+					const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
+					if (new TextDecoder().decode(blob) === content) {
+						return true;
+					}
+				} catch (e) {}
+			}
+		}
+		return false;
+	}
+
+	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		const entry = matrix.find(([p]) => p === filepath);
+		if (!entry) return;
+
+		if (options?.staged === false) {
+			// Unstaged scope: reset only the worktree copy from the index version; the
+			// index is never touched. A path absent from the index (untracked file or
+			// worktree-only rename) has no staged copy to restore from, so its worktree
+			// file is cleaned instead.
+			const staged = await this.readStageEntry(filepath);
+			if (staged) {
+				const text = await this.readBlobText(staged.oid);
+				if (text !== null) {
+					await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, text);
+				}
+			} else {
+				await this.unlinkIfPresent(filepath);
+			}
+			return;
+		}
+
+		// A staged rename pairs the destination (staged addition) with a path removed
+		// from the index and worktree whose HEAD content matches the staged content —
+		// the same pairing `git reset HEAD -- <source> <dest>` reverts on the desktop
+		// engine. The rename is reverted whole: the original path is restored from
+		// HEAD, the destination is removed from the index, and unstaged edits at the
+		// destination survive as an untracked file.
+		const renameSource = await this.findRenameSource(matrix, filepath);
+		if (renameSource) {
+			const staged = await this.readStageEntry(filepath);
+			const stagedText = staged ? await this.readBlobText(staged.oid) : null;
+			const worktreeText = await this.readWorktreeText(filepath);
+			const hasEdits = stagedText !== null && worktreeText !== null && worktreeText !== stagedText;
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: [renameSource],
+				force: true
+			});
+			await this.removeFromIndex(filepath);
+			if (!hasEdits) {
+				await this.unlinkIfPresent(filepath);
+			}
+			return;
+		}
+
+		const [, head] = entry;
+		if (head === 1) {
+			// Tracked path: restore index and worktree from HEAD. `git.checkout`
+			// silently removes worktree files absent from the ref, so it may only
+			// be used for paths that exist in HEAD.
 			await git.checkout({
 				fs: this.fs!,
 				dir: this.dir,
@@ -1011,14 +1115,26 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				filepaths: [filepath],
 				force: true
 			});
-		} catch (e) {
-			try {
-				await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
-				await git.remove({ fs: this.fs!, dir: this.dir, filepath }).catch(() => {});
-			} catch (unlinkErr) {
-				console.error('[Git] Failed to unlink file on discard', unlinkErr);
-				throw unlinkErr;
-			}
+			return;
+		}
+
+		// Absent from HEAD: an untracked file or a staged addition. Remove the
+		// index entry and clean the worktree copy. A staged addition whose
+		// worktree copy holds edits matching another path's HEAD content (a
+		// staged copy) keeps those edits as an untracked file, mirroring the
+		// desktop engine's CM handling — the user's edits are never the engine's
+		// to delete.
+		const staged = await this.readStageEntry(filepath);
+		let keepWorktree = false;
+		if (staged) {
+			const stagedText = await this.readBlobText(staged.oid);
+			const worktreeText = await this.readWorktreeText(filepath);
+			keepWorktree = stagedText !== null && worktreeText !== null && worktreeText !== stagedText
+				&& await this.matchesHeadContentOfTrackedPath(matrix, filepath, stagedText);
+			await this.removeFromIndex(filepath);
+		}
+		if (!keepWorktree) {
+			await this.unlinkIfPresent(filepath);
 		}
 	}
 
