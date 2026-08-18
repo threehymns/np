@@ -195,3 +195,5 @@ export class IndexedDBSessionPersistence implements SessionPersistence {
 		});
 	}
 }
+
+export { IndexedDBSessionPersistence as IndexedDBWorkspacePersistence };
