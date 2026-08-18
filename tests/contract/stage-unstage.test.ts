@@ -1,21 +1,22 @@
 import { expect } from 'bun:test';
 import { chmodSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileOrigin } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { IsomorphicGitAdapter } from '@np/adapters-browser';
 import { browserHandleRegistry } from '@np/adapters-browser';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
-import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
 	TestRepo,
+	checkedGit,
 	createTrackedRepo,
 	describe,
 	it,
 	indexContents,
 	lsFiles,
+	nodeFileAccess,
 	porcelainStatus,
 	runGit,
 	worktreeContents
@@ -24,12 +25,6 @@ import {
 function origin(r: TestRepo): FileOrigin {
 	return { scheme: 'file', path: r.path, name: 'repo' };
 }
-
-const nodeFileAccess: GitFileAccess = {
-	readFile: (path) => readFile(path),
-	writeFile: (path, content) => writeFile(path, content),
-	deleteEntry: (path) => rm(path, { force: true })
-};
 
 /** The staging surface under contract: per-file and bulk stage/unstage plus the index-content engine. */
 interface StageUnstage {
@@ -169,7 +164,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		it('unstages a staged delete per-file, restoring the file to the index', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			await r.git(['rm', '-q', '--cached', 'README.md']);
+			await checkedGit(r, ['rm', '-q', '--cached', 'README.md']);
 			const adapter = engine.adapter(r);
 			// Porcelain reports the staged delete (`D `) and the now-untracked
 			// worktree file (`??`) as separate comparisons.
@@ -187,7 +182,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		it('unstaging a staged rename per-file restores the source to the index', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			await r.git(['mv', 'src.txt', 'moved.txt']);
+			await checkedGit(r, ['mv', 'src.txt', 'moved.txt']);
 			const adapter = engine.adapter(r);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
 
@@ -427,6 +422,24 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'new-file.txt')).toBe('new content\n');
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'new-file.txt', 'src.txt']);
 			expect(await indexMode(r, 'new-file.txt')).toBe('100644');
+		});
+
+		it('preserves the executable index mode of an existing entry across updateIndexContent', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Make the tracked file executable so its index entry carries 100755.
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await stageAll(r);
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			const adapter = engine.adapter(r);
+
+			await adapter.updateIndexContent('hello.ts', `${HELLO_V0}extra\n`);
+
+			// A content write must never reset the mode back to the default: the
+			// replace path keeps the index entry's mode (no mode header in the
+			// patch), the new-file path is the only one allowed to use the default.
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await indexContents(r, 'hello.ts')).toBe(`${HELLO_V0}extra\n`);
 		});
 
 		it('writes spliced content into a destination already staged as a rename', async () => {
