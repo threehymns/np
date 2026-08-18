@@ -394,6 +394,9 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	private static readonly EMPTY_STAT = { additions: 0, deletions: 0 };
 
+	/** How many untracked worktree files getChanges reads per concurrent batch. */
+	private static readonly UNTRACKED_READ_CONCURRENCY = 8;
+
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
 			this.runGit(['status', '--porcelain=v1', '-z', '-uall']),
@@ -410,6 +413,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const changes: GitChange[] = [];
 		const entries = this.parseStatusEntries(statusRes.stdout);
+
+		// Untracked files are read from disk for their line counts; collect them
+		// first so the reads run with bounded concurrency instead of one at a time
+		// or all at once. Porcelain always lists untracked entries last, so pushing
+		// them after the loop keeps the output in git status order.
+		const untrackedPaths: string[] = [];
 
 		for (const { x, y, filepath } of entries) {
 
@@ -431,21 +440,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				const status = y === '?' ? 'U' : (y === 'D' ? 'D' : 'M');
 
 				if (y === '?') {
-					// git diff --numstat never includes untracked files, so count lines directly.
-					let additions = 0;
-					try {
-						const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
-						const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-						additions = countLines(content);
-					} catch (e) {}
-					changes.push({
-						filepath,
-						status,
-						additions,
-						deletions: 0,
-						diff: '',
-						staged: false
-					});
+					untrackedPaths.push(filepath);
 				} else {
 					const stat = unstagedStats.get(filepath) ?? SpawnGitAdapter.EMPTY_STAT;
 
@@ -458,6 +453,30 @@ export class SpawnGitAdapter implements VCSAdapter {
 						staged: false
 					});
 				}
+			}
+		}
+
+		for (let i = 0; i < untrackedPaths.length; i += SpawnGitAdapter.UNTRACKED_READ_CONCURRENCY) {
+			const chunk = untrackedPaths.slice(i, i + SpawnGitAdapter.UNTRACKED_READ_CONCURRENCY);
+			const counts = await Promise.all(chunk.map(async (filepath) => {
+				// git diff --numstat never includes untracked files, so count lines directly.
+				let additions = 0;
+				try {
+					const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+					const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+					additions = countLines(content);
+				} catch (e) {}
+				return { filepath, additions };
+			}));
+			for (const { filepath, additions } of counts) {
+				changes.push({
+					filepath,
+					status: 'U',
+					additions,
+					deletions: 0,
+					diff: '',
+					staged: false
+				});
 			}
 		}
 
