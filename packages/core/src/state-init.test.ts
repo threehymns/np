@@ -53,6 +53,18 @@ describe("AppState / Workspace SSR & Initialization", () => {
 	let AppState: any;
 
 	beforeAll(async () => {
+		mock.module("svelte", () => ({
+			getContext: () => null,
+			setContext: () => {},
+			hasContext: () => false,
+			getAllContexts: () => new Map(),
+			untrack: (fn: any) => fn(),
+			tick: async () => {}
+		}));
+		mock.module("svelte/reactivity", () => ({
+			SvelteMap: Map,
+			SvelteSet: Set
+		}));
 		mock.module("phosphor-svelte", () => ({
 			File: () => {},
 			FileCode: () => {},
