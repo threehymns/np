@@ -145,15 +145,13 @@ export class NodeDirectoryHandle {
 			if (!recursive && st.isDirectory() && (await readdir(target)).length > 0) {
 				throw invalidModificationError(target);
 			}
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-				// Removing a missing entry is a no-op, mirroring the browser API's
-				// tolerance for already-gone entries via force:true.
-				return;
-			}
-			throw error;
+} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			throw notFoundError(target);
 		}
-		await rm(target, { recursive, force: true });
+		throw error;
+	}
+	await rm(target, { recursive });
 	}
 
 	async *keys(): AsyncIterableIterator<string> {
