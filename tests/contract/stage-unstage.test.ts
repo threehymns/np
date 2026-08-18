@@ -238,7 +238,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await r.write('hello.ts', HELLO_V1);
 			await r.write('added.txt', 'new content\n');
 			await stageAll(r);
-			await r.git(['rm', '-q', '--cached', 'README.md']);
+			await checkedGit(r, ['rm', '-q', '--cached', 'README.md']);
 			const adapter = engine.adapter(r);
 
 			await adapter.unstageAll();
@@ -378,7 +378,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await baseRepo(r);
 			// The index entry is removed while HEAD and the worktree keep the file;
 			// the write must re-add the exact content without touching other entries.
-			await r.git(['rm', '-q', '--cached', 'README.md']);
+			await checkedGit(r, ['rm', '-q', '--cached', 'README.md']);
 			const adapter = engine.adapter(r);
 			expect(await indexContents(r, 'README.md')).toBe(null);
 
