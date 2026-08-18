@@ -825,7 +825,18 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				depth: 50
 			});
 			const result: GitCommit[] = [];
-			const filesPerCommit = await Promise.all(commits.map(c => this.commitFileNames(c)));
+			// Walk every commit's tree with bounded concurrency: 50 commits read in
+			// one unbounded Promise.all would fan out against the FS shim. Indexed
+			// assignment keeps the per-commit file lists in log order.
+			const filesPerCommit: string[][] = new Array(commits.length);
+			let next = 0;
+			const workers = Array.from({ length: Math.min(8, commits.length) }, async () => {
+				while (next < commits.length) {
+					const i = next++;
+					filesPerCommit[i] = await this.commitFileNames(commits[i]);
+				}
+			});
+			await Promise.all(workers);
 			for (let i = 0; i < commits.length; i++) {
 				const c = commits[i];
 				result.push({
