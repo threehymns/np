@@ -46,16 +46,22 @@ export function runGit(cwd: string, env: Record<string, string>, args: string[])
 
 /**
  * Environment for hermetic git invocations: system/global/user config disabled via
- * `HOME` redirection plus `GIT_CONFIG_NOSYSTEM`, commit identity supplied through
- * `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and developer-set git override variables scrubbed.
+ * `HOME` redirection plus `GIT_CONFIG_NOSYSTEM` (with `GIT_CONFIG_GLOBAL` pinned to
+ * an isolated, nonexistent file in the temp home so a developer's global config can
+ * never leak in), commit identity supplied through `GIT_AUTHOR_*`/`GIT_COMMITTER_*`,
+ * and developer-set git override variables scrubbed.
  */
 export function gitEnv(homePath: string): Record<string, string> {
 	const env: Record<string, string> = { ...process.env } as Record<string, string>;
 	delete env.GIT_CONFIG;
-	delete env.GIT_CONFIG_GLOBAL;
 	delete env.GIT_CONFIG_SYSTEM;
 	delete env.GIT_CONFIG_COUNT;
 	delete env.XDG_CONFIG_HOME;
+	delete env.GIT_DIR;
+	delete env.GIT_WORK_TREE;
+	delete env.GIT_INDEX_FILE;
+	delete env.GIT_OBJECT_DIRECTORY;
+	delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
 	delete env.GIT_AUTHOR_NAME;
 	delete env.GIT_AUTHOR_EMAIL;
 	delete env.GIT_COMMITTER_NAME;
@@ -63,9 +69,9 @@ export function gitEnv(homePath: string): Record<string, string> {
 	return {
 		...env,
 		GIT_CONFIG_NOSYSTEM: '1',
+		GIT_CONFIG_GLOBAL: join(homePath, '.gitconfig'),
 		HOME: homePath,
 		GIT_TERMINAL_PROMPT: '0',
-		GIT_DEFAULT_BRANCH: 'main',
 		GIT_AUTHOR_NAME: TEST_IDENTITY.name,
 		GIT_AUTHOR_EMAIL: TEST_IDENTITY.email,
 		GIT_COMMITTER_NAME: TEST_IDENTITY.name,
@@ -109,8 +115,8 @@ export class TestRepo {
 }
 
 /**
- * Create a fresh throwaway repository: isolated temp home, `git init`, deterministic
- * `main` branch (via `GIT_DEFAULT_BRANCH` on new git, `symbolic-ref` on old git).
+ * Create a fresh throwaway repository: isolated temp home, `git init`, and a
+ * deterministic `main` branch selected via `symbolic-ref` on every git version.
  */
 export async function createTestRepo(): Promise<TestRepo> {
 	const root = await mkdtemp(join(tmpdir(), 'np-contract-'));
