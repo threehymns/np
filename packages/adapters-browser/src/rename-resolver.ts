@@ -65,25 +65,26 @@ export async function resolveRenamedHeadContent(params: RenameResolutionParams):
 			if (type === 'blob') {
 				const oid = await entries[0].oid();
 				if (oid) {
-					// Exact OID match: only meaningful when the candidate source is
-					// actually gone from the worktree. A still-present blob (e.g. an
-					// identical-content copy) is an addition, not a rename, and must
-					// not supply a baseline.
-					if (targetOid && oid === targetOid && !matchedHeadOid) {
-						try {
-							await fs.promises.stat(`${dir}/${walkPath}`);
-						} catch (e: any) {
-							if (!isENOENT(e)) {
-								throw e;
-							}
-							matchedHeadOid = oid;
-						}
-					}
+					// One presence probe per walk path: a blob that still exists in the
+					// worktree is an addition, not a rename, and must not supply a
+					// baseline, so both the exact-OID match and the deleted-candidate
+					// scoring only apply to absent sources.
+					let absent = false;
 					try {
 						await fs.promises.stat(`${dir}/${walkPath}`);
 					} catch (e: any) {
 						if (!isENOENT(e)) {
 							throw e;
+						}
+						absent = true;
+					}
+					if (absent) {
+						// Exact OID match: only meaningful when the candidate source is
+						// actually gone from the worktree. A still-present blob (e.g. an
+						// identical-content copy) is an addition, not a rename, and must
+						// not supply a baseline.
+						if (targetOid && oid === targetOid && !matchedHeadOid) {
+							matchedHeadOid = oid;
 						}
 						let score = 0;
 						const walkBasename = walkPath.split('/').pop() || walkPath;
