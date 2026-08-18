@@ -48,6 +48,26 @@ export class ElectronSessionPersistence implements SessionPersistence {
 	}
 
 	async loadAll(): Promise<Record<string, any>> {
-		return await window.electronAPI.persistenceLoadAll();
+		const all = await window.electronAPI.persistenceLoadAll();
+		const keyPrefixes = {
+			openFiles: 'open-files',
+			activeDocumentId: 'active-id',
+			expandedPaths: 'expanded-paths'
+		};
+
+		for (const key of Object.keys(all)) {
+			for (const [legacyPrefix, normalizedPrefix] of Object.entries(keyPrefixes)) {
+				if (key.startsWith(`${legacyPrefix}:`)) {
+					const normalizedKey = `${normalizedPrefix}:${key.slice(legacyPrefix.length + 1)}`;
+					if (!(normalizedKey in all)) {
+						all[normalizedKey] = all[key];
+					}
+					delete all[key];
+					break;
+				}
+			}
+		}
+
+		return all;
 	}
 }
