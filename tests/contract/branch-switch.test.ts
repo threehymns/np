@@ -502,7 +502,9 @@ for (const engine of ENGINES) {
 				const res = await adp.switchBranch('non-existent-branch');
 
 				expect(res.status).toBe('error');
-				expect((res as any).message).toBeTruthy();
+				if (res.status === 'error') {
+					expect(res.message).toBeTruthy();
+				}
 				expect(await currentBranch(r)).toBe('main');
 				expect(await worktreeContents(r, 'file.txt')).toBe('dirty work\n');
 				expect(await indexContents(r, 'file.txt')).toBe('base\n');
