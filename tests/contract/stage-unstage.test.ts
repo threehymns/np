@@ -252,6 +252,50 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'added.txt')).toBe(null);
 			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
 		});
+
+		it('unstages a staged file before the first commit (unborn HEAD)', async () => {
+			const r = await createTrackedRepo();
+			await r.write('first.txt', 'first content\n');
+			await stageAll(r);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: ' ', path: 'first.txt' }]);
+
+			await adapter.unstageFile('first.txt');
+
+			// No commits exist yet, so there is no HEAD to reset to: the index entry
+			// is removed and the worktree copy stays put.
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'first.txt' }]);
+			expect(await indexContents(r, 'first.txt')).toBe(null);
+			expect(await worktreeContents(r, 'first.txt')).toBe('first content\n');
+			expect(await lsFiles(r)).toEqual([]);
+		});
+
+		it('unstageAll empties the index before the first commit (unborn HEAD)', async () => {
+			const r = await createTrackedRepo();
+			await r.write('first.txt', 'first content\n');
+			await r.write('second.txt', 'second content\n');
+			await stageAll(r);
+			await r.write('untracked.txt', 'untracked\n');
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: 'A', y: ' ', path: 'first.txt' },
+				{ x: 'A', y: ' ', path: 'second.txt' },
+				{ x: '?', y: '?', path: 'untracked.txt' }
+			]);
+
+			await adapter.unstageAll();
+
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: '?', y: '?', path: 'first.txt' },
+				{ x: '?', y: '?', path: 'second.txt' },
+				{ x: '?', y: '?', path: 'untracked.txt' }
+			]);
+			expect(await indexContents(r, 'first.txt')).toBe(null);
+			expect(await indexContents(r, 'second.txt')).toBe(null);
+			expect(await lsFiles(r)).toEqual([]);
+			expect(await worktreeContents(r, 'first.txt')).toBe('first content\n');
+			expect(await worktreeContents(r, 'second.txt')).toBe('second content\n');
+		});
 	});
 
 	describe(`${engine.name} — index-content engine`, () => {
