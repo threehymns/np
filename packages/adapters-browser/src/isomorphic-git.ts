@@ -1,11 +1,21 @@
 import git from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin } from '@np/core';
-import { toURI } from '@np/core';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
+import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
+import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
+
+/** Parent of a shim path: '/a/b/c' → '/a/b', '' when there is none. */
+function parentDirectory(p: string): string {
+	const trimmed = p.replace(/\/+$/, '');
+	const idx = trimmed.lastIndexOf('/');
+	if (idx <= 0) return '';
+	return trimmed.slice(0, idx);
+}
 
 class BrowserStats {
 	ctime: Date;
@@ -102,7 +112,7 @@ class BrowserGitFS {
 				try {
 					return await current.getFileHandle(part);
 				} catch (fileError: any) {
-					if (fileError.name !== 'TypeMismatchError' && fileError.name !== 'NotFoundError') {
+					if (fileError.name !== 'TypeMismatchError' && !isENOENT(fileError)) {
 						throw this.convertError(fileError, path);
 					}
 				}
@@ -122,9 +132,9 @@ class BrowserGitFS {
 	private convertError(error: any, path: string): Error {
 		const code = error?.name === 'TypeMismatchError'
 			? 'ENOTDIR'
-			: error?.name === 'NotFoundError'
+			: isENOENT(error)
 				? 'ENOENT'
-				: error?.name === 'NotAllowedError' || error?.name === 'NotReadableError'
+				: error?.name === 'NotAllowedError' || error?.name === 'NotReadableError' || error?.code === 'EACCES'
 					? 'EACCES'
 					: 'EIO';
 
@@ -229,44 +239,74 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (this.initPromise) return this.initPromise;
 
 		this.initPromise = (async () => {
-			try {
-				const uri = toURI(this.rootOrigin);
-				const handle = await browserHandleRegistry.resolve(uri);
+			const detected = await this.detect(this.rootOrigin.path);
+			this.initialized = detected;
+			return detected;
+		})().finally(() => {
+			this.initPromise = null;
+		});
+
+		return this.initPromise;
+	}
+
+	async detect(rootPath: string): Promise<boolean> {
+		try {
+			// git resolves a work tree from any directory inside it, so probe the
+			// path and each ancestor directory for a .git directory.
+			let path = rootPath;
+			for (;;) {
+				const origin: FileOrigin = { scheme: this.rootOrigin.scheme, path, name: this.rootOrigin.name };
+				const handle = await browserHandleRegistry.resolve(toURI(origin));
 				if (!handle || handle.kind !== 'directory') {
 					return false;
 				}
-				this.rootHandle = handle as FileSystemDirectoryHandle;
-
 				// Verify permission first.
-				const permission = await this.rootHandle.queryPermission({ mode: 'readwrite' });
+				const permission = await handle.queryPermission({ mode: 'readwrite' });
 				if (permission !== 'granted') {
 					return false;
 				}
 
-				// Check if it's a git repo
+				// Probe the filesystem shim for a .git directory.
+				const fs = new BrowserGitFS(handle as FileSystemDirectoryHandle);
+				let names: string[];
 				try {
-					await this.rootHandle.getDirectoryHandle('.git');
-				} catch (e: any) {
-					if (e.name === 'NotReadableError') {
-						console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
-						return false;
+					names = await fs.readdir(REPO_DIR);
+				} catch (probeError: any) {
+					if (probeError?.code === 'ENOENT' || probeError?.code === 'ENOTDIR') {
+						// No repo subdirectory here; an ancestor may hold it.
+						const parent = parentDirectory(path);
+						if (parent === path) return false;
+						path = parent;
+						continue;
 					}
-					return false;
+					throw probeError;
 				}
-				
-				this.fs = new BrowserGitFS(this.rootHandle);
-				this.initialized = true;
-				console.log('[Git] Initialization successful');
-				return true;
-			} catch (e: any) {
-				console.error('[Git] Unexpected initialization error:', e);
-				return false;
-			} finally {
-				this.initPromise = null;
-			}
-		})();
+				if (names.includes('.git')) {
+					this.rootHandle = handle as FileSystemDirectoryHandle;
+					this.fs = fs;
+					return true;
+				}
 
-		return this.initPromise;
+				const parent = parentDirectory(path);
+				if (parent === path) return false;
+				path = parent;
+			}
+		} catch (e: any) {
+			if (e?.name === 'NotReadableError') {
+				console.log('[Git] .git folder is blocked by browser security (needs user gesture)');
+			} else {
+				console.error('[Git] Unexpected detection error:', e);
+			}
+			return false;
+		}
+	}
+
+	private async readStatusMatrix() {
+		return await git.statusMatrix({
+			fs: this.fs!,
+			dir: this.dir,
+			filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+		});
 	}
 
 	async getCurrentBranch(): Promise<string | null> {
@@ -298,11 +338,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	async getStatus(): Promise<VCSStatus> {
 		if (!this.initialized && !await this.ensureInitialized()) return { isDirty: false, uncommittedFiles: [] };
 		try {
-			const matrix = await git.statusMatrix({ 
-				fs: this.fs!,
-				dir: this.dir,
-				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
-			});
+			const matrix = await this.readStatusMatrix();
 			
 			const uncommittedFiles = matrix
 				.filter(([file, head, workdir, stage]) => {
@@ -422,11 +458,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		// 1. Take a snapshot of all dirty files
 		const snapshots: FileSnapshot[] = [];
 		try {
-			const matrix = await git.statusMatrix({ 
-				fs: this.fs!,
-				dir: this.dir,
-				filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
-			});
+			const matrix = await this.readStatusMatrix();
 
 			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
 				return head !== 1 || workdir !== 1 || stage !== 1;
@@ -566,6 +598,599 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
+	async getChanges(): Promise<GitChange[]> {
+		if (!await this.ensureInitialized()) return [];
+		try {
+			const matrix = await this.readStatusMatrix();
+
+			const result: GitChange[] = [];
+
+			for (const [filepath, head, workdir, stage] of matrix) {
+				const hasStaged = (head === 0 && stage !== 0) || (head === 1 && stage !== 1);
+				const hasUnstaged = workdir !== stage;
+
+				if (!hasStaged && !hasUnstaged) continue;
+
+				if (hasStaged) {
+					const status = head === 0 ? 'A' : (stage === 0 ? 'D' : 'M');
+					result.push({
+						filepath: filepath as string,
+						status,
+						additions: 0,
+						deletions: 0,
+						diff: '',
+						staged: true
+					});
+				}
+
+				if (hasUnstaged) {
+					const status = (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
+
+					let additions = 0;
+					let deletions = 0;
+					if (status === 'U') {
+						// statusMatrix carries no line counts; untracked files are cheap to count
+						// directly. Exact counts for tracked files would require reading blobs,
+						// which getChanges() deliberately avoids (see #30) — the tradeoff is that
+						// tracked-file badges show no counts until their diff is loaded.
+						try {
+							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+							const content = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+							additions = countLines(content);
+						} catch (e) {}
+					}
+
+					result.push({
+						filepath: filepath as string,
+						status,
+						additions,
+						deletions,
+						diff: '',
+						staged: false
+					});
+				}
+			}
+
+			return result;
+		} catch (e) {
+			console.error('[Git] getChanges failed', e);
+			throw e;
+		}
+	}
+
+	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
+		if (!await this.ensureInitialized()) {
+			return { originalContent: '', modifiedContent: '', stagedContent: '' };
+		}
+
+		// isomorphic-git's statusMatrix does not detect renames, so a rename is represented
+		// as a delete + add pair; each side resolves its own blob correctly from HEAD/workdir.
+		let headCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+		let headFound = false;
+		let headContent = '';
+		if (headCommit) {
+			try {
+				const { blob } = await git.readBlob({
+					fs: this.fs!,
+					dir: this.dir,
+					oid: headCommit,
+					filepath
+				});
+				headContent = new TextDecoder().decode(blob);
+				headFound = true;
+			} catch (e) {}
+		}
+
+		let stagedOid: string | null = null;
+		let stagedContent = '';
+		try {
+			await git.walk({
+				fs: this.fs!,
+				dir: this.dir,
+				trees: [git.STAGE()],
+				map: async (walkPath, entries) => {
+					if (walkPath === filepath && entries && entries[0]) {
+						const type = await entries[0].type();
+						if (type === 'blob') {
+							const oid = await entries[0].oid();
+							if (oid) {
+								stagedOid = oid;
+								const { blob } = await git.readBlob({
+									fs: this.fs!,
+									dir: this.dir,
+									oid
+								});
+								stagedContent = new TextDecoder().decode(blob);
+							}
+						}
+					}
+				}
+			});
+		} catch (e) {}
+
+		let workdirContent = '';
+		if (options?.staged !== true) {
+			try {
+				// EAFP: attempt reading worktree content; file may be deleted or missing
+				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+				workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+			} catch (e: any) {
+				// Only genuinely absent files yield empty worktree content;
+				// anything else (permissions, I/O failures) must reach the caller.
+				if (!isENOENT(e)) throw e;
+			}
+		}
+
+		// Rename resolution fallback: if filepath was not in HEAD, search HEAD tree
+		if (headCommit && !headFound) {
+			const renamedHeadContent = await resolveRenamedHeadContent({
+				fs: this.fs!,
+				dir: this.dir,
+				headCommit,
+				filepath,
+				stagedOid,
+				workdirContent
+			});
+			if (renamedHeadContent !== null) {
+				headContent = renamedHeadContent;
+				if (!stagedOid) {
+					stagedContent = renamedHeadContent;
+				}
+			}
+		}
+
+		return resolveDiffDetail(headContent, stagedContent, workdirContent, options);
+	}
+
+	async updateFileContent(filepath: string, content: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
+	}
+
+	/** The oid and mode of a path in the index (STAGE tree), or null when it has no entry. */
+	private async readStageEntry(filepath: string): Promise<{ oid: string; mode: number } | null> {
+		let result: { oid: string; mode: number } | null = null;
+		try {
+			await git.walk({
+				fs: this.fs!,
+				dir: this.dir,
+				trees: [git.STAGE()],
+				map: async (walkPath, entries) => {
+					if (walkPath === filepath && entries && entries[0]) {
+						const type = await entries[0].type();
+						if (type === 'blob') {
+							const oid = await entries[0].oid();
+							const mode = await entries[0].mode();
+							if (oid) result = { oid, mode };
+						}
+					}
+				}
+			});
+		} catch (e: any) {
+			// Only an absent index (hollowed repo) yields ENOENT and means "no
+			// entry"; anything else (corrupt index, permission failure) must reach
+			// the caller instead of being silently treated as absent, which would
+			// mis-stage with default mode. Mirrors the desktop adapter's
+			// `readGitObject` carve-out.
+			if (!isENOENT(e)) throw e;
+		}
+		return result;
+	}
+
+	private async readBlobText(oid: string): Promise<string | null> {
+		try {
+			const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid });
+			return new TextDecoder().decode(blob);
+		} catch (e) {
+			return null;
+		}
+	}
+
+	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+
+		// A literal no-op: the destination already holds exactly this content, so the
+		// write is skipped entirely. Only an identical write reaches the empty→empty
+		// shape, and writing a new blob + index rewrite would be pointless work.
+		const destEntry = await this.readStageEntry(filepath);
+		if (destEntry && (await this.readBlobText(destEntry.oid)) === content) {
+			return;
+		}
+
+		const oid = await git.writeBlob({
+			fs: this.fs!,
+			dir: this.dir,
+			blob: new TextEncoder().encode(content)
+		});
+
+		await git.updateIndex({
+			fs: this.fs!,
+			dir: this.dir,
+			filepath,
+			oid,
+			add: true,
+			mode: destEntry?.mode ?? 0o100644
+		});
+	}
+
+	async getCommits(): Promise<GitCommit[]> {
+		if (!await this.ensureInitialized()) return [];
+		try {
+			const commits = await git.log({
+				fs: this.fs!,
+				dir: this.dir,
+				depth: 50
+			});
+			const result: GitCommit[] = [];
+			const filesPerCommit = await Promise.all(commits.map(c => this.commitFileNames(c)));
+			for (let i = 0; i < commits.length; i++) {
+				const c = commits[i];
+				result.push({
+					hash: c.oid.substring(0, 7),
+					author: `${c.commit.author.name} <${c.commit.author.email}>`,
+					// Match `git log --format=%s` subject semantics: only the first line.
+					message: c.commit.message.split('\n')[0],
+					date: new Date(c.commit.author.timestamp * 1000).toISOString().split('T')[0],
+					files: filesPerCommit[i]
+				});
+			}
+			return result;
+		} catch (e) {
+			return [];
+		}
+	}
+
+	/**
+	 * File names changed by a commit, matching `git log --name-only --no-renames`:
+	 * every path whose blob differs between the commit and its parent (both sides
+	 * of a rename, since no rename detection is performed). Merge commits report
+	 * no changed files, like `git log`, which emits no diff for merges.
+	 */
+	private async commitFileNames(commit: { oid: string; commit: { parent: string[] } }): Promise<string[]> {
+		// Merge commits report no changed files, like `git log`, which emits no diff for merges.
+		if (commit.commit.parent.length > 1) return [];
+		const trees = commit.commit.parent.length === 1
+			? [git.TREE({ ref: commit.oid }), git.TREE({ ref: commit.commit.parent[0] })]
+			: [git.TREE({ ref: commit.oid })];
+		const files: string[] = [];
+		await git.walk({
+			fs: this.fs!,
+			dir: this.dir,
+			trees,
+			map: async (filepath, entries) => {
+				if (filepath === '.') return;
+				const [commitEntry, parentEntry] = entries;
+				const commitType = commitEntry ? await commitEntry.type() : null;
+				const parentType = parentEntry ? await parentEntry.type() : null;
+				if (commitType === 'blob' || parentType === 'blob') {
+					const commitBlobOid = commitType === 'blob' ? await commitEntry!.oid() : undefined;
+					const parentBlobOid = parentType === 'blob' ? await parentEntry!.oid() : undefined;
+					// A mode-only change (e.g. the executable bit) keeps the blob OID
+					// but still changes the file, like `git log --name-only` reports.
+					const commitMode = commitEntry ? await commitEntry.mode() : undefined;
+					const parentMode = parentEntry ? await parentEntry.mode() : undefined;
+					if (commitBlobOid !== parentBlobOid || commitMode !== parentMode) {
+						files.push(filepath);
+					}
+				}
+			}
+		});
+		return files;
+	}
+
+	/**
+	 * Remove a path from the index only, never touching the worktree. `force` is
+	 * safe because the shim's lstat would otherwise throw for a missing file.
+	 */
+	private async removeFromIndex(filepath: string): Promise<void> {
+		await git.updateIndex({ fs: this.fs!, dir: this.dir, filepath, remove: true, force: true });
+	}
+
+	async stageFile(filepath: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await git.statusMatrix({
+			fs: this.fs!,
+			dir: this.dir,
+			filepaths: [filepath]
+		});
+		if (matrix.length > 0) {
+			const [,, workdir] = matrix[0];
+			if (workdir === 0) {
+				// Staging a deletion must not touch the worktree: the file may already
+				// be gone, which `git.remove` would fail on.
+				await this.removeFromIndex(filepath);
+				return;
+			}
+		}
+		await git.add({ fs: this.fs!, dir: this.dir, filepath });
+	}
+
+	async unstageFile(filepath: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		try {
+			// statusMatrix has no rename notion: a staged rename is a staged addition
+			// plus a staged deletion. Unstaging the destination alone would leave the
+			// source staged-deleted, so pair the two via content match, like `git reset
+			// HEAD -- <source> <dest>` does on the desktop engine.
+			const matrix = await this.readStatusMatrix();
+			const paths: string[] = [filepath];
+			const dest = matrix.find(([p]) => p === filepath);
+			if (dest && dest[1] === 0 && dest[3] === 2) {
+				const renameSource = await this.findRenameSource(matrix, filepath);
+				if (renameSource) paths.push(renameSource);
+			}
+			for (const path of paths) {
+				await git.resetIndex({
+					fs: this.fs!,
+					dir: this.dir,
+					filepath: path
+				});
+			}
+		} catch (e) {
+			console.error('[Git] Failed to unstage file', e);
+			throw e;
+		}
+	}
+
+	/**
+	 * The source path of a staged rename for `filepath` (the destination): another
+	 * path present in HEAD but removed from both the index and the worktree whose
+	 * HEAD content equals the destination's staged content. Null when the
+	 * destination is not a rename — the statusMatrix analogue of the desktop
+	 * engine's porcelain rename probe.
+	 */
+	private async findRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | null> {
+		const staged = await this.readStageEntry(filepath);
+		if (!staged) return null;
+		const stagedText = await this.readBlobText(staged.oid);
+		if (stagedText === null) return null;
+		let headCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+		if (!headCommit) return null;
+		for (const [candidate, head, workdir, stage] of matrix) {
+			if (candidate !== filepath && head === 1 && workdir === 0 && stage === 0) {
+				try {
+					const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
+					if (new TextDecoder().decode(blob) === stagedText) {
+						return candidate;
+					}
+				} catch (e) {}
+			}
+		}
+		return null;
+	}
+
+	/** The worktree text of a path, or null when the file is absent. */
+	private async readWorktreeText(filepath: string): Promise<string | null> {
+		try {
+			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e: any) {
+			if (!isENOENT(e)) throw e;
+			return null;
+		}
+	}
+
+	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
+	private async unlinkIfPresent(filepath: string): Promise<void> {
+		try {
+			await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
+		} catch (e: any) {
+			if (!isENOENT(e)) throw e;
+		}
+	}
+
+	/**
+	 * Whether `content` matches the HEAD content of another path still tracked in
+	 * the index — the statusMatrix analogue of the desktop engine's porcelain copy
+	 * entries, used to keep a staged copy's worktree edits instead of cleaning them.
+	 */
+	private async matchesHeadContentOfTrackedPath(matrix: [string, number, number, number][], filepath: string, content: string): Promise<boolean> {
+		let headCommit: string | null = null;
+		try {
+			headCommit = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: 'HEAD' });
+		} catch (e) {}
+		if (!headCommit) return false;
+		for (const [candidate, head, , stage] of matrix) {
+			if (candidate !== filepath && head === 1 && stage === 2) {
+				try {
+					const { blob } = await git.readBlob({ fs: this.fs!, dir: this.dir, oid: headCommit, filepath: candidate });
+					if (new TextDecoder().decode(blob) === content) {
+						return true;
+					}
+				} catch (e) {}
+			}
+		}
+		return false;
+	}
+
+	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		const entry = matrix.find(([p]) => p === filepath);
+		if (!entry) return;
+
+		if (options?.staged === false) {
+			// Unstaged scope: reset only the worktree copy from the index version; the
+			// index is never touched. A path absent from the index (untracked file or
+			// worktree-only rename) has no staged copy to restore from, so its worktree
+			// file is cleaned instead.
+			const staged = await this.readStageEntry(filepath);
+			if (staged) {
+				const text = await this.readBlobText(staged.oid);
+				if (text !== null) {
+					await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, text);
+				}
+			} else {
+				await this.unlinkIfPresent(filepath);
+			}
+			return;
+		}
+
+		// A staged rename pairs the destination (staged addition) with a path removed
+		// from the index and worktree whose HEAD content matches the staged content —
+		// the same pairing `git reset HEAD -- <source> <dest>` reverts on the desktop
+		// engine. The rename is reverted whole: the original path is restored from
+		// HEAD, the destination is removed from the index, and unstaged edits at the
+		// destination survive as an untracked file.
+		const renameSource = await this.findRenameSource(matrix, filepath);
+		if (renameSource) {
+			const staged = await this.readStageEntry(filepath);
+			const stagedText = staged ? await this.readBlobText(staged.oid) : null;
+			const worktreeText = await this.readWorktreeText(filepath);
+			const hasEdits = stagedText !== null && worktreeText !== null && worktreeText !== stagedText;
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: [renameSource],
+				force: true
+			});
+			await this.removeFromIndex(filepath);
+			if (!hasEdits) {
+				await this.unlinkIfPresent(filepath);
+			}
+			return;
+		}
+
+		const [, head] = entry;
+		if (head === 1) {
+			// Tracked path: restore index and worktree from HEAD. `git.checkout`
+			// silently removes worktree files absent from the ref, so it may only
+			// be used for paths that exist in HEAD.
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: [filepath],
+				force: true
+			});
+			return;
+		}
+
+		// Absent from HEAD: an untracked file or a staged addition. Remove the
+		// index entry and clean the worktree copy. A staged addition whose
+		// worktree copy holds edits matching another path's HEAD content (a
+		// staged copy) keeps those edits as an untracked file, mirroring the
+		// desktop engine's CM handling — the user's edits are never the engine's
+		// to delete.
+		const staged = await this.readStageEntry(filepath);
+		let keepWorktree = false;
+		if (staged) {
+			const stagedText = await this.readBlobText(staged.oid);
+			const worktreeText = await this.readWorktreeText(filepath);
+			keepWorktree = stagedText !== null && worktreeText !== null && worktreeText !== stagedText
+				&& await this.matchesHeadContentOfTrackedPath(matrix, filepath, stagedText);
+			await this.removeFromIndex(filepath);
+		}
+		if (!keepWorktree) {
+			await this.unlinkIfPresent(filepath);
+		}
+	}
+
+	async stageAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		for (const [filepath, head, workdir, stage] of matrix) {
+			const isClean = head === 1 && workdir === 1 && stage === 1;
+			if (isClean) continue;
+			if (workdir === 0) {
+				if (stage !== 0 || head !== 0) {
+					// Index-only removal: `git.remove` would also unlink the worktree
+					// file, which fails when it is already gone.
+					await this.removeFromIndex(filepath as string);
+				}
+			} else {
+				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+			}
+		}
+	}
+
+	async unstageAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		for (const [filepath, head, , stage] of matrix) {
+			const hasStaged = (head === 0 && stage !== 0) || (head === 1 && stage !== 1);
+			if (!hasStaged) continue;
+			await git.resetIndex({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+		}
+	}
+
+	async discardAll(): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		const matrix = await this.readStatusMatrix();
+		const trackedToRestore: string[] = [];
+		for (const [filepath, head, workdir, stage] of matrix) {
+			const isClean = head === 1 && workdir === 1 && stage === 1;
+			if (isClean) continue;
+			if (head === 0) {
+				await this.fs!.promises.unlink(`${this.dir}/${filepath}`).catch(() => {});
+				await git.remove({ fs: this.fs!, dir: this.dir, filepath: filepath as string }).catch(() => {});
+			} else {
+				trackedToRestore.push(filepath as string);
+			}
+		}
+		if (trackedToRestore.length > 0) {
+			await git.checkout({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: 'HEAD',
+				filepaths: trackedToRestore,
+				force: true
+			});
+		}
+	}
+
+	async getUserConfig(): Promise<{ name: string; email: string } | null> {
+		if (!await this.ensureInitialized()) return null;
+		try {
+			const name = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'user.name' });
+			const email = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'user.email' });
+			if (name && email) return { name: String(name).trim(), email: String(email).trim() };
+		} catch (e) {}
+		return null;
+	}
+
+	async commit(message: string, options?: { author?: { name: string; email: string }; amend?: boolean }): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		let author = options?.author;
+		if (!author) {
+			const config = await this.getUserConfig();
+			if (config) {
+				author = config;
+			} else {
+				throw new Error('Git author identity (user.name and user.email) is not configured');
+			}
+		}
+		await git.commit({
+			fs: this.fs!,
+			dir: this.dir,
+			message,
+			author,
+			amend: options?.amend
+		});
+	}
+
+	async createBranch(branchName: string): Promise<void> {
+		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		await git.branch({
+			fs: this.fs!,
+			dir: this.dir,
+			ref: branchName
+		});
+		const res = await this.switchBranch(branchName);
+		if (res.status === 'error') {
+			throw new Error(res.message || `Failed to switch to created branch ${branchName}`);
+		} else if (res.status === 'blocked') {
+			throw new Error(`Failed to switch to created branch ${branchName}: ${res.reason}`);
+		}
+	}
+
 	reset() {
 		console.log('[Git] Resetting adapter state...');
 		this.initialized = false;
@@ -573,8 +1198,4 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		this.fs = null;
 		this.rootHandle = null;
 	}
-}
-
-if (typeof window !== 'undefined') {
-	(window as any).git = git;
 }
