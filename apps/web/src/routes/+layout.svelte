@@ -10,7 +10,24 @@
 	storage.registerProvider('browser', new BrowserStorage());
 	const persistence = new IndexedDBWorkspacePersistence();
 	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
-	const appState = new AppState({ storage, persistence, vcsFactory });
+	const appState = new AppState({
+		storage,
+		persistence,
+		vcsFactory,
+		clipboardService: {
+			writeText: async (text) => {
+				if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+					await navigator.clipboard.writeText(text);
+				}
+			},
+			readText: async () => {
+				if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+					return await navigator.clipboard.readText();
+				}
+				return '';
+			}
+		}
+	});
 	storage.registerProvider('keymap', new KeymapStorageProvider(appState.keymaps));
 	setContext("appState", appState);
 
