@@ -11,5 +11,6 @@
 		"allowJs": true,
 		"types": ["node", "wicg-file-system-access", "vite/client"]
 	},
-	"include": ["src/renderer/**/*"]
+	"include": ["src/renderer/**/*"],
+	"exclude": ["**/*.test.ts"]
 }

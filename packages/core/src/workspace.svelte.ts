@@ -2,12 +2,18 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
-import { type WorkspacePersistence, type SerializedDocument } from './persistence';
+import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
+
+export interface WorkspaceTab {
+	id: string;
+	type: 'document' | 'diff';
+}
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
-	activeDocumentId = $state<string>('');
+	tabs = $state<WorkspaceTab[]>([]);
+	activeTabId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
@@ -17,10 +23,11 @@ export class Workspace {
 	
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	persistence: WorkspacePersistence;
+	persistence: SessionPersistence;
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 	private restorePromise: Promise<void> | null = null;
+	private latestRestoreId = 0;
 
 	private saveOpenFilesTimeout: any = null;
 
@@ -33,11 +40,18 @@ export class Workspace {
 		}, 500);
 	}
 
-	flushSaveOpenFiles() {
-		if (this.isRestoring) return;
-
-		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-		const serializedDocs: SerializedDocument[] = this.documents.map(doc => {
+	private serializeTabs(): SerializedDocument[] {
+		return this.tabs.map(tab => {
+			if (tab.type === 'diff') {
+				return {
+					id: tab.id,
+					origin: null,
+					isModified: false,
+					virtualTabType: 'diff'
+				};
+			}
+			const doc = this.documents.find(d => d.id === tab.id);
+			if (!doc) return null;
 			const serialized: SerializedDocument = {
 				id: doc.id,
 				origin: doc.origin ? $state.snapshot(doc.origin) : null,
@@ -48,7 +62,14 @@ export class Workspace {
 				serialized.draftContent = doc.content;
 			}
 			return serialized;
-		});
+		}).filter(Boolean) as SerializedDocument[];
+	}
+
+	flushSaveOpenFiles() {
+		if (this.isRestoring) return;
+
+		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const serializedDocs = this.serializeTabs();
 
 		this.persistence.saveOpenFiles(serializedDocs, folderUri);
 
@@ -61,64 +82,72 @@ export class Workspace {
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: WorkspacePersistence
+		persistence: SessionPersistence
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
-		
-		if (typeof window !== 'undefined') {
-			this.restoreSession();
 
-			window.addEventListener('beforeunload', () => {
-				this.flushSaveOpenFiles();
+		$effect.root(() => {
+			$effect(() => {
+				const activeDoc = this.activeDocument;
+				if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
+					activeDoc.loadContent();
+				}
 			});
 
-			$effect.root(() => {
-				$effect(() => {
-					const activeDoc = this.activeDocument;
-					if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
-						activeDoc.loadContent();
-					}
+			$effect(() => {
+				if (this.isRestoring) return;
+				
+				const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+				const _tabs = this.tabs.map(t => t.id).join(',');
+				this.documents.forEach(doc => {
+					const _c = doc.content;
+					const _m = doc.isModified;
+					const _o = doc.origin;
+					const _t = doc.untitledTitle;
 				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					
-					const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-					this.documents.forEach(doc => {
-						const _c = doc.content;
-						const _m = doc.isModified;
-						const _o = doc.origin;
-						const _t = doc.untitledTitle;
-					});
-					
-					this.debouncedSaveOpenFiles();
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-					this.persistence.saveActiveDocumentId(this.activeDocumentId, folderUri);
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					// Persist root folder
-					this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
-				});
-
-				$effect(() => {
-					if (this.isRestoring) return;
-					// Persist recent folders
-					this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
-				});
+				
+				this.debouncedSaveOpenFiles();
 			});
-		}
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+			});
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				// Persist root folder
+				this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
+			});
+
+			$effect(() => {
+				if (this.isRestoring) return;
+				// Persist recent folders
+				this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
+			});
+		});
+	}
+
+	get activeTab() {
+		return this.tabs.find(t => t.id === this.activeTabId);
 	}
 
 	get activeDocument() {
-		return this.documents.find((doc) => doc.id === this.activeDocumentId);
+		if (this.activeTab?.type === 'document') {
+			return this.documents.find((doc) => doc.id === this.activeTabId);
+		}
+		return undefined;
+	}
+
+	get activeDocumentId() {
+		return this.activeTabId;
+	}
+
+	set activeDocumentId(value: string) {
+		this.activeTabId = value;
 	}
 
 	get currentBranch() {
@@ -129,8 +158,23 @@ export class Workspace {
 		return this.repository?.branches ?? [];
 	}
 
+	setTabs(tabs: WorkspaceTab[]) {
+		this.tabs = tabs;
+		this.debouncedSaveOpenFiles();
+	}
+
 	reorderDocuments(newDocs: DocumentSession[]) {
 		this.documents = newDocs;
+		this.debouncedSaveOpenFiles();
+	}
+
+	moveTab(fromIdx: number, toIdx: number) {
+		if (fromIdx < 0 || fromIdx >= this.tabs.length || toIdx < 0 || toIdx >= this.tabs.length || fromIdx === toIdx) {
+			return;
+		}
+		const [movedTab] = this.tabs.splice(fromIdx, 1);
+		this.tabs.splice(toIdx, 0, movedTab);
+		this.debouncedSaveOpenFiles();
 	}
 
 	async newFile() {
@@ -138,7 +182,8 @@ export class Workspace {
 		this.untitledCounter++;
 		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
 		this.documents.push(newDoc);
-		this.activeDocumentId = newDoc.id;
+		this.tabs.push({ id: newDoc.id, type: 'document' });
+		this.activeTabId = newDoc.id;
 		console.log('[Workspace] newFile finished. documents count:', this.documents.length);
 		return newDoc;
 	}
@@ -158,14 +203,15 @@ export class Workspace {
 		const targetUri = toURI(origin);
 		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
 		if (existing) {
-			this.activeDocumentId = existing.id;
-			return;
+			this.activeTabId = existing.id;
+			return existing;
 		}
 
 		const content = await this.storage.readFile(origin);
 		const newDoc = new DocumentSession(this.storage, content, origin, undefined, this);
 		this.documents.push(newDoc);
-		this.activeDocumentId = newDoc.id;
+		this.tabs.push({ id: newDoc.id, type: 'document' });
+		this.activeTabId = newDoc.id;
 		return newDoc;
 	}
 
@@ -195,6 +241,7 @@ export class Workspace {
 		this.hasRootPermission = true;
 
 		this.repository = new Repository(origin, this.vcsFactory);
+		await this.repository.adapter.detect(origin.path);
 		await this.repository.refresh();
 		
 		// Add to recent folders
@@ -239,6 +286,7 @@ export class Workspace {
 				adapter.reset();
 			}
 			
+			await this.repository.adapter.detect(this.rootOrigin.path);
 			const success = await this.repository.refresh();
 			console.log('[Workspace] Repository initialized after permission:', success);
 			
@@ -259,45 +307,80 @@ export class Workspace {
 	}
 
 	closeDocument(id: string) {
-		const index = this.documents.findIndex(doc => doc.id === id);
-		if (index === -1) return;
+		this.closeTab(id);
+	}
 
-		const doc = this.documents[index];
-		if (doc.isModified) {
-			this.pendingCloseId = id;
-			return;
+	closeTab(id: string) {
+		const tab = this.tabs.find(t => t.id === id);
+		if (!tab) return;
+
+		if (tab.type === 'document') {
+			const index = this.documents.findIndex(doc => doc.id === id);
+			if (index !== -1) {
+				const doc = this.documents[index];
+				if (doc.isModified) {
+					this.pendingCloseId = id;
+					return;
+				}
+			}
 		}
 
 		this.finalizeClose(id);
 	}
 
 	finalizeClose(id: string, saveFirst = false) {
-		const index = this.documents.findIndex(doc => doc.id === id);
-		if (index === -1) return;
+		const tab = this.tabs.find(t => t.id === id);
+		if (!tab) return;
 
-		const doc = this.documents[index];
-		
-		if (saveFirst) {
-			doc.save().then(() => {
-				this.performClose(index, id);
-			});
-		} else {
-			this.performClose(index, id);
+		if (tab.type === 'document') {
+			const index = this.documents.findIndex(doc => doc.id === id);
+			if (index !== -1) {
+				const doc = this.documents[index];
+				if (saveFirst) {
+					doc.save().then(
+						(saved) => {
+							if (saved) {
+								this.performClose(id);
+							}
+							this.pendingCloseId = null;
+						},
+						(err) => {
+							console.error('[Workspace] Save before close failed', err);
+							this.pendingCloseId = null;
+						}
+					);
+					return;
+				} else {
+					this.performClose(id);
+					this.pendingCloseId = null;
+					return;
+				}
+			}
 		}
-		
+
+		this.performClose(id);
 		this.pendingCloseId = null;
 	}
 
-	private async performClose(index: number, id: string) {
-		if (this.documents.length === 1) {
-			this.untitledCounter++;
-			this.documents[0] = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
-			this.activeDocumentId = this.documents[0].id;
-		} else {
-			this.documents.splice(index, 1);
-			if (this.activeDocumentId === id) {
-				this.activeDocumentId = this.documents[Math.max(0, index - 1)].id;
+	private async performClose(id: string) {
+		const tabIndex = this.tabs.findIndex(t => t.id === id);
+		if (tabIndex === -1) return;
+
+		const tab = this.tabs[tabIndex];
+
+		if (tab.type === 'document') {
+			const docIndex = this.documents.findIndex(doc => doc.id === id);
+			if (docIndex !== -1) {
+				this.documents.splice(docIndex, 1);
 			}
+		}
+
+		this.tabs.splice(tabIndex, 1);
+
+		if (this.tabs.length === 0) {
+			await this.newFile();
+		} else if (this.activeTabId === id) {
+			this.activeTabId = this.tabs[Math.max(0, tabIndex - 1)].id;
 		}
 	}
 
@@ -353,23 +436,14 @@ export class Workspace {
 		}
 	}
 
+
+
 	async saveFolderState(folderUri: string) {
 		console.log('[Workspace] saveFolderState start for:', folderUri);
-		const serializedDocs: SerializedDocument[] = this.documents.map(doc => {
-			const serialized: SerializedDocument = {
-				id: doc.id,
-				origin: doc.origin ? $state.snapshot(doc.origin) : null,
-				untitledTitle: doc.untitledTitle,
-				isModified: doc.isModified
-			};
-			if (doc.isModified || !doc.origin) {
-				serialized.draftContent = doc.content;
-			}
-			return serialized;
-		});
+		const serializedDocs = this.serializeTabs();
 
 		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
-		await this.persistence.saveActiveDocumentId(this.activeDocumentId, folderUri);
+		await this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
 		console.log('[Workspace] saveFolderState finished for:', folderUri);
 	}
 
@@ -383,11 +457,19 @@ export class Workspace {
 
 			if (origins && origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
+				const restoredTabs: WorkspaceTab[] = [];
 				for (const serialized of origins) {
 					const isNewSchema = serialized && typeof serialized === 'object' && ('id' in serialized);
 					
-					let doc: DocumentSession;
+					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
+						if (serialized.virtualTabType === 'diff') {
+							restoredTabs.push({
+								id: serialized.id,
+								type: 'diff'
+							});
+							continue;
+						}
 						doc = new DocumentSession(
 							this.storage,
 							'',
@@ -405,33 +487,53 @@ export class Workspace {
 						doc = new DocumentSession(this.storage, '', origin, undefined, this);
 					}
 					restoredDocs.push(doc);
+					restoredTabs.push({
+						id: doc.id,
+						type: 'document'
+					});
 				}
 
 				this.documents = restoredDocs;
-				if (activeId && restoredDocs.some(d => d.id === activeId)) {
-					this.activeDocumentId = activeId;
+				this.tabs = restoredTabs;
+				if (activeId && restoredTabs.some(t => t.id === activeId)) {
+					this.activeTabId = activeId;
 				} else {
-					this.activeDocumentId = restoredDocs[0].id;
+					this.activeTabId = restoredTabs[0]?.id || '';
 				}
 			} else {
 				console.log('[Workspace] No origins found, creating new file');
 				this.documents = [];
+				this.tabs = [];
 				await this.newFile();
 			}
 			console.log('[Workspace] loadFolderState finished. documents count:', this.documents.length);
 		} catch (e) {
 			console.error('[Workspace] Failed to load folder state', e);
 			this.documents = [];
+			this.tabs = [];
 			await this.newFile();
 		}
 	}
 
-	async restoreSession() {
-		if (this.restorePromise) return this.restorePromise;
+	restoreSession(force = false): Promise<void> {
+		if (!force && this.restorePromise) {
+			return this.restorePromise;
+		}
 
-		this.restorePromise = (async () => {
+		const previousPromise = this.restorePromise;
+		this.isRestoring = true;
+		const currentRestoreId = ++this.latestRestoreId;
+
+		const currentPromise = (async () => {
+			if (previousPromise) {
+				try {
+					await previousPromise;
+				} catch {
+					// Ignore failures from previous restore attempts
+				}
+			}
+
 			console.log('[Workspace] restoreSession start');
-			this.isRestoring = true;
 			try {
 				const all = await this.persistence.loadAll();
 				console.log('[Workspace] loadAll returned:', all);
@@ -471,13 +573,17 @@ export class Workspace {
 			} catch (e) {
 				console.error('[Workspace] Failed to restore session', e);
 				this.documents = [];
+				this.tabs = [];
 				await this.newFile();
 			} finally {
-				this.isRestoring = false;
-				console.log('[Workspace] restoreSession finished. isRestoring = false');
+				if (this.latestRestoreId === currentRestoreId) {
+					this.isRestoring = false;
+					console.log('[Workspace] restoreSession finished. isRestoring = false');
+				}
 			}
 		})();
 
-		return this.restorePromise;
+		this.restorePromise = currentPromise;
+		return currentPromise;
 	}
 }
