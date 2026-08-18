@@ -57,7 +57,7 @@ The contract suite in [`tests/contract/`](file:///home/john/Projects/np/tests/co
 | **Branch Switching** | [`branch-switch.test.ts`](file:///home/john/Projects/np/tests/contract/branch-switch.test.ts) | `switchBranch` with atomic carry-forward: clean switch, dirty switch without conflict, dirty switch with collision (blocked), non-existent branch, dryRun |
 | **Commit & Branch Creation** | [`commit-branch-creation.test.ts`](file:///home/john/Projects/np/tests/contract/commit-branch-creation.test.ts) | `commit` with custom author, amend, dirty/clean trees, `createBranch` and checkout verification |
 | **Hunk Action Composition** | [`hunk-actions.test.ts`](file:///home/john/Projects/np/tests/contract/hunk-actions.test.ts) | Real diff -> hunk range -> splice -> index/worktree write pipeline, single/multi-hunk staging, unstaging, discarding |
-| **Runner & Harness** | [`harness.test.ts`](file:///home/john/Projects/np/tests/contract/harness.test.ts), [`spawn-git-adapter.test.ts`](file:///home/john/Projects/np/tests/contract/spawn-git-adapter.test.ts) | Hermetic temp repo isolation, synthetic git identity (`GIT_CONFIG_NOSYSTEM=1`), version floor guard |
+| **Runner & Harness** | [`harness.test.ts`](file:///home/john/Projects/np/tests/contract/harness.test.ts) | Hermetic temp repo isolation, synthetic git identity (`GIT_CONFIG_NOSYSTEM=1`), version floor guard |
 
 ---
 
