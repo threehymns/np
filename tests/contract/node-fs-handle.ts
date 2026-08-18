@@ -45,19 +45,21 @@ export class NodeFileHandle {
 		write(chunk: string | ArrayBuffer | ArrayBufferView): Promise<void>;
 		close(): Promise<void>;
 	}> {
+		const chunks: Uint8Array[] = [];
 		return {
 			write: async (chunk: string | ArrayBuffer | ArrayBufferView) => {
-				let content: string | Uint8Array;
 				if (typeof chunk === 'string') {
-					content = chunk;
+					chunks.push(Buffer.from(chunk, 'utf8'));
 				} else if (chunk instanceof ArrayBuffer) {
-					content = new Uint8Array(chunk);
+					chunks.push(new Uint8Array(chunk));
 				} else {
-					content = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+					chunks.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
 				}
-				await writeFile(this.path, content);
 			},
-			close: async () => {}
+			close: async () => {
+				const combined = Buffer.concat(chunks);
+				await writeFile(this.path, combined);
+			}
 		};
 	}
 }

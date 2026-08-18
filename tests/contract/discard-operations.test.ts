@@ -26,9 +26,9 @@ function origin(r: TestRepo): FileOrigin {
 }
 
 const nodeFileAccess: GitFileAccess = {
-	readFile: (path) => readFile(path),
-	writeFile: (path, content) => writeFile(path, content),
-	deleteEntry: (path) => rm(path, { force: true })
+	readFile: (filePath) => readFile(filePath),
+	writeFile: (filePath, content) => writeFile(filePath, content),
+	deleteEntry: (filePath) => rm(filePath, { force: true })
 };
 
 /** The discard surface under contract: per-file discard across scopes plus bulk discard-all. */
