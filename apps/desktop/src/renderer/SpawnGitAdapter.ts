@@ -321,17 +321,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
-		const res = await this.runGit(['log', '-n', '50', '--pretty=format:%h|%an <%ae>|%ad|%s', '--date=short']);
+		const res = await this.runGit(['log', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
 				return [];
 			}
 			throw new Error(res.stderr || 'Failed to retrieve git commit log');
 		}
-		return res.stdout.split('\n').filter(Boolean).map(line => {
-			const [hash, author, date, ...rest] = line.split('|');
+		// Each block starts with a NUL-prefixed metadata line (hash|author|date|subject)
+		// followed by the changed file names, one per line; blocks are separated by
+		// the newline ending the previous block and the next block's NUL prefix
+		// (file-less commits like merges and empty commits emit no name section).
+		return res.stdout.split('\n\0').filter(Boolean).map(block => {
+			const lines = block.split('\n');
+			const [hash, author, date, ...rest] = lines[0].replace(/^\0/, '').split('|');
 			const message = rest.join('|');
-			return { hash, author, date, message, files: [] };
+			return { hash, author, date, message, files: lines.slice(1).filter(Boolean) };
 		});
 	}
 

@@ -757,20 +757,57 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				dir: this.dir,
 				depth: 50
 			});
-			return commits.map(c => {
-				const author = `${c.commit.author.name} <${c.commit.author.email}>`;
-				const date = new Date(c.commit.author.timestamp * 1000).toISOString().split('T')[0];
-				return {
+			const result: GitCommit[] = [];
+			const filesPerCommit = await Promise.all(commits.map(c => this.commitFileNames(c)));
+			for (let i = 0; i < commits.length; i++) {
+				const c = commits[i];
+				result.push({
 					hash: c.oid.substring(0, 7),
-					author,
-					message: c.commit.message,
-					date,
-					files: []
-				};
-			});
+					author: `${c.commit.author.name} <${c.commit.author.email}>`,
+					// Match `git log --format=%s` subject semantics: only the first line.
+					message: c.commit.message.split('\n')[0],
+					date: new Date(c.commit.author.timestamp * 1000).toISOString().split('T')[0],
+					files: filesPerCommit[i]
+				});
+			}
+			return result;
 		} catch (e) {
 			return [];
 		}
+	}
+
+	/**
+	 * File names changed by a commit, matching `git log --name-only --no-renames`:
+	 * every path whose blob differs between the commit and its parent (both sides
+	 * of a rename, since no rename detection is performed). Merge commits report
+	 * no changed files, like `git log`, which emits no diff for merges.
+	 */
+	private async commitFileNames(commit: { oid: string; commit: { parent: string[] } }): Promise<string[]> {
+		// Merge commits report no changed files, like `git log`, which emits no diff for merges.
+		if (commit.commit.parent.length > 1) return [];
+		const trees = commit.commit.parent.length === 1
+			? [git.TREE({ ref: commit.oid }), git.TREE({ ref: commit.commit.parent[0] })]
+			: [git.TREE({ ref: commit.oid })];
+		const files: string[] = [];
+		await git.walk({
+			fs: this.fs!,
+			dir: this.dir,
+			trees,
+			map: async (filepath, entries) => {
+				if (filepath === '.') return;
+				const [commitEntry, parentEntry] = entries;
+				const commitType = commitEntry ? await commitEntry.type() : null;
+				const parentType = parentEntry ? await parentEntry.type() : null;
+				if (commitType === 'blob' || parentType === 'blob') {
+					const commitBlobOid = commitType === 'blob' ? await commitEntry!.oid() : undefined;
+					const parentBlobOid = parentType === 'blob' ? await parentEntry!.oid() : undefined;
+					if (commitBlobOid !== parentBlobOid) {
+						files.push(filepath);
+					}
+				}
+			}
+		});
+		return files;
 	}
 
 	async stageFile(filepath: string): Promise<void> {

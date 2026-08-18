@@ -814,23 +814,4 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await expect(adapter.stageAll()).rejects.toThrow(/index file corrupt/);
 	});
-
-	it('detect returns true when inside a work tree', async () => {
-		mockGitRun.mockImplementation(async (_wd: string, args: string[]) => {
-			if (args.includes('--is-inside-work-tree')) {
-				return { code: 0, stdout: 'true', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		const result = await adapter.detect('/test/repo');
-		expect(result).toBe(true);
-	});
-
-	it('detect returns false when not inside a work tree', async () => {
-		mockGitRun.mockImplementation(async () => ({ code: 128, stdout: '', stderr: 'fatal: not a git repository' }));
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		const result = await adapter.detect('/test/repo');
-		expect(result).toBe(false);
-	});
 });

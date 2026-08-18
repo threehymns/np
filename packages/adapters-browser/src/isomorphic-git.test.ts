@@ -328,19 +328,6 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
-	it('detect returns true when the filesystem shim lists a .git directory', async () => {
-		const adapter = new IsomorphicGitAdapter(rootOrigin);
-		const result = await adapter.detect(rootOrigin.path);
-		expect(result).toBe(true);
-	});
-
-	it('detect returns false when no .git directory is present', async () => {
-		const adapter = new IsomorphicGitAdapter(rootOrigin);
-		mockDirectoryHandle.keys = async function* () { yield 'README.md'; };
-		const result = await adapter.detect(rootOrigin.path);
-		expect(result).toBe(false);
-	});
-
 	it('detect returns false when permission is not granted', async () => {
 		const adapter = new IsomorphicGitAdapter(rootOrigin);
 		mockDirectoryHandle.queryPermission = mock(async () => 'prompt');

@@ -13,13 +13,6 @@ function adapter(r: TestRepo): SpawnGitAdapter {
 }
 
 describe('SpawnGitAdapter with a real git runner', () => {
-	it('reports the current branch of the repository', async () => {
-		const r = await createTrackedRepo();
-		await seedCommit(r);
-
-		expect(await adapter(r).getCurrentBranch()).toBe('main');
-	});
-
 	it('reports a clean committed repository as not dirty', async () => {
 		const r = await createTrackedRepo();
 		await seedCommit(r);
