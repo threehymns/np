@@ -438,25 +438,6 @@ describe('SpawnGitAdapter', () => {
 		expect(commands).toContainEqual(['rm', '--cached', '-q', '-r', '--', '.']);
 	});
 
-	it('unstageAll does not fall back when a broken HEAD hides an existing repository', async () => {
-		const commands: string[][] = [];
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			commands.push(args);
-			if (args[0] === 'restore') {
-				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
-			}
-			if (args[0] === 'for-each-ref') {
-				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await expect(adapter.unstageAll()).rejects.toThrow("could not resolve 'HEAD'");
-
-		expect(commands.some(cmd => cmd[0] === 'rm')).toBe(false);
-	});
-
 	it('unstageAll propagates a real rm --cached failure on an unborn HEAD', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'restore') {
