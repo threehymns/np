@@ -385,12 +385,21 @@ describe('SpawnGitAdapter', () => {
 					stderr: "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."
 				};
 			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageFile('file.txt');
 
+		expect(commands).toContainEqual(['symbolic-ref', '-q', 'HEAD']);
+		expect(commands).toContainEqual(['rev-parse', '--verify', 'HEAD']);
+		expect(commands).toContainEqual(['for-each-ref', '--format=%(refname)']);
 		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
 	});
 
@@ -398,6 +407,12 @@ describe('SpawnGitAdapter', () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'reset') {
 				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
+			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
 			}
 			if (args[0] === 'rm') {
 				return { code: 128, stdout: '', stderr: 'fatal: rm failed' };
@@ -415,8 +430,36 @@ describe('SpawnGitAdapter', () => {
 			if (args[0] === 'reset') {
 				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
 			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+			}
 			if (args[0] === 'for-each-ref') {
 				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).rejects.toThrow("ambiguous argument 'HEAD'");
+
+		expect(commands.some(cmd => cmd[0] === 'rm')).toBe(false);
+	});
+
+	it('unstageFile does not fall back on a broken detached HEAD even if for-each-ref is empty', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'reset') {
+				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
+			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 1, stdout: '', stderr: 'fatal: ref HEAD is not a symbolic ref' };
+			}
+			if (args[0] === 'for-each-ref') {
+				return { code: 0, stdout: '', stderr: '' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
@@ -434,12 +477,19 @@ describe('SpawnGitAdapter', () => {
 			if (args[0] === 'reset') {
 				return { code: 1, stdout: '', stderr: "fatal: Failed to resolve 'HEAD' as a valid ref." };
 			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageFile('file.txt');
 
+		expect(commands).toContainEqual(['symbolic-ref', '-q', 'HEAD']);
 		expect(commands).toContainEqual(['for-each-ref', '--format=%(refname)']);
 		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
 	});
@@ -472,6 +522,12 @@ describe('SpawnGitAdapter', () => {
 			if (args[0] === 'restore') {
 				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
 			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
 
@@ -485,6 +541,12 @@ describe('SpawnGitAdapter', () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'restore') {
 				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
+			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
 			}
 			if (args[0] === 'rm') {
 				return { code: 128, stdout: '', stderr: 'fatal: rm failed' };

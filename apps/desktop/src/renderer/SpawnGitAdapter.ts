@@ -76,12 +76,19 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * True when no refs exist, i.e. nothing has ever been committed. A broken HEAD
-	 * on a repository with commits fails with the same "could not resolve 'HEAD'"
-	 * message as a true unborn HEAD, so the unborn fallbacks must not run unless
-	 * the repository is genuinely commit-less.
+	 * True when HEAD is unborn (i.e. a symbolic ref to a branch that has no commits yet,
+	 * and no refs exist in the repository). A detached HEAD or a broken HEAD on a repository
+	 * with existing commits/objects must not trigger the unborn fallback.
 	 */
 	private async isUnbornRepository(): Promise<boolean> {
+		const symRef = await this.runGit(['symbolic-ref', '-q', 'HEAD']);
+		if (symRef.code !== 0 || !symRef.stdout.trim()) {
+			return false;
+		}
+		const headRef = await this.runGit(['rev-parse', '--verify', 'HEAD']);
+		if (headRef.code === 0) {
+			return false;
+		}
 		const refs = await this.runGit(['for-each-ref', '--format=%(refname)']);
 		return refs.code === 0 && refs.stdout.trim() === '';
 	}
