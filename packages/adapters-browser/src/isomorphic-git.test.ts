@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, type Mock } from 'bun:test';
 import { IsomorphicGitAdapter } from './isomorphic-git';
 import type { FileOrigin } from '@np/core';
 import git, { type StatusRow } from 'isomorphic-git';
@@ -342,229 +342,153 @@ describe('IsomorphicGitAdapter', () => {
 		expect(result).toBe(false);
 	});
 
-	it('switchBranch blocks with the file named when a snapshot worktree read fails', async () => {
-		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
-			['blocked.txt', 1, 2, 1] // Modified unstaged
-		]);
-		const checkoutSpy = mock(async () => {});
-		const walkSpy = mock(async ({ map }: { map: Function }) => {
-			await map('blocked.txt', [{
-				type: async () => 'blob',
-				oid: async () => 'staged-oid'
-			}]);
-		});
-		const readBlobSpy = mock(async ({ oid }: { oid: string }) => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
-		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
-		const currentBranchSpy = mock(async () => 'main');
-		const origStatusMatrix = git.statusMatrix;
-		const origCheckout = git.checkout;
-		const origWalk = git.walk;
-		const origReadBlob = git.readBlob;
-		const origResolveRef = git.resolveRef;
-		const origCurrentBranch = git.currentBranch;
-		mockGit.statusMatrix = statusMatrixSpy;
-		mockGit.checkout = checkoutSpy;
-		(git as any).walk = walkSpy;
-		(git as any).readBlob = readBlobSpy;
-		(git as any).resolveRef = resolveRefSpy;
-		(git as any).currentBranch = currentBranchSpy;
-		mockDirectoryHandle.getFileHandle = mock(async () => {
-			throw Object.assign(new Error('NotReadableError: blocked'), { name: 'NotReadableError' });
-		});
+	interface SwitchBranchMocks {
+		statusMatrix: StatusRow[];
+		readBlob?: (args: { oid: string }) => Promise<{ blob: Uint8Array; oid?: string }>;
+		getFileHandle?: () => Promise<unknown>;
+	}
 
-		try {
-			const adapter = new IsomorphicGitAdapter(rootOrigin);
-			const result = await adapter.switchBranch('feature');
-
-			expect(result.status).toBe('blocked');
-			if (result.status === 'blocked') {
-				expect(result.reason).toBe('unreadable');
-				expect(result.files).toEqual(['blocked.txt']);
-			}
-			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
-			expect(forcedCalls.length).toBe(0);
-		} finally {
-			mockGit.statusMatrix = origStatusMatrix;
-			mockGit.checkout = origCheckout;
-			(git as any).walk = origWalk;
-			(git as any).readBlob = origReadBlob;
-			(git as any).resolveRef = origResolveRef;
-			(git as any).currentBranch = origCurrentBranch;
-		}
-	});
-
-	it('switchBranch proceeds past a worktree file that vanished mid-snapshot, restoring it as deleted', async () => {
-		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
-			['blocked.txt', 1, 2, 1] // Modified unstaged
-		]);
-		const checkoutSpy = mock(async () => {});
-		const walkSpy = mock(async ({ map }: { map: Function }) => {
-			await map('blocked.txt', [{
-				type: async () => 'blob',
-				oid: async () => 'staged-oid'
-			}]);
-		});
-		const readBlobSpy = mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
-		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
-		const currentBranchSpy = mock(async () => 'main');
-		const addSpy = mock(async () => {});
-		const origStatusMatrix = git.statusMatrix;
-		const origCheckout = git.checkout;
-		const origWalk = git.walk;
-		const origReadBlob = git.readBlob;
-		const origResolveRef = git.resolveRef;
-		const origCurrentBranch = git.currentBranch;
-		const origAdd = git.add;
-		mockGit.statusMatrix = statusMatrixSpy;
-		mockGit.checkout = checkoutSpy;
-		mockGit.add = addSpy;
-		(git as any).walk = walkSpy;
-		(git as any).readBlob = readBlobSpy;
-		(git as any).resolveRef = resolveRefSpy;
-		(git as any).currentBranch = currentBranchSpy;
-		let reads = 0;
-		mockDirectoryHandle.getFileHandle = mock(async () => {
-			reads++;
-			if (reads === 1) {
-				// The file vanishes between the status scan and the snapshot read.
-				throw Object.assign(new Error('NotFoundError: gone'), { name: 'NotFoundError' });
-			}
-			return {
-				kind: 'file',
-				name: 'blocked.txt',
-				getFile: mock(async () => ({
-					text: mock(async () => 'workdir file text'),
-					arrayBuffer: mock(async () => new TextEncoder().encode('workdir file text').buffer),
-					size: 17,
-					lastModified: Date.now()
-				})),
-				createWritable: mock(async () => ({
-					write: mock(async () => {}),
-					close: mock(async () => {})
-				}))
-			};
-		});
-
-		try {
-			const adapter = new IsomorphicGitAdapter(rootOrigin);
-			const result = await adapter.switchBranch('feature');
-
-			expect(result.status).toBe('switched');
-			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
-			expect(forcedCalls.length).toBe(1);
-		} finally {
-			mockGit.statusMatrix = origStatusMatrix;
-			mockGit.checkout = origCheckout;
-			mockGit.add = origAdd;
-			(git as any).walk = origWalk;
-			(git as any).readBlob = origReadBlob;
-			(git as any).resolveRef = origResolveRef;
-			(git as any).currentBranch = origCurrentBranch;
-		}
-	});
-
-	it('switchBranch blocks with the file named when a snapshot staged-blob read fails', async () => {
-		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
-			['blocked.txt', 1, 1, 2] // Staged modification
-		]);
-		const checkoutSpy = mock(async () => {});
-		const walkSpy = mock(async ({ map }: { map: Function }) => {
-			await map('blocked.txt', [{
-				type: async () => 'blob',
-				oid: async () => 'staged-oid'
-			}]);
-		});
-		const readBlobSpy = mock(async ({ oid }: { oid: string }) => {
-			if (oid === 'staged-oid') throw new Error('odb corrupted');
-			return { blob: new Uint8Array(1), oid: 'same-oid' };
-		});
-		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
-		const currentBranchSpy = mock(async () => 'main');
-		const origStatusMatrix = git.statusMatrix;
-		const origCheckout = git.checkout;
-		const origWalk = git.walk;
-		const origReadBlob = git.readBlob;
-		const origResolveRef = git.resolveRef;
-		const origCurrentBranch = git.currentBranch;
-		mockGit.statusMatrix = statusMatrixSpy;
-		mockGit.checkout = checkoutSpy;
-		(git as any).walk = walkSpy;
-		(git as any).readBlob = readBlobSpy;
-		(git as any).resolveRef = resolveRefSpy;
-		(git as any).currentBranch = currentBranchSpy;
-
-		try {
-			const adapter = new IsomorphicGitAdapter(rootOrigin);
-			const result = await adapter.switchBranch('feature');
-
-			expect(result.status).toBe('blocked');
-			if (result.status === 'blocked') {
-				expect(result.reason).toBe('unreadable');
-				expect(result.files).toEqual(['blocked.txt']);
-			}
-			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
-			expect(forcedCalls.length).toBe(0);
-		} finally {
-			mockGit.statusMatrix = origStatusMatrix;
-			mockGit.checkout = origCheckout;
-			(git as any).walk = origWalk;
-			(git as any).readBlob = origReadBlob;
-			(git as any).resolveRef = origResolveRef;
-			(git as any).currentBranch = origCurrentBranch;
-		}
-	});
-
-	it('switchBranch blocks naming every unreadable file, not just the first', async () => {
-		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
-			['blocked-a.txt', 1, 2, 1], // Modified unstaged
-			['blocked-b.txt', 1, 2, 1] // Modified unstaged
-		]);
-		const checkoutSpy = mock(async () => {});
-		const walkSpy = mock(async ({ map }: { map: Function }) => {
-			for (const name of ['blocked-a.txt', 'blocked-b.txt']) {
-				await map(name, [{
+	async function withSwitchBranchMocks<T>(
+		mocks: SwitchBranchMocks,
+		fn: (spies: { checkout: Mock<() => Promise<void>>; add: Mock<() => Promise<void>> }) => Promise<T>
+	): Promise<T> {
+		const checkout = mock(async () => {});
+		const add = mock(async () => {});
+		const readBlob = mocks.readBlob ?? mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
+		const resolveRef = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
+		const currentBranch = mock(async () => 'main');
+		const walk = mock(async ({ map }: { map: (filepath: string, entries: unknown[]) => Promise<void> }) => {
+			for (const [filepath] of mocks.statusMatrix) {
+				await map(filepath as string, [{
 					type: async () => 'blob',
 					oid: async () => 'staged-oid'
 				}]);
 			}
 		});
-		const readBlobSpy = mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
-		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
-		const currentBranchSpy = mock(async () => 'main');
-		const origStatusMatrix = git.statusMatrix;
-		const origCheckout = git.checkout;
-		const origWalk = git.walk;
-		const origReadBlob = git.readBlob;
-		const origResolveRef = git.resolveRef;
-		const origCurrentBranch = git.currentBranch;
-		mockGit.statusMatrix = statusMatrixSpy;
-		mockGit.checkout = checkoutSpy;
-		(git as any).walk = walkSpy;
-		(git as any).readBlob = readBlobSpy;
-		(git as any).resolveRef = resolveRefSpy;
-		(git as any).currentBranch = currentBranchSpy;
-		mockDirectoryHandle.getFileHandle = mock(async () => {
-			throw Object.assign(new Error('NotReadableError: blocked'), { name: 'NotReadableError' });
-		});
+		const originals = {
+			statusMatrix: mockGit.statusMatrix,
+			checkout: mockGit.checkout,
+			add: mockGit.add,
+			readBlob: (git as any).readBlob,
+			resolveRef: (git as any).resolveRef,
+			currentBranch: (git as any).currentBranch,
+			walk: (git as any).walk
+		};
+		const originalGetFileHandle = mockDirectoryHandle.getFileHandle;
+
+		mockGit.statusMatrix = mock(async (): Promise<StatusRow[]> => mocks.statusMatrix);
+		mockGit.checkout = checkout;
+		mockGit.add = add;
+		(git as any).readBlob = readBlob;
+		(git as any).resolveRef = resolveRef;
+		(git as any).currentBranch = currentBranch;
+		(git as any).walk = walk;
+		if (mocks.getFileHandle) {
+			mockDirectoryHandle.getFileHandle = mock(mocks.getFileHandle);
+		}
 
 		try {
+			return await fn({ checkout, add });
+		} finally {
+			mockGit.statusMatrix = originals.statusMatrix;
+			mockGit.checkout = originals.checkout;
+			mockGit.add = originals.add;
+			(git as any).readBlob = originals.readBlob;
+			(git as any).resolveRef = originals.resolveRef;
+			(git as any).currentBranch = originals.currentBranch;
+			(git as any).walk = originals.walk;
+			mockDirectoryHandle.getFileHandle = originalGetFileHandle;
+		}
+	}
+
+	function forcedCheckouts(checkout: Mock<() => Promise<void>>) {
+		return checkout.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
+	}
+
+	function fileError(name: string, message: string): Error {
+		return Object.assign(new Error(message), { name });
+	}
+
+	function workingFileHandle(name: string) {
+		return {
+			kind: 'file',
+			name,
+			getFile: mock(async () => ({
+				text: mock(async () => 'workdir file text'),
+				arrayBuffer: mock(async () => new TextEncoder().encode('workdir file text').buffer),
+				size: 17,
+				lastModified: Date.now()
+			})),
+			createWritable: mock(async () => ({
+				write: mock(async () => {}),
+				close: mock(async () => {})
+			}))
+		};
+	}
+
+	it('switchBranch blocks with the file named when a snapshot worktree read fails', async () => {
+		await withSwitchBranchMocks({
+			statusMatrix: [['blocked.txt', 1, 2, 1]], // Modified unstaged
+			getFileHandle: async () => { throw fileError('NotReadableError', 'NotReadableError: blocked'); }
+		}, async ({ checkout }) => {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			const result = await adapter.switchBranch('feature');
 
-			expect(result.status).toBe('blocked');
-			if (result.status === 'blocked') {
-				expect(result.reason).toBe('unreadable');
-				expect(result.files).toEqual(['blocked-a.txt', 'blocked-b.txt']);
+			expect(result).toMatchObject({ status: 'blocked', reason: 'unreadable', files: ['blocked.txt'] });
+			expect(forcedCheckouts(checkout).length).toBe(0);
+		});
+	});
+
+	it('switchBranch proceeds past a worktree file that vanished mid-snapshot, restoring it as deleted', async () => {
+		let reads = 0;
+		await withSwitchBranchMocks({
+			statusMatrix: [['blocked.txt', 1, 2, 1]], // Modified unstaged
+			getFileHandle: async () => {
+				reads++;
+				if (reads === 1) {
+					// The file vanishes between the status scan and the snapshot read.
+					throw fileError('NotFoundError', 'NotFoundError: gone');
+				}
+				return workingFileHandle('blocked.txt');
 			}
-			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
-			expect(forcedCalls.length).toBe(0);
-		} finally {
-			mockGit.statusMatrix = origStatusMatrix;
-			mockGit.checkout = origCheckout;
-			(git as any).walk = origWalk;
-			(git as any).readBlob = origReadBlob;
-			(git as any).resolveRef = origResolveRef;
-			(git as any).currentBranch = origCurrentBranch;
-		}
+		}, async ({ checkout }) => {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+		});
+	});
+
+	it('switchBranch blocks with the file named when a snapshot staged-blob read fails', async () => {
+		await withSwitchBranchMocks({
+			statusMatrix: [['blocked.txt', 1, 1, 2]], // Staged modification
+			readBlob: async ({ oid }: { oid: string }) => {
+				if (oid === 'staged-oid') throw new Error('odb corrupted');
+				return { blob: new Uint8Array(1), oid: 'same-oid' };
+			}
+		}, async ({ checkout }) => {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result).toMatchObject({ status: 'blocked', reason: 'unreadable', files: ['blocked.txt'] });
+			expect(forcedCheckouts(checkout).length).toBe(0);
+		});
+	});
+
+	it('switchBranch blocks naming every unreadable file, not just the first', async () => {
+		await withSwitchBranchMocks({
+			statusMatrix: [
+				['blocked-a.txt', 1, 2, 1], // Modified unstaged
+				['blocked-b.txt', 1, 2, 1] // Modified unstaged
+			],
+			getFileHandle: async () => { throw fileError('NotReadableError', 'NotReadableError: blocked'); }
+		}, async ({ checkout }) => {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result).toMatchObject({ status: 'blocked', reason: 'unreadable', files: ['blocked-a.txt', 'blocked-b.txt'] });
+			expect(forcedCheckouts(checkout).length).toBe(0);
+		});
 	});
 });
