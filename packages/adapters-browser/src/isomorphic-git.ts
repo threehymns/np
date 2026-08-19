@@ -488,8 +488,16 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						// A snapshot with null content cannot restore the file after the
 						// forced checkout below, so a failed read aborts the switch
 						// instead of risking the user's changes.
-						const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-						workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
+						try {
+							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+							workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
+						} catch (e: any) {
+							// A file that vanished between the status scan and the snapshot
+							// read is a deletion, not a failure: leave the content null so
+							// the restore unlinks it, exactly like a file already gone when
+							// the scan ran. Anything else is unreadable and aborts.
+							if (!isENOENT(e)) throw e;
+						}
 					}
 
 					const stagedOid = stagedOids[filepath as string];

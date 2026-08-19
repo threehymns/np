@@ -390,6 +390,76 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
+	it('switchBranch proceeds past a worktree file that vanished mid-snapshot, restoring it as deleted', async () => {
+		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
+			['blocked.txt', 1, 2, 1] // Modified unstaged
+		]);
+		const checkoutSpy = mock(async () => {});
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			await map('blocked.txt', [{
+				type: async () => 'blob',
+				oid: async () => 'staged-oid'
+			}]);
+		});
+		const readBlobSpy = mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
+		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
+		const currentBranchSpy = mock(async () => 'main');
+		const addSpy = mock(async () => {});
+		const origStatusMatrix = git.statusMatrix;
+		const origCheckout = git.checkout;
+		const origWalk = git.walk;
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origCurrentBranch = git.currentBranch;
+		const origAdd = git.add;
+		mockGit.statusMatrix = statusMatrixSpy;
+		mockGit.checkout = checkoutSpy;
+		mockGit.add = addSpy;
+		(git as any).walk = walkSpy;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).currentBranch = currentBranchSpy;
+		let reads = 0;
+		mockDirectoryHandle.getFileHandle = mock(async () => {
+			reads++;
+			if (reads === 1) {
+				// The file vanishes between the status scan and the snapshot read.
+				throw Object.assign(new Error('NotFoundError: gone'), { name: 'NotFoundError' });
+			}
+			return {
+				kind: 'file',
+				name: 'blocked.txt',
+				getFile: mock(async () => ({
+					text: mock(async () => 'workdir file text'),
+					arrayBuffer: mock(async () => new TextEncoder().encode('workdir file text').buffer),
+					size: 17,
+					lastModified: Date.now()
+				})),
+				createWritable: mock(async () => ({
+					write: mock(async () => {}),
+					close: mock(async () => {})
+				}))
+			};
+		});
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
+			expect(forcedCalls.length).toBe(1);
+		} finally {
+			mockGit.statusMatrix = origStatusMatrix;
+			mockGit.checkout = origCheckout;
+			mockGit.add = origAdd;
+			(git as any).walk = origWalk;
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).currentBranch = origCurrentBranch;
+		}
+	});
+
 	it('switchBranch aborts before a forced checkout when a snapshot staged-blob read fails', async () => {
 		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
 			['blocked.txt', 1, 1, 2] // Staged modification
