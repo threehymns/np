@@ -458,6 +458,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 		// 1. Take a snapshot of all dirty files
 		const snapshots: FileSnapshot[] = [];
+		const unreadableFiles: string[] = [];
 		try {
 			const matrix = await this.readStatusMatrix();
 
@@ -486,7 +487,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 					if (workdir !== 0) {
 						// A snapshot with null content cannot restore the file after the
-						// forced checkout below, so a failed read aborts the switch
+						// forced checkout below, so a failed read blocks the switch
 						// instead of risking the user's changes.
 						try {
 							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
@@ -495,19 +496,28 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 							// A file that vanished between the status scan and the snapshot
 							// read is a deletion, not a failure: leave the content null so
 							// the restore unlinks it, exactly like a file already gone when
-							// the scan ran. Anything else is unreadable and aborts.
-							if (!isENOENT(e)) throw e;
+							// the scan ran. Anything else is unreadable — the forced
+							// checkout would clobber it, so it blocks the switch.
+							if (!isENOENT(e)) {
+								unreadableFiles.push(filepath as string);
+								continue;
+							}
 						}
 					}
 
 					const stagedOid = stagedOids[filepath as string];
 					if (stagedOid) {
-						const { blob } = await git.readBlob({
-							fs: this.fs!,
-							dir: this.dir,
-							oid: stagedOid
-						});
-						stagedContent = blob;
+						try {
+							const { blob } = await git.readBlob({
+								fs: this.fs!,
+								dir: this.dir,
+								oid: stagedOid
+							});
+							stagedContent = blob;
+						} catch (e) {
+							unreadableFiles.push(filepath as string);
+							continue;
+						}
 					}
 
 					snapshots.push({
@@ -521,7 +531,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				}
 			}
 		} catch (e: any) {
+			console.error('[Git] Snapshot failed, branch switch aborted', e);
 			return { status: 'error', message: `Snapshot failed: ${e.message || e}` };
+		}
+
+		if (unreadableFiles.length > 0) {
+			return { status: 'blocked', reason: 'unreadable', files: unreadableFiles };
 		}
 
 		// 2. Perform checkout (with force: true to overwrite changes that isomorphic-git would complain about.

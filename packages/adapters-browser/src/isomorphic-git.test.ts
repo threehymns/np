@@ -342,7 +342,7 @@ describe('IsomorphicGitAdapter', () => {
 		expect(result).toBe(false);
 	});
 
-	it('switchBranch aborts before a forced checkout when a snapshot worktree read fails', async () => {
+	it('switchBranch blocks with the file named when a snapshot worktree read fails', async () => {
 		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
 			['blocked.txt', 1, 2, 1] // Modified unstaged
 		]);
@@ -376,8 +376,11 @@ describe('IsomorphicGitAdapter', () => {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			const result = await adapter.switchBranch('feature');
 
-			expect(result.status).toBe('error');
-			expect((result as { message: string }).message).toContain('Snapshot failed');
+			expect(result.status).toBe('blocked');
+			if (result.status === 'blocked') {
+				expect(result.reason).toBe('unreadable');
+				expect(result.files).toEqual(['blocked.txt']);
+			}
 			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
 			expect(forcedCalls.length).toBe(0);
 		} finally {
@@ -460,7 +463,7 @@ describe('IsomorphicGitAdapter', () => {
 		}
 	});
 
-	it('switchBranch aborts before a forced checkout when a snapshot staged-blob read fails', async () => {
+	it('switchBranch blocks with the file named when a snapshot staged-blob read fails', async () => {
 		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
 			['blocked.txt', 1, 1, 2] // Staged modification
 		]);
@@ -494,8 +497,65 @@ describe('IsomorphicGitAdapter', () => {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			const result = await adapter.switchBranch('feature');
 
-			expect(result.status).toBe('error');
-			expect((result as { message: string }).message).toContain('Snapshot failed');
+			expect(result.status).toBe('blocked');
+			if (result.status === 'blocked') {
+				expect(result.reason).toBe('unreadable');
+				expect(result.files).toEqual(['blocked.txt']);
+			}
+			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
+			expect(forcedCalls.length).toBe(0);
+		} finally {
+			mockGit.statusMatrix = origStatusMatrix;
+			mockGit.checkout = origCheckout;
+			(git as any).walk = origWalk;
+			(git as any).readBlob = origReadBlob;
+			(git as any).resolveRef = origResolveRef;
+			(git as any).currentBranch = origCurrentBranch;
+		}
+	});
+
+	it('switchBranch blocks naming every unreadable file, not just the first', async () => {
+		const statusMatrixSpy = mock(async (): Promise<StatusRow[]> => [
+			['blocked-a.txt', 1, 2, 1], // Modified unstaged
+			['blocked-b.txt', 1, 2, 1] // Modified unstaged
+		]);
+		const checkoutSpy = mock(async () => {});
+		const walkSpy = mock(async ({ map }: { map: Function }) => {
+			for (const name of ['blocked-a.txt', 'blocked-b.txt']) {
+				await map(name, [{
+					type: async () => 'blob',
+					oid: async () => 'staged-oid'
+				}]);
+			}
+		});
+		const readBlobSpy = mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
+		const resolveRefSpy = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
+		const currentBranchSpy = mock(async () => 'main');
+		const origStatusMatrix = git.statusMatrix;
+		const origCheckout = git.checkout;
+		const origWalk = git.walk;
+		const origReadBlob = git.readBlob;
+		const origResolveRef = git.resolveRef;
+		const origCurrentBranch = git.currentBranch;
+		mockGit.statusMatrix = statusMatrixSpy;
+		mockGit.checkout = checkoutSpy;
+		(git as any).walk = walkSpy;
+		(git as any).readBlob = readBlobSpy;
+		(git as any).resolveRef = resolveRefSpy;
+		(git as any).currentBranch = currentBranchSpy;
+		mockDirectoryHandle.getFileHandle = mock(async () => {
+			throw Object.assign(new Error('NotReadableError: blocked'), { name: 'NotReadableError' });
+		});
+
+		try {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('blocked');
+			if (result.status === 'blocked') {
+				expect(result.reason).toBe('unreadable');
+				expect(result.files).toEqual(['blocked-a.txt', 'blocked-b.txt']);
+			}
 			const forcedCalls = checkoutSpy.mock.calls.filter(([args]: [{ force?: boolean }]) => args.force);
 			expect(forcedCalls.length).toBe(0);
 		} finally {

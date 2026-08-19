@@ -1,7 +1,7 @@
 export type SwitchResult =
 	| { status: 'switched' }
 	| { status: 'noop' }
-	| { status: 'blocked'; reason: 'conflict' | 'worktree'; files: string[] }
+	| { status: 'blocked'; reason: 'conflict' | 'worktree' | 'unreadable'; files: string[] }
 	| { status: 'error'; message: string };
 
 export interface VCSStatus {
