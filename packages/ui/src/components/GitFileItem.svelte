@@ -55,7 +55,7 @@
 		} else if (action === 'diff') {
 			appState.commands.execute('git.openDiff', change.filepath);
 		} else if (action === 'open') {
-			appState.commands.execute('file.openPath', change.filepath);
+			appState.commands.execute('file.open', change.filepath);
 		}
 	}
 </script>
@@ -197,7 +197,7 @@
 			<FileArrowUpIcon size={11} />
 			Open File
 			<ContextMenu.Shortcut>
-				{appState.keymaps.getShortcutForCommand('file.openPath')}
+				{appState.keymaps.getShortcutForCommand('file.open')}
 			</ContextMenu.Shortcut>
 		</ContextMenu.Item>
 	</ContextMenu.Content>
