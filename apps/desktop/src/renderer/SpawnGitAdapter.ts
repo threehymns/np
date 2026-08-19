@@ -48,8 +48,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'does not have an entry in index',
 		'exists on disk, but not in',
 		'did not match any file(s)',
-		'did not match any files',
 		'neither on disk nor in the index'
+	];
+
+	/** Markers for `git rm --cached` reporting that no index entries matched the pathspec (an empty unborn index). */
+	private static readonly RM_EMPTY_INDEX_MARKERS = [
+		'did not match any files'
 	];
 
 	/** Markers for the unborn-HEAD failure: `git reset`/`git restore` resolving `HEAD` on a repository with no commits yet. */
@@ -61,6 +65,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	private isPathNotFoundError(stderr: string): boolean {
 		return SpawnGitAdapter.PATH_NOT_FOUND_MARKERS.some(marker => stderr.includes(marker));
+	}
+
+	private isRmEmptyIndexError(stderr: string): boolean {
+		return SpawnGitAdapter.RM_EMPTY_INDEX_MARKERS.some(marker => stderr.includes(marker));
 	}
 
 	private isUnbornHeadError(stderr: string): boolean {
@@ -345,7 +353,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// fallback only runs when the repository is genuinely commit-less.
 			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
 				const rmRes = await this.runGit(['rm', '--cached', '-q', '-r', '--', '.']);
-				if (rmRes.code !== 0 && !this.isPathNotFoundError(rmRes.stderr)) {
+				if (rmRes.code !== 0 && !this.isRmEmptyIndexError(rmRes.stderr)) {
 					throw new Error(rmRes.stderr || 'Failed to unstage all changes');
 				}
 				return;

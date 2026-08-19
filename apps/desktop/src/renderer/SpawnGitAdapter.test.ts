@@ -457,6 +457,20 @@ describe('SpawnGitAdapter', () => {
 		expect(commands.some(cmd => cmd[0] === 'rm')).toBe(false);
 	});
 
+	it('unstageAll propagates a real rm --cached failure on an unborn HEAD', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'restore') {
+				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
+			}
+			if (args[0] === 'rm') {
+				return { code: 128, stdout: '', stderr: 'fatal: rm failed' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageAll()).rejects.toThrow('rm failed');
+	});
+
 	it('unstageAll treats an empty unborn index as a successful no-op', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'restore') {
