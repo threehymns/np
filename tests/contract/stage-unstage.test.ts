@@ -309,6 +309,18 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await lsFiles(r)).toEqual([]);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
+
+		it('unstageFile treats an unstaged path in an unborn repository as a successful no-op', async () => {
+			const r = await createTrackedRepo();
+			await r.write('first.txt', 'first content\n');
+			const adapter = engine.adapter(r);
+			expect(await lsFiles(r)).toEqual([]);
+
+			await adapter.unstageFile('first.txt');
+
+			expect(await lsFiles(r)).toEqual([]);
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'first.txt' }]);
+		});
 	});
 
 	describe(`${engine.name} — index-content engine`, () => {

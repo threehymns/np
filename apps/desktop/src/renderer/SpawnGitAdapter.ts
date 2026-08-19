@@ -221,7 +221,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// repository is genuinely commit-less.
 			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
 				const rmRes = await this.runGit(['rm', '--cached', '-q', '--', ...paths]);
-				if (rmRes.code !== 0) {
+				if (rmRes.code !== 0 && !this.isRmEmptyIndexError(rmRes.stderr)) {
 					throw new Error(rmRes.stderr || `Failed to unstage file: ${filepath}`);
 				}
 				return;

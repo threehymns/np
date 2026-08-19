@@ -423,6 +423,26 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('rm failed');
 	});
 
+	it('unstageFile treats an unstaged path in an unborn repository as a successful no-op', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'reset') {
+				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
+			}
+			if (args[0] === 'symbolic-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args[1] === '--verify') {
+				return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+			}
+			if (args[0] === 'rm') {
+				return { code: 1, stdout: '', stderr: "fatal: pathspec 'file.txt' did not match any files" };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).resolves.toBeUndefined();
+	});
+
 	it('unstageFile does not fall back when a broken HEAD hides an existing repository', async () => {
 		const commands: string[][] = [];
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
