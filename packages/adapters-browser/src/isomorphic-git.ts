@@ -645,9 +645,21 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					} catch (e) {}
 				}
 			} else if (stagedContent) {
-				await writeFileSafe(stagedContent);
-				await git.add({ fs: this.fs!, dir: this.dir, filepath });
-				await unlinkSafe();
+				if (await isTrulyAbsent()) {
+					await writeFileSafe(stagedContent);
+					await git.add({ fs: this.fs!, dir: this.dir, filepath });
+					await unlinkSafe();
+				} else {
+					let currentWorktree: Uint8Array | null = null;
+					try {
+						currentWorktree = await this.readWorktreeBytes(filepath);
+					} catch {}
+					if (currentWorktree !== null) {
+						await writeFileSafe(stagedContent);
+						await git.add({ fs: this.fs!, dir: this.dir, filepath });
+						await writeFileSafe(currentWorktree);
+					}
+				}
 			} else {
 				if (await isTrulyAbsent()) {
 					await unlinkSafe();

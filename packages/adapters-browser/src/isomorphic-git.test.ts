@@ -646,6 +646,70 @@ describe('IsomorphicGitAdapter', () => {
 		});
 	});
 
+	it('switchBranch keeps a staged-deleted file recreated after the pre-checkout re-read', async () => {
+		const stagedBytes = new TextEncoder().encode('staged blob text\n');
+		let reads = 0;
+		const state = { content: new Uint8Array(0) };
+		let addedFilePath: string | null = null;
+
+		await withSwitchBranchMocks({
+			statusMatrix: [['staged-deleted.txt', 1, 0, 2]], // Staged modification, worktree deleted
+			readBlob: async () => ({ blob: stagedBytes, oid: 'staged-oid' }),
+			getFileHandle: async (name: string, opts?: { create?: boolean }) => {
+				if (opts?.create) {
+					return {
+						kind: 'file',
+						name,
+						createWritable: mock(async () => ({
+							write: mock(async (data: Uint8Array | string) => {
+								state.content = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+							}),
+							close: mock(async () => {})
+						}))
+					};
+				}
+				reads++;
+				if (reads === 1) {
+					// Absent at pre-checkout re-read
+					throw fileError('NotFoundError', 'NotFoundError: gone');
+				}
+				// Recreated after pre-checkout re-read
+				state.content = new TextEncoder().encode('recreated staged-deleted content\n');
+				return {
+					kind: 'file',
+					name,
+					getFile: mock(async () => ({
+						text: mock(async () => new TextDecoder().decode(state.content)),
+						arrayBuffer: mock(async () => state.content.buffer),
+						size: state.content.length,
+						lastModified: Date.now()
+					})),
+					createWritable: mock(async () => ({
+						write: mock(async (data: Uint8Array | string) => {
+							state.content = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+						}),
+						close: mock(async () => {})
+					}))
+				};
+			}
+		}, async ({ checkout }) => {
+			(git as any).add = mock(async (opts: { filepath: string }) => {
+				addedFilePath = opts.filepath;
+			});
+			mockDirectoryHandle.removeEntry = mock(async () => {
+				state.content = new Uint8Array(0);
+			});
+
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			expect(addedFilePath).toBe('staged-deleted.txt');
+			expect(new TextDecoder().decode(state.content)).toBe('recreated staged-deleted content\n');
+		});
+	});
+
 	it('switchBranch blocks with the file named when a snapshot staged-blob read fails', async () => {
 		await withSwitchBranchMocks({
 			statusMatrix: [['blocked.txt', 1, 1, 2]], // Staged modification
