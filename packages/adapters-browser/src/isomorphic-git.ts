@@ -485,26 +485,21 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					let stagedContent: Uint8Array | null = null;
 
 					if (workdir !== 0) {
-						try {
-							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-							workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
-						} catch (e) {
-							console.warn(`[Git] Failed to read workdir content for snapshot: ${filepath}`, e);
-						}
+						// A snapshot with null content cannot restore the file after the
+						// forced checkout below, so a failed read aborts the switch
+						// instead of risking the user's changes.
+						const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
+						workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
 					}
 
 					const stagedOid = stagedOids[filepath as string];
 					if (stagedOid) {
-						try {
-							const { blob } = await git.readBlob({
-								fs: this.fs!,
-								dir: this.dir,
-								oid: stagedOid
-							});
-							stagedContent = blob;
-						} catch (e) {
-							console.warn(`[Git] Failed to read staged blob for snapshot: ${filepath}`, e);
-						}
+						const { blob } = await git.readBlob({
+							fs: this.fs!,
+							dir: this.dir,
+							oid: stagedOid
+						});
+						stagedContent = blob;
 					}
 
 					snapshots.push({
