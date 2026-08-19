@@ -23,7 +23,16 @@ export interface GitVersion extends GitFloor {
 
 export const GIT_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 23 });
 
-/** `git status` copy detection (`status.renames=copies`), added in git 2.18. */
+/**
+ * `git status` copy detection (`status.renames=copies`), added in git 2.18.
+ *
+ * Deliberately below GIT_FLOOR, so `copyDetectionGuard` can never fire on a
+ * supported git. Its role is documentation — the exact porcelain-code
+ * assertions hold for the whole supported range — plus protection if GIT_FLOOR
+ * is ever lowered beneath 2.18. Weakening those assertions instead would
+ * silently run the copy-path fixtures down a different adapter branch on a
+ * drifted version, so a loud precondition failure is the safer failure mode.
+ */
 export const COPY_DETECTION_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 18 });
 
 export const TEST_IDENTITY = Object.freeze({ name: 'Contract Test', email: 'contract@test.invalid' });
@@ -201,6 +210,15 @@ export async function gitFloorSkipReason(floor: GitFloor = GIT_FLOOR): Promise<s
 	const version = await gitVersion();
 	if (atLeastGit(version, floor)) return null;
 	return `requires git >= ${floor.major}.${floor.minor}.0 (found ${version.raw})`;
+}
+
+/** Guard pair for fixtures asserting exact copy-detection porcelain codes: [skip, reason]. */
+export function copyDetectionGuard(version: GitVersion): [skip: boolean, reason: string] {
+	if (atLeastGit(version, COPY_DETECTION_FLOOR)) return [false, ''];
+	return [
+		true,
+		`requires git >= ${COPY_DETECTION_FLOOR.major}.${COPY_DETECTION_FLOOR.minor}.0 for status copy detection (found ${version.raw})`
+	];
 }
 
 const defaultSkipReason = await gitFloorSkipReason();
