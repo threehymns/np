@@ -562,3 +562,25 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		});
 	});
 }
+
+describe('SpawnGitAdapter — broken-HEAD unstage guard', () => {
+	it('unstageAll surfaces a broken HEAD instead of emptying the index', async () => {
+		const r = await createTrackedRepo();
+		await baseRepo(r);
+		await r.write('hello.ts', HELLO_V1);
+		await stageAll(r);
+		// Point HEAD at a deleted branch: `restore --staged` fails with the same
+		// message as an unborn HEAD, but the repository has commits, so the unborn
+		// fallback must not run — a `rm --cached -r` here would unstage every
+		// tracked file and a subsequent commit would delete them all.
+		await r.write('.git/HEAD', 'ref: refs/heads/ghost\n');
+		const adapter = spawnEngine.adapter(r);
+
+		await expect(adapter.unstageAll()).rejects.toThrow();
+
+		// Every index entry survives: the guard must refuse to touch the index.
+		expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
+		expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V1);
+		expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+	});
+});

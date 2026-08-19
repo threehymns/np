@@ -67,6 +67,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return SpawnGitAdapter.UNBORN_HEAD_MARKERS.some(marker => stderr.includes(marker));
 	}
 
+	/**
+	 * True when no refs exist, i.e. nothing has ever been committed. A broken HEAD
+	 * on a repository with commits fails with the same "could not resolve 'HEAD'"
+	 * message as a true unborn HEAD, so the unborn fallbacks must not run unless
+	 * the repository is genuinely commit-less.
+	 */
+	private async isUnbornRepository(): Promise<boolean> {
+		const refs = await this.runGit(['for-each-ref', '--format=%(refname)']);
+		return refs.code === 0 && refs.stdout.trim() === '';
+	}
+
 	private async readGitObject(objectSpec: string): Promise<string | null> {
 		const res = await this.runGit(['show', objectSpec]);
 		if (res.code === 0) return res.stdout;
@@ -187,10 +198,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const res = await this.runGit(['reset', 'HEAD', '--', ...paths]);
 		if (res.code !== 0) {
 			// An unborn HEAD (no commits yet) cannot resolve 'HEAD' as a revision
-			// (older git rejects the explicit reset outright; newer git accepts it).
-			// Fall back to removing the index entries directly, leaving the worktree
-			// untouched — the same outcome reset produces once a first commit exists.
-			if (this.isUnbornHeadError(res.stderr)) {
+			// (older git rejects the explicit reset outright; newer git accepts it),
+			// so remove the index entries directly, leaving the worktree untouched —
+			// the same outcome reset produces once a first commit exists. The message
+			// alone is not proof of an unborn HEAD: a broken HEAD on a repo with
+			// commits emits the same error, so the fallback only runs when the
+			// repository is genuinely commit-less.
+			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
 				const rmRes = await this.runGit(['rm', '--cached', '-q', '--', ...paths]);
 				if (rmRes.code !== 0) {
 					throw new Error(rmRes.stderr || `Failed to unstage file: ${filepath}`);
@@ -326,8 +340,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (res.code !== 0) {
 			// Unborn HEAD: `git restore --staged` cannot resolve its default source.
 			// Empty the index with `rm --cached` instead, leaving the worktree
-			// untouched; a trailing "did not match" means nothing was staged.
-			if (this.isUnbornHeadError(res.stderr)) {
+			// untouched; a trailing "did not match" means nothing was staged. The
+			// marker also fires for a broken HEAD on a repo with commits, so the
+			// fallback only runs when the repository is genuinely commit-less.
+			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
 				const rmRes = await this.runGit(['rm', '--cached', '-q', '-r', '--', '.']);
 				if (rmRes.code !== 0 && !this.isPathNotFoundError(rmRes.stderr)) {
 					throw new Error(rmRes.stderr || 'Failed to unstage all changes');

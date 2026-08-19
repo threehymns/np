@@ -365,6 +365,42 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.unstageFile('file.txt')).rejects.toThrow('rm failed');
 	});
 
+	it('unstageFile does not fall back when a broken HEAD hides an existing repository', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'reset') {
+				return { code: 1, stdout: '', stderr: "fatal: ambiguous argument 'HEAD'" };
+			}
+			if (args[0] === 'for-each-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageFile('file.txt')).rejects.toThrow("ambiguous argument 'HEAD'");
+
+		expect(commands.some(cmd => cmd[0] === 'rm')).toBe(false);
+	});
+
+	it('unstageFile falls back when git fails to resolve HEAD as a valid ref', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'reset') {
+				return { code: 1, stdout: '', stderr: "fatal: Failed to resolve 'HEAD' as a valid ref." };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await adapter.unstageFile('file.txt');
+
+		expect(commands).toContainEqual(['for-each-ref', '--format=%(refname)']);
+		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
+	});
+
 	it('unstageFile propagates a git status failure instead of swallowing it', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'status') {
@@ -400,6 +436,25 @@ describe('SpawnGitAdapter', () => {
 		await adapter.unstageAll();
 
 		expect(commands).toContainEqual(['rm', '--cached', '-q', '-r', '--', '.']);
+	});
+
+	it('unstageAll does not fall back when a broken HEAD hides an existing repository', async () => {
+		const commands: string[][] = [];
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			commands.push(args);
+			if (args[0] === 'restore') {
+				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
+			}
+			if (args[0] === 'for-each-ref') {
+				return { code: 0, stdout: 'refs/heads/main\n', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		await expect(adapter.unstageAll()).rejects.toThrow("could not resolve 'HEAD'");
+
+		expect(commands.some(cmd => cmd[0] === 'rm')).toBe(false);
 	});
 
 	it('unstageAll treats an empty unborn index as a successful no-op', async () => {
