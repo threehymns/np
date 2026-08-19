@@ -471,21 +471,6 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.unstageAll()).rejects.toThrow('rm failed');
 	});
 
-	it('unstageAll treats an empty unborn index as a successful no-op', async () => {
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'restore') {
-				return { code: 1, stdout: '', stderr: "fatal: could not resolve 'HEAD'" };
-			}
-			if (args[0] === 'rm') {
-				return { code: 128, stdout: '', stderr: "fatal: pathspec '.' did not match any files" };
-			}
-			return { code: 0, stdout: '', stderr: '' };
-		});
-
-		const adapter = new SpawnGitAdapter(rootOrigin);
-		await adapter.unstageAll();
-	});
-
 	it('unstageAll propagates a non-unborn restore failure', async () => {
 		mockGitRun.mockImplementation(async () => ({ code: 1, stdout: '', stderr: 'fatal: restore failed' }));
 		const adapter = new SpawnGitAdapter(rootOrigin);

@@ -296,6 +296,19 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'first.txt')).toBe('first content\n');
 			expect(await worktreeContents(r, 'second.txt')).toBe('second content\n');
 		});
+
+		it('unstageAll treats an empty unborn index as a successful no-op', async () => {
+			const r = await createTrackedRepo();
+			const adapter = engine.adapter(r);
+			expect(await lsFiles(r)).toEqual([]);
+
+			await adapter.unstageAll();
+
+			// Nothing is staged, so the fallback's `rm --cached` finds no entries:
+			// the call must still succeed and leave the empty repository untouched.
+			expect(await lsFiles(r)).toEqual([]);
+			expect(await porcelainStatus(r)).toEqual([]);
+		});
 	});
 
 	describe(`${engine.name} — index-content engine`, () => {
