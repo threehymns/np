@@ -108,6 +108,28 @@ describe('resolveRenamedHeadContent', () => {
 		expect(res).toBeNull();
 	});
 
+	it('returns null when top candidate only matches extension (score 1 below threshold 2)', async () => {
+		(git as any).walk = mock(async ({ map }: { map: Function }) => {
+			// deleted in other-dir/old.ts: different dir, different basename, same ext -> score 1
+			await map('other-dir/old.ts', [{
+				type: async () => 'blob',
+				oid: async () => 'candidate-ext-only'
+			}]);
+		});
+		(git as any).readBlob = mock(async () => {
+			return { blob: new TextEncoder().encode('other content') };
+		});
+
+		const res = await resolveRenamedHeadContent({
+			fs: mockFs,
+			dir: '/repo',
+			headCommit: 'head-oid',
+			filepath: 'src/new.ts',
+			workdirContent: 'const fresh = true;'
+		});
+		expect(res).toBeNull();
+	});
+
 	it('returns null when candidates are tied for highest score (ambiguous)', async () => {
 		(git as any).walk = mock(async ({ map }: { map: Function }) => {
 			// Two files in src/ with .ts extension deleted -> both score 3
