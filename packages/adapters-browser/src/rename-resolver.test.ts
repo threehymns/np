@@ -284,4 +284,41 @@ describe('resolveRenamedHeadContent', () => {
 			(git as any).hashBlob = origHashBlob;
 		}
 	});
+
+	it('does not read filesystem when workdirContent is provided as empty string', async () => {
+		const readFileMock = mock(async () => {
+			throw new Error('readFile should not be called');
+		});
+		const customFs = {
+			promises: {
+				readFile: readFileMock,
+				stat: mock(async () => {
+					const err = new Error('ENOENT');
+					(err as any).code = 'ENOENT';
+					throw err;
+				})
+			}
+		};
+
+		(git as any).walk = mock(async ({ map }: { map: Function }) => {
+			await map('src/old-empty.ts', [{
+				type: async () => 'blob',
+				oid: async () => 'empty-blob-oid'
+			}]);
+		});
+		(git as any).readBlob = mock(async () => {
+			return { blob: new Uint8Array() };
+		});
+
+		const res = await resolveRenamedHeadContent({
+			fs: customFs,
+			dir: '/repo',
+			headCommit: 'head-oid',
+			filepath: 'src/new-empty.ts',
+			workdirContent: ''
+		});
+
+		expect(readFileMock).not.toHaveBeenCalled();
+		expect(res).toBe('');
+	});
 });

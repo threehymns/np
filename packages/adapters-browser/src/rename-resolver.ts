@@ -28,7 +28,7 @@ export async function resolveRenamedHeadContent(params: RenameResolutionParams):
 
 	if (!targetOid) {
 		let buffer: Uint8Array | string | null = null;
-		if (workdirContent !== undefined && workdirContent !== '') {
+		if (workdirContent !== undefined) {
 			buffer = workdirContent;
 		} else {
 			try {
