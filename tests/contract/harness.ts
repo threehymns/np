@@ -69,6 +69,7 @@ export function gitEnv(homePath: string): Record<string, string> {
 	delete env.GIT_CONFIG;
 	delete env.GIT_CONFIG_SYSTEM;
 	delete env.GIT_CONFIG_COUNT;
+	delete env.GIT_CONFIG_PARAMETERS;
 	delete env.XDG_CONFIG_HOME;
 	delete env.GIT_DIR;
 	delete env.GIT_WORK_TREE;

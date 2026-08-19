@@ -9,6 +9,7 @@ import {
 	createTrackedRepo,
 	currentBranch,
 	describe,
+	gitEnv,
 	gitFloorSkipReason,
 	gitVersion,
 	headAuthor,
@@ -20,6 +21,16 @@ import {
 } from './harness';
 
 describe('contract harness', () => {
+	it('gitEnv scrubs developer git configuration environment variables including GIT_CONFIG_PARAMETERS', () => {
+		process.env.GIT_CONFIG_PARAMETERS = "'user.name=Leaked'";
+		try {
+			const env = gitEnv('/fake/home');
+			expect(env.GIT_CONFIG_PARAMETERS).toBeUndefined();
+			expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
+		} finally {
+			delete process.env.GIT_CONFIG_PARAMETERS;
+		}
+	});
 	it('creates a fresh repository per test with its own temp root and .git', async () => {
 		const a = await createTrackedRepo();
 		const b = await createTrackedRepo();
