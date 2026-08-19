@@ -354,10 +354,17 @@ describe('IsomorphicGitAdapter', () => {
 
 	async function withSwitchBranchMocks<T>(
 		mocks: SwitchBranchMocks,
-		fn: (spies: { checkout: Mock<() => Promise<void>>; add: Mock<() => Promise<void>> }) => Promise<T>
+		fn: (spies: {
+			checkout: Mock<() => Promise<void>>;
+			add: Mock<() => Promise<void>>;
+			updateIndex: Mock<() => Promise<void>>;
+			writeBlob: Mock<() => Promise<string>>;
+		}) => Promise<T>
 	): Promise<T> {
 		const checkout = mock(async () => {});
 		const add = mock(async () => {});
+		const updateIndex = mock(async () => {});
+		const writeBlob = mock(async () => 'restored-oid');
 		const readBlob = mocks.readBlob ?? mock(async () => ({ blob: new Uint8Array(1), oid: 'same-oid' }));
 		const resolveRef = mock(async ({ ref }: { ref: string }) => (ref === 'HEAD' ? 'head-oid' : 'target-oid'));
 		const currentBranch = mock(async () => 'main');
@@ -365,7 +372,8 @@ describe('IsomorphicGitAdapter', () => {
 			for (const [filepath] of mocks.statusMatrix) {
 				await map(filepath as string, [{
 					type: async () => 'blob',
-					oid: async () => 'staged-oid'
+					oid: async () => 'staged-oid',
+					mode: async () => 0o100644
 				}]);
 			}
 		});
@@ -373,6 +381,8 @@ describe('IsomorphicGitAdapter', () => {
 			statusMatrix: mockGit.statusMatrix,
 			checkout: mockGit.checkout,
 			add: mockGit.add,
+			updateIndex: mockGit.updateIndex,
+			writeBlob: (git as any).writeBlob,
 			readBlob: (git as any).readBlob,
 			resolveRef: (git as any).resolveRef,
 			currentBranch: (git as any).currentBranch,
@@ -383,6 +393,8 @@ describe('IsomorphicGitAdapter', () => {
 		mockGit.statusMatrix = mock(async (): Promise<StatusRow[]> => mocks.statusMatrix);
 		mockGit.checkout = checkout;
 		mockGit.add = add;
+		mockGit.updateIndex = updateIndex;
+		(git as any).writeBlob = writeBlob;
 		(git as any).readBlob = readBlob;
 		(git as any).resolveRef = resolveRef;
 		(git as any).currentBranch = currentBranch;
@@ -392,11 +404,13 @@ describe('IsomorphicGitAdapter', () => {
 		}
 
 		try {
-			return await fn({ checkout, add });
+			return await fn({ checkout, add, updateIndex, writeBlob });
 		} finally {
 			mockGit.statusMatrix = originals.statusMatrix;
 			mockGit.checkout = originals.checkout;
 			mockGit.add = originals.add;
+			mockGit.updateIndex = originals.updateIndex;
+			(git as any).writeBlob = originals.writeBlob;
 			(git as any).readBlob = originals.readBlob;
 			(git as any).resolveRef = originals.resolveRef;
 			(git as any).currentBranch = originals.currentBranch;
@@ -621,14 +635,20 @@ describe('IsomorphicGitAdapter', () => {
 	it('switchBranch restores staged content and unlinks worktree file when workdir was deleted', async () => {
 		const stagedBytes = new TextEncoder().encode('staged blob text\n');
 		let worktreeUnlinked = false;
-		let addedFilePath: string | null = null;
+		let updatedIndexOpts: { filepath: string; oid?: string; add?: boolean } | null = null;
+		let writtenBlob: Uint8Array | null = null;
 
 		await withSwitchBranchMocks({
 			statusMatrix: [['staged-deleted.txt', 1, 0, 2]], // Staged modification, worktree deleted
-			readBlob: async () => ({ blob: stagedBytes, oid: 'staged-oid' })
-		}, async ({ checkout }) => {
-			(git as any).add = mock(async (opts: { filepath: string }) => {
-				addedFilePath = opts.filepath;
+			readBlob: async () => ({ blob: stagedBytes, oid: 'staged-oid' }),
+			getFileHandle: async () => { throw fileError('NotFoundError', 'NotFoundError: gone'); }
+		}, async ({ checkout, updateIndex, writeBlob }) => {
+			updateIndex.mockImplementation(async (opts: any) => {
+				updatedIndexOpts = opts;
+			});
+			writeBlob.mockImplementation(async (opts: any) => {
+				writtenBlob = opts.blob;
+				return 'written-staged-oid';
 			});
 			mockDirectoryHandle.removeEntry = mock(async (name: string) => {
 				if (name === 'staged-deleted.txt') {
@@ -641,7 +661,8 @@ describe('IsomorphicGitAdapter', () => {
 
 			expect(result.status).toBe('switched');
 			expect(forcedCheckouts(checkout).length).toBe(1);
-			expect(addedFilePath).toBe('staged-deleted.txt');
+			expect(writtenBlob).toEqual(stagedBytes);
+			expect(updatedIndexOpts).toMatchObject({ filepath: 'staged-deleted.txt', oid: 'written-staged-oid', add: true });
 			expect(worktreeUnlinked).toBe(true);
 		});
 	});
@@ -650,7 +671,8 @@ describe('IsomorphicGitAdapter', () => {
 		const stagedBytes = new TextEncoder().encode('staged blob text\n');
 		let reads = 0;
 		const state = { content: new Uint8Array(0) };
-		let addedFilePath: string | null = null;
+		let updatedIndexOpts: { filepath: string; oid?: string; add?: boolean } | null = null;
+		let worktreeWritten = false;
 
 		await withSwitchBranchMocks({
 			statusMatrix: [['staged-deleted.txt', 1, 0, 2]], // Staged modification, worktree deleted
@@ -662,6 +684,7 @@ describe('IsomorphicGitAdapter', () => {
 						name,
 						createWritable: mock(async () => ({
 							write: mock(async (data: Uint8Array | string) => {
+								worktreeWritten = true;
 								state.content = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
 							}),
 							close: mock(async () => {})
@@ -686,15 +709,16 @@ describe('IsomorphicGitAdapter', () => {
 					})),
 					createWritable: mock(async () => ({
 						write: mock(async (data: Uint8Array | string) => {
+							worktreeWritten = true;
 							state.content = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
 						}),
 						close: mock(async () => {})
 					}))
 				};
 			}
-		}, async ({ checkout }) => {
-			(git as any).add = mock(async (opts: { filepath: string }) => {
-				addedFilePath = opts.filepath;
+		}, async ({ checkout, updateIndex }) => {
+			updateIndex.mockImplementation(async (opts: any) => {
+				updatedIndexOpts = opts;
 			});
 			mockDirectoryHandle.removeEntry = mock(async () => {
 				state.content = new Uint8Array(0);
@@ -705,7 +729,9 @@ describe('IsomorphicGitAdapter', () => {
 
 			expect(result.status).toBe('switched');
 			expect(forcedCheckouts(checkout).length).toBe(1);
-			expect(addedFilePath).toBe('staged-deleted.txt');
+			// Staged index was restored directly without overwriting the worktree
+			expect(updatedIndexOpts).toMatchObject({ filepath: 'staged-deleted.txt', add: true });
+			expect(worktreeWritten).toBe(false);
 			expect(new TextDecoder().decode(state.content)).toBe('recreated staged-deleted content\n');
 		});
 	});
@@ -739,6 +765,44 @@ describe('IsomorphicGitAdapter', () => {
 
 			expect(result).toMatchObject({ status: 'blocked', reason: 'unreadable', files: ['blocked-a.txt', 'blocked-b.txt'] });
 			expect(forcedCheckouts(checkout).length).toBe(0);
+		});
+	});
+
+	it('switchBranch never overwrites worktree files with staged bytes during snapshot restoration', async () => {
+		const stagedBytes = new TextEncoder().encode('staged blob content\n');
+		const writtenToWorktree: string[] = [];
+
+		await withSwitchBranchMocks({
+			statusMatrix: [['staged-mod.txt', 1, 2, 2]], // Staged + unstaged modification
+			readBlob: async () => ({ blob: stagedBytes, oid: 'staged-oid' }),
+			getFileHandle: async (name: string) => ({
+				kind: 'file',
+				name,
+				getFile: mock(async () => ({
+					text: mock(async () => 'workdir user edit\n'),
+					arrayBuffer: mock(async () => new TextEncoder().encode('workdir user edit\n').buffer),
+					size: 18,
+					lastModified: Date.now()
+				})),
+				createWritable: mock(async () => ({
+					write: mock(async (data: Uint8Array | string) => {
+						const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
+						writtenToWorktree.push(str);
+					}),
+					close: mock(async () => {})
+				}))
+			})
+		}, async ({ checkout, updateIndex, writeBlob }) => {
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			// Staged content is written to Git object database, not worktree
+			expect(writeBlob).toHaveBeenCalledTimes(1);
+			expect(updateIndex).toHaveBeenCalledTimes(1);
+			// Worktree only received the worktree content once, never the staged content
+			expect(writtenToWorktree).toEqual(['workdir user edit\n']);
 		});
 	});
 });

@@ -224,6 +224,7 @@ interface FileSnapshot {
 	stage: number;
 	workdirContent: Uint8Array | null;
 	stagedContent: Uint8Array | null;
+	stagedMode?: number;
 }
 
 export class IsomorphicGitAdapter implements VCSAdapter {
@@ -467,7 +468,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 
 			if (dirtyRows.length > 0) {
-				const stagedOids: Record<string, string> = {};
+				const stagedEntries: Record<string, { oid: string; mode?: number }> = {};
 				await git.walk({
 					fs: this.fs!,
 					dir: this.dir,
@@ -476,7 +477,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						if (filepath === '.' || !entry) return;
 						const type = await entry.type();
 						if (type === 'blob') {
-							stagedOids[filepath] = await entry.oid();
+							const oid = await entry.oid();
+							const mode = await entry.mode();
+							if (oid) stagedEntries[filepath] = { oid, mode };
 						}
 					}
 				});
@@ -484,6 +487,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				for (const [filepath, head, workdir, stage] of dirtyRows) {
 					let workdirContent: Uint8Array | null = null;
 					let stagedContent: Uint8Array | null = null;
+					let stagedMode: number | undefined = undefined;
 
 					if (workdir !== 0) {
 						// A snapshot with null content cannot restore the file after the
@@ -500,15 +504,16 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						}
 					}
 
-					const stagedOid = stagedOids[filepath as string];
-					if (stagedOid && stage !== 1) {
+					const stagedEntry = stagedEntries[filepath as string];
+					if (stagedEntry && stage !== 1) {
 						try {
 							const { blob } = await git.readBlob({
 								fs: this.fs!,
 								dir: this.dir,
-								oid: stagedOid
+								oid: stagedEntry.oid
 							});
 							stagedContent = blob;
+							stagedMode = stagedEntry.mode;
 						} catch (e) {
 							unreadableFiles.push(filepath as string);
 							continue;
@@ -521,7 +526,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						workdir: workdir as number,
 						stage: stage as number,
 						workdirContent,
-						stagedContent
+						stagedContent,
+						stagedMode
 					});
 				}
 			}
@@ -583,7 +589,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	private async restoreSnapshots(snapshots: FileSnapshot[], checkoutCommit: string | null): Promise<void> {
 		for (const snap of snapshots) {
-			const { filepath, workdirContent, stagedContent, stage } = snap;
+			const { filepath, workdirContent, stagedContent, stagedMode, stage } = snap;
 			const fullPath = `${this.dir}/${filepath}`;
 
 			// A path recorded as absent may have been recreated after the
@@ -631,43 +637,36 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				await this.fs!.promises.unlink(fullPath).catch(() => {});
 			};
 
-			if (workdirContent && stagedContent) {
+			// Restore index staging state without touching the worktree:
+			// Writing staged blobs directly into git object storage and updating
+			// the index avoids bouncing content through the worktree via `git.add`,
+			// which would race with and overwrite concurrent local writes.
+			if (stagedContent) {
+				const oid = await git.writeBlob({
+					fs: this.fs!,
+					dir: this.dir,
+					blob: stagedContent
+				});
+				await git.updateIndex({
+					fs: this.fs!,
+					dir: this.dir,
+					filepath,
+					oid,
+					add: true,
+					mode: stagedMode ?? 0o100644
+				});
+			} else if (stage === 0) {
+				await this.removeFromIndex(filepath);
+			}
+
+			// Restore worktree state:
+			// If workdir had content, restore it. If workdir was absent/deleted,
+			// unlink checkout content only if no concurrent recreation occurred.
+			if (workdirContent !== null) {
 				await writeFileSafe(workdirContent);
-				await unlinkSafe(); // clear cache
-				await writeFileSafe(stagedContent);
-				await git.add({ fs: this.fs!, dir: this.dir, filepath });
-				await writeFileSafe(workdirContent);
-			} else if (workdirContent) {
-				await writeFileSafe(workdirContent);
-				if (stage === 0) {
-					try {
-						await git.remove({ fs: this.fs!, dir: this.dir, filepath });
-					} catch (e) {}
-				}
-			} else if (stagedContent) {
-				if (await isTrulyAbsent()) {
-					await writeFileSafe(stagedContent);
-					await git.add({ fs: this.fs!, dir: this.dir, filepath });
-					await unlinkSafe();
-				} else {
-					let currentWorktree: Uint8Array | null = null;
-					try {
-						currentWorktree = await this.readWorktreeBytes(filepath);
-					} catch {}
-					if (currentWorktree !== null) {
-						await writeFileSafe(stagedContent);
-						await git.add({ fs: this.fs!, dir: this.dir, filepath });
-						await writeFileSafe(currentWorktree);
-					}
-				}
 			} else {
 				if (await isTrulyAbsent()) {
 					await unlinkSafe();
-					if (stage === 0) {
-						try {
-							await git.remove({ fs: this.fs!, dir: this.dir, filepath });
-						} catch (e) {}
-					}
 				}
 			}
 		}
