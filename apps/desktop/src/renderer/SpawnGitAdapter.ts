@@ -433,7 +433,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (parts.length >= 3) {
 				const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
 				const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
-				const rawPath = parts.slice(2).join('\t').trim();
+				const rawPath = parts.slice(2).join('\t');
 				let targetPath = rawPath;
 				if (targetPath.includes(' => ')) {
 					if (targetPath.includes('{') && targetPath.includes('}')) {

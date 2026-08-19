@@ -181,6 +181,49 @@ describe('SpawnGitAdapter', () => {
 		expect(bothUnstaged?.deletions).toBe(0);
 	});
 
+	it('preserves leading and trailing whitespace in filenames from numstat during getChanges', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			const cmd = args.join(' ');
+			if (cmd.startsWith('status')) {
+				return {
+					code: 0,
+					stdout: 'MM  leading_space.ts\0M  trailing_space.ts \0',
+					stderr: ''
+				};
+			}
+			if (cmd === 'diff --cached --numstat') {
+				return {
+					code: 0,
+					stdout: '7\t2\t leading_space.ts\n12\t4\ttrailing_space.ts \n',
+					stderr: ''
+				};
+			}
+			if (cmd === 'diff --numstat') {
+				return {
+					code: 0,
+					stdout: '5\t1\t leading_space.ts\n',
+					stderr: ''
+				};
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const changes = await adapter.getChanges();
+
+		const leadingStaged = changes.find(c => c.filepath === ' leading_space.ts' && c.staged);
+		expect(leadingStaged?.additions).toBe(7);
+		expect(leadingStaged?.deletions).toBe(2);
+
+		const leadingUnstaged = changes.find(c => c.filepath === ' leading_space.ts' && !c.staged);
+		expect(leadingUnstaged?.additions).toBe(5);
+		expect(leadingUnstaged?.deletions).toBe(1);
+
+		const trailingStaged = changes.find(c => c.filepath === 'trailing_space.ts ' && c.staged);
+		expect(trailingStaged?.additions).toBe(12);
+		expect(trailingStaged?.deletions).toBe(4);
+	});
+
 	it('updateIndexContent throws when git apply --cached fails', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
