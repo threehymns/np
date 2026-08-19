@@ -11,15 +11,20 @@ import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdap
 import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
 	TestRepo,
+	atLeastGit,
 	createTrackedRepo,
 	describe,
+	gitVersion,
 	it,
 	indexContents,
 	lsFiles,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	worktreeContents,
+	COPY_DETECTION_FLOOR
 } from './harness';
+
+const copyVersion = await gitVersion();
 
 function origin(r: TestRepo): FileOrigin {
 	return { scheme: 'file', path: r.path, name: 'repo' };
@@ -168,7 +173,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'moved.txt')).toBe(DEST_EDITED);
 		});
 
-		it('discards a staged copy without touching the source file', async () => {
+		it.skipIf(
+			!atLeastGit(copyVersion, COPY_DETECTION_FLOOR),
+			`requires git >= ${COPY_DETECTION_FLOOR.major}.${COPY_DETECTION_FLOOR.minor}.0 for status copy detection (found ${copyVersion.raw})`
+		)('discards a staged copy without touching the source file', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const config = await r.git(['config', 'status.renames', 'copies']);
@@ -195,7 +203,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'copy.txt')).toBe(null);
 		});
 
-		it('discards a staged copy with unstaged destination edits, keeping the edits', async () => {
+		it.skipIf(
+			!atLeastGit(copyVersion, COPY_DETECTION_FLOOR),
+			`requires git >= ${COPY_DETECTION_FLOOR.major}.${COPY_DETECTION_FLOOR.minor}.0 for status copy detection (found ${copyVersion.raw})`
+		)('discards a staged copy with unstaged destination edits, keeping the edits', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const config = await r.git(['config', 'status.renames', 'copies']);

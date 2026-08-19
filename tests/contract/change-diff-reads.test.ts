@@ -8,7 +8,6 @@ import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter
 import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import { NodeDirectoryHandle, moveEntry } from './node-fs-handle';
 import {
-	GitFloor,
 	TestRepo,
 	atLeastGit,
 	checkedGit,
@@ -19,11 +18,9 @@ import {
 	indexContents,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	worktreeContents,
+	COPY_DETECTION_FLOOR
 } from './harness';
-
-/** `git status` copy detection (`status.renames=copies`), added in git 2.18. */
-const COPY_DETECTION_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 18 });
 
 const copyVersion = await gitVersion();
 
@@ -491,7 +488,10 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		expect(diff.modifiedContent).toBe(await indexContents(r, 'moved.txt'));
 	});
 
-	it('reports a staged identical-content copy as an addition and keeps following entries aligned', async () => {
+	it.skipIf(
+		!atLeastGit(copyVersion, COPY_DETECTION_FLOOR),
+		`requires git >= ${COPY_DETECTION_FLOOR.major}.${COPY_DETECTION_FLOOR.minor}.0 for status copy detection (found ${copyVersion.raw})`
+	)('reports a staged identical-content copy as an addition and keeps following entries aligned', async () => {
 		const r = await createTrackedRepo();
 		await baseRepo(r);
 		const config = await r.git(['config', 'status.renames', 'copies']);

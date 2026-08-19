@@ -23,6 +23,9 @@ export interface GitVersion extends GitFloor {
 
 export const GIT_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 23 });
 
+/** `git status` copy detection (`status.renames=copies`), added in git 2.18. */
+export const COPY_DETECTION_FLOOR: GitFloor = Object.freeze({ major: 2, minor: 18 });
+
 export const TEST_IDENTITY = Object.freeze({ name: 'Contract Test', email: 'contract@test.invalid' });
 
 export interface PorcelainEntry {
