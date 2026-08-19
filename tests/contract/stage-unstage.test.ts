@@ -493,7 +493,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexMode(r, 'new-file.txt')).toBe('100644');
 		});
 
-		it('preserves the executable index mode of an existing entry across updateIndexContent', async () => {
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('preserves the executable index mode of an existing entry across updateIndexContent', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			// Make the tracked file executable so its index entry carries 100755.
