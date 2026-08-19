@@ -21,6 +21,18 @@ export default defineConfig({
 			}
 		}
 	],
+	resolve: {
+		dedupe: [
+			'@codemirror/state',
+			'@codemirror/view',
+			'@codemirror/language',
+			'@codemirror/commands',
+			'@codemirror/autocomplete',
+			'@codemirror/search',
+			'@codemirror/merge',
+			'svelte'
+		]
+	},
 	server: {
 		fs: {
 			allow: [
