@@ -38,6 +38,10 @@ describe('IsomorphicGitAdapter', () => {
 						arrayBuffer: mock(async () => new TextEncoder().encode('workdir file text').buffer),
 						size: 17,
 						lastModified: Date.now()
+					})),
+					createWritable: mock(async () => ({
+						write: mock(async () => {}),
+						close: mock(async () => {})
 					}))
 				};
 			}),
@@ -345,7 +349,7 @@ describe('IsomorphicGitAdapter', () => {
 	interface SwitchBranchMocks {
 		statusMatrix: StatusRow[];
 		readBlob?: (args: { oid: string }) => Promise<{ blob: Uint8Array; oid?: string }>;
-		getFileHandle?: () => Promise<unknown>;
+		getFileHandle?: (name: string, opts?: { create?: boolean }) => Promise<unknown>;
 	}
 
 	async function withSwitchBranchMocks<T>(
@@ -409,23 +413,6 @@ describe('IsomorphicGitAdapter', () => {
 		return Object.assign(new Error(message), { name });
 	}
 
-	function workingFileHandle(name: string) {
-		return {
-			kind: 'file',
-			name,
-			getFile: mock(async () => ({
-				text: mock(async () => 'workdir file text'),
-				arrayBuffer: mock(async () => new TextEncoder().encode('workdir file text').buffer),
-				size: 17,
-				lastModified: Date.now()
-			})),
-			createWritable: mock(async () => ({
-				write: mock(async () => {}),
-				close: mock(async () => {})
-			}))
-		};
-	}
-
 	it('switchBranch blocks with the file named when a snapshot worktree read fails', async () => {
 		await withSwitchBranchMocks({
 			statusMatrix: [['blocked.txt', 1, 2, 1]], // Modified unstaged
@@ -440,16 +427,23 @@ describe('IsomorphicGitAdapter', () => {
 	});
 
 	it('switchBranch proceeds past a worktree file that vanished mid-snapshot, restoring it as deleted', async () => {
-		let reads = 0;
 		await withSwitchBranchMocks({
 			statusMatrix: [['blocked.txt', 1, 2, 1]], // Modified unstaged
-			getFileHandle: async () => {
-				reads++;
-				if (reads === 1) {
-					// The file vanishes between the status scan and the snapshot read.
-					throw fileError('NotFoundError', 'NotFoundError: gone');
+			getFileHandle: async (_name: string, opts?: { create?: boolean }) => {
+				// Reads never see the file: it vanished between the status scan and the
+				// snapshot read and stays gone through the pre-checkout re-read. Writes
+				// (create: true) still work so the checkout and restore can proceed.
+				if (opts?.create) {
+					return {
+						kind: 'file',
+						name: 'blocked.txt',
+						createWritable: mock(async () => ({
+							write: mock(async () => {}),
+							close: mock(async () => {})
+						}))
+					};
 				}
-				return workingFileHandle('blocked.txt');
+				throw fileError('NotFoundError', 'NotFoundError: gone');
 			}
 		}, async ({ checkout }) => {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
@@ -457,6 +451,198 @@ describe('IsomorphicGitAdapter', () => {
 
 			expect(result.status).toBe('switched');
 			expect(forcedCheckouts(checkout).length).toBe(1);
+		});
+	});
+
+	it('switchBranch preserves a dirty file recreated after the snapshot ENOENT read', async () => {
+		let reads = 0;
+		const state = { content: new Uint8Array(0) };
+		await withSwitchBranchMocks({
+			statusMatrix: [['recreated.txt', 1, 2, 1]], // Modified unstaged
+			getFileHandle: async () => {
+				reads++;
+				if (reads === 1) {
+					// The file vanishes between the status scan and the snapshot read.
+					throw fileError('NotFoundError', 'NotFoundError: gone');
+				}
+				if (reads === 2) {
+					// A concurrent filesystem operation recreates the dirty file
+					// before the checkout begins.
+					state.content = new TextEncoder().encode('recreated content\n');
+				}
+				return {
+					kind: 'file',
+					name: 'recreated.txt',
+					getFile: mock(async () => ({
+						text: mock(async () => new TextDecoder().decode(state.content)),
+						arrayBuffer: mock(async () => state.content.buffer),
+						size: state.content.length,
+						lastModified: Date.now()
+					})),
+					createWritable: mock(async () => ({
+						write: mock(async (data: Uint8Array | string) => {
+							state.content = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+						}),
+						close: mock(async () => {})
+					}))
+				};
+			}
+		}, async ({ checkout }) => {
+			// An unlink at the end of restoration (the pre-fix behavior) would wipe
+			// the recreated file; make it observable by clearing the file content.
+			mockDirectoryHandle.removeEntry = mock(async () => {
+				state.content = new Uint8Array(0);
+			});
+
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			// The recreated local content survives the switch: restoration wrote it
+			// back instead of unlinking the path.
+			expect(new TextDecoder().decode(state.content)).toBe('recreated content\n');
+		});
+	});
+
+	it('switchBranch keeps a dirty file recreated after the pre-checkout re-read', async () => {
+		let reads = 0;
+		const state = { content: new Uint8Array(0) };
+		await withSwitchBranchMocks({
+			statusMatrix: [['recreated.txt', 1, 2, 1]], // Modified unstaged
+			getFileHandle: async (name: string, opts?: { create?: boolean }) => {
+				if (opts?.create) {
+					return {
+						kind: 'file',
+						name,
+						createWritable: mock(async () => ({
+							write: mock(async () => {}),
+							close: mock(async () => {})
+						}))
+					};
+				}
+				reads++;
+				if (reads <= 2) {
+					// Gone at the snapshot read and still gone at the pre-checkout
+					// re-read: the switch records it as deleted.
+					throw fileError('NotFoundError', 'NotFoundError: gone');
+				}
+				// A concurrent operation recreates the file between the pre-checkout
+				// re-read and restoration — the window only the restore-time check
+				// can see.
+				state.content = new TextEncoder().encode('recreated after re-read\n');
+				return {
+					kind: 'file',
+					name,
+					getFile: mock(async () => ({
+						text: mock(async () => new TextDecoder().decode(state.content)),
+						arrayBuffer: mock(async () => state.content.buffer),
+						size: state.content.length,
+						lastModified: Date.now()
+					})),
+					createWritable: mock(async () => ({
+						write: mock(async () => {}),
+						close: mock(async () => {})
+					}))
+				};
+			}
+		}, async ({ checkout }) => {
+			// An unlink at the end of restoration would wipe the recreated file;
+			// make it observable by clearing the file content.
+			mockDirectoryHandle.removeEntry = mock(async () => {
+				state.content = new Uint8Array(0);
+			});
+
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			// The file recreated after the re-read survives: the final unlink only
+			// runs when the path is confirmed absent.
+			expect(new TextDecoder().decode(state.content)).toBe('recreated after re-read\n');
+		});
+	});
+
+	it('switchBranch preserves a tracked file recreated after the status scan', async () => {
+		const state = { content: new Uint8Array(0) };
+		await withSwitchBranchMocks({
+			statusMatrix: [['deleted.txt', 1, 0, 0]], // Tracked, deleted unstaged
+			getFileHandle: async (name: string, opts?: { create?: boolean }) => {
+				if (opts?.create) {
+					return {
+						kind: 'file',
+						name,
+						createWritable: mock(async () => ({
+							write: mock(async () => {}),
+							close: mock(async () => {})
+						}))
+					};
+				}
+				// The scan saw the deletion, but a concurrent operation recreates
+				// the file before the checkout begins.
+				state.content = new TextEncoder().encode('recreated content\n');
+				return {
+					kind: 'file',
+					name,
+					getFile: mock(async () => ({
+						text: mock(async () => new TextDecoder().decode(state.content)),
+						arrayBuffer: mock(async () => state.content.buffer),
+						size: state.content.length,
+						lastModified: Date.now()
+					})),
+					createWritable: mock(async () => ({
+						write: mock(async () => {}),
+						close: mock(async () => {})
+					}))
+				};
+			}
+		}, async ({ checkout }) => {
+			// The file absent from the workdir is also absent from the index, so
+			// the staged-blob walk yields no entry for it (the shared walk mock
+			// yields one for every row).
+			(git as any).walk = mock(async () => {});
+
+			mockDirectoryHandle.removeEntry = mock(async () => {
+				state.content = new Uint8Array(0);
+			});
+
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			// The recreated content is carried across the switch instead of the
+			// recorded deletion being applied.
+			expect(new TextDecoder().decode(state.content)).toBe('recreated content\n');
+		});
+	});
+
+	it('switchBranch restores staged content and unlinks worktree file when workdir was deleted', async () => {
+		const stagedBytes = new TextEncoder().encode('staged blob text\n');
+		let worktreeUnlinked = false;
+		let addedFilePath: string | null = null;
+
+		await withSwitchBranchMocks({
+			statusMatrix: [['staged-deleted.txt', 1, 0, 2]], // Staged modification, worktree deleted
+			readBlob: async () => ({ blob: stagedBytes, oid: 'staged-oid' })
+		}, async ({ checkout }) => {
+			(git as any).add = mock(async (opts: { filepath: string }) => {
+				addedFilePath = opts.filepath;
+			});
+			mockDirectoryHandle.removeEntry = mock(async (name: string) => {
+				if (name === 'staged-deleted.txt') {
+					worktreeUnlinked = true;
+				}
+			});
+
+			const adapter = new IsomorphicGitAdapter(rootOrigin);
+			const result = await adapter.switchBranch('feature');
+
+			expect(result.status).toBe('switched');
+			expect(forcedCheckouts(checkout).length).toBe(1);
+			expect(addedFilePath).toBe('staged-deleted.txt');
+			expect(worktreeUnlinked).toBe(true);
 		});
 	});
 

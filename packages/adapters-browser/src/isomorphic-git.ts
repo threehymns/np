@@ -488,25 +488,20 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					if (workdir !== 0) {
 						// A snapshot with null content cannot restore the file after the
 						// forced checkout below, so a failed read blocks the switch
-						// instead of risking the user's changes.
+						// instead of risking the user's changes. A vanished file (ENOENT)
+						// returns null from readWorktreeBytes so the restore unlinks it.
 						try {
-							const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-							workdirContent = typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
-						} catch (e: any) {
-							// A file that vanished between the status scan and the snapshot
-							// read is a deletion, not a failure: leave the content null so
-							// the restore unlinks it, exactly like a file already gone when
-							// the scan ran. Anything else is unreadable — the forced
-							// checkout would clobber it, so it blocks the switch.
-							if (!isENOENT(e)) {
-								unreadableFiles.push(filepath as string);
-								continue;
-							}
+							workdirContent = await this.readWorktreeBytes(filepath as string);
+						} catch (e) {
+							// Any non-ENOENT read failure is unreadable — the forced checkout
+							// would clobber it, so it blocks the switch.
+							unreadableFiles.push(filepath as string);
+							continue;
 						}
 					}
 
 					const stagedOid = stagedOids[filepath as string];
-					if (stagedOid) {
+					if (stagedOid && stage !== 1) {
 						try {
 							const { blob } = await git.readBlob({
 								fs: this.fs!,
@@ -535,6 +530,21 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			return { status: 'error', message: `Snapshot failed: ${e.message || e}` };
 		}
 
+		// A file recorded as absent — it vanished mid-snapshot (ENOENT) or was
+		// already gone at the scan — may have been recreated by a concurrent
+		// operation before the checkout begins. Re-read those files so a recreated
+		// file is carried across the switch instead of being unlinked during
+		// restoration. A file still absent (ENOENT) returns null and stays a deletion.
+		for (const snap of snapshots) {
+			if (snap.workdirContent !== null) continue;
+			try {
+				snap.workdirContent = await this.readWorktreeBytes(snap.filepath);
+			} catch (e) {
+				// Non-ENOENT read error: unreadable, so block rather than let the
+				// checkout clobber it.
+				unreadableFiles.push(snap.filepath);
+			}
+		}
 		if (unreadableFiles.length > 0) {
 			return { status: 'blocked', reason: 'unreadable', files: unreadableFiles };
 		}
@@ -550,7 +560,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			});
 
 			// 3. Restore snapshots on target branch
-			await this.restoreSnapshots(snapshots);
+			await this.restoreSnapshots(snapshots, targetCommit);
 			return { status: 'switched' };
 		} catch (err: any) {
 			console.error(`[Git] Checkout of ${branchName} failed, starting rollback...`, err);
@@ -562,7 +572,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						ref: originalBranch,
 						force: true
 					});
-					await this.restoreSnapshots(snapshots);
+					await this.restoreSnapshots(snapshots, headCommit);
 				} catch (rollbackErr) {
 					console.error('[Git] Critical: Rollback checkout failed!', rollbackErr);
 				}
@@ -571,10 +581,42 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	private async restoreSnapshots(snapshots: FileSnapshot[]): Promise<void> {
+	private async restoreSnapshots(snapshots: FileSnapshot[], checkoutCommit: string | null): Promise<void> {
 		for (const snap of snapshots) {
 			const { filepath, workdirContent, stagedContent, stage } = snap;
 			const fullPath = `${this.dir}/${filepath}`;
+
+			// A path recorded as absent may have been recreated after the
+			// pre-checkout re-read — a concurrent operation landing during the
+			// checkout itself. Confirm absence right before the destructive step:
+			// only a file still absent, or one byte-identical to the checkout
+			// commit's own version (i.e. written by the checkout, not by a
+			// concurrent op), is unlinked. A recreation is kept instead.
+			const isTrulyAbsent = async (): Promise<boolean> => {
+				let bytes: Uint8Array | null;
+				try {
+					bytes = await this.readWorktreeBytes(filepath);
+				} catch {
+					// Unreadable: assume present and keep it — deleting a path we
+					// cannot inspect risks losing data we cannot see.
+					return false;
+				}
+				if (bytes === null) return true;
+				if (!checkoutCommit) return false;
+				try {
+					const { blob } = await git.readBlob({
+						fs: this.fs!,
+						dir: this.dir,
+						oid: checkoutCommit,
+						filepath
+					});
+					return blob.length === bytes.length && blob.every((b, i) => b === bytes[i]);
+				} catch {
+					// Not in the checkout commit's tree: the checkout cannot have
+					// written it, so it is a recreation and must be kept.
+					return false;
+				}
+			};
 
 			const writeFileSafe = async (content: Uint8Array) => {
 				const parts = filepath.split('/');
@@ -607,11 +649,13 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				await git.add({ fs: this.fs!, dir: this.dir, filepath });
 				await unlinkSafe();
 			} else {
-				await unlinkSafe();
-				if (stage === 0) {
-					try {
-						await git.remove({ fs: this.fs!, dir: this.dir, filepath });
-					} catch (e) {}
+				if (await isTrulyAbsent()) {
+					await unlinkSafe();
+					if (stage === 0) {
+						try {
+							await git.remove({ fs: this.fs!, dir: this.dir, filepath });
+						} catch (e) {}
+					}
 				}
 			}
 		}
@@ -986,15 +1030,21 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return null;
 	}
 
-	/** The worktree text of a path, or null when the file is absent. */
-	private async readWorktreeText(filepath: string): Promise<string | null> {
+	/** The worktree bytes of a path, or null when the file is absent; other read failures surface. */
+	private async readWorktreeBytes(filepath: string): Promise<Uint8Array | null> {
 		try {
 			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
-			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+			return typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
 		} catch (e: any) {
 			if (!isENOENT(e)) throw e;
 			return null;
 		}
+	}
+
+	/** The worktree text of a path, or null when the file is absent. */
+	private async readWorktreeText(filepath: string): Promise<string | null> {
+		const bytes = await this.readWorktreeBytes(filepath);
+		return bytes === null ? null : new TextDecoder().decode(bytes);
 	}
 
 	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
