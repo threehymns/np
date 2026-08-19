@@ -1,5 +1,114 @@
 import { describe, it, expect } from "bun:test";
-import { resolveDiscardOptions, type GitChange } from "./vcs";
+import { countDiffStats, resolveDiscardOptions, type GitChange } from "./vcs";
+
+describe("countDiffStats", () => {
+	it("returns zero counts for empty input", () => {
+		expect(countDiffStats("")).toEqual({ additions: 0, deletions: 0 });
+	});
+
+	it("returns zero counts for header-only diffs", () => {
+		const diff = [
+			"diff --git a/a.txt b/a.txt",
+			"index de98044..53fd399 100644",
+			"--- a/a.txt",
+			"+++ b/a.txt"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 0, deletions: 0 });
+	});
+
+	it("counts added and deleted lines inside hunks", () => {
+		const diff = [
+			"diff --git a/f.txt b/f.txt",
+			"index de98044..53fd399 100644",
+			"--- a/f.txt",
+			"+++ b/f.txt",
+			"@@ -1,3 +1,5 @@",
+			" a",
+			"+b",
+			"-c",
+			" d"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 1, deletions: 1 });
+	});
+
+	it("counts added and deleted lines whose content begins with + or - (++x / --x)", () => {
+		const diff = [
+			"diff --git a/f.txt b/f.txt",
+			"index de98044..53fd399 100644",
+			"--- a/f.txt",
+			"+++ b/f.txt",
+			"@@ -1,3 +1,5 @@",
+			" a",
+			"+++added",
+			" b",
+			"+--gone",
+			" c"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 2, deletions: 0 });
+	});
+
+	it("ignores the no-newline marker inside hunks", () => {
+		const diff = [
+			"diff --git a/f.txt b/f.txt",
+			"index de98044..53fd399 100644",
+			"--- a/f.txt",
+			"+++ b/f.txt",
+			"@@ -1 +1 @@",
+			"-old",
+			"\\ No newline at end of file",
+			"+new",
+			"\\ No newline at end of file"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 1, deletions: 1 });
+	});
+
+	it("tracks hunks independently across multiple files", () => {
+		const diff = [
+			"diff --git a/f.txt b/f.txt",
+			"index de98044..53fd399 100644",
+			"--- a/f.txt",
+			"+++ b/f.txt",
+			"@@ -1,3 +1,5 @@",
+			" a",
+			"+x",
+			"diff --git a/g.txt b/g.txt",
+			"index 04ec35a..72c29dd 100644",
+			"--- a/g.txt",
+			"+++ b/g.txt",
+			"@@ -1,3 +1,3 @@",
+			" x",
+			"-y",
+			"+y2",
+			" z"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 2, deletions: 1 });
+	});
+
+	it("counts changes that follow context lines within the same hunk", () => {
+		const diff = [
+			"@@ -1,3 +1,3 @@",
+			" a",
+			"-b",
+			"+B",
+			" c",
+			"-d",
+			"+D"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 2, deletions: 2 });
+	});
+
+	it("counts changes that follow empty context lines without leading space within a hunk", () => {
+		const diff = [
+			"@@ -1,5 +1,5 @@",
+			" context",
+			"",
+			"+added_line",
+			"-deleted_line",
+			" context"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 1, deletions: 1 });
+	});
+});
 
 describe("resolveDiscardOptions", () => {
 	it("returns fallback staged state when changes list is empty or undefined", () => {

@@ -56,7 +56,7 @@ The contract suite in [`tests/contract/`](../tests/contract) exercises the entir
 | **Discard Operations** | [`discard-operations.test.ts`](../tests/contract/discard-operations.test.ts) | `discardChanges` (staged, unstaged, mixed), `discardAll`, preserving edits at destination for RM/CM renames and copies |
 | **Branch Switching** | [`branch-switch.test.ts`](../tests/contract/branch-switch.test.ts) | `switchBranch` with atomic carry-forward: clean switch, dirty switch without conflict, dirty switch with collision (blocked), non-existent branch, dryRun |
 | **Commit & Branch Creation** | [`commit-branch-creation.test.ts`](../tests/contract/commit-branch-creation.test.ts) | `commit` with custom author, amend, dirty/clean trees, `createBranch` and checkout verification |
-| **Hunk Action Composition** | [`hunk-actions.test.ts`](../tests/contract/hunk-actions.test.ts) | Real diff -> hunk range -> splice -> index/worktree write pipeline, single/multi-hunk staging, unstaging, discarding |
+| **Hunk Action Composition (Layer 3)** | [`packages/core/src/hunk-actions.test.ts`](../packages/core/src/hunk-actions.test.ts) | Real diff -> hunk range -> splice -> index/worktree write pipeline, single/multi-hunk staging, unstaging, discarding |
 | **Runner & Harness** | [`harness.test.ts`](../tests/contract/harness.test.ts) | Hermetic temp repo isolation, synthetic git identity (`GIT_CONFIG_NOSYSTEM=1`), version floor guard |
 
 ---
