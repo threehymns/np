@@ -120,7 +120,7 @@ export function countLines(text: string): number {
  * line is prefixed, so `+`/`-` lines always count — including added or deleted
  * lines whose content itself begins with `+` or `-` (e.g. `+++added`, `---gone`),
  * which a naive whole-text scan misreads as `+++`/`---` file headers. Any
- * unprefixed line (`diff --git`, `index`, `--- a/`, `+++ b/`, blank) ends the
+ * non-context line (`diff --git`, `index`, `--- a/`, `+++ b/`) ends the
  * current hunk, so headers between files and trailing lines are never counted.
  */
 export function countDiffStats(diffText: string): { additions: number; deletions: number } {
@@ -139,8 +139,8 @@ export function countDiffStats(diffText: string): { additions: number; deletions
 			additions++;
 		} else if (line.startsWith('-')) {
 			deletions++;
-		} else if (line.startsWith('\\') || line.startsWith(' ')) {
-			// `\ No newline at end of file` markers and context lines are not diff lines.
+		} else if (line === '' || line.startsWith('\\') || line.startsWith(' ')) {
+			// `\ No newline at end of file` markers, empty context lines, and normal context lines are not diff lines.
 		} else {
 			inHunk = false;
 		}

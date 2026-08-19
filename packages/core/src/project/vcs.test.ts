@@ -96,6 +96,18 @@ describe("countDiffStats", () => {
 		].join("\n");
 		expect(countDiffStats(diff)).toEqual({ additions: 2, deletions: 2 });
 	});
+
+	it("counts changes that follow empty context lines without leading space within a hunk", () => {
+		const diff = [
+			"@@ -1,5 +1,5 @@",
+			" context",
+			"",
+			"+added_line",
+			"-deleted_line",
+			" context"
+		].join("\n");
+		expect(countDiffStats(diff)).toEqual({ additions: 1, deletions: 1 });
+	});
 });
 
 describe("resolveDiscardOptions", () => {
