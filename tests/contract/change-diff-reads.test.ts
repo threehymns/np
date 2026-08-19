@@ -309,6 +309,26 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(status.isDirty).toBe(true);
 			expect([...status.uncommittedFiles].sort()).toEqual(porcelain.map(e => e.path).sort());
 		});
+
+		it('correctly associates numstat line counts for non-ASCII filenames in getChanges', async () => {
+			const r = await createTrackedRepo();
+			await r.write('café.txt', 'line 1\n');
+			await r.write('日本語.txt', 'line 1\n');
+			await commitAll(r, 'base non-ascii');
+			await r.write('café.txt', 'line 1\nline 2\nline 3\n');
+			await r.write('日本語.txt', 'line 1\nline 2\n');
+			await checkedGit(r, ['add', 'café.txt']);
+			const adapter = engine.adapter(r);
+
+			const changes = await adapter.getChanges();
+			const stagedCafe = changes.find(c => c.filepath === 'café.txt' && c.staged);
+			expect(stagedCafe).toBeDefined();
+			expect(stagedCafe?.additions).toBe(trackedStats(engine, { additions: 2, deletions: 0 }).additions);
+
+			const unstagedNihongo = changes.find(c => c.filepath === '日本語.txt' && !c.staged);
+			expect(unstagedNihongo).toBeDefined();
+			expect(unstagedNihongo?.additions).toBe(trackedStats(engine, { additions: 1, deletions: 0 }).additions);
+		});
 	});
 }
 

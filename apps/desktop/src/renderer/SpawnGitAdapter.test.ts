@@ -128,14 +128,14 @@ describe('SpawnGitAdapter', () => {
 					stderr: ''
 				};
 			}
-			if (cmd === 'diff --cached --numstat') {
+			if (cmd.includes('diff --cached --numstat')) {
 				return {
 					code: 0,
 					stdout: '10\t5\tstaged.ts\n3\t1\tboth.ts\n',
 					stderr: ''
 				};
 			}
-			if (cmd === 'diff --numstat') {
+			if (cmd.includes('diff --numstat')) {
 				return {
 					code: 0,
 					stdout: '20\t2\tunstaged.ts\n4\t0\tboth.ts\n',
@@ -151,10 +151,16 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const changes = await adapter.getChanges();
 
+		// Check that numstat commands include core.quotepath=false configuration
+		const numstatCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1].includes('--numstat'));
+		expect(numstatCalls.length).toBe(2);
+		expect(numstatCalls[0][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat']);
+		expect(numstatCalls[1][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--numstat']);
+
 		// Check that no per-file diff or show commands were executed
 		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
 			const args = call[1];
-			return args[0] === 'diff' && args.includes('--') && !args.includes('--numstat');
+			return args.includes('diff') && args.includes('--') && !args.includes('--numstat');
 		});
 		expect(perFileDiffCalls.length).toBe(0);
 		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
@@ -191,14 +197,14 @@ describe('SpawnGitAdapter', () => {
 					stderr: ''
 				};
 			}
-			if (cmd === 'diff --cached --numstat') {
+			if (cmd.includes('diff --cached --numstat')) {
 				return {
 					code: 0,
 					stdout: '7\t2\t leading_space.ts\n12\t4\ttrailing_space.ts \n',
 					stderr: ''
 				};
 			}
-			if (cmd === 'diff --numstat') {
+			if (cmd.includes('diff --numstat')) {
 				return {
 					code: 0,
 					stdout: '5\t1\t leading_space.ts\n',

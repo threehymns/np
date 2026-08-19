@@ -465,8 +465,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
 			this.runGit(['status', '--porcelain=v1', '-z', '-uall']),
-			this.runGit(['diff', '--cached', '--numstat']),
-			this.runGit(['diff', '--numstat'])
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat']),
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--numstat'])
 		]);
 
 		if (statusRes.code !== 0) {
