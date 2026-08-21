@@ -32,6 +32,11 @@
 
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 
+		const handleBeforeUnload = () => {
+			appState.flushSaveOpenFiles();
+		};
+		window.addEventListener('beforeunload', handleBeforeUnload);
+
 		// Lazy load secondary UI
 		Promise.all([
 			import("./components/SettingsModal.svelte"),
@@ -47,6 +52,7 @@
 
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
+			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
 	});
 
