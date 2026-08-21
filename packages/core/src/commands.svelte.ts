@@ -758,6 +758,9 @@ export async function applyHunkAction(
 		}
 
 		if (stagedContent === undefined) {
+			if (change.combined) {
+				throw new Error(`Cannot perform hunk ${action}: combined change for ${change.filepath} is missing staged content`);
+			}
 			stagedContent = change.staged ? modContent : origContent;
 		}
 

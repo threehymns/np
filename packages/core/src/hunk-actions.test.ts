@@ -366,6 +366,32 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
+	it("refuses to guess index content for a combined change when stagedContent is unavailable", async () => {
+		let indexWriteCount = 0;
+		const { appState, alerts } = createMockAppState({
+			updateIndexContent: mock(async () => {
+				indexWriteCount++;
+			})
+		});
+		// Combined change with content attached but no stagedContent and no adapter.getFileDiff:
+		// the index cannot be derived locally (it differs from HEAD by definition of "combined").
+		const change = createTestChange({
+			staged: false,
+			combined: true,
+			originalContent: "head\n",
+			modifiedContent: "head\nwork\n",
+			stagedContent: undefined
+		});
+		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
+
+		await applyHunkAction(appState, change, hunk, "stage");
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toContain("combined change");
+		expect(alerts[0]).toContain("missing staged content");
+		expect(indexWriteCount).toBe(0);
+		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
+
 	it("discards an unstaged hunk in a combined change using the full-diff scope", async () => {
 		let updatedWorktreeFile = "";
 		let updatedWorktreeContent = "";
