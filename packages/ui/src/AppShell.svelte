@@ -20,22 +20,28 @@
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
-	onMount(async () => {
-		await appState.init();
-		
+	onMount(() => {
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
 			if (appState.keymaps.handleKeydown(e)) {
 				e.stopPropagation();
 				e.preventDefault();
 			}
 		};
-
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 
 		const handleBeforeUnload = () => {
 			appState.flushSaveOpenFiles();
 		};
 		window.addEventListener('beforeunload', handleBeforeUnload);
+
+		return () => {
+			window.removeEventListener('keydown', handleCaptureKeydown, true);
+			window.removeEventListener('beforeunload', handleBeforeUnload);
+		};
+	});
+
+	onMount(async () => {
+		await appState.init();
 
 		// Lazy load secondary UI
 		Promise.all([
@@ -49,11 +55,6 @@
 		}).catch(err => {
 			console.error("[AppShell] Failed to load secondary UI components:", err);
 		});
-
-		return () => {
-			window.removeEventListener('keydown', handleCaptureKeydown, true);
-			window.removeEventListener('beforeunload', handleBeforeUnload);
-		};
 	});
 
 	$effect(() => {
