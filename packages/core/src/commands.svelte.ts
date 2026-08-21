@@ -717,6 +717,16 @@ export function spliceText(target: Text, from: number, to: number, replacement: 
 	return target.sliceString(0, from) + replacement + target.sliceString(to);
 }
 
+/**
+ * Restores the reference content's CRLF line endings onto spliced output.
+ * Text-based diff math normalizes to LF; without this, any hunk operation
+ * on a CRLF file rewrites every line ending and dirties the whole file.
+ */
+function applyLineEndings(content: string, reference: string): string {
+	if (!reference.includes('\r\n')) return content;
+	return content.replace(/(?<!\r)\n/g, '\r\n');
+}
+
 export async function applyHunkAction(
 	appState: AppState,
 	change: GitChange,
@@ -769,14 +779,20 @@ export async function applyHunkAction(
 		const stagedText = Text.of(stagedContent.split(/\r?\n/));
 		if (action === 'stage') {
 			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB));
+			const newIndexContent = applyLineEndings(
+				spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB)),
+				stagedContent
+			);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 			}
 		} else if (action === 'unstage') {
 			const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
-			const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA));
+			const newIndexContent = applyLineEndings(
+				spliceText(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA)),
+				stagedContent
+			);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
@@ -793,7 +809,10 @@ export async function applyHunkAction(
 
 			if (isUnstaged) {
 				const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-				const newWorktreeContent = spliceText(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to));
+				const newWorktreeContent = applyLineEndings(
+					spliceText(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to)),
+					modContent
+				);
 
 				if (repo.adapter.updateFileContent) {
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
@@ -804,8 +823,14 @@ export async function applyHunkAction(
 				}
 				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
 				const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
-				const newIndexContent = spliceText(stagedText, indexRange.from, indexRange.to, origHunkSlice);
-				const newWorktreeContent = spliceText(modText, hunk.fromB, hunk.toB, origHunkSlice);
+				const newIndexContent = applyLineEndings(
+					spliceText(stagedText, indexRange.from, indexRange.to, origHunkSlice),
+					stagedContent
+				);
+				const newWorktreeContent = applyLineEndings(
+					spliceText(modText, hunk.fromB, hunk.toB, origHunkSlice),
+					modContent
+				);
 
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				if (repo.adapter.updateFileContent) {
@@ -813,7 +838,7 @@ export async function applyHunkAction(
 						await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
 					} catch (err) {
 						try {
-							await repo.adapter.updateIndexContent(change.filepath, stagedText.toString());
+							await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
 						} catch (rollbackErr) {
 							console.error('Failed to rollback index after worktree write failure:', rollbackErr);
 						}
