@@ -227,6 +227,73 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
+	it("preserves CRLF line endings when unstaging a hunk", async () => {
+		let updatedContent = "";
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				updatedContent = content;
+			})
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "a\r\nb\r\n",
+			modifiedContent: "A\r\nb\r\n",
+			stagedContent: "A\r\nb\r\n"
+		});
+		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
+
+		await applyHunkAction(appState, change, hunk, "unstage");
+		expect(updatedContent).toBe("a\r\nb\r\n");
+	});
+
+	it("preserves CRLF line endings when discarding a staged hunk from index and worktree", async () => {
+		let updatedIndexContent = "";
+		let updatedWorktreeContent = "";
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				updatedIndexContent = content;
+			}),
+			updateFileContent: mock(async (_file: string, content: string) => {
+				updatedWorktreeContent = content;
+			})
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "a\r\nb\r\n",
+			modifiedContent: "a\r\nB\r\n",
+			stagedContent: "a\r\nB\r\n"
+		});
+		const hunk: HunkRange = { fromA: 2, toA: 3, fromB: 2, toB: 3 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(updatedIndexContent).toBe("a\r\nb\r\n");
+		expect(updatedWorktreeContent).toBe("a\r\nb\r\n");
+	});
+
+	it("restores CRLF index content when rolling back after a failed worktree write", async () => {
+		const indexCalls: string[] = [];
+		const { appState, alerts } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				indexCalls.push(content);
+			}),
+			updateFileContent: mock(async () => {
+				throw new Error("Disk write failure");
+			})
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "a\r\nb\r\n",
+			modifiedContent: "a\r\nB\r\n",
+			stagedContent: "a\r\nB\r\n"
+		});
+		const hunk: HunkRange = { fromA: 2, toA: 3, fromB: 2, toB: 3 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(indexCalls).toEqual(["a\r\nb\r\n", "a\r\nB\r\n"]);
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toContain("Disk write failure");
+	});
+
 	it("resolves missing diff content via adapter.getFileDiff on stage", async () => {
 		let updatedFile = "";
 		let updatedContent = "";
