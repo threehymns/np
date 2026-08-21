@@ -227,40 +227,6 @@ describe("applyHunkAction error handling", () => {
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
-	it("preserves CRLF line endings when staging a hunk", async () => {
-		let updatedContent = "";
-		const { appState } = createMockAppState({
-			updateIndexContent: mock(async (_file: string, content: string) => {
-				updatedContent = content;
-			})
-		});
-		const change = createTestChange({
-			originalContent: "line1\r\nline2\r\nline3\r\n",
-			modifiedContent: "line1\r\nline2 edited\r\nline3\r\n"
-		});
-		const hunk: HunkRange = { fromA: 6, toA: 11, fromB: 6, toB: 18 };
-
-		await applyHunkAction(appState, change, hunk, "stage");
-		expect(updatedContent).toBe("line1\r\nline2 edited\r\nline3\r\n");
-	});
-
-	it("preserves CRLF line endings when discarding an unstaged hunk", async () => {
-		let updatedContent = "";
-		const { appState } = createMockAppState({
-			updateFileContent: mock(async (_file: string, content: string) => {
-				updatedContent = content;
-			})
-		});
-		const change = createTestChange({
-			originalContent: "a\r\nb\r\n",
-			modifiedContent: "a\r\nB\r\n"
-		});
-		const hunk: HunkRange = { fromA: 2, toA: 3, fromB: 2, toB: 3 };
-
-		await applyHunkAction(appState, change, hunk, "discard");
-		expect(updatedContent).toBe("a\r\nb\r\n");
-	});
-
 	it("resolves missing diff content via adapter.getFileDiff on stage", async () => {
 		let updatedFile = "";
 		let updatedContent = "";
@@ -458,6 +424,42 @@ describe("applyHunkAction error handling", () => {
 		expect(updatedWorktreeContent).toBe("line0\nline1\nline2\nline3\n");
 		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
+	});
+});
+
+describe("applyHunkAction line ending preservation", () => {
+	it("preserves CRLF line endings when staging a hunk", async () => {
+		let updatedContent = "";
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				updatedContent = content;
+			})
+		});
+		const change = createTestChange({
+			originalContent: "line1\r\nline2\r\nline3\r\n",
+			modifiedContent: "line1\r\nline2 edited\r\nline3\r\n"
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 11, fromB: 6, toB: 18 };
+
+		await applyHunkAction(appState, change, hunk, "stage");
+		expect(updatedContent).toBe("line1\r\nline2 edited\r\nline3\r\n");
+	});
+
+	it("preserves CRLF line endings when discarding an unstaged hunk", async () => {
+		let updatedContent = "";
+		const { appState } = createMockAppState({
+			updateFileContent: mock(async (_file: string, content: string) => {
+				updatedContent = content;
+			})
+		});
+		const change = createTestChange({
+			originalContent: "a\r\nb\r\n",
+			modifiedContent: "a\r\nB\r\n"
+		});
+		const hunk: HunkRange = { fromA: 2, toA: 3, fromB: 2, toB: 3 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(updatedContent).toBe("a\r\nb\r\n");
 	});
 });
 
