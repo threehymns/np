@@ -35,6 +35,15 @@ async function readClipboard(appState: AppState): Promise<string> {
 	return '';
 }
 
+/**
+ * True for absolute filesystem paths in any common form: POSIX ('/a/b'),
+ * Windows drive ('C:\a\b', 'C:/a/b'), and UNC ('\\\\server\\share').
+ * URI strings ('scheme://...') are classified separately before this runs.
+ */
+function isAbsoluteFilesystemPath(target: string): boolean {
+	return target.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(target) || target.startsWith('\\\\');
+}
+
 export interface Command {
 	id: string;
 	label: string;
@@ -91,22 +100,19 @@ export function registerCoreCommands(appState: AppState) {
 		}
 		if (target.includes('://')) {
 			await appState.workspace.openFile(parseURI(target));
+		} else if (isAbsoluteFilesystemPath(target)) {
+			const name = target.split(/[/\\]/).filter(Boolean).pop() || target;
+			await appState.workspace.openFile({
+				scheme: 'file',
+				path: target,
+				name
+			});
 		} else if (appState.workspace.rootOrigin) {
 			const rootUri = toURI(appState.workspace.rootOrigin);
 			const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
 			await appState.workspace.openFile(parseURI(fileUri));
 		} else {
-			const isAbsolute = target.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(target) || target.startsWith('\\\\');
-			if (isAbsolute) {
-				const name = target.split(/[/\\]/).filter(Boolean).pop() || target;
-				await appState.workspace.openFile({
-					scheme: 'file',
-					path: target,
-					name
-				});
-			} else {
-				console.error(`Cannot open '${target}': open a folder first to resolve relative paths.`);
-			}
+			console.error(`Cannot open '${target}': open a folder first to resolve relative paths.`);
 		}
 	};
 

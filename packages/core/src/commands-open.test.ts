@@ -1,4 +1,3 @@
-
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
 import { registerCoreCommands, CommandRegistry } from "./commands.svelte";
@@ -60,6 +59,39 @@ describe("file.open command", () => {
 			scheme: "file",
 			path: "/projects/np/src/index.ts",
 			name: "index.ts"
+		});
+	});
+
+	it("opens POSIX absolute path directly instead of joining rootOrigin", async () => {
+		const { commands, workspace, openedFiles } = createMockAppState();
+		await commands.execute("file.open", "/tmp/notes.md");
+		expect(workspace.openFile).toHaveBeenCalledTimes(1);
+		expect(openedFiles[0]).toEqual({
+			scheme: "file",
+			path: "/tmp/notes.md",
+			name: "notes.md"
+		});
+	});
+
+	it("opens Windows drive absolute path directly instead of joining rootOrigin", async () => {
+		const { commands, workspace, openedFiles } = createMockAppState();
+		await commands.execute("file.open", "C:\\Users\\john\\doc.md");
+		expect(workspace.openFile).toHaveBeenCalledTimes(1);
+		expect(openedFiles[0]).toEqual({
+			scheme: "file",
+			path: "C:\\Users\\john\\doc.md",
+			name: "doc.md"
+		});
+	});
+
+	it("opens UNC absolute path directly instead of joining rootOrigin", async () => {
+		const { commands, workspace, openedFiles } = createMockAppState();
+		await commands.execute("file.open", "\\\\server\\share\\file.md");
+		expect(workspace.openFile).toHaveBeenCalledTimes(1);
+		expect(openedFiles[0]).toEqual({
+			scheme: "file",
+			path: "\\\\server\\share\\file.md",
+			name: "file.md"
 		});
 	});
 
