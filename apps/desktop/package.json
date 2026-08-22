@@ -24,6 +24,7 @@
 		"@types/wicg-file-system-access": "^2023.10.7"
 	},
 	"dependencies": {
+		"@codemirror/view": "^6.43.8",
 		"@np/core": "workspace:*",
 		"@np/ui": "workspace:*",
 		"codemirror": "^6.0.2",
