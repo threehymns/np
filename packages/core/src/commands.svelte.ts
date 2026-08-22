@@ -727,6 +727,16 @@ function applyLineEndings(content: string, reference: string): string {
 	return content.replace(/(?<!\r)\n/g, '\r\n');
 }
 
+/**
+ * Splices [from, to] in the target Text document and restores the endings of
+ * `reference`, the raw file content whose bytes the result will overwrite.
+ * Index writes pass the index content as reference, worktree writes the
+ * worktree content. Pairing them at one call site keeps that rule unmissable.
+ */
+function splicePreservingEndings(target: Text, from: number, to: number, replacement: string, reference: string): string {
+	return applyLineEndings(spliceText(target, from, to, replacement), reference);
+}
+
 export async function applyHunkAction(
 	appState: AppState,
 	change: GitChange,
@@ -779,20 +789,14 @@ export async function applyHunkAction(
 		const stagedText = Text.of(stagedContent.split(/\r?\n/));
 		if (action === 'stage') {
 			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-			const newIndexContent = applyLineEndings(
-				spliceText(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB)),
-				stagedContent
-			);
+			const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB), stagedContent);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 			}
 		} else if (action === 'unstage') {
 			const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
-			const newIndexContent = applyLineEndings(
-				spliceText(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA)),
-				stagedContent
-			);
+			const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA), stagedContent);
 
 			if (repo.adapter.updateIndexContent) {
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
@@ -809,10 +813,7 @@ export async function applyHunkAction(
 
 			if (isUnstaged) {
 				const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-				const newWorktreeContent = applyLineEndings(
-					spliceText(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to)),
-					modContent
-				);
+				const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
 
 				if (repo.adapter.updateFileContent) {
 					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
@@ -823,14 +824,8 @@ export async function applyHunkAction(
 				}
 				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
 				const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
-				const newIndexContent = applyLineEndings(
-					spliceText(stagedText, indexRange.from, indexRange.to, origHunkSlice),
-					stagedContent
-				);
-				const newWorktreeContent = applyLineEndings(
-					spliceText(modText, hunk.fromB, hunk.toB, origHunkSlice),
-					modContent
-				);
+				const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origHunkSlice, stagedContent);
+				const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, origHunkSlice, modContent);
 
 				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				if (repo.adapter.updateFileContent) {
