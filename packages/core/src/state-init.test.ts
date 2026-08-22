@@ -1,17 +1,7 @@
-(globalThis as any).$state = Object.assign(<T>(v: T) => v, {
-	snapshot: <T>(v: T) => v,
-	raw: <T>(v: T) => v
-});
-(globalThis as any).$derived = Object.assign(<T>(v: T) => v, {
-	by: (fn: any) => fn()
-});
-(globalThis as any).$effect = Object.assign(() => {}, {
-	root: (cb: () => void) => { cb(); return () => {}; }
-});
-
+import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
 import type { SessionPersistence } from "./persistence";
-import type { Storage } from "./storage";
+import { createMockStorage } from "../../../tests/mock-storage";
 
 function createMockPersistence(onLoadAll?: () => void): SessionPersistence {
 	return {
@@ -29,23 +19,6 @@ function createMockPersistence(onLoadAll?: () => void): SessionPersistence {
 			onLoadAll?.();
 			return {};
 		})
-	};
-}
-
-function createMockStorage(): Storage {
-	return {
-		readFile: mock(async () => ""),
-		writeFile: mock(async () => {}),
-		deleteFile: mock(async () => {}),
-		listDirectory: mock(async () => []),
-		createDirectory: mock(async () => {}),
-		deleteDirectory: mock(async () => {}),
-		exists: mock(async () => true),
-		stat: mock(async () => ({ isFile: true, isDirectory: false, size: 0, mtime: 0 })),
-		pickFile: mock(async () => null),
-		pickDirectory: mock(async () => null),
-		queryPermission: mock(async () => "prompt" as const),
-		verifyPermission: mock(async () => false)
 	};
 }
 
