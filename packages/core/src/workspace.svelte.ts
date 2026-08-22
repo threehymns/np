@@ -31,6 +31,27 @@ export class Workspace {
 
 	private saveOpenFilesTimeout: any = null;
 
+	/**
+	 * Diff-tab selection read back from persisted session state, awaiting a
+	 * repository that has refreshed its change list to be applied to.
+	 */
+	private pendingDiffRestore: { filepath: string; staged?: boolean } | null = null;
+
+	private applyPendingDiffRestore() {
+		const pending = this.pendingDiffRestore;
+		const repo = this.repository;
+		if (!pending || !repo) return;
+		this.pendingDiffRestore = null;
+
+		let match = repo.changes.find(c => c.filepath === pending.filepath && (pending.staged === undefined || c.staged === pending.staged));
+		if (!match) {
+			match = repo.changes.find(c => c.filepath === pending.filepath);
+		}
+		if (match) {
+			repo.activeDiffFile = match;
+		}
+	}
+
 	private debouncedSaveOpenFiles() {
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
@@ -43,12 +64,18 @@ export class Workspace {
 	private serializeTabs(): SerializedDocument[] {
 		return this.tabs.map(tab => {
 			if (tab.type === 'diff') {
-				return {
+				const serialized: SerializedDocument = {
 					id: tab.id,
 					origin: null,
 					isModified: false,
 					virtualTabType: 'diff'
 				};
+				const active = this.repository?.activeDiffFile;
+				if (active) {
+					serialized.diffFilepath = active.filepath;
+					serialized.diffStaged = active.staged;
+				}
+				return serialized;
 			}
 			const doc = this.documents.find(d => d.id === tab.id);
 			if (!doc) return null;
@@ -288,6 +315,7 @@ export class Workspace {
 			
 			await this.repository.adapter.detect(this.rootOrigin.path);
 			const success = await this.repository.refresh();
+			this.applyPendingDiffRestore();
 			console.log('[Workspace] Repository initialized after permission:', success);
 			
 			await this.projectTree.scan(this.rootOrigin);
@@ -449,6 +477,7 @@ export class Workspace {
 
 	async loadFolderState(folderUri: string) {
 		console.log('[Workspace] loadFolderState start for:', folderUri);
+		this.pendingDiffRestore = null;
 		try {
 			const origins = await this.persistence.loadOpenFiles(folderUri);
 			console.log('[Workspace] loadOpenFiles returned:', origins);
@@ -460,7 +489,7 @@ export class Workspace {
 				const restoredTabs: WorkspaceTab[] = [];
 				for (const serialized of origins) {
 					const isNewSchema = serialized && typeof serialized === 'object' && ('id' in serialized);
-					
+
 					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
 						if (serialized.virtualTabType === 'diff') {
@@ -468,6 +497,12 @@ export class Workspace {
 								id: serialized.id,
 								type: 'diff'
 							});
+							if (serialized.diffFilepath) {
+								this.pendingDiffRestore = {
+									filepath: serialized.diffFilepath,
+									staged: serialized.diffStaged
+								};
+							}
 							continue;
 						}
 						doc = new DocumentSession(
@@ -500,6 +535,8 @@ export class Workspace {
 				} else {
 					this.activeTabId = restoredTabs[0]?.id || '';
 				}
+				// Repository already refreshed (folder-open path): apply now.
+				this.applyPendingDiffRestore();
 			} else {
 				console.log('[Workspace] No origins found, creating new file');
 				this.documents = [];
@@ -509,6 +546,7 @@ export class Workspace {
 			console.log('[Workspace] loadFolderState finished. documents count:', this.documents.length);
 		} catch (e) {
 			console.error('[Workspace] Failed to load folder state', e);
+			this.pendingDiffRestore = null;
 			this.documents = [];
 			this.tabs = [];
 			await this.newFile();
@@ -555,6 +593,9 @@ export class Workspace {
 							try {
 								this.repository = new Repository(rootOrigin!, this.vcsFactory);
 								await this.repository.refresh();
+								// Session restore loads tabs before the repo exists;
+								// re-apply the persisted diff selection once changes are in.
+								this.applyPendingDiffRestore();
 								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);

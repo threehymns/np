@@ -15,6 +15,16 @@ export interface SerializedDocument {
 	 * for git-computed diff views. Omitted on ordinary document tabs.
 	 */
 	virtualTabType?: 'diff' | 'document';
+	/**
+	 * For diff tabs: filepath of the change selected when the session was
+	 * saved, so reload restores the previous selection instead of the first
+	 * change in the list.
+	 */
+	diffFilepath?: string;
+	/**
+	 * For diff tabs: whether the selected change is the staged variant.
+	 */
+	diffStaged?: boolean;
 }
 
 /**
