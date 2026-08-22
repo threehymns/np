@@ -105,7 +105,7 @@ export function registerCoreCommands(appState: AppState) {
 					name
 				});
 			} else {
-				return;
+				console.error(`Cannot open '${target}': open a folder first to resolve relative paths.`);
 			}
 		}
 	};
@@ -791,16 +791,12 @@ export async function applyHunkAction(
 			const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
 			const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, modText.sliceString(hunk.fromB, hunk.toB), stagedContent);
 
-			if (repo.adapter.updateIndexContent) {
-				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
-			}
+			await repo.adapter.updateIndexContent!(change.filepath, newIndexContent);
 		} else if (action === 'unstage') {
 			const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
 			const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origText.sliceString(hunk.fromA, hunk.toA), stagedContent);
 
-			if (repo.adapter.updateIndexContent) {
-				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
-			}
+			await repo.adapter.updateIndexContent!(change.filepath, newIndexContent);
 		} else if (action === 'discard') {
 			const unstagedChunks = Chunk.build(stagedText, modText);
 			const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
@@ -815,9 +811,7 @@ export async function applyHunkAction(
 				const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
 				const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
 
-				if (repo.adapter.updateFileContent) {
-					await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
-				}
+				await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
 			} else {
 				if (!repo.adapter.updateIndexContent) {
 					throw new Error('VCS adapter does not support updating index for hunk discard');
