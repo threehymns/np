@@ -695,7 +695,10 @@ export function mapPos(posA: number, chunks: readonly Chunk[]): number {
 		if (posA <= c.fromA) {
 			return lastToB + (posA - lastToA);
 		}
-		if (posA <= c.toA) {
+		// Strictly less-than: posA === c.toA sits on the unchanged boundary after
+		// the chunk and must map to c.toB via the unchanged-region arithmetic
+		// below, not to the chunk start.
+		if (posA < c.toA) {
 			return c.fromB;
 		}
 		lastToA = c.toA;
@@ -804,40 +807,94 @@ export async function applyHunkAction(
 
 			await repo.adapter.updateIndexContent!(change.filepath, newIndexContent);
 		} else if (action === 'discard') {
-			const unstagedChunks = Chunk.build(stagedText, modText);
-			const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
-			const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
-			const isUnstaged = unstagedChunks.some((uc: Chunk) => {
-				const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
-				const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
-				return (lineStartB <= ucEndB && lineEndB >= ucStartB);
-			});
+			const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
 
-			if (isUnstaged) {
-				const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-				const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
-
-				await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
-			} else {
+			if (change.staged && !change.combined) {
+				// Staged-scope hunks live in HEAD-vs-index space (modText is the
+				// index), so discarding must also revert the hunk's mirror image
+				// in the worktree. Resolve the real worktree text first: writing
+				// a splice of the index over the worktree would destroy
+				// unrelated unstaged edits.
 				if (!repo.adapter.updateIndexContent) {
 					throw new Error('VCS adapter does not support updating index for hunk discard');
 				}
-				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
-				const origHunkSlice = origText.sliceString(hunk.fromA, hunk.toA);
-				const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origHunkSlice, stagedContent);
-				const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, origHunkSlice, modContent);
+				const wtDiff = await repo.getFileDiff(change.filepath, { staged: false });
+				const wtContent = wtDiff?.modifiedContent;
 
-				await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
-				if (repo.adapter.updateFileContent) {
-					try {
-						await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
-					} catch (err) {
+				const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
+				const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origHunkSlice, stagedContent);
+
+				if (typeof wtContent !== 'string') {
+					// Worktree text unavailable: revert the index only. The
+					// discarded hunk resurfaces as an unstaged change instead of
+					// guessing at worktree bytes that were never read.
+					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+				} else {
+					const wtText = Text.of(wtContent.split(/\r?\n/));
+					const unstagedChunks = Chunk.build(stagedText, wtText);
+					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText);
+					const wtStartLine = wtText.lineAt(Math.min(wtRange.from, wtText.length)).number;
+					const wtEndLine = wtText.lineAt(Math.min(wtRange.to, wtText.length)).number;
+					// Unstaged edits inside the hunk's region cannot be reverted
+					// without destroying them; leave the worktree untouched so
+					// they survive as an unstaged change.
+					const overlapsUnstaged = unstagedChunks.some((uc: Chunk) => {
+						const ucStartLine = wtText.lineAt(Math.min(uc.fromB, wtText.length)).number;
+						const ucEndLine = wtText.lineAt(Math.min(uc.toB, wtText.length)).number;
+						return wtStartLine <= ucEndLine && wtEndLine >= ucStartLine;
+					});
+
+					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+
+					if (!overlapsUnstaged) {
+						const newWorktreeContent = splicePreservingEndings(wtText, wtRange.from, wtRange.to, origHunkSlice, wtContent);
 						try {
-							await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
-						} catch (rollbackErr) {
-							console.error('Failed to rollback index after worktree write failure:', rollbackErr);
+							await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
+						} catch (err) {
+							try {
+								await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
+							} catch (rollbackErr) {
+								console.error('Failed to rollback index after worktree write failure:', rollbackErr);
+							}
+							throw err;
 						}
-						throw err;
+					}
+				}
+			} else {
+				const unstagedChunks = Chunk.build(stagedText, modText);
+				const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
+				const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
+				const isUnstaged = unstagedChunks.some((uc: Chunk) => {
+					const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
+					const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
+					return (lineStartB <= ucEndB && lineEndB >= ucStartB);
+				});
+
+				if (isUnstaged) {
+					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
+					const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
+
+					await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
+				} else {
+					if (!repo.adapter.updateIndexContent) {
+						throw new Error('VCS adapter does not support updating index for hunk discard');
+					}
+					const indexRange = mapRange(hunk.fromB, hunk.toB, modText, stagedText);
+					const newIndexContent = splicePreservingEndings(stagedText, indexRange.from, indexRange.to, origHunkSlice, stagedContent);
+					const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, origHunkSlice, modContent);
+
+					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
+					if (repo.adapter.updateFileContent) {
+						try {
+							await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
+						} catch (err) {
+							try {
+								await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
+							} catch (rollbackErr) {
+								console.error('Failed to rollback index after worktree write failure:', rollbackErr);
+							}
+							throw err;
+						}
 					}
 				}
 			}

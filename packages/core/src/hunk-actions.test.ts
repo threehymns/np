@@ -1,5 +1,6 @@
 import { describe, it, expect, mock } from "bun:test";
 import { Text } from "@codemirror/state";
+import { Chunk } from "@codemirror/merge";
 import { applyHunkAction, mapPos, mapRange, spliceText, type HunkRange } from "./commands.svelte";
 import { countLines, countDiffStats, diffCacheKey, resolveDiffDetail, type GitChange, type VCSAdapter } from "./project/vcs";
 
@@ -183,6 +184,11 @@ describe("applyHunkAction error handling", () => {
 			updateFileContent: mock(async (file: string, content: string) => {
 				updatedWorktreeFile = file;
 				updatedWorktreeContent = content;
+			}),
+			getFileDiff: async () => ({
+				originalContent: "line1\nline2\n",
+				modifiedContent: "line1\nline2\n",
+				stagedContent: "line1\nline2\n"
 			})
 		});
 		const change = createTestChange({
@@ -210,6 +216,11 @@ describe("applyHunkAction error handling", () => {
 			}),
 			updateFileContent: mock(async (_file: string, _content: string) => {
 				throw new Error("Disk write failure");
+			}),
+			getFileDiff: async () => ({
+				originalContent: "line1\nline2\n",
+				modifiedContent: "line1\nline2\n",
+				stagedContent: "line1\nline2\n"
 			})
 		});
 		const change = createTestChange({
@@ -255,6 +266,11 @@ describe("applyHunkAction error handling", () => {
 			}),
 			updateFileContent: mock(async (_file: string, content: string) => {
 				updatedWorktreeContent = content;
+			}),
+			getFileDiff: async () => ({
+				originalContent: "a\r\nB\r\n",
+				modifiedContent: "a\r\nB\r\n",
+				stagedContent: "a\r\nB\r\n"
 			})
 		});
 		const change = createTestChange({
@@ -278,6 +294,11 @@ describe("applyHunkAction error handling", () => {
 			}),
 			updateFileContent: mock(async () => {
 				throw new Error("Disk write failure");
+			}),
+			getFileDiff: async () => ({
+				originalContent: "a\r\nB\r\n",
+				modifiedContent: "a\r\nB\r\n",
+				stagedContent: "a\r\nB\r\n"
 			})
 		});
 		const change = createTestChange({
@@ -292,6 +313,125 @@ describe("applyHunkAction error handling", () => {
 		expect(indexCalls).toEqual(["a\r\nb\r\n", "a\r\nB\r\n"]);
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("Disk write failure");
+	});
+
+	it("preserves unrelated unstaged worktree edits when discarding a staged hunk", async () => {
+		let updatedIndexContent = "";
+		let worktreeWriteCount = 0;
+		let updatedWorktreeContent = "";
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				updatedIndexContent = content;
+			}),
+			updateFileContent: mock(async (_file: string, content: string) => {
+				worktreeWriteCount++;
+				updatedWorktreeContent = content;
+			}),
+			getFileDiff: async (_filepath: string, options?: { staged?: boolean }) => {
+				if (options?.staged === false) {
+					// index vs worktree: unrelated unstaged edit on line 3
+					return {
+						originalContent: "HEAD1\nB1\nHEAD3\n",
+						modifiedContent: "HEAD1\nB1\nWORKTREE3\n",
+						stagedContent: "HEAD1\nB1\nHEAD3\n"
+					};
+				}
+				// HEAD vs index: staged hunk replaces line 2
+				return {
+					originalContent: "HEAD1\nHEAD2\nHEAD3\n",
+					modifiedContent: "HEAD1\nB1\nHEAD3\n",
+					stagedContent: "HEAD1\nB1\nHEAD3\n"
+				};
+			}
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "HEAD1\nHEAD2\nHEAD3\n",
+			modifiedContent: "HEAD1\nB1\nHEAD3\n",
+			stagedContent: "HEAD1\nB1\nHEAD3\n"
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 11, fromB: 6, toB: 8 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
+		expect(worktreeWriteCount).toBe(1);
+		// The unstaged WORKTREE3 edit must survive; only the hunk's line reverts.
+		expect(updatedWorktreeContent).toBe("HEAD1\nHEAD2\nWORKTREE3\n");
+	});
+
+	it("leaves the worktree untouched when an unstaged edit overlaps the discarded staged hunk", async () => {
+		let indexWriteCount = 0;
+		let updatedIndexContent = "";
+		let worktreeWriteCount = 0;
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				indexWriteCount++;
+				updatedIndexContent = content;
+			}),
+			updateFileContent: mock(async () => {
+				worktreeWriteCount++;
+			}),
+			getFileDiff: async (_filepath: string, options?: { staged?: boolean }) => {
+				if (options?.staged === false) {
+					// index vs worktree: line 2 was edited again after staging
+					return {
+						originalContent: "HEAD1\nB1\nHEAD3\n",
+						modifiedContent: "HEAD1\nBX\nHEAD3\n",
+						stagedContent: "HEAD1\nB1\nHEAD3\n"
+					};
+				}
+				return {
+					originalContent: "HEAD1\nHEAD2\nHEAD3\n",
+					modifiedContent: "HEAD1\nB1\nHEAD3\n",
+					stagedContent: "HEAD1\nB1\nHEAD3\n"
+				};
+			}
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "HEAD1\nHEAD2\nHEAD3\n",
+			modifiedContent: "HEAD1\nB1\nHEAD3\n",
+			stagedContent: "HEAD1\nB1\nHEAD3\n"
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 11, fromB: 6, toB: 8 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		// Index-only revert: the overlapping unstaged edit survives in the
+		// worktree and resurfaces as part of the unstaged diff.
+		expect(indexWriteCount).toBe(1);
+		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
+		expect(worktreeWriteCount).toBe(0);
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+	});
+
+	it("reverts only the index when worktree content is unavailable for a staged hunk discard", async () => {
+		let indexWriteCount = 0;
+		let updatedIndexContent = "";
+		let worktreeWriteCount = 0;
+		const { appState } = createMockAppState({
+			updateIndexContent: mock(async (_file: string, content: string) => {
+				indexWriteCount++;
+				updatedIndexContent = content;
+			}),
+			updateFileContent: mock(async () => {
+				worktreeWriteCount++;
+			})
+			// no getFileDiff: repository.getFileDiff resolves null
+		});
+		const change = createTestChange({
+			staged: true,
+			originalContent: "line1\n",
+			modifiedContent: "line1\nline2\n",
+			stagedContent: "line1\nline2\n"
+		});
+		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
+
+		await applyHunkAction(appState, change, hunk, "discard");
+		expect(indexWriteCount).toBe(1);
+		expect(updatedIndexContent).toBe("line1\n");
+		expect(worktreeWriteCount).toBe(0);
+		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
 
 	it("resolves missing diff content via adapter.getFileDiff on stage", async () => {
@@ -426,9 +566,11 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "stage");
 		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", undefined);
 		expect(updatedFile).toBe("test.txt");
-		// The hunk is spliced into the index at the offset mapped from HEAD content,
-		// i.e. before DIFF rather than after it (staged offset 12, not 18).
-		expect(updatedContent).toBe("line0\nline1\nX\nDIFF\nline3\n");
+		// The hunk anchors after line2 (HEAD offset 18). That offset sits on the
+		// changed-chunk end boundary and must map to the index offset AFTER DIFF
+		// (staged offset 17), matching the worktree order (line2, X, line3) and
+		// git add -p. Mapping it to the chunk start would insert X before DIFF.
+		expect(updatedContent).toBe("line0\nline1\nDIFF\nX\nline3\n");
 		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
 		expect(appState.workspace.repository.isBusy).toBe(false);
 	});
@@ -543,6 +685,16 @@ describe("hunk text mapping utilities", () => {
 		const mapped = mapRange(14, 14, textA, textB);
 		expect(mapped.from).toBe(14);
 		expect(mapped.to).toBe(14);
+	});
+
+	it("mapPos maps a chunk-end boundary to the chunk end, not the chunk start", () => {
+		const textA = Text.of(["a", "b"]);
+		const textB = Text.of(["a", "X", "Y"]);
+		// "b" (chars [2,4) in A) was replaced by "X\nY" (chars [2,6) in B)
+		const chunks = Chunk.build(textA, textB);
+		expect(mapPos(2, chunks)).toBe(2); // start boundary stays at start
+		expect(mapPos(4, chunks)).toBe(6); // end boundary maps to end, not insertion point
+		expect(mapPos(5, chunks)).toBe(7); // unchanged region after the chunk shifts by the delta
 	});
 });
 
