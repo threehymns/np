@@ -42,7 +42,6 @@ export class Repository {
 
 	async refresh(): Promise<boolean> {
 		const generation = ++this.refreshGeneration;
-		this.isBusy = true;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
 			const [branchRes, branchesRes, changesRes, commitsRes] = await Promise.allSettled([
@@ -116,54 +115,46 @@ export class Repository {
 			return false;
 		} finally {
 			if (generation === this.refreshGeneration) {
-				this.isBusy = false;
 				this.changesLoaded = true;
 			}
 		}
 	}
 
 	async getSafetyReport(activeModifiedFiles: string[], targetBranch: string): Promise<RepositorySafetyReport> {
-		this.isBusy = true;
-		try {
-			if (activeModifiedFiles.length > 0) {
-				const status = await this.adapter.getStatus();
-				return {
-					canSwitch: false,
-					unsavedFiles: activeModifiedFiles,
-					uncommittedFiles: status.uncommittedFiles
-				};
-			}
-
-			const res = await this.adapter.switchBranch(targetBranch, { dryRun: true });
-			
-			if (res.status === 'switched' || res.status === 'noop') {
-				return {
-					canSwitch: true,
-					unsavedFiles: [],
-					uncommittedFiles: []
-				};
-			}
-
-			const uncommittedFiles = res.status === 'blocked' ? res.files : [];
+		// Read-only dry run: isBusy belongs to exclusive mutations only.
+		if (activeModifiedFiles.length > 0) {
+			const status = await this.adapter.getStatus();
 			return {
 				canSwitch: false,
-				unsavedFiles: [],
-				uncommittedFiles
+				unsavedFiles: activeModifiedFiles,
+				uncommittedFiles: status.uncommittedFiles
 			};
-		} finally {
-			this.isBusy = false;
 		}
+
+		const res = await this.adapter.switchBranch(targetBranch, { dryRun: true });
+
+		if (res.status === 'switched' || res.status === 'noop') {
+			return {
+				canSwitch: true,
+				unsavedFiles: [],
+				uncommittedFiles: []
+			};
+		}
+
+		const uncommittedFiles = res.status === 'blocked' ? res.files : [];
+		return {
+			canSwitch: false,
+			unsavedFiles: [],
+			uncommittedFiles
+		};
 	}
 
 	async switchBranch(branchName: string): Promise<SwitchResult> {
-		this.isBusy = true;
-		try {
+		return runExclusively(this, async () => {
 			const result = await this.adapter.switchBranch(branchName);
 			await this.refresh();
 			return result;
-		} finally {
-			this.isBusy = false;
-		}
+		});
 	}
 
 	async stageAll(): Promise<boolean> {

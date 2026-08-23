@@ -755,7 +755,16 @@ export async function applyHunkAction(
 	const repo = appState.workspace.repository;
 	if (!repo) return;
 
-	await runExclusively(repo, async () => {
+	await runExclusively(repo, () => performHunkAction(appState, repo, change, hunk, action));
+}
+
+async function performHunkAction(
+	appState: AppState,
+	repo: NonNullable<AppState['workspace']['repository']>,
+	change: GitChange,
+	hunk: HunkRange,
+	action: 'stage' | 'unstage' | 'discard'
+) {
 	try {
 		if (action === 'stage' || action === 'unstage') {
 			if (!repo.adapter.updateIndexContent) {
@@ -904,5 +913,4 @@ export async function applyHunkAction(
 		console.error(`Failed to ${action} hunk:`, e);
 		await showAlert(appState, `Failed to ${action} hunk in '${change.filepath}': ${(e as Error).message}`);
 	}
-	});
 }
