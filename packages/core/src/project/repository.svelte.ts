@@ -15,6 +15,8 @@ export class Repository {
 	uncommittedFiles = $state<string[]>([]);
 	isBusy = $state(false);
 	changes = $state<GitChange[]>([]);
+	/** True once at least one refresh has resolved the change list, successful or not. */
+	changesLoaded = $state(false);
 	commits = $state<GitCommit[]>([]);
 	activeDiffFile = $state<GitChange | null>(null);
 	selectedPaths = $state<string[]>([]);
@@ -115,6 +117,7 @@ export class Repository {
 		} finally {
 			if (generation === this.refreshGeneration) {
 				this.isBusy = false;
+				this.changesLoaded = true;
 			}
 		}
 	}

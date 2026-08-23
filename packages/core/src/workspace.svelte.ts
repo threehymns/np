@@ -41,12 +41,18 @@ export class Workspace {
 		const pending = this.pendingDiffRestore;
 		const repo = this.repository;
 		if (!pending || !repo) return;
-		this.pendingDiffRestore = null;
 
 		let match = repo.changes.find(c => c.filepath === pending.filepath && (pending.staged === undefined || c.staged === pending.staged));
 		if (!match) {
 			match = repo.changes.find(c => c.filepath === pending.filepath);
 		}
+		// During session restore this can run while the repository's initial
+		// refresh is still in flight; an empty change list then means "not
+		// loaded yet", not "no match". Keep the selection queued for the
+		// post-refresh retry instead of discarding it.
+		if (!match && !repo.changesLoaded) return;
+		this.pendingDiffRestore = null;
+
 		if (match) {
 			repo.activeDiffFile = match;
 		}
