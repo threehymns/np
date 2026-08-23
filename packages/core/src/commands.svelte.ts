@@ -746,6 +746,31 @@ function splicePreservingEndings(target: Text, from: number, to: number, replace
 	return applyLineEndings(spliceText(target, from, to, replacement), reference);
 }
 
+/**
+ * Writes a discarded hunk's new worktree content; if that write fails,
+ * restores the index to `stagedText` before rethrowing, so a half-applied
+ * discard never leaves index and worktree describing different versions of
+ * the file. Callers must have already verified both adapter methods exist.
+ */
+async function updateFileWithIndexRollback(
+	repo: NonNullable<AppState['workspace']['repository']>,
+	filepath: string,
+	newWorktreeContent: string,
+	stagedText: Text,
+	stagedContent: string
+): Promise<void> {
+	try {
+		await repo.adapter.updateFileContent!(filepath, newWorktreeContent);
+	} catch (err) {
+		try {
+			await repo.adapter.updateIndexContent!(filepath, applyLineEndings(stagedText.toString(), stagedContent));
+		} catch (rollbackErr) {
+			console.error('Failed to rollback index after worktree write failure:', rollbackErr);
+		}
+		throw err;
+	}
+}
+
 export async function applyHunkAction(
 	appState: AppState,
 	change: GitChange,
@@ -857,16 +882,7 @@ async function performHunkAction(
 
 					if (!overlapsUnstaged) {
 						const newWorktreeContent = splicePreservingEndings(wtText, wtRange.from, wtRange.to, origHunkSlice, wtContent);
-						try {
-							await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
-						} catch (err) {
-							try {
-								await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
-							} catch (rollbackErr) {
-								console.error('Failed to rollback index after worktree write failure:', rollbackErr);
-							}
-							throw err;
-						}
+						await updateFileWithIndexRollback(repo, change.filepath, newWorktreeContent, stagedText, stagedContent);
 					}
 				}
 			} else {
@@ -894,16 +910,7 @@ async function performHunkAction(
 
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 					if (repo.adapter.updateFileContent) {
-						try {
-							await repo.adapter.updateFileContent(change.filepath, newWorktreeContent);
-						} catch (err) {
-							try {
-								await repo.adapter.updateIndexContent(change.filepath, applyLineEndings(stagedText.toString(), stagedContent));
-							} catch (rollbackErr) {
-								console.error('Failed to rollback index after worktree write failure:', rollbackErr);
-							}
-							throw err;
-						}
+						await updateFileWithIndexRollback(repo, change.filepath, newWorktreeContent, stagedText, stagedContent);
 					}
 				}
 			}
