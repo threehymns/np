@@ -118,6 +118,35 @@ describe("diff tab session persistence", () => {
 		expect(ws.repository!.activeDiffFile?.staged).toBe(false);
 	});
 
+	it("keeps selections independent across multiple persisted diff tabs", async () => {
+		const persistence = new MemorySessionPersistence();
+		const storage = createLocalMockStorage();
+		// Only docs/b.md exists anymore; the second tab's persisted selection
+		// ("src/gone.ts") is stale. docs/b.md is deliberately NOT the first
+		// change, so refresh's default first-change fallback can't mask the
+		// outcome.
+		const factory = createVcsFactory([makeChange("other/c.ts", false), makeChange("docs/b.md", true)]);
+		const ws = makeWorkspace(storage, factory, persistence);
+
+		const folderUri = "file:///projects/np";
+		await persistence.saveOpenFiles(
+			[
+				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", diffFilepath: "docs/b.md", diffStaged: true },
+				{ id: "__project_diff_2__", origin: null, isModified: false, virtualTabType: "diff", diffFilepath: "src/gone.ts", diffStaged: false }
+			],
+			folderUri
+		);
+
+		await ws.openDirectory(rootOrigin);
+
+		expect(ws.tabs.filter(t => t.type === "diff").map(t => t.id)).toEqual(["__project_diff__", "__project_diff_2__"]);
+		// A later diff tab's stale selection must not destroy an earlier tab's
+		// still-resolvable selection: entries resolve per tab, unresolvable
+		// ones are dropped, resolvable ones are applied.
+		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
+		expect(ws.repository!.activeDiffFile?.staged).toBe(true);
+	});
+
 	it("restores the persisted diff selection when the change list finishes loading after session state", async () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createLocalMockStorage();

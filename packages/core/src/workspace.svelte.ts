@@ -32,29 +32,41 @@ export class Workspace {
 	private saveOpenFilesTimeout: any = null;
 
 	/**
-	 * Diff-tab selection read back from persisted session state, awaiting a
-	 * repository that has refreshed its change list to be applied to.
+	 * Diff-tab selections read back from persisted session state, keyed by tab
+	 * id, awaiting a repository that has refreshed its change list to be
+	 * applied to. Keyed per tab so multiple persisted diff tabs resolve
+	 * independently instead of overwriting a shared slot — a later tab's stale
+	 * selection must not destroy an earlier tab's still-valid one.
 	 */
-	private pendingDiffRestore: { filepath: string; staged?: boolean } | null = null;
+	private pendingDiffRestore = new Map<string, { filepath: string; staged?: boolean }>();
 
 	private applyPendingDiffRestore() {
-		const pending = this.pendingDiffRestore;
 		const repo = this.repository;
-		if (!pending || !repo) return;
+		if (!repo || this.pendingDiffRestore.size === 0) return;
 
-		let match = repo.changes.find(c => c.filepath === pending.filepath && (pending.staged === undefined || c.staged === pending.staged));
-		if (!match) {
-			match = repo.changes.find(c => c.filepath === pending.filepath);
-		}
-		// During session restore this can run while the repository's initial
-		// refresh is still in flight; an empty change list then means "not
-		// loaded yet", not "no match". Keep the selection queued for the
-		// post-refresh retry instead of discarding it.
-		if (!match && !repo.changesLoaded) return;
-		this.pendingDiffRestore = null;
+		for (const [tabId, pending] of [...this.pendingDiffRestore]) {
+			// The persisted tab is gone; drop its queued selection.
+			if (!this.tabs.some(t => t.id === tabId)) {
+				this.pendingDiffRestore.delete(tabId);
+				continue;
+			}
 
-		if (match) {
-			repo.activeDiffFile = match;
+			let match = repo.changes.find(c => c.filepath === pending.filepath && (pending.staged === undefined || c.staged === pending.staged));
+			if (!match) {
+				match = repo.changes.find(c => c.filepath === pending.filepath);
+			}
+			// During session restore this can run while the repository's initial
+			// refresh is still in flight; an empty change list then means "not
+			// loaded yet", not "no match". Keep this entry queued for the
+			// post-refresh retry instead of discarding it.
+			if (!match && !repo.changesLoaded) continue;
+			this.pendingDiffRestore.delete(tabId);
+
+			// `activeDiffFile` is a single workspace-global slot, so entries
+			// applied in iteration order and the last resolvable one wins.
+			if (match) {
+				repo.activeDiffFile = match;
+			}
 		}
 	}
 
@@ -508,7 +520,7 @@ export class Workspace {
 
 	async loadFolderState(folderUri: string) {
 		console.log('[Workspace] loadFolderState start for:', folderUri);
-		this.pendingDiffRestore = null;
+		this.pendingDiffRestore.clear();
 		try {
 			const origins = await this.persistence.loadOpenFiles(folderUri);
 			console.log('[Workspace] loadOpenFiles returned:', origins);
@@ -529,10 +541,10 @@ export class Workspace {
 								type: 'diff'
 							});
 							if (serialized.diffFilepath) {
-								this.pendingDiffRestore = {
+								this.pendingDiffRestore.set(serialized.id, {
 									filepath: serialized.diffFilepath,
 									staged: serialized.diffStaged
-								};
+								});
 							}
 							continue;
 						}
@@ -577,7 +589,7 @@ export class Workspace {
 			console.log('[Workspace] loadFolderState finished. documents count:', this.documents.length);
 		} catch (e) {
 			console.error('[Workspace] Failed to load folder state', e);
-			this.pendingDiffRestore = null;
+			this.pendingDiffRestore.clear();
 			this.documents = [];
 			this.tabs = [];
 			await this.newFile();
