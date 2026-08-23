@@ -1,5 +1,4 @@
-(globalThis as any).$state = <T>(v: T) => v;
-
+import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
 import { registerCoreCommands, CommandRegistry } from "./commands.svelte";
 
