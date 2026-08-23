@@ -7,6 +7,7 @@ import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import type { GitChange } from "./project/vcs";
+import { runExclusively } from "./project/repository.svelte";
 
 async function showAlert(appState: AppState, msg: string): Promise<void> {
 	if (appState.dialogService?.alert) {
@@ -470,17 +471,16 @@ export function registerCoreCommands(appState: AppState) {
 	): Promise<boolean> {
 		const repo = appState.workspace.repository;
 		if (!repo) return false;
-		repo.isBusy = true;
 		try {
-			await op(repo);
-			await repo.refresh();
-			return true;
+			return await runExclusively(repo, async () => {
+				await op(repo);
+				await repo.refresh();
+				return true;
+			});
 		} catch (e) {
 			console.error(`${label} failed:`, e);
 			await showAlert(appState, `${label} failed: ${(e as Error).message}`);
 			return false;
-		} finally {
-			repo.isBusy = false;
 		}
 	}
 
@@ -755,7 +755,7 @@ export async function applyHunkAction(
 	const repo = appState.workspace.repository;
 	if (!repo) return;
 
-	repo.isBusy = true;
+	await runExclusively(repo, async () => {
 	try {
 		if (action === 'stage' || action === 'unstage') {
 			if (!repo.adapter.updateIndexContent) {
@@ -903,7 +903,6 @@ export async function applyHunkAction(
 	} catch (e) {
 		console.error(`Failed to ${action} hunk:`, e);
 		await showAlert(appState, `Failed to ${action} hunk in '${change.filepath}': ${(e as Error).message}`);
-	} finally {
-		repo.isBusy = false;
 	}
+	});
 }

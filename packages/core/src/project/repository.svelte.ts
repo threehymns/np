@@ -185,15 +185,33 @@ export class Repository {
 	}
 
 	private async runBulkOp(op: () => Promise<void>): Promise<void> {
-		this.isBusy = true;
-		try {
+		await runExclusively(this, async () => {
 			await op();
 			await this.refresh();
-		} finally {
-			this.isBusy = false;
-		}
+		});
 	}
 
+}
+
+const opQueues = new WeakMap<object, { queue: Promise<unknown>; depth: number }>();
+
+/**
+ * Serializes mutating operations per repository instance and holds `isBusy`
+ * until the last queued operation settles. Hunk actions splice contents read
+ * from an earlier snapshot, so overlapping writes on one repository can
+ * corrupt the index or worktree.
+ */
+export function runExclusively<T>(repo: { isBusy: boolean }, op: () => Promise<T>): Promise<T> {
+	const existing = opQueues.get(repo);
+	const state = existing ?? { queue: Promise.resolve() as Promise<unknown>, depth: 0 };
+	opQueues.set(repo, state);
+	state.depth++;
+	repo.isBusy = true;
+	const result = state.queue.then(op, op);
+	state.queue = result.then(() => undefined, () => undefined);
+	return result.finally(() => {
+		if (--state.depth === 0) repo.isBusy = false;
+	});
 }
 
 
