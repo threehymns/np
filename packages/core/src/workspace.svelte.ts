@@ -198,6 +198,20 @@ export class Workspace {
 
 	reorderDocuments(newDocs: DocumentSession[]) {
 		this.documents = newDocs;
+		// Tabs are the persisted ordering authority, so a document reorder
+		// must permute tabs too or the next session restores stale order.
+		// Non-document tabs sort after all document tabs, keeping their own
+		// relative order (stable sort).
+		const rank = new Map<string, number>();
+		newDocs.forEach((d, i) => rank.set(d.id, i));
+		this.tabs = [...this.tabs].sort((x, y) => {
+			const rx = rank.get(x.id);
+			const ry = rank.get(y.id);
+			if (rx !== undefined && ry !== undefined) return rx - ry;
+			if (rx !== undefined) return -1;
+			if (ry !== undefined) return 1;
+			return 0;
+		});
 		this.debouncedSaveOpenFiles();
 	}
 
@@ -207,6 +221,17 @@ export class Workspace {
 		}
 		const [movedTab] = this.tabs.splice(fromIdx, 1);
 		this.tabs.splice(toIdx, 0, movedTab);
+		if (movedTab.type === 'document') {
+			const docFrom = this.documents.findIndex(d => d.id === movedTab.id);
+			if (docFrom !== -1) {
+				const [movedDoc] = this.documents.splice(docFrom, 1);
+				// The tab strip and the documents array hold different item
+				// kinds, so derive the insertion slot from how many document
+				// tabs precede the target position.
+				const docTabsBefore = this.tabs.slice(0, toIdx).filter(t => t.type === 'document').length;
+				this.documents.splice(Math.min(docTabsBefore, this.documents.length), 0, movedDoc);
+			}
+		}
 		this.debouncedSaveOpenFiles();
 	}
 
