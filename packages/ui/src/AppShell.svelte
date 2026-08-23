@@ -29,14 +29,25 @@
 		};
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 
-		const handleBeforeUnload = () => {
+		// Persistence backends are async (IndexedDB, Electron IPC), so a flush
+		// started in `beforeunload` may not finish before teardown. `pagehide`
+		// and `visibilitychange` → hidden fire earlier and more reliably,
+		// giving the save a head start; `beforeunload` stays as the last try.
+		const flushSession = () => {
 			appState.flushSaveOpenFiles();
 		};
-		window.addEventListener('beforeunload', handleBeforeUnload);
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'hidden') flushSession();
+		};
+		window.addEventListener('pagehide', flushSession);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('beforeunload', flushSession);
 
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
-			window.removeEventListener('beforeunload', handleBeforeUnload);
+			window.removeEventListener('pagehide', flushSession);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('beforeunload', flushSession);
 		};
 	});
 
