@@ -1,5 +1,5 @@
 import { mock } from "bun:test";
-import type { Storage, FileOrigin } from "../../packages/core/src/storage";
+import type { Storage, FileOrigin } from "../packages/core/src/storage";
 
 export interface MockStorageOptions {
 	pickDirectory?: () => Promise<FileOrigin | null>;
