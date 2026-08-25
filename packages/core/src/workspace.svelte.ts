@@ -92,6 +92,15 @@ export class Workspace {
 				if (active) {
 					serialized.diffFilepath = active.filepath;
 					serialized.diffStaged = active.staged;
+				} else {
+					// Session restore can finish before the repository's refresh
+					// applies the persisted selection; serialize the queued one so a
+					// save in that window doesn't drop it.
+					const pending = this.pendingDiffRestore.get(tab.id);
+					if (pending) {
+						serialized.diffFilepath = pending.filepath;
+						serialized.diffStaged = pending.staged;
+					}
 				}
 				return serialized;
 			}

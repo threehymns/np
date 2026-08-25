@@ -190,4 +190,39 @@ describe("diff tab session persistence", () => {
 		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
 		expect(ws.repository!.activeDiffFile?.staged).toBe(true);
 	});
+
+	it("re-persists the queued diff selection when saving before the change list loads", async () => {
+		const persistence = new MemorySessionPersistence();
+		const storage = createLocalMockStorage();
+
+		const base = createVcsFactory([makeChange("src/a.ts", false), makeChange("docs/b.md", true)])(rootOrigin);
+		const stalledAdapter: VCSAdapter = {
+			...base,
+			getChanges: async () => new Promise(() => {})
+		};
+
+		const folderUri = "file:///projects/np";
+		await persistence.saveRootFolder(rootOrigin);
+		await persistence.saveOpenFiles(
+			[
+				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", diffFilepath: "docs/b.md", diffStaged: true }
+			],
+			folderUri
+		);
+		await persistence.saveActiveDocumentId("__project_diff__", folderUri);
+
+		const ws = makeWorkspace(storage, () => stalledAdapter, persistence);
+
+		// Restore finishes with the repository's refresh still hung, so
+		// activeDiffFile is unset and the selection lives only in the
+		// pending-restore queue.
+		await ws.restoreSession();
+		expect(ws.repository?.activeDiffFile).toBeNull();
+
+		ws.flushSaveOpenFiles();
+		const saved = await persistence.loadOpenFiles(folderUri);
+		const diffEntry = saved.find(d => d.virtualTabType === "diff");
+		expect(diffEntry?.diffFilepath).toBe("docs/b.md");
+		expect(diffEntry?.diffStaged).toBe(true);
+	});
 });
