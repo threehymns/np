@@ -14,6 +14,7 @@
 		"build": "bun --filter web build && bun --filter desktop build",
 		"build:web": "bun --filter web build",
 		"preview:web": "bun --filter web preview",
+		"check": "bun run check:web && bun run check:desktop",
 		"check:web": "bun --filter web check",
 		"dev:desktop": "bun --filter desktop dev",
 		"build:desktop": "bun --filter desktop build",

@@ -13,7 +13,7 @@
   
   import { X } from "phosphor-svelte";
   import { flip } from "svelte/animate";
-  import type { EditorView } from "codemirror";
+  import type { EditorView } from "@codemirror/view";
 
   const storage = new MultiSchemeStorage();
   storage.registerProvider("file", new ElectronStorage());

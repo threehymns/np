@@ -1,14 +1,4 @@
-(globalThis as any).$state = Object.assign(<T>(v: T) => v, {
-	snapshot: <T>(v: T) => v,
-	raw: <T>(v: T) => v
-});
-(globalThis as any).$derived = Object.assign(<T>(v: T) => v, {
-	by: (fn: any) => fn()
-});
-(globalThis as any).$effect = Object.assign(() => {}, {
-	root: (cb: () => void) => { cb(); return () => {}; }
-});
-
+import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from 'bun:test';
 import { Repository } from './repository.svelte';
 import type { VCSAdapter, VCSStatus, GitChange } from './vcs';

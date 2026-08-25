@@ -1,2 +1,5 @@
+[install]
+trustedDependencies = ["electron"]
+
 [test]
 pathIgnorePatterns = ["tests/e2e/**"]

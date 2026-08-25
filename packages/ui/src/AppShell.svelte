@@ -20,17 +20,39 @@
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
-	onMount(async () => {
-		await appState.init();
-		
+	onMount(() => {
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
 			if (appState.keymaps.handleKeydown(e)) {
 				e.stopPropagation();
 				e.preventDefault();
 			}
 		};
-
 		window.addEventListener('keydown', handleCaptureKeydown, true);
+
+		// Persistence backends are async (IndexedDB, Electron IPC), so a flush
+		// started in `beforeunload` may not finish before teardown. `pagehide`
+		// and `visibilitychange` → hidden fire earlier and more reliably,
+		// giving the save a head start; `beforeunload` stays as the last try.
+		const flushSession = () => {
+			appState.flushSaveOpenFiles();
+		};
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'hidden') flushSession();
+		};
+		window.addEventListener('pagehide', flushSession);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('beforeunload', flushSession);
+
+		return () => {
+			window.removeEventListener('keydown', handleCaptureKeydown, true);
+			window.removeEventListener('pagehide', flushSession);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('beforeunload', flushSession);
+		};
+	});
+
+	onMount(async () => {
+		await appState.init();
 
 		// Lazy load secondary UI
 		Promise.all([
@@ -44,10 +66,6 @@
 		}).catch(err => {
 			console.error("[AppShell] Failed to load secondary UI components:", err);
 		});
-
-		return () => {
-			window.removeEventListener('keydown', handleCaptureKeydown, true);
-		};
 	});
 
 	$effect(() => {
