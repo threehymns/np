@@ -40,7 +40,8 @@ function createVcsFactory(changes: GitChange[]): (root: FileOrigin) => VCSAdapte
 		getBranches: async () => ["main"],
 		getChanges: async () => changes,
 		getCommits: async () => [],
-		getStatus: async () => ({ isDirty: changes.length > 0, uncommittedFiles: [...new Set(changes.map(c => c.filepath))] })
+		getStatus: async () => ({ isDirty: changes.length > 0, uncommittedFiles: [...new Set(changes.map(c => c.filepath))] }),
+		switchBranch: mock(async () => ({ status: "switched" as const }))
 	});
 }
 
