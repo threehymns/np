@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
-	import type { GitChange, FileDiffDetail } from '@np/core';
-	import { fileDiffFromChange, diffCacheKey } from '@np/core';
+	import type { GitChange, FileDiffDetail, HunkCoordinates } from '@np/core';
+	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -12,13 +12,6 @@
 	import Button from './ui/button/button.svelte';
 
 	import { mount, unmount } from 'svelte';
-
-	export interface HunkCoordinates {
-		fromA: number;
-		toA: number;
-		fromB: number;
-		toB: number;
-	}
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -134,43 +127,6 @@
 		}
 	}
 
-	function getUnifiedHunks(origText: Text, modText: Text): HunkCoordinates[] {
-		const rawChunks = Chunk.build(origText, modText);
-		if (rawChunks.length <= 1) {
-			return rawChunks.map(c => ({ fromA: c.fromA, toA: c.toA, fromB: c.fromB, toB: c.toB }));
-		}
-
-		const merged: HunkCoordinates[] = [];
-		let current: HunkCoordinates = {
-			fromA: rawChunks[0].fromA,
-			toA: rawChunks[0].toA,
-			fromB: rawChunks[0].fromB,
-			toB: rawChunks[0].toB
-		};
-
-		for (let i = 1; i < rawChunks.length; i++) {
-			const next = rawChunks[i];
-			const lineGapA = origText.lineAt(Math.min(next.fromA, origText.length)).number - origText.lineAt(Math.min(current.toA, origText.length)).number;
-			const lineGapB = modText.lineAt(Math.min(next.fromB, modText.length)).number - modText.lineAt(Math.min(current.toB, modText.length)).number;
-
-			if (lineGapA <= 3 && lineGapB <= 3) {
-				current.toA = next.toA;
-				current.toB = next.toB;
-			} else {
-				merged.push(current);
-				current = {
-					fromA: next.fromA,
-					toA: next.toA,
-					fromB: next.fromB,
-					toB: next.toB
-				};
-			}
-		}
-		merged.push(current);
-
-		return merged;
-	}
-
 	function createHunkWidgetExtension(change: GitChange, state: AppState) {
 		return ViewPlugin.fromClass(
 			class {
@@ -194,7 +150,7 @@
 					const origText = Text.of(origContent.split(/\r?\n/));
 					const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-					this.cachedHunks = getUnifiedHunks(origText, modText);
+					this.cachedHunks = getUnifiedHunks(origText, modText, stagedText);
 					this.cachedUnstagedChunks = Chunk.build(stagedText, modText);
 					this.cachedModText = modText;
 					this.cachedOrigContent = origContent;
@@ -953,9 +909,11 @@
 			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
 			if (!origContent && !modContent) return;
 
+			const stagedContent = diff?.stagedContent ?? change.stagedContent ?? (change.staged ? modContent : origContent);
 			const origText = Text.of(origContent.split(/\r?\n/));
 			const modText = Text.of(modContent.split(/\r?\n/));
-			const chunks = getUnifiedHunks(origText, modText);
+			const stagedText = Text.of(stagedContent.split(/\r?\n/));
+			const chunks = getUnifiedHunks(origText, modText, stagedText);
 			chunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
