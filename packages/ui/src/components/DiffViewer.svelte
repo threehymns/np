@@ -829,22 +829,9 @@
 	$effect(() => {
 		const currentChanges = repo?.changes ?? null;
 		if (currentChanges !== lastChangesRef) {
-			// When repo changes reference updates, prune cached entries that are no longer active
-			// instead of wiping all loaded diffs unconditionally on rapid status polls.
-			if (currentChanges && lastChangesRef) {
-				const currentKeys = new Set(currentChanges.map(c => diffCacheKey(c)));
-				const nextLoaded: Record<string, FileDiffDetail> = {};
-				for (const [k, v] of Object.entries(loadedDiffs)) {
-					if (currentKeys.has(k)) {
-						nextLoaded[k] = v;
-					}
-				}
-				loadedDiffs = nextLoaded;
-			} else {
-				loadedDiffs = {};
-			}
-			lastChangesRef = currentChanges;
+			loadedDiffs = {};
 			loadingDiffs = {};
+			lastChangesRef = currentChanges;
 		}
 	});
 
