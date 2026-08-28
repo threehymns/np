@@ -1,4 +1,4 @@
-import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { mapBounded } from '@np/core/utils';
 
@@ -565,11 +565,33 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
-	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
-		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
+	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail> {
+		// Optimization: If the file is untracked ('U'), it has no HEAD or index objects.
+		if (options?.status === 'U') {
+			let worktreeContent = '';
+			if (options.staged !== true) {
+				try {
+					const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+					worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+				} catch (e) {
+					if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+						throw e;
+					}
+				}
+			}
+			return resolveDiffDetail('', '', worktreeContent, options);
+		}
+
+		// Optimization: If a file is staged added ('A' with staged: true), HEAD is guaranteed empty.
+		if (options?.status === 'A' && options.staged === true) {
+			const indexObj = await this.readGitObject(`:${filepath}`);
+			return resolveDiffDetail('', indexObj ?? '', '', options);
+		}
 
 		let worktreeContent = '';
-		if (options?.staged !== true) {
+		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
+		const isDeletedWorktree = options?.status === 'D' && options?.staged !== true;
+		if (options?.staged !== true && !isDeletedWorktree) {
 			try {
 				// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
 				const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
@@ -581,6 +603,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 		}
 
+		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);

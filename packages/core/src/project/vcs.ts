@@ -218,6 +218,11 @@ export function resolveDiscardOptions(
 	return { staged: contextIsStaged };
 }
 
+export interface GetFileDiffOptions {
+	staged?: boolean;
+	status?: 'M' | 'A' | 'D' | 'U';
+}
+
 export interface VCSAdapter {
 	detect(rootPath: string): Promise<boolean>;
 	getCurrentBranch(): Promise<string | null>;
@@ -226,7 +231,7 @@ export interface VCSAdapter {
 	switchBranch(branchName: string, options?: { dryRun?: boolean }): Promise<SwitchResult>;
 	getChanges?(): Promise<GitChange[]>;
 	getCommits?(): Promise<GitCommit[]>;
-	getFileDiff?(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail>;
+	getFileDiff?(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail>;
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
 	discardChanges?(filepath: string, options?: { staged?: boolean }): Promise<void>;
