@@ -288,7 +288,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			
+
 			if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
 				try {
 					const handle = await (window as any).showSaveFilePicker({
@@ -319,8 +319,6 @@ export function registerCoreCommands(appState: AppState) {
     label: 'Command Palette: Toggle',
     category: 'View',
     action: () => {
-      if (!appState.activeDocument) return;
-      const currentDoc = appState.activeDocument;
       appState.commandPalette.open = !appState.commandPalette.open;
     }
   });
@@ -332,7 +330,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: () => {
 			if (!appState.activeDocument) return;
 			const currentDoc = appState.activeDocument;
-			
+
 			const langItems = [
 				{
 					id: 'auto',
@@ -355,9 +353,9 @@ export function registerCoreCommands(appState: AppState) {
 					}
 				},
 				...allLanguages.map(lang => {
-					const isCurrent = currentDoc.userLanguageOverride === lang.name || 
+					const isCurrent = currentDoc.userLanguageOverride === lang.name ||
 						(currentDoc.userLanguageOverride === null && currentDoc.language?.name === lang.name);
-					
+
 					let packageId = '';
 					const nameMap: Record<string, string> = {
 						"C++": "@codemirror/lang-cpp",
@@ -554,7 +552,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async (message: string, options?: { author?: { name: string; email: string }; amend?: boolean }) => {
 			const repo = appState.workspace.repository;
 			if (!repo || !repo.adapter.commit) return false;
-			
+
 			const stagedCount = repo.changes.filter(c => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
 				await showAlert(appState, 'Cannot commit: No staged changes to commit.');
