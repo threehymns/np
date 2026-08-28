@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
+	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail, HunkCoordinates } from '@np/core';
 	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
@@ -11,7 +11,10 @@
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
-	import { mount, unmount } from 'svelte';
+	const SVG_PLUS = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></svg>';
+	const SVG_MINUS = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/></svg>';
+	const SVG_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></svg>';
+	const SVG_UNDO = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></svg>';
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -19,7 +22,6 @@
 		staged: boolean;
 		change: GitChange;
 		appState: AppState;
-		private mountedApps: Array<Record<string, any>> = [];
 
 		constructor(
 			hunkIndex: number,
@@ -36,8 +38,19 @@
 			this.appState = appState;
 		}
 
+		eq(other: HunkWidget): boolean {
+			return (
+				this.hunkIndex === other.hunkIndex &&
+				this.staged === other.staged &&
+				this.change === other.change &&
+				this.hunkRange.fromA === other.hunkRange.fromA &&
+				this.hunkRange.toA === other.hunkRange.toA &&
+				this.hunkRange.fromB === other.hunkRange.fromB &&
+				this.hunkRange.toB === other.hunkRange.toB
+			);
+		}
+
 		toDOM(): HTMLElement {
-			this.mountedApps = [];
 			const wrap = document.createElement('div');
 			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover/95 text-popover-foreground border border-border/80 rounded-md px-1.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-90 hover:opacity-100 transition-opacity select-none';
 			wrap.style.cssText = 'float: right; margin-top: -2px; margin-bottom: -2px; position: relative; z-index: 20;';
@@ -62,7 +75,7 @@
 				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
 				unstageBtn.setAttribute('aria-label', `Unstage Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(MinusIcon, { target: unstageBtn, props: { size: 10 } }));
+				unstageBtn.innerHTML = SVG_MINUS;
 				unstageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -75,7 +88,7 @@
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
 				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(TrashIcon, { target: discardBtn, props: { size: 10 } }));
+				discardBtn.innerHTML = SVG_TRASH;
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -88,7 +101,7 @@
 				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
 				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
 				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(PlusIcon, { target: stageBtn, props: { size: 10 } }));
+				stageBtn.innerHTML = SVG_PLUS;
 				stageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -101,7 +114,7 @@
 				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
 				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
 				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(ArrowCounterClockwiseIcon, { target: discardBtn, props: { size: 10 } }));
+				discardBtn.innerHTML = SVG_UNDO;
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -113,20 +126,17 @@
 			return wrap;
 		}
 
-		destroy() {
-			if (this.mountedApps.length === 0) return;
-			for (const app of this.mountedApps) {
-				unmount(app);
-			}
-			this.mountedApps = [];
-		}
-
 		ignoreEvent() {
 			return true;
 		}
 	}
 
-	function createHunkWidgetExtension(change: GitChange, state: AppState) {
+	function createHunkWidgetExtension(
+		change: GitChange,
+		state: AppState,
+		precomputedHunks?: HunkCoordinates[],
+		precomputedUnstagedChunks?: readonly Chunk[]
+	) {
 		return ViewPlugin.fromClass(
 			class {
 				decorations: DecorationSet;
@@ -137,7 +147,19 @@
 				cachedStagedContent: string = '';
 
 				constructor(view: EditorView) {
-					this.computeDiff(view);
+					const origContent = change.originalContent || '';
+					const modText = view.state.doc;
+					const stagedContent = change.stagedContent ?? (change.staged ? modText.toString() : origContent);
+
+					if (precomputedHunks && precomputedUnstagedChunks && modText.toString() === (change.modifiedContent || '')) {
+						this.cachedHunks = precomputedHunks;
+						this.cachedUnstagedChunks = precomputedUnstagedChunks;
+						this.cachedModText = modText;
+						this.cachedOrigContent = origContent;
+						this.cachedStagedContent = stagedContent;
+					} else {
+						this.computeDiff(view);
+					}
 					this.decorations = this.buildDecorations(view);
 				}
 
@@ -415,6 +437,8 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
+			hunks?: HunkCoordinates[];
+			unstagedChunks?: readonly Chunk[];
 		}
 	) {
 		let view: EditorView | undefined;
@@ -439,7 +463,7 @@
 						})
 					),
 					hunkCompartment.of(
-						createHunkWidgetExtension(currentOptions.fileChange, appState)
+						createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 					),
 					...langExtensions,
 					syntaxHighlighting(markdownHighlight),
@@ -490,7 +514,7 @@
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effects.push(
 							hunkCompartment.reconfigure(
-								createHunkWidgetExtension(currentOptions.fileChange, appState)
+								createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 							)
 						);
 					}
@@ -531,6 +555,8 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
+			hunks?: HunkCoordinates[];
+			unstagedChunks?: readonly Chunk[];
 			onDocChange?: (newVal: string) => void;
 		}
 	) {
@@ -563,7 +589,7 @@
 					extensions: [
 						EditorState.readOnly.of(true),
 						hunkCompartmentB.of(
-							createHunkWidgetExtension(currentOptions.fileChange, appState)
+							createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 						),
 						...langExtensions,
 						syntaxHighlighting(markdownHighlight),
@@ -670,7 +696,7 @@
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effectsB.push(
 							hunkCompartmentB.reconfigure(
-								createHunkWidgetExtension(currentOptions.fileChange, appState)
+								createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 							)
 						);
 					}
@@ -799,29 +825,61 @@
 		return result;
 	}
 
-	let loadedDiffs = $state<Record<string, FileDiffDetail>>({});
+	interface CachedDiffDetail extends FileDiffDetail {
+		hunks?: HunkCoordinates[];
+		unstagedChunks?: readonly Chunk[];
+	}
+
+	let loadedDiffs = $state<Record<string, CachedDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
-	function resolveFileDiff(fileChange: GitChange): FileDiffDetail | null {
+	function getOrComputeDiffHunks(diff: FileDiffDetail): { hunks: HunkCoordinates[]; unstagedChunks: readonly Chunk[] } {
+		const cached = diff as CachedDiffDetail;
+		if (cached.hunks && cached.unstagedChunks) {
+			return { hunks: cached.hunks, unstagedChunks: cached.unstagedChunks };
+		}
+		const origText = Text.of((diff.originalContent || '').split(/\r?\n/));
+		const modText = Text.of((diff.modifiedContent || '').split(/\r?\n/));
+		const stagedContent = diff.stagedContent ?? diff.originalContent ?? '';
+		const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+		const hunks = getUnifiedHunks(origText, modText, DEFAULT_DIFF_CONFIG);
+		const unstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
+		cached.hunks = hunks;
+		cached.unstagedChunks = unstagedChunks;
+		return { hunks, unstagedChunks };
+	}
+
+	function resolveFileDiff(fileChange: GitChange): CachedDiffDetail | null {
 		const key = diffCacheKey(fileChange);
 		if (loadedDiffs[key]) {
 			return loadedDiffs[key];
 		}
-		return fileDiffFromChange(fileChange);
+		const detail = fileDiffFromChange(fileChange);
+		if (detail) {
+			getOrComputeDiffHunks(detail);
+			loadedDiffs[key] = detail;
+			return detail;
+		}
+		return null;
 	}
 
-	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean }) {
+	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean; status?: 'M' | 'A' | 'D' | 'U' }) {
 		const key = diffCacheKey({ filepath, staged: options?.staged, combined: options?.combined });
 		if (loadingDiffs[key] || loadedDiffs[key]) return;
 		loadingDiffs[key] = true;
 		try {
 			if (repo) {
-				const diff = await repo.getFileDiff(filepath, options?.combined ? undefined : { staged: options?.staged });
-				loadedDiffs[key] = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
+				const diff = await repo.getFileDiff(filepath, options?.combined ? { status: options?.status } : { staged: options?.staged, status: options?.status });
+				const detail: CachedDiffDetail = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
+				getOrComputeDiffHunks(detail);
+				loadedDiffs[key] = detail;
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
-			loadedDiffs[key] = { originalContent: '', modifiedContent: '', stagedContent: '' };
+			const fallback: CachedDiffDetail = { originalContent: '', modifiedContent: '', stagedContent: '' };
+			getOrComputeDiffHunks(fallback);
+			loadedDiffs[key] = fallback;
 		} finally {
 			loadingDiffs[key] = false;
 		}
@@ -842,7 +900,7 @@
 			if (!isFileCollapsed(file.filepath)) {
 				const key = diffCacheKey(file);
 				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[key] && !loadingDiffs[key]) {
-					fetchDiff(file.filepath, { staged: file.staged, combined: file.combined });
+					fetchDiff(file.filepath, { staged: file.staged, combined: file.combined, status: file.status });
 				}
 			}
 		}
@@ -893,15 +951,11 @@
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
-			const diff = loadedDiffs[diffCacheKey(change)];
-			const origContent = diff?.originalContent ?? change.originalContent ?? '';
-			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
-			if (!origContent && !modContent) return;
+			const diff = resolveFileDiff(change);
+			if (!diff || (!diff.originalContent && !diff.modifiedContent)) return;
 
-			const origText = Text.of(origContent.split(/\r?\n/));
-			const modText = Text.of(modContent.split(/\r?\n/));
-			const chunks = getUnifiedHunks(origText, modText);
-			chunks.forEach((chunk, chunkIndex) => {
+			const { hunks } = getOrComputeDiffHunks(diff);
+			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
 					filepath: change.filepath,
@@ -1269,7 +1323,9 @@
 											readOnly: true,
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap
+											wrap: appState.prefs.wordWrap,
+											hunks: diff.hunks,
+											unstagedChunks: diff.unstagedChunks
 										}}></div>
 									</div>
 								{:else}
@@ -1280,7 +1336,9 @@
 											rightContent: diff.modifiedContent,
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap
+											wrap: appState.prefs.wordWrap,
+											hunks: diff.hunks,
+											unstagedChunks: diff.unstagedChunks
 										}}></div>
 									</div>
 								{/if}
