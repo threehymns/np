@@ -12,9 +12,13 @@
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
 
-	let SettingsModal = $state<any>(null);
-	let CommandPalette = $state<any>(null);
-	let WhichKey = $state<any>(null);
+	import type SettingsModalComponent from "./components/SettingsModal.svelte";
+	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
+	import type WhichKeyComponent from "./components/WhichKey.svelte";
+
+	let SettingsModal = $state<typeof SettingsModalComponent | null>(null);
+	let CommandPalette = $state<typeof CommandPaletteComponent | null>(null);
+	let WhichKey = $state<typeof WhichKeyComponent | null>(null);
 
 	let { children } = $props<{ children: Snippet }>();
 

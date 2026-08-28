@@ -10,13 +10,16 @@
   import type { EditorView } from '@codemirror/view';
 
   import DiffViewer from './DiffViewer.svelte';
+  import type EditorComponent from './Editor.svelte';
+  import type FileExplorerComponent from './FileExplorer.svelte';
+  import type GitPanelComponent from './GitPanel.svelte';
 
   const appState = useAppState();
 
   // Lazy load heavy components
-  let Editor = $state<any>(null);
-  let FileExplorer = $state<any>(null);
-  let GitPanel = $state<any>(null);
+  let Editor = $state<typeof EditorComponent | null>(null);
+  let FileExplorer = $state<typeof FileExplorerComponent | null>(null);
+  let GitPanel = $state<typeof GitPanelComponent | null>(null);
 
   let draggedId = $state<string | null>(null);
   let initialTabIds: string[] | null = null;
