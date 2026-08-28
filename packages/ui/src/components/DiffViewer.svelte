@@ -114,10 +114,9 @@
 		}
 
 		destroy() {
+			if (this.mountedApps.length === 0) return;
 			for (const app of this.mountedApps) {
-				try {
-					unmount(app);
-				} catch (e) {}
+				unmount(app);
 			}
 			this.mountedApps = [];
 		}
