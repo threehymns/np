@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { Text } from "@codemirror/state";
-import { countDiffStats, resolveDiscardOptions, getUnifiedHunks, type GitChange } from "./vcs";
+import { countDiffStats, resolveDiscardOptions, getUnifiedHunks, DEFAULT_DIFF_CONFIG, type GitChange } from "./vcs";
 
 describe("countDiffStats", () => {
 	it("returns zero counts for empty input", () => {
@@ -145,6 +145,13 @@ describe("getUnifiedHunks", () => {
 
 		expect(hunks).toHaveLength(1);
 		expect(startLines(mod, hunks)).toEqual([4]);
+	});
+
+	it("uses DEFAULT_DIFF_CONFIG and allows overriding diffConfig", () => {
+		expect(DEFAULT_DIFF_CONFIG).toEqual({ scanLimit: 5000, timeout: 500 });
+		const mod = Text.of(replaceLine(HEAD_LINES, 4, "DD-edit"));
+		const hunks = getUnifiedHunks(origText, mod, { scanLimit: 1000, timeout: 100 });
+		expect(hunks).toHaveLength(1);
 	});
 });
 

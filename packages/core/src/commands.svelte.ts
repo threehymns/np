@@ -1,12 +1,12 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
-import { Chunk } from "@codemirror/merge";
+import { Chunk, type DiffConfig } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
-import type { GitChange } from "./project/vcs";
+import { type GitChange, DEFAULT_DIFF_CONFIG } from "./project/vcs";
 import { runExclusively } from "./project/repository.svelte";
 
 async function showAlert(appState: AppState, msg: string): Promise<void> {
@@ -720,8 +720,14 @@ export function mapPos(posA: number, chunks: readonly Chunk[]): number {
  * Maps a character range [posFrom, posTo] defined on textA (original coordinate space)
  * into textB (target coordinate space) by computing diff chunks and mapping both endpoints.
  */
-export function mapRange(posFrom: number, posTo: number, textA: Text, textB: Text): { from: number; to: number } {
-	const chunks = Chunk.build(textA, textB);
+export function mapRange(
+	posFrom: number,
+	posTo: number,
+	textA: Text,
+	textB: Text,
+	diffConfig: DiffConfig = DEFAULT_DIFF_CONFIG
+): { from: number; to: number } {
+	const chunks = Chunk.build(textA, textB, diffConfig);
 	return {
 		from: mapPos(posFrom, chunks),
 		to: mapPos(posTo, chunks)
@@ -874,8 +880,8 @@ async function performHunkAction(
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				} else {
 					const wtText = Text.of(wtContent.split(/\r?\n/));
-					const unstagedChunks = Chunk.build(stagedText, wtText);
-					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText);
+					const unstagedChunks = Chunk.build(stagedText, wtText, DEFAULT_DIFF_CONFIG);
+					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText, DEFAULT_DIFF_CONFIG);
 					const wtStartLine = wtText.lineAt(Math.min(wtRange.from, wtText.length)).number;
 					const wtEndLine = wtText.lineAt(Math.min(wtRange.to, wtText.length)).number;
 					// Unstaged edits inside the hunk's region cannot be reverted
@@ -895,7 +901,7 @@ async function performHunkAction(
 					}
 				}
 			} else {
-				const unstagedChunks = Chunk.build(stagedText, modText);
+				const unstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 				const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
 				const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
 				const isUnstaged = unstagedChunks.some((uc: Chunk) => {
@@ -905,7 +911,7 @@ async function performHunkAction(
 				});
 
 				if (isUnstaged) {
-					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
+					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText, DEFAULT_DIFF_CONFIG);
 					const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
 
 					await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);

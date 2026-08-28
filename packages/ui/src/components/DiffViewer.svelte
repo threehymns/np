@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail, HunkCoordinates } from '@np/core';
-	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks } from '@np/core';
+	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -149,8 +149,8 @@
 					const origText = Text.of(origContent.split(/\r?\n/));
 					const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-					this.cachedHunks = getUnifiedHunks(origText, modText);
-					this.cachedUnstagedChunks = Chunk.build(stagedText, modText);
+					this.cachedHunks = getUnifiedHunks(origText, modText, DEFAULT_DIFF_CONFIG);
+					this.cachedUnstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 					this.cachedModText = modText;
 					this.cachedOrigContent = origContent;
 					this.cachedStagedContent = stagedContent;
@@ -434,7 +434,8 @@
 					diffCompartment.of(
 						unifiedMergeView({
 							original: currentOptions.originalContent,
-							collapseUnchanged: DIFF_COLLAPSE_CONFIG
+							collapseUnchanged: DIFF_COLLAPSE_CONFIG,
+							diffConfig: DEFAULT_DIFF_CONFIG
 						})
 					),
 					hunkCompartment.of(
@@ -480,7 +481,8 @@
 							diffCompartment.reconfigure(
 								unifiedMergeView({
 									original: currentOptions.originalContent,
-									collapseUnchanged: DIFF_COLLAPSE_CONFIG
+									collapseUnchanged: DIFF_COLLAPSE_CONFIG,
+									diffConfig: DEFAULT_DIFF_CONFIG
 								})
 							)
 						);
@@ -576,6 +578,7 @@
 						wrapCompartmentB.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
+				diffConfig: DEFAULT_DIFF_CONFIG,
 				parent: node,
 				orientation: "a-b",
 				collapseUnchanged: DIFF_COLLAPSE_CONFIG

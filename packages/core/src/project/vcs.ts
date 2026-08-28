@@ -1,5 +1,15 @@
 import { Text } from '@codemirror/state';
-import { Chunk } from '@codemirror/merge';
+import { Chunk, type DiffConfig } from '@codemirror/merge';
+
+/**
+ * Default configuration for CodeMirror Myers diffing across np.
+ * Capping scanLimit prevents UI thread freezes on massive edits, while
+ * timeout prevents worst-case quadratic runtimes on minified / dissimilar files.
+ */
+export const DEFAULT_DIFF_CONFIG: DiffConfig = {
+	scanLimit: 5000,
+	timeout: 500
+};
 
 export type SwitchResult =
 	| { status: 'switched' }
@@ -167,8 +177,12 @@ export interface HunkCoordinates {
 	toB: number;
 }
 
-export function getUnifiedHunks(origText: Text, modText: Text): HunkCoordinates[] {
-	return Chunk.build(origText, modText).map(c => ({
+export function getUnifiedHunks(
+	origText: Text,
+	modText: Text,
+	diffConfig: DiffConfig = DEFAULT_DIFF_CONFIG
+): HunkCoordinates[] {
+	return Chunk.build(origText, modText, diffConfig).map(c => ({
 		fromA: c.fromA,
 		toA: c.toA,
 		fromB: c.fromB,
