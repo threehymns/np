@@ -8,17 +8,6 @@
 
 	let inputValue = $state("");
 
-	$effect(() => {
-		function handleKeydown(e: KeyboardEvent) {
-			if ((e.metaKey || e.ctrlKey) && e.key === "p") {
-				e.preventDefault();
-				appState.commandPalette.open = !appState.commandPalette.open;
-			}
-		}
-
-		window.addEventListener("keydown", handleKeydown);
-		return () => window.removeEventListener("keydown", handleKeydown);
-	});
 
 	$effect(() => {
 		if (!appState.commandPalette.open) {

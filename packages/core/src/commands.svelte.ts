@@ -314,6 +314,17 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+  appState.commands.register({
+    id: 'commandPalette.toggle',
+    label: 'Command Palette: Toggle',
+    category: 'View',
+    action: () => {
+      if (!appState.activeDocument) return;
+      const currentDoc = appState.activeDocument;
+      appState.commandPalette.open = !appState.commandPalette.open;
+    }
+  });
+
 	appState.commands.register({
 		id: 'edit.changeLanguageMode',
 		label: 'Change Language Mode',
