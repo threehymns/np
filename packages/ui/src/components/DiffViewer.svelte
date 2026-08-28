@@ -52,7 +52,7 @@
 
 		toDOM(): HTMLElement {
 			const wrap = document.createElement('div');
-			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover/95 text-popover-foreground border border-border/80 rounded-md px-1.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-90 hover:opacity-100 transition-opacity select-none';
+			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover text-popover-foreground border-x border-b border-border rounded-b-md px-0.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-50 hover:opacity-100 transition-opacity select-none font-sans';
 			wrap.style.cssText = 'float: right; margin-top: -2px; margin-bottom: -2px; position: relative; z-index: 20;';
 
 			const preventEvent = (e: Event) => {
@@ -64,18 +64,13 @@
 			wrap.addEventListener('mouseup', preventEvent);
 			wrap.addEventListener('click', preventEvent);
 
-			const label = document.createElement('span');
-			label.className = 'font-bold text-[9px] opacity-70 mr-0.5';
-			label.textContent = `#${this.hunkIndex + 1}`;
-			wrap.appendChild(label);
-
 			if (this.staged) {
 				const unstageBtn = document.createElement('button');
 				unstageBtn.type = 'button';
-				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
-				unstageBtn.setAttribute('aria-label', `Unstage Hunk #${this.hunkIndex + 1}`);
-				unstageBtn.innerHTML = SVG_MINUS;
+				unstageBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
+				unstageBtn.title = `Unstage Hunk`;
+				unstageBtn.setAttribute('aria-label', `Unstage Hunk`);
+				unstageBtn.innerHTML = "Unstage";
 				unstageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -85,10 +80,10 @@
 
 				const discardBtn = document.createElement('button');
 				discardBtn.type = 'button';
-				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				discardBtn.innerHTML = SVG_TRASH;
+				discardBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
+				discardBtn.title = `Discard Hunk`;
+				discardBtn.setAttribute('aria-label', `Discard Hunk`);
+				discardBtn.innerHTML = "Discard";
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -98,10 +93,10 @@
 			} else {
 				const stageBtn = document.createElement('button');
 				stageBtn.type = 'button';
-				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
-				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
-				stageBtn.innerHTML = SVG_PLUS;
+				stageBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
+				stageBtn.title = `Stage Hunk`;
+				stageBtn.setAttribute('aria-label', `Stage Hunk`);
+				stageBtn.innerHTML = "Stage";
 				stageBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -111,10 +106,10 @@
 
 				const discardBtn = document.createElement('button');
 				discardBtn.type = 'button';
-				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				discardBtn.innerHTML = SVG_UNDO;
+				discardBtn.className = 'py-0.5 px-1 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
+				discardBtn.title = `Discard Hunk`;
+				discardBtn.setAttribute('aria-label', `Discard Hunk`);
+				discardBtn.innerHTML = "Discard";
 				discardBtn.onclick = (e) => {
 					e.stopPropagation();
 					e.preventDefault();
@@ -459,7 +454,8 @@
 						unifiedMergeView({
 							original: currentOptions.originalContent,
 							collapseUnchanged: DIFF_COLLAPSE_CONFIG,
-							diffConfig: DEFAULT_DIFF_CONFIG
+							diffConfig: DEFAULT_DIFF_CONFIG,
+							mergeControls: false,
 						})
 					),
 					hunkCompartment.of(
@@ -506,7 +502,8 @@
 								unifiedMergeView({
 									original: currentOptions.originalContent,
 									collapseUnchanged: DIFF_COLLAPSE_CONFIG,
-									diffConfig: DEFAULT_DIFF_CONFIG
+									diffConfig: DEFAULT_DIFF_CONFIG,
+									mergeControls: false,
 								})
 							)
 						);
