@@ -833,14 +833,14 @@
 	let loadedDiffs = $state<Record<string, CachedDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
-	function getOrComputeDiffHunks(diff: FileDiffDetail): { hunks: HunkCoordinates[]; unstagedChunks: readonly Chunk[] } {
+	function getOrComputeDiffHunks(diff: FileDiffDetail, isStaged: boolean = false): { hunks: HunkCoordinates[]; unstagedChunks: readonly Chunk[] } {
 		const cached = diff as CachedDiffDetail;
 		if (cached.hunks && cached.unstagedChunks) {
 			return { hunks: cached.hunks, unstagedChunks: cached.unstagedChunks };
 		}
 		const origText = Text.of((diff.originalContent || '').split(/\r?\n/));
 		const modText = Text.of((diff.modifiedContent || '').split(/\r?\n/));
-		const stagedContent = diff.stagedContent ?? diff.originalContent ?? '';
+		const stagedContent = diff.stagedContent ?? (isStaged ? (diff.modifiedContent || '') : (diff.originalContent || ''));
 		const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
 		const hunks = getUnifiedHunks(origText, modText, DEFAULT_DIFF_CONFIG);
@@ -857,7 +857,7 @@
 		}
 		const detail = fileDiffFromChange(fileChange);
 		if (detail) {
-			getOrComputeDiffHunks(detail);
+			getOrComputeDiffHunks(detail, fileChange.staged);
 			loadedDiffs[key] = detail;
 			return detail;
 		}
@@ -872,13 +872,13 @@
 			if (repo) {
 				const diff = await repo.getFileDiff(filepath, options?.combined ? { status: options?.status } : { staged: options?.staged, status: options?.status });
 				const detail: CachedDiffDetail = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
-				getOrComputeDiffHunks(detail);
+				getOrComputeDiffHunks(detail, options?.staged);
 				loadedDiffs[key] = detail;
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
 			const fallback: CachedDiffDetail = { originalContent: '', modifiedContent: '', stagedContent: '' };
-			getOrComputeDiffHunks(fallback);
+			getOrComputeDiffHunks(fallback, options?.staged);
 			loadedDiffs[key] = fallback;
 		} finally {
 			loadingDiffs[key] = false;
@@ -954,7 +954,7 @@
 			const diff = resolveFileDiff(change);
 			if (!diff || (!diff.originalContent && !diff.modifiedContent)) return;
 
-			const { hunks } = getOrComputeDiffHunks(diff);
+			const { hunks } = getOrComputeDiffHunks(diff, change.staged);
 			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,

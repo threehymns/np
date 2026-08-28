@@ -582,10 +582,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 			return resolveDiffDetail('', '', worktreeContent, options);
 		}
 
-		// Optimization: If a file is staged added ('A' with staged: true), HEAD is guaranteed empty.
-		if (options?.status === 'A' && options.staged === true) {
+		// Optimization: If a file is added ('A'), HEAD is guaranteed empty.
+		if (options?.status === 'A') {
+			let worktreeContent = '';
+			if (options?.staged !== true) {
+				try {
+					const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+					worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+				} catch (e) {
+					if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+						throw e;
+					}
+				}
+			}
 			const indexObj = await this.readGitObject(`:${filepath}`);
-			return resolveDiffDetail('', indexObj ?? '', '', options);
+			return resolveDiffDetail('', indexObj ?? '', worktreeContent, options);
 		}
 
 		let worktreeContent = '';

@@ -50,14 +50,10 @@ export class LanguageSupport {
 			}
 		};
 
-		if (typeof window !== 'undefined') {
-			if (typeof window.requestIdleCallback === 'function') {
-				window.requestIdleCallback(() => load());
-			} else {
-				setTimeout(load, 50);
-			}
+		if (typeof globalThis !== 'undefined' && typeof (globalThis as any).requestIdleCallback === 'function') {
+			(globalThis as any).requestIdleCallback(() => load());
 		} else {
-			load();
+			setTimeout(load, 50);
 		}
 	}
 }
