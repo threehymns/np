@@ -40,7 +40,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
 			"space v s": "view.toggleSidebar",
-			"space p": "command-palette",
+			"space p": "commandPalette.toggle",
 			"space d": "window.toggleDevTools"
 		}
 	},
@@ -64,7 +64,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+o": "file.open",
 			"cmd+s": "file.save",
 			"cmd+shift+s": "file.saveAs",
-			"cmd+p": "command-palette",
+			"cmd+shift+p": "commandPalette.toggle",
 			"cmd+\\": "view.toggleSidebar",
 			"cmd++": "view.zoomIn",
 			"cmd+-": "view.zoomOut",
