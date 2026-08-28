@@ -8,6 +8,7 @@ import { KeymapRegistry } from './keymap.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { iconRegistry } from './editor/icons.svelte';
+import { LanguageSupport } from './editor/language.svelte';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
@@ -63,12 +64,17 @@ export class AppState {
 			console.error('[AppState] Failed to restore session:', e);
 		}
 
-		// Defer heavy icon initialization until after the first paint
+		// Defer heavy icon initialization and language grammar preloading until after the first paint
 		const deferredInit = async () => {
 			try {
 				await this.prefs.initializeIcons();
 			} catch (e) {
 				console.error('[AppState] Failed to initialize icons:', e);
+			}
+			try {
+				LanguageSupport.preloadCommonLanguages();
+			} catch (e) {
+				console.error('[AppState] Failed to preload languages:', e);
 			}
 		};
 

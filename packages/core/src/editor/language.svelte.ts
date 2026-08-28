@@ -38,4 +38,26 @@ export class LanguageSupport {
 	static async loadLanguage(lang: LanguageDescription) {
 		return await lang.load();
 	}
+
+	static preloadCommonLanguages(): void {
+		const load = () => {
+			const commonNames = new Set(['javascript', 'typescript', 'jsx', 'tsx', 'json', 'markdown', 'svelte', 'css', 'html']);
+			const targetLangs = allLanguages.filter(l =>
+				commonNames.has(l.name.toLowerCase()) || l.alias.some(a => commonNames.has(a.toLowerCase()))
+			);
+			for (const lang of targetLangs) {
+				lang.load().catch(() => {});
+			}
+		};
+
+		if (typeof window !== 'undefined') {
+			if (typeof window.requestIdleCallback === 'function') {
+				window.requestIdleCallback(() => load());
+			} else {
+				setTimeout(load, 50);
+			}
+		} else {
+			load();
+		}
+	}
 }
