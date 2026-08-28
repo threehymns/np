@@ -126,39 +126,20 @@ describe("getUnifiedHunks", () => {
 		return hunks.map((h) => text.lineAt(h.fromB).number);
 	}
 
-	function endLine(text: Text, to: number): number {
-		return text.lineAt(Math.max(0, Math.min(to, text.length) - 1)).number;
-	}
+	it("returns contiguous changed chunks as distinct hunks", () => {
+		// Line 4 and line 6 are edited with line 5 unchanged.
+		// Each contiguous edit is its own independent hunk.
+		const mod = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-edit"), 6, "FF-edit"));
 
-	it("keeps nearby staged and unstaged chunks as separate hunks instead of merging across the staging boundary", () => {
-		// Line 4 is staged (index), line 6 was edited afterwards in the worktree.
-		// The raw chunks are 2 lines apart, but they sit on opposite sides of the
-		// staging boundary and must stay separate so each gets its own actions.
-		const staged = Text.of(replaceLine(HEAD_LINES, 4, "DD-staged"));
-		const worktree = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-staged"), 6, "FF-worktree"));
-
-		const hunks = getUnifiedHunks(origText, worktree, staged);
+		const hunks = getUnifiedHunks(origText, mod);
 
 		expect(hunks).toHaveLength(2);
-		expect(startLines(worktree, hunks)).toEqual([4, 6]);
+		expect(startLines(mod, hunks)).toEqual([4, 6]);
 	});
 
-	it("still merges nearby chunks that belong to the same staging side", () => {
-		// Both edits were staged together and the worktree matches the index:
-		// no unstaged chunks exist, so the two nearby chunks merge into one hunk.
-		const staged = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-staged"), 6, "FF-staged"));
-		const worktree = staged;
-
-		const hunks = getUnifiedHunks(origText, worktree, staged);
-
-		expect(hunks).toHaveLength(1);
-		expect(startLines(worktree, hunks)).toEqual([4]);
-		expect(endLine(worktree, hunks[0].toB)).toBe(6);
-		expect(endLine(origText, hunks[0].toA)).toBe(6);
-	});
-
-	it("merges nearby chunks as before when no staged text is provided", () => {
-		const mod = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-edit"), 6, "FF-edit"));
+	it("returns a single hunk for contiguous multiline edits", () => {
+		// Lines 4 and 5 are edited contiguously.
+		const mod = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-edit"), 5, "EE-edit"));
 
 		const hunks = getUnifiedHunks(origText, mod);
 

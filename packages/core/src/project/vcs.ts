@@ -167,63 +167,13 @@ export interface HunkCoordinates {
 	toB: number;
 }
 
-function chunkOverlapsUnstaged(chunk: Chunk, unstagedChunks: readonly Chunk[], modText: Text): boolean {
-	const startB = modText.lineAt(Math.min(chunk.fromB, modText.length)).number;
-	const endB = modText.lineAt(Math.min(chunk.toB, modText.length)).number;
-	return unstagedChunks.some((uc) => {
-		const ucStartB = modText.lineAt(Math.min(uc.fromB, modText.length)).number;
-		const ucEndB = modText.lineAt(Math.min(uc.toB, modText.length)).number;
-		if (chunk.fromB === chunk.toB && uc.fromB === uc.toB) {
-			return Math.abs(uc.fromB - chunk.fromB) <= 1 || startB === ucStartB;
-		}
-		return startB <= ucEndB && endB >= ucStartB;
-	});
-}
-
-export function getUnifiedHunks(origText: Text, modText: Text, stagedText?: Text): HunkCoordinates[] {
-	const rawChunks = Chunk.build(origText, modText);
-	if (rawChunks.length <= 1) {
-		return rawChunks.map(c => ({ fromA: c.fromA, toA: c.toA, fromB: c.fromB, toB: c.toB }));
-	}
-
-	const unstagedChunks = stagedText ? Chunk.build(stagedText, modText) : null;
-
-	const merged: HunkCoordinates[] = [];
-	let current: HunkCoordinates = {
-		fromA: rawChunks[0].fromA,
-		toA: rawChunks[0].toA,
-		fromB: rawChunks[0].fromB,
-		toB: rawChunks[0].toB
-	};
-	let currentStaged: boolean | null = unstagedChunks
-		? !chunkOverlapsUnstaged(rawChunks[0], unstagedChunks, modText)
-		: null;
-
-	for (let i = 1; i < rawChunks.length; i++) {
-		const next = rawChunks[i];
-		const lineGapA = origText.lineAt(Math.min(next.fromA, origText.length)).number - origText.lineAt(Math.min(current.toA, origText.length)).number;
-		const lineGapB = modText.lineAt(Math.min(next.fromB, modText.length)).number - modText.lineAt(Math.min(current.toB, modText.length)).number;
-		const nextStaged: boolean | null = unstagedChunks
-			? !chunkOverlapsUnstaged(next, unstagedChunks, modText)
-			: null;
-
-		if (lineGapA <= 3 && lineGapB <= 3 && currentStaged === nextStaged) {
-			current.toA = next.toA;
-			current.toB = next.toB;
-		} else {
-			merged.push(current);
-			current = {
-				fromA: next.fromA,
-				toA: next.toA,
-				fromB: next.fromB,
-				toB: next.toB
-			};
-			currentStaged = nextStaged;
-		}
-	}
-	merged.push(current);
-
-	return merged;
+export function getUnifiedHunks(origText: Text, modText: Text): HunkCoordinates[] {
+	return Chunk.build(origText, modText).map(c => ({
+		fromA: c.fromA,
+		toA: c.toA,
+		fromB: c.fromB,
+		toB: c.toB
+	}));
 }
 
 /**

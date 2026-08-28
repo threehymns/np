@@ -150,7 +150,7 @@
 					const origText = Text.of(origContent.split(/\r?\n/));
 					const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-					this.cachedHunks = getUnifiedHunks(origText, modText, stagedText);
+					this.cachedHunks = getUnifiedHunks(origText, modText);
 					this.cachedUnstagedChunks = Chunk.build(stagedText, modText);
 					this.cachedModText = modText;
 					this.cachedOrigContent = origContent;
@@ -896,11 +896,9 @@
 			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
 			if (!origContent && !modContent) return;
 
-			const stagedContent = diff?.stagedContent ?? change.stagedContent ?? (change.staged ? modContent : origContent);
 			const origText = Text.of(origContent.split(/\r?\n/));
 			const modText = Text.of(modContent.split(/\r?\n/));
-			const stagedText = Text.of(stagedContent.split(/\r?\n/));
-			const chunks = getUnifiedHunks(origText, modText, stagedText);
+			const chunks = getUnifiedHunks(origText, modText);
 			chunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
