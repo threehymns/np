@@ -120,6 +120,17 @@ function registerIpcHandlers() {
 		};
 	});
 
+	ipcMain.handle('dialog:saveFile', async (_, options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => {
+		if (!mainWindow) return null;
+		const result = await dialog.showSaveDialog(mainWindow, {
+			defaultPath: options?.defaultPath,
+			filters: options?.filters
+		});
+		if (result.canceled || !result.filePath) return null;
+		return result.filePath;
+	});
+
+
 	// FS operations
 	ipcMain.handle('fs:readFile', async (_, filePath: string) => {
 		return await fs.readFile(filePath);

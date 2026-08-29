@@ -7,7 +7,8 @@ import { CommandRegistry, registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
-import { iconRegistry } from './editor/icons.svelte';
+import { HeadlessIconRegistry } from './editor/icons/headless-registry';
+import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
@@ -21,6 +22,23 @@ export interface ClipboardService {
 	writeText?(text: string): Promise<void>;
 }
 
+export interface ExportFileType {
+	description: string;
+	accept: Record<string, string[]>;
+}
+
+export interface ExportFileOptions {
+	content: string;
+	suggestedName: string;
+	defaultFileName?: string;
+	mimeType?: string;
+	types?: ExportFileType[];
+}
+
+export interface ExportService {
+	exportFile(options: ExportFileOptions): Promise<void>;
+}
+
 export interface AppStateOptions {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
@@ -28,6 +46,8 @@ export interface AppStateOptions {
 	prefsStorage?: PreferenceStorage;
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
+	exportService?: ExportService;
+	iconRegistry?: IconRegistryInterface;
 }
 
 export class AppState {
@@ -36,12 +56,13 @@ export class AppState {
 	workspace: Workspace;
 	selection = selectionState;
 	commandPalette = new CommandPaletteState();
-	icons = iconRegistry;
+	icons: IconRegistryInterface;
 	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
 	settingsOpen = $state(false);
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
+	exportService?: ExportService;
 	
 	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
 	activeEditorView = $state<any>(undefined);
@@ -51,6 +72,19 @@ export class AppState {
 		this.prefs = new Preferences(options.prefsStorage);
 		this.dialogService = options.dialogService;
 		this.clipboardService = options.clipboardService;
+		this.exportService = options.exportService;
+		this.icons = options.iconRegistry ?? new HeadlessIconRegistry();
+
+		this.icons.activeFileThemeId = this.prefs.fileIconThemeId;
+		this.icons.activeProductThemeId = this.prefs.productIconThemeId;
+		this.prefs.onIconThemeChange = (type, id) => {
+			if (type === 'file') {
+				this.icons.activeFileThemeId = id;
+			} else if (type === 'product') {
+				this.icons.activeProductThemeId = id;
+			}
+		};
+
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
 		registerCoreCommands(this);
@@ -66,11 +100,12 @@ export class AppState {
 		// Defer heavy icon initialization until after the first paint
 		const deferredInit = async () => {
 			try {
-				await this.prefs.initializeIcons();
+				await this.icons.initialize?.();
 			} catch (e) {
 				console.error('[AppState] Failed to initialize icons:', e);
 			}
 		};
+
 
 		if (typeof window !== 'undefined' && (window as any).electronAPI?.onWindowShown) {
 			// On desktop, the window might already be shown
