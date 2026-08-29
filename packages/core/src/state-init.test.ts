@@ -38,20 +38,10 @@ describe("AppState / Workspace SSR & Initialization", () => {
 			SvelteMap: Map,
 			SvelteSet: Set
 		}));
-		mock.module("phosphor-svelte", () => ({
-			File: () => {},
-			FileCode: () => {},
-			FileText: () => {},
-			Code: () => {},
-			Globe: () => {},
-			Database: () => {},
-			Gear: () => {},
-			Folder: () => {},
-			FolderOpen: () => {}
-		}));
 		const mod = await import("./state.svelte");
 		AppState = mod.AppState;
 	});
+
 
 	it("does not restore session, open DB, or create untitled documents during construction", () => {
 		let loadAllCalled = false;

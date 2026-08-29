@@ -22,8 +22,6 @@ export class LocalStorageAdapter implements PreferenceStorage {
 	}
 }
 
-import { iconRegistry } from './editor/icons.svelte';
-
 export class Preferences {
 	wordWrap = $state(true);
 	statusBar = $state(true);
@@ -39,13 +37,14 @@ export class Preferences {
 	sidebarWidth = $state(256);
 	private _fileIconThemeId = $state<string>('phosphor');
 	private _productIconThemeId = $state<string>('phosphor');
+	onIconThemeChange?: (type: 'file' | 'product', id: string) => void;
 
 	get fileIconThemeId() {
 		return this._fileIconThemeId;
 	}
 	set fileIconThemeId(val: string) {
 		this._fileIconThemeId = val;
-		iconRegistry.activeFileThemeId = val;
+		this.onIconThemeChange?.('file', val);
 		this.save();
 	}
 
@@ -54,7 +53,7 @@ export class Preferences {
 	}
 	set productIconThemeId(val: string) {
 		this._productIconThemeId = val;
-		iconRegistry.activeProductThemeId = val;
+		this.onIconThemeChange?.('product', val);
 		this.save();
 	}
 
@@ -78,9 +77,8 @@ export class Preferences {
 		}
 	}
 
-	async initializeIcons() {
-		await iconRegistry.initialize();
-	}
+	async initializeIcons() {}
+
 
 	private load() {
 		try {
