@@ -1,3 +1,5 @@
+import { mock } from "bun:test";
+
 // Svelte 5 rune stubs for test environments that do not compile Svelte components
 // (the contract suite runs `commands.svelte`/`repository.svelte` logic through
 // bun). Load this module before any Svelte module import so `$state`/`$derived`/
@@ -15,3 +17,17 @@
 		return () => {};
 	}
 });
+
+mock.module("svelte", () => ({
+	getContext: () => null,
+	setContext: () => {},
+	hasContext: () => false,
+	getAllContexts: () => new Map(),
+	untrack: (fn: any) => fn(),
+	tick: async () => {}
+}));
+
+mock.module("svelte/reactivity", () => ({
+	SvelteMap: Map,
+	SvelteSet: Set
+}));

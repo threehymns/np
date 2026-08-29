@@ -31,3 +31,34 @@ export interface ProductIconProvider {
   resolveProductIcon(iconName: string): ResolvedIcon | null;
   setAppearance?(appearance: 'light' | 'dark'): void;
 }
+
+export interface ThemeInfo {
+  id: string;
+  name: string;
+  source: 'builtin' | 'installed';
+}
+
+export interface IconRegistryInterface {
+  activeFileThemeId: string;
+  activeProductThemeId: string;
+  currentAppearance: 'light' | 'dark';
+  registerFileTheme(id: string, provider: FileIconProvider): void;
+  registerProductTheme(id: string, provider: ProductIconProvider): void;
+  getFileThemes(): ThemeInfo[];
+  getProductThemes(): ThemeInfo[];
+  setAppearance(appearance: 'light' | 'dark'): void;
+  resolveFileIconChain(filename: string, context?: { language?: string }): ResolvedIcon[];
+  resolveFolderIconChain(foldername: string, options?: { expanded?: boolean }): ResolvedIcon[];
+  resolveProductIconChain(iconName: string): ResolvedIcon[];
+  resolveFileIcon(filename: string, languageModeName?: string): any;
+  resolveProductIcon(iconName: string): any;
+  getLanguageIcon(name: string): any;
+  getFileIcon(filename: string): any;
+  getFolderIcon(name: string): any;
+  getFolderExpandedIcon(name: string): any;
+  getThemeDefaultFileIcon(): any;
+  getThemeDefaultFolderIcon(): any;
+  getThemeDefaultFolderExpandedIcon(): any;
+  initialize?(): Promise<void>;
+}
+
