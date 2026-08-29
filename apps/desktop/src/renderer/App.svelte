@@ -1,6 +1,7 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
-  import { AppState, KeymapStorageProvider } from "@np/core";
+  import { AppState, KeymapStorageProvider, ManifestIconProvider, type ExportService } from "@np/core";
+  import { iconRegistry } from "@np/ui";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
   import { JSONFilePersistence } from "./JSONFilePersistence";
@@ -19,10 +20,33 @@
   storage.registerProvider("file", new ElectronStorage());
   const persistence = new JSONFilePersistence();
   const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
+
+  const exportService: ExportService = {
+    exportFile: async ({ content, suggestedName, defaultFileName, types }) => {
+      const fileName = suggestedName || defaultFileName || 'export.html';
+      const filters = types?.map(t => ({
+        name: t.description,
+        extensions: Object.values(t.accept).flat().map(ext => ext.replace(/^\./, ''))
+      })) ?? [{ name: 'All Files', extensions: ['*'] }];
+
+      if (window.electronAPI?.saveFileDialog) {
+        const filePath = await window.electronAPI.saveFileDialog({
+          defaultPath: fileName,
+          filters
+        });
+        if (filePath) {
+          await window.electronAPI.writeFile(filePath, content);
+        }
+      }
+    }
+  };
+
   const appState = new AppState({
     storage,
     persistence,
     vcsFactory,
+    iconRegistry,
+    exportService,
     clipboardService: {
       writeText: async (text) => {
         if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -42,7 +66,9 @@
 
   if (typeof window !== "undefined") {
     (window as any).appState = appState;
+    (window as any).ManifestIconProvider = ManifestIconProvider;
   }
+
 
   // Lazy load heavy components
   let Editor = $state<any>(null);

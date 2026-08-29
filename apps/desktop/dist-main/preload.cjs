@@ -4,6 +4,7 @@ const electron_1 = require("electron");
 electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     openFile: () => electron_1.ipcRenderer.invoke('dialog:openFile'),
     openDirectory: () => electron_1.ipcRenderer.invoke('dialog:openDirectory'),
+    saveFileDialog: (options) => electron_1.ipcRenderer.invoke('dialog:saveFile', options),
     readFile: (filePath) => electron_1.ipcRenderer.invoke('fs:readFile', filePath),
     writeFile: (filePath, content) => electron_1.ipcRenderer.invoke('fs:writeFile', filePath, content),
     readDirectory: (dirPath) => electron_1.ipcRenderer.invoke('fs:readDirectory', dirPath),
