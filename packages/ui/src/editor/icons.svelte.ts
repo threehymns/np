@@ -311,11 +311,14 @@ export class IconRegistry implements IconRegistryInterface {
 		const normalizedUrl = this.normalizeGitHubUrl(repoUrl);
 		if (!normalizedUrl) return null;
 
-		const themeUrl = `https://cdn.jsdelivr.net/gh/${normalizedUrl.owner}/${normalizedUrl.repo}@${normalizedUrl.ref}/icon_themes/`;
+		const { owner, repo, ref } = normalizedUrl;
+		const themeUrl = await this.resolveThemeDocumentUrl(owner, repo, ref);
+		if (!themeUrl) return null;
+
 		const theme = await fetchZedTheme(themeUrl);
 		if (!theme) return null;
 
-		const baseUrl = `https://cdn.jsdelivr.net/gh/${normalizedUrl.owner}/${normalizedUrl.repo}@${normalizedUrl.ref}/`;
+		const baseUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/`;
 		const id = `installed-${normalizedUrl.owner}-${normalizedUrl.repo}`;
 		const name = theme.name || id;
 
@@ -331,6 +334,24 @@ export class IconRegistry implements IconRegistryInterface {
 		this.cacheTheme(id, name, baseUrl, theme);
 
 		return { id, name };
+	}
+
+	// The CDN serves a directory listing instead of JSON for folder URLs, so the
+	// exact theme document path must be looked up before fetching.
+	private async resolveThemeDocumentUrl(owner: string, repo: string, ref: string): Promise<string | null> {
+		try {
+			const response = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${ref}?structure=flat`);
+			if (!response.ok) return null;
+			const data = await response.json() as { files?: Array<{ name?: string }> };
+			const themeFile = (data.files ?? []).find(
+				(f) => typeof f.name === 'string' && f.name.startsWith('/icon_themes/') && f.name.endsWith('.json')
+			);
+			return themeFile?.name
+				? `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}${themeFile.name}`
+				: null;
+		} catch {
+			return null;
+		}
 	}
 
 	private normalizeGitHubUrl(url: string): { owner: string; repo: string; ref: string } | null {

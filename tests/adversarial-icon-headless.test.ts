@@ -371,6 +371,63 @@ describe("Adversarial Stress Test: UI IconRegistry & PhosphorIconProvider", () =
 			delete g.localStorage;
 		}
 	});
+
+	it("resolves an explicit theme document URL when installing from GitHub", async () => {
+		const g = globalThis as any;
+		const originalFetch = g.fetch;
+		const fetchCalls: string[] = [];
+		g.fetch = async (url: string) => {
+			fetchCalls.push(url);
+			if (url.startsWith("https://data.jsdelivr.com/")) {
+				return {
+					ok: true,
+					json: async () => ({
+						files: [{ name: "/README.md" }, { name: "/icon_themes/my-theme.json" }]
+					})
+				};
+			}
+			return {
+				ok: true,
+				json: async () => ({
+					name: "My Theme",
+					themes: [{
+						name: "Dark",
+						appearance: "dark",
+						file_suffixes: { ts: "typescript" },
+						file_icons: { typescript: { path: "ts.svg" } }
+					}]
+				})
+			};
+		};
+
+		try {
+			const registry = new IconRegistry();
+			const installed = await registry.installThemeFromGitHub("https://github.com/some-user/some-icons");
+
+			expect(installed).toEqual({ id: "installed-some-user-some-icons", name: "My Theme" });
+			expect(fetchCalls[0]).toBe("https://data.jsdelivr.com/v1/packages/gh/some-user/some-icons@main?structure=flat");
+			expect(fetchCalls[1]).toBe("https://cdn.jsdelivr.net/gh/some-user/some-icons@main/icon_themes/my-theme.json");
+			expect(registry.getFileThemes().some((t: any) => t.id === "installed-some-user-some-icons")).toBe(true);
+		} finally {
+			g.fetch = originalFetch;
+		}
+	});
+
+	it("fails installation when the repo publishes no icon theme JSON", async () => {
+		const g = globalThis as any;
+		const originalFetch = g.fetch;
+		g.fetch = async () => ({
+			ok: true,
+			json: async () => ({ files: [{ name: "/README.md" }] })
+		});
+
+		try {
+			const registry = new IconRegistry();
+			await expect(registry.installThemeFromGitHub("https://github.com/some-user/no-themes")).resolves.toBeNull();
+		} finally {
+			g.fetch = originalFetch;
+		}
+	});
 });
 
 describe("Adversarial Static Grep & AST Invariant Audits", () => {
