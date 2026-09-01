@@ -61,6 +61,11 @@ export class PhosphorIconProvider implements FileIconProvider, ProductIconProvid
 	}
 }
 
+const BUILTIN_FILE_THEME_IDS = new Set<string>([
+	'phosphor',
+	...builtinFileThemes.map((config) => config.id)
+]);
+
 export class IconRegistry implements IconRegistryInterface {
 	activeFileThemeId = $state<string>('phosphor');
 	activeProductThemeId = $state<string>('phosphor');
@@ -149,7 +154,7 @@ export class IconRegistry implements IconRegistryInterface {
 		return Object.keys(this.fileThemes).map(id => ({
 			id,
 			name: this.fileThemes[id].name || id,
-			source: id === 'phosphor' || id === 'material' || id === 'catppuccin' || id === 'vscode' ? 'builtin' : 'installed'
+			source: BUILTIN_FILE_THEME_IDS.has(id) ? 'builtin' : 'installed'
 		}));
 	}
 
@@ -383,7 +388,7 @@ export class IconRegistry implements IconRegistryInterface {
 	}
 
 	async uninstallTheme(id: string) {
-		if (id === 'phosphor' || id === 'material' || id === 'catppuccin' || id === 'vscode') return;
+		if (BUILTIN_FILE_THEME_IDS.has(id)) return;
 
 		delete this.fileThemes[id];
 
