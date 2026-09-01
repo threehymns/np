@@ -22,8 +22,8 @@
   const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
 
   const exportService: ExportService = {
-    exportFile: async ({ content, suggestedName, defaultFileName, types }) => {
-      const fileName = suggestedName || defaultFileName || 'export.html';
+    exportFile: async ({ content, suggestedName, types }) => {
+      const fileName = suggestedName || 'export.html';
       const filters = types?.map(t => ({
         name: t.description,
         extensions: Object.values(t.accept).flat().map(ext => ext.replace(/^\./, ''))

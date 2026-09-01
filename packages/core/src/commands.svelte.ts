@@ -303,7 +303,6 @@ export function registerCoreCommands(appState: AppState) {
 				await exportFile(appState, {
 					content: html,
 					suggestedName,
-					defaultFileName: suggestedName,
 					mimeType: 'text/html',
 					types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
 				});

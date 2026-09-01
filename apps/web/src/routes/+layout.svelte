@@ -13,8 +13,8 @@
 	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
 
 	const exportService: ExportService = {
-		exportFile: async ({ content, suggestedName, defaultFileName, mimeType, types }) => {
-			const fileName = suggestedName || defaultFileName || 'export.html';
+		exportFile: async ({ content, suggestedName, mimeType, types }) => {
+			const fileName = suggestedName || 'export.html';
 			if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
 				try {
 					const handle = await (window as any).showSaveFilePicker({
