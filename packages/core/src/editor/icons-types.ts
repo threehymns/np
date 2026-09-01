@@ -51,11 +51,9 @@ export interface IconRegistryInterface {
   resolveFolderIconChain(foldername: string, options?: { expanded?: boolean }): ResolvedIcon[];
   resolveProductIconChain(iconName: string): ResolvedIcon[];
   resolveFileIcon(filename: string, languageModeName?: string): any;
-  resolveProductIcon(iconName: string): any;
   getLanguageIcon(name: string): any;
   getFileIcon(filename: string): any;
   getFolderIcon(name: string): any;
-  getFolderExpandedIcon(name: string): any;
   getThemeDefaultFileIcon(): any;
   getThemeDefaultFolderIcon(): any;
   getThemeDefaultFolderExpandedIcon(): any;
