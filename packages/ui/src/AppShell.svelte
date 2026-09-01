@@ -221,14 +221,14 @@
 	</main>
 
 	{#if appState.prefs.statusBar}
-		{#snippet statusButton(
-			Icon: typeof SidebarIcon,
-			btnClass: string,
-			title: string,
-			shortcut: string | null | undefined,
-			onclickFn: (e: MouseEvent) => void,
-			badge?: number
-		)}
+		{#snippet statusButton({ icon: Icon, class: btnClass, title, shortcut, onclick: onclickFn, badge }: {
+			icon: typeof SidebarIcon;
+			class: string;
+			title: string;
+			shortcut?: string | null;
+			onclick: (e: MouseEvent) => void;
+			badge?: number;
+		})}
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
@@ -259,20 +259,20 @@
 		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
 			<div class="flex items-center gap-1">
 				<Tooltip.Provider>
-					{@render statusButton(
-						SidebarIcon,
-						appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : '',
-						'Toggle Sidebar',
-						appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\',
-						() => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible
-					)}
+					{@render statusButton({
+						icon: SidebarIcon,
+						class: appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : '',
+						title: 'Toggle Sidebar',
+						shortcut: appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\',
+						onclick: () => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible
+					})}
 
-					{@render statusButton(
-						FolderOpenIcon,
-						`flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
-						'Project Explorer',
-						appState.keymaps.getShortcutForCommand('view.showExplorer'),
-						() => {
+					{@render statusButton({
+						icon: FolderOpenIcon,
+						class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Project Explorer',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showExplorer'),
+						onclick: () => {
 							if (appState.activeSidebarTab === 'explorer' && appState.prefs.sidebarVisible) {
 								appState.prefs.sidebarVisible = false;
 							} else {
@@ -280,14 +280,14 @@
 								appState.prefs.sidebarVisible = true;
 							}
 						}
-					)}
+					})}
 
-					{@render statusButton(
-						GitMergeIcon,
-						`flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
-						'Source Control',
-						appState.keymaps.getShortcutForCommand('view.showGit'),
-						() => {
+					{@render statusButton({
+						icon: GitMergeIcon,
+						class: `flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Source Control',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showGit'),
+						onclick: () => {
 							if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
 								appState.prefs.sidebarVisible = false;
 							} else {
@@ -295,8 +295,8 @@
 								appState.prefs.sidebarVisible = true;
 							}
 						},
-						appState.workspace.repository?.changes?.length
-					)}
+						badge: appState.workspace.repository?.changes?.length
+					})}
 				</Tooltip.Provider>
 
 				<div class="flex gap-3 opacity-80 ml-2">

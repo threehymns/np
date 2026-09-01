@@ -186,6 +186,8 @@
 		);
 	}
 
+	type ViewEntry = { inline?: EditorView; split?: MergeView };
+
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, ViewEntry>();
 	let editorResolvers = new Map<string, Array<(views: ViewEntry) => void>>();
@@ -250,8 +252,6 @@
 		const { firstLine, lastLine } = getBufferBoundaries(view.state);
 		return direction === 'up' ? curLine <= firstLine : curLine >= lastLine;
 	}
-
-	type ViewEntry = { inline?: EditorView; split?: MergeView };
 
 	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
 		if (mode === 'split') {

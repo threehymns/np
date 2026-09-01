@@ -5,7 +5,7 @@
 	import { ButtonGroup } from './ui/button-group';
 	import {
 		GitBranchIcon, PlusIcon, MinusIcon, ArrowCounterClockwiseIcon, CheckIcon,
-		CaretDownIcon, PlusMinusIcon, TrashIcon, EyeIcon
+		CaretDownIcon, PlusMinusIcon, TrashIcon, GitDiffIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
@@ -752,7 +752,7 @@
 				{/if}
 				<ContextMenu.Separator />
 				<ContextMenu.Item onclick={() => runGitAction(appState, 'diff', node.change!.filepath, { isStaged: isStagedSection })}>
-					<EyeIcon size={11} />
+					<GitDiffIcon size={11} />
 					Open Diff
 					<ContextMenu.Shortcut>
 						{appState.keymaps.getShortcutForCommand('git.openDiff')}
