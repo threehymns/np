@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
-	import type { GitChange, FileDiffDetail, HunkCoordinates } from '@np/core';
-	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks, DEFAULT_DIFF_CONFIG } from '@np/core';
+	import type { GitChange, FileDiffDetail } from '@np/core';
+	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -18,14 +18,14 @@
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
-		hunkRange: HunkCoordinates;
+		hunkRange: Chunk;
 		staged: boolean;
 		change: GitChange;
 		appState: AppState;
 
 		constructor(
 			hunkIndex: number,
-			hunkRange: HunkCoordinates,
+			hunkRange: Chunk,
 			staged: boolean,
 			change: GitChange,
 			appState: AppState
@@ -129,13 +129,13 @@
 	function createHunkWidgetExtension(
 		change: GitChange,
 		state: AppState,
-		precomputedHunks?: HunkCoordinates[],
+		precomputedHunks?: readonly Chunk[],
 		precomputedUnstagedChunks?: readonly Chunk[]
 	) {
 		return ViewPlugin.fromClass(
 			class {
 				decorations: DecorationSet;
-				cachedHunks: HunkCoordinates[] = [];
+				cachedHunks: readonly Chunk[] = [];
 				cachedUnstagedChunks: readonly Chunk[] = [];
 				cachedModText: Text = Text.empty;
 				cachedOrigContent: string = '';
@@ -166,7 +166,7 @@
 					const origText = Text.of(origContent.split(/\r?\n/));
 					const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-					this.cachedHunks = getUnifiedHunks(origText, modText, DEFAULT_DIFF_CONFIG);
+					this.cachedHunks = Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG);
 					this.cachedUnstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 					this.cachedModText = modText;
 					this.cachedOrigContent = origContent;
@@ -432,7 +432,7 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
-			hunks?: HunkCoordinates[];
+			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
 		}
 	) {
@@ -552,7 +552,7 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
-			hunks?: HunkCoordinates[];
+			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
 			onDocChange?: (newVal: string) => void;
 		}
@@ -823,14 +823,14 @@
 	}
 
 	interface CachedDiffDetail extends FileDiffDetail {
-		hunks?: HunkCoordinates[];
+		hunks?: readonly Chunk[];
 		unstagedChunks?: readonly Chunk[];
 	}
 
 	let loadedDiffs = $state<Record<string, CachedDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
-	function getOrComputeDiffHunks(diff: FileDiffDetail, isStaged: boolean = false): { hunks: HunkCoordinates[]; unstagedChunks: readonly Chunk[] } {
+	function getOrComputeDiffHunks(diff: FileDiffDetail, isStaged: boolean = false): { hunks: readonly Chunk[]; unstagedChunks: readonly Chunk[] } {
 		const cached = diff as CachedDiffDetail;
 		if (cached.hunks && cached.unstagedChunks) {
 			return { hunks: cached.hunks, unstagedChunks: cached.unstagedChunks };
@@ -840,7 +840,7 @@
 		const stagedContent = diff.stagedContent ?? (isStaged ? (diff.modifiedContent || '') : (diff.originalContent || ''));
 		const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-		const hunks = getUnifiedHunks(origText, modText, DEFAULT_DIFF_CONFIG);
+		const hunks = Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG);
 		const unstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 		cached.hunks = hunks;
 		cached.unstagedChunks = unstagedChunks;

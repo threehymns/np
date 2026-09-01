@@ -1,5 +1,4 @@
-import { Text } from '@codemirror/state';
-import { Chunk, type DiffConfig } from '@codemirror/merge';
+import { type DiffConfig } from '@codemirror/merge';
 
 /**
  * Default configuration for CodeMirror Myers diffing across np.
@@ -168,26 +167,6 @@ export function diffCacheKey(fileChange: { filepath: string; staged?: boolean; c
 	if (fileChange.combined) return `${fileChange.filepath}:combined`;
 	if (fileChange.staged !== undefined) return `${fileChange.filepath}:${fileChange.staged ? 'staged' : 'unstaged'}`;
 	return fileChange.filepath;
-}
-
-export interface HunkCoordinates {
-	fromA: number;
-	toA: number;
-	fromB: number;
-	toB: number;
-}
-
-export function getUnifiedHunks(
-	origText: Text,
-	modText: Text,
-	diffConfig: DiffConfig = DEFAULT_DIFF_CONFIG
-): HunkCoordinates[] {
-	return Chunk.build(origText, modText, diffConfig).map(c => ({
-		fromA: c.fromA,
-		toA: c.toA,
-		fromB: c.fromB,
-		toB: c.toB
-	}));
 }
 
 /**

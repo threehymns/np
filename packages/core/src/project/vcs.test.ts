@@ -1,6 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { Text } from "@codemirror/state";
-import { countDiffStats, resolveDiscardOptions, getUnifiedHunks, DEFAULT_DIFF_CONFIG, type GitChange } from "./vcs";
+import { countDiffStats, resolveDiscardOptions, DEFAULT_DIFF_CONFIG, type GitChange } from "./vcs";
 
 describe("countDiffStats", () => {
 	it("returns zero counts for empty input", () => {
@@ -111,47 +110,9 @@ describe("countDiffStats", () => {
 	});
 });
 
-describe("getUnifiedHunks", () => {
-	// Eight 2-char lines; line N starts at offset (N-1) * 3.
-	const HEAD_LINES = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"];
-	const origText = Text.of(HEAD_LINES);
-
-	function replaceLine(lines: string[], lineNumber: number, replacement: string): string[] {
-		const next = [...lines];
-		next[lineNumber - 1] = replacement;
-		return next;
-	}
-
-	function startLines(text: Text, hunks: { fromB: number }[]): number[] {
-		return hunks.map((h) => text.lineAt(h.fromB).number);
-	}
-
-	it("returns contiguous changed chunks as distinct hunks", () => {
-		// Line 4 and line 6 are edited with line 5 unchanged.
-		// Each contiguous edit is its own independent hunk.
-		const mod = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-edit"), 6, "FF-edit"));
-
-		const hunks = getUnifiedHunks(origText, mod);
-
-		expect(hunks).toHaveLength(2);
-		expect(startLines(mod, hunks)).toEqual([4, 6]);
-	});
-
-	it("returns a single hunk for contiguous multiline edits", () => {
-		// Lines 4 and 5 are edited contiguously.
-		const mod = Text.of(replaceLine(replaceLine(HEAD_LINES, 4, "DD-edit"), 5, "EE-edit"));
-
-		const hunks = getUnifiedHunks(origText, mod);
-
-		expect(hunks).toHaveLength(1);
-		expect(startLines(mod, hunks)).toEqual([4]);
-	});
-
-	it("uses DEFAULT_DIFF_CONFIG and allows overriding diffConfig", () => {
+describe("DEFAULT_DIFF_CONFIG", () => {
+	it("caps scanLimit and timeout so diffing large files cannot freeze the UI thread", () => {
 		expect(DEFAULT_DIFF_CONFIG).toEqual({ scanLimit: 5000, timeout: 500 });
-		const mod = Text.of(replaceLine(HEAD_LINES, 4, "DD-edit"));
-		const hunks = getUnifiedHunks(origText, mod, { scanLimit: 1000, timeout: 100 });
-		expect(hunks).toHaveLength(1);
 	});
 });
 

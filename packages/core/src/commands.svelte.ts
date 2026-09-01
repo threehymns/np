@@ -1,7 +1,7 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
-import { Chunk, type DiffConfig } from "@codemirror/merge";
+import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
@@ -724,10 +724,9 @@ export function mapRange(
 	posFrom: number,
 	posTo: number,
 	textA: Text,
-	textB: Text,
-	diffConfig: DiffConfig = DEFAULT_DIFF_CONFIG
+	textB: Text
 ): { from: number; to: number } {
-	const chunks = Chunk.build(textA, textB, diffConfig);
+	const chunks = Chunk.build(textA, textB, DEFAULT_DIFF_CONFIG);
 	return {
 		from: mapPos(posFrom, chunks),
 		to: mapPos(posTo, chunks)
@@ -881,7 +880,7 @@ async function performHunkAction(
 				} else {
 					const wtText = Text.of(wtContent.split(/\r?\n/));
 					const unstagedChunks = Chunk.build(stagedText, wtText, DEFAULT_DIFF_CONFIG);
-					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText, DEFAULT_DIFF_CONFIG);
+					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText);
 					const wtStartLine = wtText.lineAt(Math.min(wtRange.from, wtText.length)).number;
 					const wtEndLine = wtText.lineAt(Math.min(wtRange.to, wtText.length)).number;
 					// Unstaged edits inside the hunk's region cannot be reverted
@@ -911,7 +910,7 @@ async function performHunkAction(
 				});
 
 				if (isUnstaged) {
-					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText, DEFAULT_DIFF_CONFIG);
+					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
 					const newWorktreeContent = splicePreservingEndings(modText, hunk.fromB, hunk.toB, stagedText.sliceString(indexRange.from, indexRange.to), modContent);
 
 					await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
