@@ -2,7 +2,7 @@ import { undo, redo, selectAll } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
-import type { AppState, ExportFileOptions } from "./state.svelte";
+import type { AppState } from "./state.svelte";
 
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
@@ -36,14 +36,6 @@ async function readClipboard(appState: AppState): Promise<string> {
 	}
 	return '';
 }
-
-async function exportFile(appState: AppState, options: ExportFileOptions): Promise<void> {
-	if (!appState.exportService?.exportFile) {
-		return;
-	}
-	await appState.exportService.exportFile(options);
-}
-
 
 /**
  * True for absolute filesystem paths in any common form: POSIX ('/a/b'),
@@ -300,7 +292,7 @@ export function registerCoreCommands(appState: AppState) {
 			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
 			
 			try {
-				await exportFile(appState, {
+				await appState.exportService?.exportFile({
 					content: html,
 					suggestedName,
 					mimeType: 'text/html',
