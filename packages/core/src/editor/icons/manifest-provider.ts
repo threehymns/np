@@ -207,11 +207,4 @@ export class ManifestIconProvider implements FileIconProvider {
 		const resolved = this.resolveFileIcon(filename) ?? this.getDefaultFileIcon();
 		return resolved?.type === 'url' ? resolved.value : null;
 	}
-
-	getFolderIcon(name: string): string | null {
-		const resolved = this.resolveFolderIcon(name, { expanded: false });
-		if (resolved?.type === 'url') return resolved.value;
-		const def = this.getDefaultFolderIcon({ expanded: false });
-		return def?.type === 'url' ? def.value : null;
-	}
 }
