@@ -71,11 +71,8 @@ export class AppState {
 			} catch (e) {
 				console.error('[AppState] Failed to initialize icons:', e);
 			}
-			try {
-				LanguageSupport.preloadCommonLanguages();
-			} catch (e) {
-				console.error('[AppState] Failed to preload languages:', e);
-			}
+			// preloadCommonLanguages is synchronous and swallows its own async load errors
+			LanguageSupport.preloadCommonLanguages();
 		};
 
 		if (typeof window !== 'undefined' && (window as any).electronAPI?.onWindowShown) {
