@@ -299,7 +299,7 @@ export function registerCoreCommands(appState: AppState) {
 					types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
 				});
 			} catch (e) {
-				if ((e as Error).name !== 'AbortError') {
+				if ((e as { name?: string } | null | undefined)?.name !== 'AbortError') {
 					console.error('Failed to export HTML:', e);
 				}
 			}

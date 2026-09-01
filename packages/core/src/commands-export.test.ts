@@ -82,6 +82,29 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 		}).not.toThrow();
 	});
 
+	it("handles nullish export failures (throw null / undefined) without crashing", async () => {
+		for (const rejection of [null, undefined]) {
+			const exportService: ExportService = {
+				exportFile: mock(async () => {
+					throw rejection;
+				})
+			};
+			const appState = createTestAppState({ exportService });
+			const doc = new DocumentSession(
+				appState.storage,
+				"Content",
+				{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
+				"Test.md",
+				appState.workspace
+			);
+			appState.workspace.documents = [doc];
+			appState.workspace.tabs = [{ id: doc.id, type: "document" }];
+			appState.workspace.activeTabId = doc.id;
+
+			await appState.commands.execute("transformer.exportHTML");
+		}
+	});
+
 	it("handles missing exportService gracefully without crashing", async () => {
 		const appState = createTestAppState({});
 		const doc = new DocumentSession(
