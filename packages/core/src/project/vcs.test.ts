@@ -111,7 +111,7 @@ describe("countDiffStats", () => {
 });
 
 describe("DEFAULT_DIFF_CONFIG", () => {
-	it("caps scanLimit and timeout so diffing large files cannot freeze the UI thread", () => {
+	it("pins the shared diff caps so they are not silently widened", () => {
 		expect(DEFAULT_DIFF_CONFIG).toEqual({ scanLimit: 5000, timeout: 500 });
 	});
 });
