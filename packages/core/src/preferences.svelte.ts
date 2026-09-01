@@ -77,9 +77,6 @@ export class Preferences {
 		}
 	}
 
-	async initializeIcons() {}
-
-
 	private load() {
 		try {
 			const saved = this.storage.getItem(this.storageKey);
