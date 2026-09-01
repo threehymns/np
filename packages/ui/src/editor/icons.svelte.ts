@@ -73,8 +73,6 @@ export class IconRegistry implements IconRegistryInterface {
 		'phosphor': new PhosphorIconProvider()
 	});
 
-	constructor() {}
-
 	async initialize(): Promise<void> {
 		await Promise.all(
 			builtinFileThemes.map(async (config) => {
