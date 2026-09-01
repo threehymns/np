@@ -295,6 +295,15 @@ describe("Adversarial Stress Test: ManifestIconProvider", () => {
 		expect(provider.getDefaultFileIcon()).toBeNull();
 		expect(provider.getDefaultFolderIcon()).toBeNull();
 	});
+
+	it("rejects manifests whose themes are missing or empty instead of dereferencing them", () => {
+		const baseUrl = "https://icons.example.com/";
+		expect(
+			() => new ManifestIconProvider("empty", "Empty", { name: "Empty", themes: [] } as any, baseUrl)
+		).toThrow(/no theme variants defined/);
+		expect(() => new ManifestIconProvider("empty", "Empty", { name: "Empty" } as any, baseUrl)).toThrow();
+		expect(() => new ManifestIconProvider("empty", "Empty", { name: "Empty", themes: "bogus" } as any, baseUrl)).toThrow();
+	});
 });
 
 describe("Adversarial Stress Test: UI IconRegistry & PhosphorIconProvider", () => {
@@ -327,6 +336,40 @@ describe("Adversarial Stress Test: UI IconRegistry & PhosphorIconProvider", () =
 
 		const themes = registry.getFileThemes();
 		expect(themes.some((t: any) => t.id === "phosphor")).toBe(true);
+	});
+
+	it("ignores malformed installed-theme storage instead of throwing during initialization", () => {
+		const store = new Map<string, string>();
+		const g = globalThis as any;
+		g.window = {};
+		g.localStorage = {
+			getItem: (key: string) => store.get(key) ?? null,
+			setItem: (key: string, value: string) => void store.set(key, value),
+			removeItem: (key: string) => void store.delete(key)
+		};
+
+		const registry = new IconRegistry();
+		try {
+			// JSON object, string, number, and broken JSON must all fall back to []
+			for (const raw of ['{"id": "broken"}', '"a string"', "42", "not json at all"]) {
+				store.set("np-installed-icon-themes", raw);
+				expect(registry["loadInstalledThemes"]()).toEqual([]);
+			}
+
+			// A valid array survives, but entries missing required fields are dropped
+			store.set("np-installed-icon-themes", JSON.stringify([
+				{ id: "good", name: "Good", baseUrl: "https://icons.example.com/" },
+				{ id: 42 },
+				null,
+				{ id: "no-baseurl", name: "No Base Url" }
+			]));
+			expect(registry["loadInstalledThemes"]()).toEqual([
+				{ id: "good", name: "Good", baseUrl: "https://icons.example.com/" }
+			]);
+		} finally {
+			delete g.window;
+			delete g.localStorage;
+		}
 	});
 });
 
