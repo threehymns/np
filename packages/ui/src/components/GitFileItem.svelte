@@ -5,7 +5,8 @@
 		GitDiffIcon, FileArrowUpIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
-	import { resolveDiscardOptions, type GitChange, type GroupedChange } from '@np/core';
+	import { type GroupedChange } from '@np/core';
+	import { runGitAction, type GitFileAction } from './git-actions';
 	import * as ContextMenu from './ui/context-menu';
 	import * as Tooltip from './ui/tooltip/index';
 	import GitStatusChip from './GitStatusChip.svelte';
@@ -35,29 +36,8 @@
 	let fileName = $derived(change.filepath.split('/').pop());
 	let folderPath = $derived(change.filepath.substring(0, change.filepath.lastIndexOf('/')));
 
-	async function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff' | 'open') {
-		const targets = selectedPaths?.has(change.filepath) 
-			? Array.from(selectedPaths) 
-			: [change.filepath];
-
-		if (action === 'stage' || action === 'unstage' || action === 'discard') {
-			const commandId = `git.${action}`;
-			const changes = appState.workspace.repository?.changes;
-			for (const path of targets) {
-				if (action === 'discard') {
-					const options = resolveDiscardOptions(path, isStaged, changes);
-					const success = await appState.commands.execute(commandId, path, options);
-					if (!success) break;
-				} else {
-					await appState.commands.execute(commandId, path);
-				}
-			}
-		} else if (action === 'diff') {
-			appState.commands.execute('git.openDiff', change.filepath);
-		} else if (action === 'open') {
-			appState.commands.execute('file.open', change.filepath);
-		}
-	}
+	const triggerAction = (action: GitFileAction) =>
+		runGitAction(appState, action, change.filepath, { isStaged, selectedPaths });
 </script>
 
 <ContextMenu.Root>
