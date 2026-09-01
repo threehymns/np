@@ -7,7 +7,7 @@ import { CommandRegistry, registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
-import { HeadlessIconRegistry } from './editor/icons/headless-registry';
+import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
