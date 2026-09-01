@@ -264,13 +264,6 @@ export class IconRegistry implements IconRegistryInterface {
 		return first.value;
 	}
 
-	resolveProductIcon(iconName: string): any {
-		const chain = this.resolveProductIconChain(iconName);
-		const first = chain[0];
-		if (!first || first.type === 'empty') return null;
-		return first.value;
-	}
-
 	getLanguageIcon(name: string): any {
 		return this.resolveFileIcon('', name);
 	}
@@ -283,13 +276,6 @@ export class IconRegistry implements IconRegistryInterface {
 		const chain = this.resolveFolderIconChain(name, { expanded: false });
 		const first = chain[0];
 		if (!first || first.type === 'empty') return Folder;
-		return first.value;
-	}
-
-	getFolderExpandedIcon(name: string): any {
-		const chain = this.resolveFolderIconChain(name, { expanded: true });
-		const first = chain[0];
-		if (!first || first.type === 'empty') return FolderOpen;
 		return first.value;
 	}
 

@@ -37,10 +37,8 @@ describe("Adversarial Stress Test: HeadlessIconRegistry", () => {
 		expect(registry.resolveFolderIconChain("src")).toEqual([]);
 		expect(registry.resolveProductIconChain("settings")).toEqual([]);
 		expect(registry.resolveFileIcon("index.ts")).toBeNull();
-		expect(registry.resolveProductIcon("settings")).toBeNull();
 		expect(registry.getFileIcon("index.ts")).toBeNull();
 		expect(registry.getFolderIcon("src")).toBeNull();
-		expect(registry.getFolderExpandedIcon("src")).toBeNull();
 		expect(registry.getThemeDefaultFileIcon()).toBeNull();
 		expect(registry.getThemeDefaultFolderIcon()).toBeNull();
 		expect(registry.getThemeDefaultFolderExpandedIcon()).toBeNull();
