@@ -49,6 +49,9 @@ export class ManifestIconProvider implements FileIconProvider {
 	private themeName: string;
 
 	constructor(id: string, name: string, theme: ZedIconTheme, baseUrl: string) {
+		if (!theme || !Array.isArray(theme.themes) || theme.themes.length === 0) {
+			throw new Error(`Invalid icon theme manifest for "${id}": no theme variants defined`);
+		}
 		this.themeId = id;
 		this.themeName = name;
 		this.allVariants = theme.themes;

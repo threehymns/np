@@ -113,7 +113,14 @@ export class IconRegistry implements IconRegistryInterface {
 		try {
 			const raw = localStorage.getItem('np-installed-icon-themes');
 			if (!raw) return [];
-			return JSON.parse(raw);
+			const parsed: unknown = JSON.parse(raw);
+			if (!Array.isArray(parsed)) return [];
+			return parsed.filter(
+				(t): t is { id: string; name: string; baseUrl: string } =>
+					typeof (t as any)?.id === 'string' &&
+					typeof (t as any)?.name === 'string' &&
+					typeof (t as any)?.baseUrl === 'string'
+			);
 		} catch {
 			return [];
 		}
@@ -312,7 +319,13 @@ export class IconRegistry implements IconRegistryInterface {
 		const id = `installed-${normalizedUrl.owner}-${normalizedUrl.repo}`;
 		const name = theme.name || id;
 
-		const provider = new ManifestIconProvider(id, name, theme, baseUrl);
+		let provider: ManifestIconProvider;
+		try {
+			provider = new ManifestIconProvider(id, name, theme, baseUrl);
+		} catch (e) {
+			console.warn('Rejected invalid icon theme manifest:', e);
+			return null;
+		}
 		this.registerFileTheme(id, provider);
 
 		this.cacheTheme(id, name, baseUrl, theme);
