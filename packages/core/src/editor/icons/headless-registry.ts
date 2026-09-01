@@ -14,8 +14,6 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 	private fileThemes = $state<Record<string, FileIconProvider>>({});
 	private productThemes = $state<Record<string, ProductIconProvider>>({});
 
-	constructor() {}
-
 	async initialize(): Promise<void> {}
 
 	registerFileTheme(id: string, provider: FileIconProvider): void {
