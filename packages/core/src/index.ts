@@ -22,5 +22,5 @@ export * from './editor/icons-types';
 export * from './editor/icons/zed-format';
 export * from './editor/icons/builtin-themes';
 export * from './editor/icons/manifest-provider';
-export * from './editor/icons/headless-registry';
+export * from './editor/icons/headless-registry.svelte';
 

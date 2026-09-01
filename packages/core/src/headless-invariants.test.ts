@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ManifestIconProvider } from "./editor/icons/manifest-provider";
-import { HeadlessIconRegistry } from "./editor/icons/headless-registry";
+import { HeadlessIconRegistry } from "./editor/icons/headless-registry.svelte";
 import { transformer } from "./transformer";
 import { createMockStorage } from "../../../tests/mock-storage";
 
