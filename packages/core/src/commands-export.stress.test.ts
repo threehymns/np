@@ -386,8 +386,8 @@ const unclosedCode = "no closing backticks";
 			};
 
 			const desktopExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, defaultFileName, types }) => {
-					const fileName = suggestedName || defaultFileName || "export.html";
+				exportFile: async ({ content, suggestedName, types }) => {
+					const fileName = suggestedName || "export.html";
 					const filters = types?.map(t => ({
 						name: t.description,
 						extensions: Object.values(t.accept).flat().map(ext => ext.replace(/^\./, ""))
@@ -423,8 +423,8 @@ const unclosedCode = "no closing backticks";
 			};
 
 			const desktopExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, defaultFileName, types }) => {
-					const fileName = suggestedName || defaultFileName || "export.html";
+				exportFile: async ({ content, suggestedName, types }) => {
+					const fileName = suggestedName || "export.html";
 					const filters = types?.map(t => ({
 						name: t.description,
 						extensions: Object.values(t.accept).flat().map(ext => ext.replace(/^\./, ""))
@@ -474,8 +474,8 @@ const unclosedCode = "no closing backticks";
 			});
 
 			const webExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, defaultFileName, mimeType, types }) => {
-					const fileName = suggestedName || defaultFileName || "export.html";
+				exportFile: async ({ content, suggestedName, mimeType, types }) => {
+					const fileName = suggestedName || "export.html";
 					try {
 						const handle = await mockShowSaveFilePicker({
 							suggestedName: fileName,
@@ -510,8 +510,8 @@ const unclosedCode = "no closing backticks";
 			});
 
 			const webExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, defaultFileName, mimeType, types }) => {
-					const fileName = suggestedName || defaultFileName || "export.html";
+				exportFile: async ({ content, suggestedName, mimeType, types }) => {
+					const fileName = suggestedName || "export.html";
 					try {
 						const handle = await mockShowSaveFilePicker({
 							suggestedName: fileName,

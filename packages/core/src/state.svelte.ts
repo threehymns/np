@@ -30,7 +30,6 @@ export interface ExportFileType {
 export interface ExportFileOptions {
 	content: string;
 	suggestedName: string;
-	defaultFileName?: string;
 	mimeType?: string;
 	types?: ExportFileType[];
 }
