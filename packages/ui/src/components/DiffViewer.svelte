@@ -11,11 +11,6 @@
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
-	const SVG_PLUS = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></svg>';
-	const SVG_MINUS = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/></svg>';
-	const SVG_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></svg>';
-	const SVG_UNDO = '<svg xmlns="http://www.w3.org/2000/svg" role="img" width="10" height="10" fill="currentColor" viewBox="0 0 256 256"><rect width="256" height="256" fill="none" /><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></svg>';
-
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
 		hunkRange: Chunk;
@@ -64,58 +59,27 @@
 			wrap.addEventListener('mouseup', preventEvent);
 			wrap.addEventListener('click', preventEvent);
 
+			const makeBtn = (label: string, command: string, className: string) => {
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = `py-0.5 px-1 rounded flex items-center justify-center cursor-pointer ${className}`;
+				btn.title = `${label} Hunk`;
+				btn.setAttribute('aria-label', `${label} Hunk`);
+				btn.textContent = label;
+				btn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute(command, this.change, this.hunkRange);
+				};
+				wrap.appendChild(btn);
+			};
+
 			if (this.staged) {
-				const unstageBtn = document.createElement('button');
-				unstageBtn.type = 'button';
-				unstageBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				unstageBtn.title = `Unstage Hunk`;
-				unstageBtn.setAttribute('aria-label', `Unstage Hunk`);
-				unstageBtn.innerHTML = "Unstage";
-				unstageBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.unstageHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(unstageBtn);
-
-				const discardBtn = document.createElement('button');
-				discardBtn.type = 'button';
-				discardBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk`);
-				discardBtn.innerHTML = "Discard";
-				discardBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(discardBtn);
+				makeBtn('Unstage', 'git.unstageHunk', 'hover:bg-muted text-muted-foreground hover:text-foreground');
+				makeBtn('Discard', 'git.discardHunk', 'hover:bg-muted text-muted-foreground hover:text-destructive');
 			} else {
-				const stageBtn = document.createElement('button');
-				stageBtn.type = 'button';
-				stageBtn.className = 'py-0.5 px-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				stageBtn.title = `Stage Hunk`;
-				stageBtn.setAttribute('aria-label', `Stage Hunk`);
-				stageBtn.innerHTML = "Stage";
-				stageBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.stageHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(stageBtn);
-
-				const discardBtn = document.createElement('button');
-				discardBtn.type = 'button';
-				discardBtn.className = 'py-0.5 px-1 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk`);
-				discardBtn.innerHTML = "Discard";
-				discardBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(discardBtn);
+				makeBtn('Stage', 'git.stageHunk', 'hover:bg-muted text-muted-foreground hover:text-foreground');
+				makeBtn('Discard', 'git.discardHunk', 'hover:bg-destructive/10 text-muted-foreground hover:text-destructive');
 			}
 
 			return wrap;
@@ -223,8 +187,8 @@
 	}
 
 	// Map to track active EditorView or MergeView per filepath
-	let editorViews = new Map<string, { inline?: EditorView; split?: MergeView }>();
-	let editorResolvers = new Map<string, Array<(views: { inline?: EditorView; split?: MergeView }) => void>>();
+	let editorViews = new Map<string, ViewEntry>();
+	let editorResolvers = new Map<string, Array<(views: ViewEntry) => void>>();
 
 	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
 		return (event: MouseEvent) => {
@@ -287,23 +251,29 @@
 		return direction === 'up' ? curLine <= firstLine : curLine >= lastLine;
 	}
 
+	type ViewEntry = { inline?: EditorView; split?: MergeView };
+
+	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
+		if (mode === 'split') {
+			const split = views?.split;
+			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
+		}
+		return views?.inline;
+	}
+
 	async function getOrWaitEditor(filepath: string, mode: 'inline' | 'split', preferSide: 'a' | 'b' = 'b'): Promise<EditorView | undefined> {
-		const existing = editorViews.get(filepath);
-		const targetView = mode === 'split'
-			? (preferSide === 'a' ? (existing?.split?.a || existing?.split?.b) : (existing?.split?.b || existing?.split?.a))
-			: existing?.inline;
+		const targetView = pickView(editorViews.get(filepath), mode, preferSide);
 		if (targetView) return targetView;
 
 		return new Promise<EditorView | undefined>((resolve) => {
 			const timer = setTimeout(() => {
-				const current = editorViews.get(filepath);
-				resolve(mode === 'split' ? (preferSide === 'a' ? (current?.split?.a || current?.split?.b) : (current?.split?.b || current?.split?.a)) : current?.inline);
+				resolve(pickView(editorViews.get(filepath), mode, preferSide));
 			}, 500);
 
 			const list = editorResolvers.get(filepath) || [];
 			list.push((views) => {
 				clearTimeout(timer);
-				resolve(mode === 'split' ? (preferSide === 'a' ? (views.split?.a || views.split?.b) : (views.split?.b || views.split?.a)) : views.inline);
+				resolve(pickView(views, mode, preferSide));
 			});
 			editorResolvers.set(filepath, list);
 		});
@@ -410,7 +380,7 @@
 		);
 	}
 
-	function registerEditorView(filepath: string, entry: { inline?: EditorView; split?: MergeView }) {
+	function registerEditorView(filepath: string, entry: ViewEntry) {
 		const current = editorViews.get(filepath) || {};
 		const updated = { ...current, ...entry };
 		editorViews.set(filepath, updated);
@@ -782,40 +752,30 @@
 	});
 
 	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {
-		const map = new Map<string, GitChange[]>();
-		for (const c of changeList) {
-			const existing = map.get(c.filepath);
-			if (existing) {
-				existing.push(c);
-			} else {
-				map.set(c.filepath, [c]);
-			}
-		}
-
 		const result: GitChange[] = [];
-		for (const [filepath, group] of map.entries()) {
+		for (const [filepath, group] of Map.groupBy(changeList, (c) => c.filepath)) {
 			if (group.length === 1) {
 				result.push(group[0]);
-			} else {
-				const stagedChange = group.find((c) => c.staged);
-				const unstagedChange = group.find((c) => !c.staged);
+				continue;
+			}
+			const stagedChange = group.find((c) => c.staged);
+			const unstagedChange = group.find((c) => !c.staged);
 
-				if (stagedChange && unstagedChange) {
-					result.push({
-						filepath,
-						status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
-						staged: false,
-						combined: true,
-						diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
-						originalContent: stagedChange.originalContent,
-						modifiedContent: unstagedChange.modifiedContent,
-						stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent,
-						additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
-						deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
-					});
-				} else {
-					result.push(group[0]);
-				}
+			if (stagedChange && unstagedChange) {
+				result.push({
+					filepath,
+					status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
+					staged: false,
+					combined: true,
+					diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
+					originalContent: stagedChange.originalContent,
+					modifiedContent: unstagedChange.modifiedContent,
+					stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent,
+					additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
+					deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
+				});
+			} else {
+				result.push(group[0]);
 			}
 		}
 
@@ -1103,14 +1063,6 @@
 			toggleCollapse(filepath);
 		}
 	}
-
-	function prevHunk() {
-		jumpToChunk('prev');
-	}
-
-	function nextHunk() {
-		jumpToChunk('next');
-	}
 </script>
 
 <div class="flex flex-col h-full w-full bg-background border-l border-border select-text">
@@ -1197,7 +1149,7 @@
 			<button
 				type="button"
 				onmousedown={(e) => e.preventDefault()}
-				onclick={prevHunk}
+				onclick={() => jumpToChunk('prev')}
 				class="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors cursor-pointer"
 				title="Previous Hunk"
 			>
@@ -1208,7 +1160,7 @@
 			<button
 				type="button"
 				onmousedown={(e) => e.preventDefault()}
-				onclick={nextHunk}
+				onclick={() => jumpToChunk('next')}
 				class="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors cursor-pointer"
 				title="Next Hunk"
 			>
