@@ -25,7 +25,7 @@
 					await writable.write(content);
 					await writable.close();
 				} catch (e) {
-					if ((e as Error).name !== 'AbortError') throw e;
+					if ((e as { name?: string } | null | undefined)?.name !== 'AbortError') throw e;
 				}
 			} else if (typeof document !== 'undefined') {
 				const blob = new Blob([content], { type: mimeType || 'application/octet-stream' });
@@ -34,7 +34,9 @@
 				a.href = url;
 				a.download = fileName;
 				a.click();
-				URL.revokeObjectURL(url);
+				// Deferred revocation: revoking synchronously can cancel the
+				// download before it starts in Firefox and Safari.
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
 			}
 		}
 	};
