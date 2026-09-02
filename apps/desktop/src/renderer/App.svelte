@@ -56,9 +56,11 @@
     exportService,
     clipboardService: {
       writeText: async (text) => {
-        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(text);
+        if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+          // edit.cut deletes the selection only when this resolves.
+          throw new Error('Clipboard API is unavailable');
         }
+        await navigator.clipboard.writeText(text);
       },
       readText: async () => {
         if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
