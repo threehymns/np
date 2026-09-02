@@ -21,36 +21,19 @@ export function installMockFS() {
 			const chunks: Uint8Array[] = [];
 			return {
 				write: async (chunk: any) => {
-					if (typeof chunk === 'string') {
-						chunks.push(new TextEncoder().encode(chunk));
-					} else if (chunk instanceof ArrayBuffer) {
-						chunks.push(new Uint8Array(chunk));
-					} else if (ArrayBuffer.isView(chunk)) {
-						chunks.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-					} else if (chunk && typeof chunk === 'object' && 'type' in chunk && chunk.type === 'write' && chunk.data) {
-						let data = chunk.data;
-						if (typeof data === 'string') {
-							chunks.push(new TextEncoder().encode(data));
-						} else if (data instanceof ArrayBuffer) {
-							chunks.push(new Uint8Array(data));
-						} else if (ArrayBuffer.isView(data)) {
-							chunks.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-						} else {
-							chunks.push(new Uint8Array(data));
-						}
-					} else {
-						chunks.push(new Uint8Array(chunk));
+					const data = (chunk && typeof chunk === 'object' && chunk.type === 'write' && 'data' in chunk) ? chunk.data : chunk;
+					if (typeof data === 'string') {
+						chunks.push(new TextEncoder().encode(data));
+					} else if (data instanceof ArrayBuffer) {
+						chunks.push(new Uint8Array(data));
+					} else if (ArrayBuffer.isView(data)) {
+						chunks.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+					} else if (data) {
+						chunks.push(new Uint8Array(data));
 					}
 				},
 				close: async () => {
-					const size = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-					const buf = new Uint8Array(size);
-					let offset = 0;
-					for (const c of chunks) {
-						buf.set(c, offset);
-						offset += c.byteLength;
-					}
-					self.data = buf;
+					self.data = new Uint8Array(await new Blob(chunks).arrayBuffer());
 					self.mtime = Date.now();
 				}
 			};
@@ -101,7 +84,6 @@ export function installMockFS() {
 			return entry as MockFileHandle;
 		}
 		async *keys() { for (const k of this.entriesMap.keys()) yield k; }
-		async *values() { for (const v of this.entriesMap.values()) yield v; }
 		async *entries() { for (const entry of this.entriesMap.entries()) yield entry; }
 		async removeEntry(name: string, options?: { recursive?: boolean }) {
 			const entry = this.entriesMap.get(name);
