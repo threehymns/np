@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
+import { installMockFS } from './helpers/mock-fs';
 
 test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test.beforeEach(async ({ page }) => {
@@ -7,100 +8,15 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await page.goto('/');
 
 		// Inject mock repo setup
+		await page.evaluate(installMockFS);
 		await page.evaluate(() => {
-			class MockFileHandle {
-				kind = 'file' as const;
-				deleted = false;
-				constructor(public name: string, public data: Uint8Array = new Uint8Array(), public mtime = Date.now()) {}
-				async isSameEntry(other: any) { return this === other; }
-				async queryPermission() { return 'granted' as const; }
-				async getFile() {
-					if (this.deleted) {
-						const err = new Error('File not found');
-						err.name = 'NotFoundError';
-						throw err;
-					}
-					return new File([this.data as any], this.name, { lastModified: this.mtime });
-				}
-				async createWritable() {
-					const self = this;
-					const chunks: Uint8Array[] = [];
-					return {
-						write: async (chunk: any) => {
-							if (typeof chunk === 'string') {
-								chunks.push(new TextEncoder().encode(chunk));
-							} else if (chunk instanceof ArrayBuffer) {
-								chunks.push(new Uint8Array(chunk));
-							} else if (ArrayBuffer.isView(chunk)) {
-								chunks.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-							} else {
-								chunks.push(new Uint8Array(chunk));
-							}
-						},
-						close: async () => {
-							const size = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-							const buf = new Uint8Array(size);
-							let offset = 0;
-							for (const c of chunks) {
-								buf.set(c, offset);
-								offset += c.byteLength;
-							}
-							self.data = buf;
-							self.mtime = Date.now();
-						}
-					};
-				}
-			}
-
-			class MockDirectoryHandle {
-				kind = 'directory' as const;
-				entriesMap = new Map<string, MockDirectoryHandle | MockFileHandle>();
-				constructor(public name: string) {}
-				async isSameEntry(other: any) { return this === other; }
-				async getDirectoryHandle(name: string, options?: { create?: boolean }) {
-					let entry = this.entriesMap.get(name);
-					if (!entry) {
-						if (options?.create) {
-							entry = new MockDirectoryHandle(name);
-							this.entriesMap.set(name, entry);
-						} else {
-							const err = new Error('Not found');
-							err.name = 'NotFoundError';
-							throw err;
-						}
-					}
-					return entry as MockDirectoryHandle;
-				}
-				async getFileHandle(name: string, options?: { create?: boolean }) {
-					let entry = this.entriesMap.get(name);
-					if (!entry) {
-						if (options?.create) {
-							entry = new MockFileHandle(name);
-							this.entriesMap.set(name, entry);
-						} else {
-							const err = new Error('Not found');
-							err.name = 'NotFoundError';
-							throw err;
-						}
-					}
-					return entry as MockFileHandle;
-				}
-				async *keys() { for (const k of this.entriesMap.keys()) yield k; }
-				async *values() { for (const v of this.entriesMap.values()) yield v; }
-				async *entries() { for (const entry of this.entriesMap.entries()) yield entry; }
-				async removeEntry(name: string) {
-					this.entriesMap.delete(name);
-				}
-				async resolve(): Promise<string[] | null> { return []; }
-				async queryPermission() { return 'granted' as const; }
-			}
 
 			(window as any).setupDiffTestRepo = async () => {
 				const appState = (window as any).appState;
 				const git = (window as any).git;
 				const RepositoryClass = (window as any).Repository;
 
-				const root = new MockDirectoryHandle('diff-test-project');
+				const root = new (window as any).MockDirectoryHandle('diff-test-project');
 				const origin = { scheme: 'browser', path: root.name, name: root.name };
 				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
 				const repository = new RepositoryClass(origin, appState.workspace.vcsFactory);
