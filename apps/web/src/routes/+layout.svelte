@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState, KeymapStorageProvider, ManifestIconProvider, windowDialogService, type ExportService } from "@np/core";
+	import { AppState, KeymapStorageProvider, ManifestIconProvider, windowDialogService, Repository, type ExportService } from "@np/core";
 	import { iconRegistry } from "@np/ui";
 	import { MultiSchemeStorage } from "@np/core/storage";
-	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence } from "@np/adapters-browser";
+	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence, git } from "@np/adapters-browser";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
@@ -70,6 +70,8 @@
 	if (typeof window !== "undefined") {
 		(window as any).appState = appState;
 		(window as any).ManifestIconProvider = ManifestIconProvider;
+		(window as any).Repository = Repository;
+		(window as any).git = git;
 		console.log('[Layout] AppState exposed on window. documents count:', appState.documents.length);
 	}
 
