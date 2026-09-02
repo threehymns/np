@@ -199,7 +199,7 @@ describe('ElectronConfigStorage', () => {
 
 	it('8. Trailing comma tolerance: a legal trailing comma is not treated as a syntax error and settings still load', () => {
 		const jsoncWithTrailingComma = `{
-  "zoom": 100,
+  "zoom": 120,
   "theme": "default",
 }
 `;
@@ -208,11 +208,41 @@ describe('ElectronConfigStorage', () => {
 		const storage = new ElectronConfigStorage();
 		const prefs = new Preferences(storage);
 
-		expect(prefs.zoom).toBe(100);
+		// The actual stored value (not just the default) must load despite the trailing comma
+		expect(prefs.zoom).toBe(120);
 		expect(prefs.theme).toBe('default');
 
 		// Writes must still work even though the file has a trailing comma
-		prefs.zoom = 120;
+		prefs.zoom = 140;
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+	});
+
+	it('9. Failed write is not treated as persisted: a repeat identical assignment retries rather than being suppressed', async () => {
+		const validJsonc = `{\n  "zoom": 100\n}`;
+		mockReadConfigFileSync.mockReturnValue(validJsonc);
+
+		// Fail the first write attempt, succeed on subsequent ones
+		let failNext = true;
+		mockWriteConfigFile.mockImplementation(async (_content: string) => {
+			if (failNext) {
+				failNext = false;
+				throw new Error('disk full');
+			}
+		});
+
+		const storage = new ElectronConfigStorage();
+
+		const payload = JSON.stringify({ zoom: 120 });
+		storage.setItem('np-prefs-v2', payload);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+
+		// Identical payload again. Under the old behavior the failed text was
+		// cached as persisted, suppressing this write; it must now retry.
+		storage.setItem('np-prefs-v2', payload);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 	});
 });

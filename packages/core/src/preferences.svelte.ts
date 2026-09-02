@@ -179,7 +179,38 @@ export class Preferences {
 		this.save();
 	}
 
+	/**
+	 * Restore every known preference to its in-memory default. Used whenever a
+	 * configuration snapshot is (re)applied so keys removed from an external file
+	 * do not leave stale values active. Icon callbacks fire only for changed ids.
+	 */
+	private resetToDefaults() {
+		this._wordWrap = true;
+		this._statusBar = true;
+		this._vimMode = false;
+		this._vimSyncClipboard = true;
+		this._zoom = 100;
+		this._lineEnding = 'Unix (LF)';
+		this._encoding = 'UTF-8';
+		this._theme = 'default';
+		this._appearanceMode = 'system';
+		this._accentColor = 'default';
+		this._sidebarVisible = true;
+		this._sidebarWidth = 256;
+		if (this._fileIconThemeId !== 'phosphor') {
+			this._fileIconThemeId = 'phosphor';
+			this.onIconThemeChange?.('file', 'phosphor');
+		}
+		if (this._productIconThemeId !== 'phosphor') {
+			this._productIconThemeId = 'phosphor';
+			this.onIconThemeChange?.('product', 'phosphor');
+		}
+	}
+
 	private applyData(raw: string | null) {
+		// Reset known preferences to defaults before applying a valid snapshot so
+		// removed keys fall back to defaults. Empty or invalid input leaves defaults.
+		this.resetToDefaults();
 		if (!raw) return;
 		try {
 			const prefs = JSON.parse(raw);

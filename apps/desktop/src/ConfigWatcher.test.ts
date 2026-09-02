@@ -96,4 +96,37 @@ describe('ConfigWatcher', () => {
 		// Should NOT have broadcasted because it was np writing to config.json
 		expect(broadcastCount).toBe(0);
 	});
+
+	it('discards stale content from an older read when a newer change supersedes it', async () => {
+		// Prepare initial file using the untouched fs/promises binding.
+		await fs.writeFile(configPath, '{\n  "zoom": 100\n}', 'utf-8');
+
+		type Resolver = (content: string) => void;
+		const pendingReads: Resolver[] = [];
+		const readFileMock = mock((_path: unknown, _enc: unknown) => {
+			return new Promise<string>((resolve) => pendingReads.push(resolve));
+		});
+
+		// Replace readFile with a controllable promise, preserving the rest of fs/promises.
+		mock.module('fs/promises', () => ({ default: { ...fs, readFile: readFileMock } }));
+
+		const broadcast: string[] = [];
+		const watcher = new ConfigWatcher({
+			configPath,
+			debounceMs: 20,
+			onConfigChanged: (content) => broadcast.push(content)
+		});
+
+		// Overlapping reloads: the first (older) read completes after the second starts.
+		const older = watcher.processChange();
+		const newer = watcher.processChange();
+
+		pendingReads[0]('{\n  "zoom": 125\n}');
+		pendingReads[1]('{\n  "zoom": 150\n}');
+
+		await Promise.all([older, newer]);
+
+		// Only the latest content may be broadcast; stale content is discarded.
+		expect(broadcast).toEqual(['{\n  "zoom": 150\n}']);
+	});
 });

@@ -7,6 +7,7 @@ import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
  */
 export class ElectronConfigStorage implements PreferenceStorage {
 	private cachedText: string = '';
+	private pendingText: string | null = null;
 	private hasSyntaxError: boolean = false;
 
 	constructor() {
@@ -48,7 +49,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 
 		try {
 			const errors: ParseError[] = [];
-			const parsed = parse(this.cachedText, errors);
+			const parsed = parse(this.cachedText, errors, { allowTrailingComma: true });
 			if (errors.length > 0 || !parsed || typeof parsed !== 'object') {
 				return null;
 			}
@@ -90,14 +91,25 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		}
 
 		// Identical-write suppression: skip write if content hasn't changed
-		if (currentText === this.cachedText) {
+		// relative to the last confirmed persistence or an already-pending write.
+		if (currentText === this.cachedText || currentText === this.pendingText) {
 			return;
 		}
 
-		this.cachedText = currentText;
-		window.electronAPI.writeConfigFile(currentText).catch((err) => {
-			console.error('Failed to persist config.json:', err);
-		});
+		// Keep pending content separate from confirmed content so a failed write
+		// does not mark uncommitted text as persisted (which would suppress retries
+		// and let preferences revert after restart).
+		this.pendingText = currentText;
+		window.electronAPI.writeConfigFile(currentText).then(
+			() => {
+				this.cachedText = currentText;
+				if (this.pendingText === currentText) this.pendingText = null;
+			},
+			(err) => {
+				console.error('Failed to persist config.json:', err);
+				if (this.pendingText === currentText) this.pendingText = null;
+			}
+		);
 	}
 
 	/**
@@ -106,6 +118,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 	 */
 	updateFromExternal(newContent: string): boolean {
 		this.cachedText = newContent;
+		this.pendingText = null;
 		return this.validateSyntax(newContent);
 	}
 

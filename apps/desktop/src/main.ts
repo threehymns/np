@@ -316,7 +316,13 @@ function registerIpcHandlers() {
 			await fs.mkdir(path.dirname(filePath), { recursive: true });
 			await fs.writeFile(filePath, content, 'utf-8');
 		} catch (e) {
+			// Clear the pending self-write marker so a later external change or
+			// retry is not wrongly suppressed, then surface the failure to the renderer.
+			if (configWatcher && configWatcher.getLastWrittenContent() === content) {
+				configWatcher.setLastWrittenContent(null);
+			}
 			console.error('Failed to write config.json:', e);
+			throw e;
 		}
 	});
 

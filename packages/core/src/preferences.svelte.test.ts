@@ -243,4 +243,45 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(storage.setItemCalls.length).toBe(0);
 		expect(prefs.wordWrap).toBe(true);
 	});
+
+	it("resets to defaults when a previously-set key is removed from an external snapshot", () => {
+		const storage = createMockStorage({
+			"np-prefs-v2": JSON.stringify({ zoom: 120, theme: "catppuccin-mocha" })
+		});
+		const prefs = new Preferences(storage);
+
+		expect(prefs.zoom).toBe(120);
+		expect(prefs.theme).toBe("catppuccin-mocha");
+
+		// External file deletes zoom entirely; other prefs must fall back to defaults.
+		prefs.reload(JSON.stringify({ theme: "gruvbox-dark-hard" }));
+
+		expect(prefs.zoom).toBe(100); // reset to default
+		expect(prefs.theme).toBe("gruvbox-dark-hard"); // still applied from snapshot
+		expect(prefs.wordWrap).toBe(true); // default
+		expect(storage.setItemCalls.length).toBe(0);
+	});
+
+	it("resets to defaults when external content is empty or missing", () => {
+		const storage = createMockStorage({
+			"np-prefs-v2": JSON.stringify({ zoom: 130, fileIconThemeId: "seti" })
+		});
+		const prefs = new Preferences(storage);
+
+		expect(prefs.zoom).toBe(130);
+		expect(prefs.fileIconThemeId).toBe("seti");
+
+		// Storage returns null (e.g. invalid external file) -> reset to defaults
+		const events: { type: string; id: string }[] = [];
+		prefs.onIconThemeChange = (type, id) => events.push({ type, id });
+
+		prefs.reload(null as any);
+
+		expect(prefs.zoom).toBe(100);
+		expect(prefs.wordWrap).toBe(true);
+		// Icon theme reset from non-default back to default must fire a callback
+		expect(prefs.fileIconThemeId).toBe("phosphor");
+		expect(events).toEqual([{ type: "file", id: "phosphor" }]);
+		expect(storage.setItemCalls.length).toBe(0);
+	});
 });

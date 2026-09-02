@@ -59,10 +59,10 @@
     }
 
     const unsubscribeConfig = window.electronAPI?.onConfigChanged?.((newContent: string) => {
-      const isValid = prefsStorage.updateFromExternal(newContent);
-      if (isValid) {
-        appState.prefs.reload();
-      }
+      prefsStorage.updateFromExternal(newContent);
+      // Reload regardless of validity so invalid content resets preferences to
+      // their in-memory defaults until the external file is corrected.
+      appState.prefs.reload();
     });
 
     return () => {

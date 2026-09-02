@@ -16,6 +16,7 @@ export class ConfigWatcher {
 	private watcher: FSWatcher | null = null;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastWrittenContent: string | null = null;
+	private generation = 0;
 	private closed = false;
 
 	constructor(options: ConfigWatcherOptions) {
@@ -72,6 +73,7 @@ export class ConfigWatcher {
 	}
 
 	public async processChange(): Promise<void> {
+		const generation = ++this.generation;
 		let content: string;
 		try {
 			content = await fs.readFile(this.configPath, 'utf-8');
@@ -79,6 +81,12 @@ export class ConfigWatcher {
 			if (e?.code !== 'ENOENT') {
 				console.error('Failed to read config.json on change:', e);
 			}
+			return;
+		}
+
+		// Discard results from an older generation that resolved after a newer
+		// change started, so stale content is never broadcast after current content.
+		if (generation !== this.generation) {
 			return;
 		}
 
