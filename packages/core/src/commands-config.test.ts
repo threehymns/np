@@ -43,15 +43,12 @@ function createMockAppState() {
 
 describe("settings.openConfigJson command", () => {
 	let mockGetConfigPath: ReturnType<typeof mock>;
-	let mockReadConfigFileSync: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockGetConfigPath = mock(async () => "/home/user/.config/np/config.json");
-		mockReadConfigFileSync = mock(() => "{\"zoom\":100}" as string | null);
 		(globalThis as any).window = {
 			electronAPI: {
-				getConfigPath: mockGetConfigPath,
-				readConfigFileSync: mockReadConfigFileSync
+				getConfigPath: mockGetConfigPath
 			}
 		};
 	});
@@ -74,7 +71,6 @@ describe("settings.openConfigJson command", () => {
 		await commands.execute("settings.openConfigJson");
 
 		expect(mockGetConfigPath).toHaveBeenCalledTimes(1);
-		expect(mockReadConfigFileSync).toHaveBeenCalledTimes(1);
 		expect(workspace.openFile).toHaveBeenCalledTimes(1);
 		expect(openedFiles[0]).toEqual({
 			scheme: "file",

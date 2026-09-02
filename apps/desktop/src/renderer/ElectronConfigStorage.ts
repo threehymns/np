@@ -31,7 +31,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 
 	private validateSyntax(text: string): boolean {
 		const errors: ParseError[] = [];
-		parse(text, errors);
+		parse(text, errors, { allowTrailingComma: true });
 		if (errors.length > 0) {
 			console.error('config.json contains syntax errors; falling back to in-memory defaults', errors);
 			this.hasSyntaxError = true;

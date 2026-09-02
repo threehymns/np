@@ -466,9 +466,6 @@ export function registerCoreCommands(appState: AppState) {
 				try {
 					const configPath = await (window as any).electronAPI.getConfigPath();
 					if (configPath) {
-						if ((window as any).electronAPI.readConfigFileSync) {
-							(window as any).electronAPI.readConfigFileSync();
-						}
 						const name = configPath.split(/[/\\]/).filter(Boolean).pop() || 'config.json';
 						await appState.workspace.openFile({
 							scheme: 'file',

@@ -196,4 +196,23 @@ describe('ElectronConfigStorage', () => {
 		storage.setItem('np-prefs-v2', JSON.stringify({ zoom: 150 }));
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
 	});
+
+	it('8. Trailing comma tolerance: a legal trailing comma is not treated as a syntax error and settings still load', () => {
+		const jsoncWithTrailingComma = `{
+  "zoom": 100,
+  "theme": "default",
+}
+`;
+		mockReadConfigFileSync.mockReturnValue(jsoncWithTrailingComma);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.zoom).toBe(100);
+		expect(prefs.theme).toBe('default');
+
+		// Writes must still work even though the file has a trailing comma
+		prefs.zoom = 120;
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+	});
 });
