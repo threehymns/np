@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { EditorState, Compartment, StateField } from "@codemirror/state";
 import { unifiedMergeView, getOriginalDoc } from "@codemirror/merge";
 import type { GitChange } from "@np/core";

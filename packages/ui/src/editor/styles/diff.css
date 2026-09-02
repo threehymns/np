@@ -1,6 +1,5 @@
 :root, [data-theme] {
 	--diff-green: oklch(0.65 0.17 140);
-	--diff-green-hover: oklch(0.55 0.15 140);
 	--diff-deleted: color-mix(in srgb, var(--destructive) 10%, transparent);
 	--diff-added: color-mix(in srgb, var(--diff-green) 10%, transparent);
 }
@@ -78,57 +77,6 @@
 .cm-collapsedLines:hover {
 	background: color-mix(in srgb, var(--accent) 80%, transparent) !important;
 	color: var(--accent-foreground) !important;
-}
-
-/* Style chunk revert buttons */
-.cm-merge-revert {
-	color: var(--muted-foreground) !important;
-	background: transparent !important;
-	border: none !important;
-	cursor: pointer !important;
-	padding: 2px !important;
-	border-radius: 3px !important;
-	display: inline-flex !important;
-	align-items: center !important;
-	justify-content: center !important;
-	transition: all 150ms ease !important;
-}
-
-.cm-merge-revert:hover {
-	color: var(--foreground) !important;
-	background: var(--muted) !important;
-}
-
-/* Style Chunk Action Buttons (Accept / Reject) */
-.cm-chunkButtons button {
-	font-family: inherit !important;
-	font-size: 10px !important;
-	font-weight: 600 !important;
-	padding: 3px 8px !important;
-	border-radius: var(--radius) !important;
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
-	transition: all 150ms ease !important;
-	cursor: pointer !important;
-}
-
-.cm-chunkButtons button[name=accept] {
-	background: var(--diff-green) !important;
-	color: white !important;
-	border: none !important;
-}
-
-.cm-chunkButtons button[name=accept]:hover {
-	background: var(--diff-green-hover) !important;
-}
-
-.cm-chunkButtons button[name=reject] {
-	background: var(--destructive) !important; /* destructive red */
-	color: var(--destructive-foreground) !important;
-	border: none !important;
-}
-
-.cm-chunkButtons button[name=reject]:hover {
-	background: color-mix(in srgb, var(--destructive) 80%, black) !important;
 }
 
 /* Change Gutter (Unified Diff) */

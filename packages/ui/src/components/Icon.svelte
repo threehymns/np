@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
 	import { File } from 'phosphor-svelte';
-	import { iconRegistry } from '@np/core';
+	import { iconRegistry } from '../editor/icons.svelte';
 	import type { ResolvedIcon } from '@np/core';
+
 
 	interface Props {
 		// New resolver props

@@ -26,32 +26,11 @@ describe("AppState / Workspace SSR & Initialization", () => {
 	let AppState: any;
 
 	beforeAll(async () => {
-		mock.module("svelte", () => ({
-			getContext: () => null,
-			setContext: () => {},
-			hasContext: () => false,
-			getAllContexts: () => new Map(),
-			untrack: (fn: any) => fn(),
-			tick: async () => {}
-		}));
-		mock.module("svelte/reactivity", () => ({
-			SvelteMap: Map,
-			SvelteSet: Set
-		}));
-		mock.module("phosphor-svelte", () => ({
-			File: () => {},
-			FileCode: () => {},
-			FileText: () => {},
-			Code: () => {},
-			Globe: () => {},
-			Database: () => {},
-			Gear: () => {},
-			Folder: () => {},
-			FolderOpen: () => {}
-		}));
+		// rune-setup (imported above) already mocks "svelte" and "svelte/reactivity"
 		const mod = await import("./state.svelte");
 		AppState = mod.AppState;
 	});
+
 
 	it("does not restore session, open DB, or create untitled documents during construction", () => {
 		let loadAllCalled = false;

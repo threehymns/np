@@ -3,10 +3,11 @@ import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
+
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
-import type { GitChange } from "./project/vcs";
+import { type GitChange, DEFAULT_DIFF_CONFIG } from "./project/vcs";
 import { runExclusively } from "./project/repository.svelte";
 
 async function showAlert(appState: AppState, msg: string): Promise<void> {
@@ -288,39 +289,29 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
-			
-			if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
-				try {
-					const handle = await (window as any).showSaveFilePicker({
-						suggestedName: appState.activeDocument.fileName.replace(/\.md$/, '') + '.html',
-						types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
-					});
-					const writable = await handle.createWritable();
-					await writable.write(html);
-					await writable.close();
-				} catch (e) {
-					if ((e as Error).name !== 'AbortError') console.error(e);
+			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
+
+			try {
+				await appState.exportService?.exportFile({
+					content: html,
+					suggestedName,
+					mimeType: 'text/html',
+					types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
+				});
+			} catch (e) {
+				if ((e as { name?: string } | null | undefined)?.name !== 'AbortError') {
+					console.error('Failed to export HTML:', e);
 				}
-			} else if (typeof document !== 'undefined') {
-				// Fallback to data URI download
-				const blob = new Blob([html], { type: 'text/html' });
-				const url = URL.createObjectURL(blob);
-				const a = document.createElement('a');
-				a.href = url;
-				a.download = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
-				a.click();
-				URL.revokeObjectURL(url);
 			}
 		}
 	});
+
 
   appState.commands.register({
     id: 'commandPalette.toggle',
     label: 'Command Palette: Toggle',
     category: 'View',
     action: () => {
-      if (!appState.activeDocument) return;
-      const currentDoc = appState.activeDocument;
       appState.commandPalette.open = !appState.commandPalette.open;
     }
   });
@@ -332,7 +323,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: () => {
 			if (!appState.activeDocument) return;
 			const currentDoc = appState.activeDocument;
-			
+
 			const langItems = [
 				{
 					id: 'auto',
@@ -355,9 +346,9 @@ export function registerCoreCommands(appState: AppState) {
 					}
 				},
 				...allLanguages.map(lang => {
-					const isCurrent = currentDoc.userLanguageOverride === lang.name || 
+					const isCurrent = currentDoc.userLanguageOverride === lang.name ||
 						(currentDoc.userLanguageOverride === null && currentDoc.language?.name === lang.name);
-					
+
 					let packageId = '';
 					const nameMap: Record<string, string> = {
 						"C++": "@codemirror/lang-cpp",
@@ -554,7 +545,7 @@ export function registerCoreCommands(appState: AppState) {
 		action: async (message: string, options?: { author?: { name: string; email: string }; amend?: boolean }) => {
 			const repo = appState.workspace.repository;
 			if (!repo || !repo.adapter.commit) return false;
-			
+
 			const stagedCount = repo.changes.filter(c => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
 				await showAlert(appState, 'Cannot commit: No staged changes to commit.');
@@ -722,8 +713,13 @@ export function mapPos(posA: number, chunks: readonly Chunk[]): number {
  * Maps a character range [posFrom, posTo] defined on textA (original coordinate space)
  * into textB (target coordinate space) by computing diff chunks and mapping both endpoints.
  */
-export function mapRange(posFrom: number, posTo: number, textA: Text, textB: Text): { from: number; to: number } {
-	const chunks = Chunk.build(textA, textB);
+export function mapRange(
+	posFrom: number,
+	posTo: number,
+	textA: Text,
+	textB: Text
+): { from: number; to: number } {
+	const chunks = Chunk.build(textA, textB, DEFAULT_DIFF_CONFIG);
 	return {
 		from: mapPos(posFrom, chunks),
 		to: mapPos(posTo, chunks)
@@ -876,7 +872,7 @@ async function performHunkAction(
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				} else {
 					const wtText = Text.of(wtContent.split(/\r?\n/));
-					const unstagedChunks = Chunk.build(stagedText, wtText);
+					const unstagedChunks = Chunk.build(stagedText, wtText, DEFAULT_DIFF_CONFIG);
 					const wtRange = mapRange(hunk.fromB, hunk.toB, stagedText, wtText);
 					const wtStartLine = wtText.lineAt(Math.min(wtRange.from, wtText.length)).number;
 					const wtEndLine = wtText.lineAt(Math.min(wtRange.to, wtText.length)).number;
@@ -897,7 +893,7 @@ async function performHunkAction(
 					}
 				}
 			} else {
-				const unstagedChunks = Chunk.build(stagedText, modText);
+				const unstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 				const lineStartB = modText.lineAt(Math.min(hunk.fromB, modText.length)).number;
 				const lineEndB = modText.lineAt(Math.min(hunk.toB, modText.length)).number;
 				const isUnstaged = unstagedChunks.some((uc: Chunk) => {

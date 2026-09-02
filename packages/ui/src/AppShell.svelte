@@ -221,89 +221,82 @@
 	</main>
 
 	{#if appState.prefs.statusBar}
+		{#snippet statusButton({ icon: Icon, class: btnClass, title, shortcut, onclick: onclickFn, badge }: {
+			icon: typeof SidebarIcon;
+			class: string;
+			title: string;
+			shortcut?: string | null;
+			onclick: (e: MouseEvent) => void;
+			badge?: number;
+		})}
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							variant="ghost"
+							size="icon-xs"
+							{...props}
+							onclick={(e) => {
+								(props as any).onclick?.(e);
+								onclickFn(e);
+							}}
+							class={btnClass}
+						>
+							<Icon class="size-3.5" />
+							{#if badge}
+								<span class="absolute -top-1 -right-1 min-w-3 h-3 bg-primary text-primary-foreground text-[7px] font-bold rounded-full flex items-center justify-center border border-background px-0.5 font-sans pointer-events-none">
+									{badge}
+								</span>
+							{/if}
+						</Button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
+					{title}{#if shortcut}<span class="text-[9px] opacity-60 ml-1">({shortcut})</span>{/if}
+				</Tooltip.Content>
+			</Tooltip.Root>
+		{/snippet}
 		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
 			<div class="flex items-center gap-1">
-			<Tooltip.Provider>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									{...props}
-									onclick={(e) => {
-										(props as any).onclick?.(e);
-										appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible;
-									}}
-									class={appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : ''}
-								>
-									<SidebarIcon class="size-3.5" />
-								</Button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
-						</Tooltip.Content>
-					</Tooltip.Root>
+				<Tooltip.Provider>
+					{@render statusButton({
+						icon: SidebarIcon,
+						class: appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : '',
+						title: 'Toggle Sidebar',
+						shortcut: appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\',
+						onclick: () => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible
+					})}
 
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									{...props}
-									onclick={(e) => {
-										(props as any).onclick?.(e);
-										if (appState.activeSidebarTab === 'explorer' && appState.prefs.sidebarVisible) {
-											appState.prefs.sidebarVisible = false;
-										} else {
-											appState.activeSidebarTab = 'explorer';
-											appState.prefs.sidebarVisible = true;
-										}
-									}}
-									class="flex items-center justify-center hover:bg-accent/50 {appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
-								>
-									<FolderOpenIcon class="size-3.5" />
-								</Button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Project Explorer{#if appState.keymaps.getShortcutForCommand('view.showExplorer')}<span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.showExplorer')})</span>{/if}
-						</Tooltip.Content>
-					</Tooltip.Root>
+					{@render statusButton({
+						icon: FolderOpenIcon,
+						class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Project Explorer',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showExplorer'),
+						onclick: () => {
+							if (appState.activeSidebarTab === 'explorer' && appState.prefs.sidebarVisible) {
+								appState.prefs.sidebarVisible = false;
+							} else {
+								appState.activeSidebarTab = 'explorer';
+								appState.prefs.sidebarVisible = true;
+							}
+						}
+					})}
 
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									{...props}
-									onclick={(e) => {
-										(props as any).onclick?.(e);
-										if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
-											appState.prefs.sidebarVisible = false;
-										} else {
-											appState.activeSidebarTab = 'git';
-											appState.prefs.sidebarVisible = true;
-										}
-									}}
-									class="flex items-center justify-center relative hover:bg-accent/50 {appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
-								>
-									<GitMergeIcon class="size-3.5" />
-									{#if (appState.workspace.repository?.changes?.length ?? 0) > 0}
-										<span class="absolute -top-1 -right-1 min-w-3 h-3 bg-primary text-primary-foreground text-[7px] font-bold rounded-full flex items-center justify-center border border-background px-0.5 font-sans pointer-events-none">
-											{appState.workspace.repository?.changes.length}
-										</span>
-									{/if}
-								</Button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Source Control{#if appState.keymaps.getShortcutForCommand('view.showGit')}<span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.showGit')})</span>{/if}
-						</Tooltip.Content>
-					</Tooltip.Root>
+					{@render statusButton({
+						icon: GitMergeIcon,
+						class: `flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Source Control',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showGit'),
+						onclick: () => {
+							if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
+								appState.prefs.sidebarVisible = false;
+							} else {
+								appState.activeSidebarTab = 'git';
+								appState.prefs.sidebarVisible = true;
+							}
+						},
+						badge: appState.workspace.repository?.changes?.length
+					})}
 				</Tooltip.Provider>
 
 				<div class="flex gap-3 opacity-80 ml-2">

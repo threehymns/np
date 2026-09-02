@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlusIcon, MinusIcon, TrashIcon, ArrowCounterClockwiseIcon } from 'phosphor-svelte';
-	import type { GitChange, FileDiffDetail, HunkCoordinates } from '@np/core';
-	import { fileDiffFromChange, diffCacheKey, getUnifiedHunks } from '@np/core';
+	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
+	import type { GitChange, FileDiffDetail } from '@np/core';
+	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -11,19 +11,16 @@
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 
-	import { mount, unmount } from 'svelte';
-
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
-		hunkRange: HunkCoordinates;
+		hunkRange: Chunk;
 		staged: boolean;
 		change: GitChange;
 		appState: AppState;
-		private mountedApps: Array<Record<string, any>> = [];
 
 		constructor(
 			hunkIndex: number,
-			hunkRange: HunkCoordinates,
+			hunkRange: Chunk,
 			staged: boolean,
 			change: GitChange,
 			appState: AppState
@@ -36,10 +33,21 @@
 			this.appState = appState;
 		}
 
+		eq(other: HunkWidget): boolean {
+			return (
+				this.hunkIndex === other.hunkIndex &&
+				this.staged === other.staged &&
+				this.change === other.change &&
+				this.hunkRange.fromA === other.hunkRange.fromA &&
+				this.hunkRange.toA === other.hunkRange.toA &&
+				this.hunkRange.fromB === other.hunkRange.fromB &&
+				this.hunkRange.toB === other.hunkRange.toB
+			);
+		}
+
 		toDOM(): HTMLElement {
-			this.mountedApps = [];
 			const wrap = document.createElement('div');
-			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover/95 text-popover-foreground border border-border/80 rounded-md px-1.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-90 hover:opacity-100 transition-opacity select-none';
+			wrap.className = 'cm-floating-hunk-control inline-flex items-center gap-1 bg-popover text-popover-foreground border-x border-b border-border rounded-b-md px-0.5 py-0.5 text-[10px] font-mono shadow-sm z-20 opacity-50 hover:opacity-100 transition-opacity select-none font-sans';
 			wrap.style.cssText = 'float: right; margin-top: -2px; margin-bottom: -2px; position: relative; z-index: 20;';
 
 			const preventEvent = (e: Event) => {
@@ -51,75 +59,30 @@
 			wrap.addEventListener('mouseup', preventEvent);
 			wrap.addEventListener('click', preventEvent);
 
-			const label = document.createElement('span');
-			label.className = 'font-bold text-[9px] opacity-70 mr-0.5';
-			label.textContent = `#${this.hunkIndex + 1}`;
-			wrap.appendChild(label);
+			const makeBtn = (label: string, command: string, className: string) => {
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = `py-0.5 px-1 rounded flex items-center justify-center cursor-pointer ${className}`;
+				btn.title = `${label} Hunk`;
+				btn.setAttribute('aria-label', `${label} Hunk`);
+				btn.textContent = label;
+				btn.onclick = (e) => {
+					e.stopPropagation();
+					e.preventDefault();
+					this.appState.commands.execute(command, this.change, this.hunkRange);
+				};
+				wrap.appendChild(btn);
+			};
 
 			if (this.staged) {
-				const unstageBtn = document.createElement('button');
-				unstageBtn.type = 'button';
-				unstageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				unstageBtn.title = `Unstage Hunk #${this.hunkIndex + 1}`;
-				unstageBtn.setAttribute('aria-label', `Unstage Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(MinusIcon, { target: unstageBtn, props: { size: 10 } }));
-				unstageBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.unstageHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(unstageBtn);
-
-				const discardBtn = document.createElement('button');
-				discardBtn.type = 'button';
-				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(TrashIcon, { target: discardBtn, props: { size: 10 } }));
-				discardBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(discardBtn);
+				makeBtn('Unstage', 'git.unstageHunk', 'hover:bg-muted text-muted-foreground hover:text-foreground');
+				makeBtn('Discard', 'git.discardHunk', 'hover:bg-muted text-muted-foreground hover:text-destructive');
 			} else {
-				const stageBtn = document.createElement('button');
-				stageBtn.type = 'button';
-				stageBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center';
-				stageBtn.title = `Stage Hunk #${this.hunkIndex + 1}`;
-				stageBtn.setAttribute('aria-label', `Stage Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(PlusIcon, { target: stageBtn, props: { size: 10 } }));
-				stageBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.stageHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(stageBtn);
-
-				const discardBtn = document.createElement('button');
-				discardBtn.type = 'button';
-				discardBtn.className = 'p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-destructive cursor-pointer flex items-center justify-center';
-				discardBtn.title = `Discard Hunk #${this.hunkIndex + 1}`;
-				discardBtn.setAttribute('aria-label', `Discard Hunk #${this.hunkIndex + 1}`);
-				this.mountedApps.push(mount(ArrowCounterClockwiseIcon, { target: discardBtn, props: { size: 10 } }));
-				discardBtn.onclick = (e) => {
-					e.stopPropagation();
-					e.preventDefault();
-					this.appState.commands.execute('git.discardHunk', this.change, this.hunkRange);
-				};
-				wrap.appendChild(discardBtn);
+				makeBtn('Stage', 'git.stageHunk', 'hover:bg-muted text-muted-foreground hover:text-foreground');
+				makeBtn('Discard', 'git.discardHunk', 'hover:bg-destructive/10 text-muted-foreground hover:text-destructive');
 			}
 
 			return wrap;
-		}
-
-		destroy() {
-			for (const app of this.mountedApps) {
-				try {
-					unmount(app);
-				} catch (e) {}
-			}
-			this.mountedApps = [];
 		}
 
 		ignoreEvent() {
@@ -127,18 +90,35 @@
 		}
 	}
 
-	function createHunkWidgetExtension(change: GitChange, state: AppState) {
+	function createHunkWidgetExtension(
+		change: GitChange,
+		state: AppState,
+		precomputedHunks?: readonly Chunk[],
+		precomputedUnstagedChunks?: readonly Chunk[]
+	) {
 		return ViewPlugin.fromClass(
 			class {
 				decorations: DecorationSet;
-				cachedHunks: HunkCoordinates[] = [];
+				cachedHunks: readonly Chunk[] = [];
 				cachedUnstagedChunks: readonly Chunk[] = [];
 				cachedModText: Text = Text.empty;
 				cachedOrigContent: string = '';
 				cachedStagedContent: string = '';
 
 				constructor(view: EditorView) {
-					this.computeDiff(view);
+					const origContent = change.originalContent || '';
+					const modText = view.state.doc;
+					const stagedContent = change.stagedContent ?? (change.staged ? modText.toString() : origContent);
+
+					if (precomputedHunks && precomputedUnstagedChunks && modText.toString() === (change.modifiedContent || '')) {
+						this.cachedHunks = precomputedHunks;
+						this.cachedUnstagedChunks = precomputedUnstagedChunks;
+						this.cachedModText = modText;
+						this.cachedOrigContent = origContent;
+						this.cachedStagedContent = stagedContent;
+					} else {
+						this.computeDiff(view);
+					}
 					this.decorations = this.buildDecorations(view);
 				}
 
@@ -150,8 +130,8 @@
 					const origText = Text.of(origContent.split(/\r?\n/));
 					const stagedText = Text.of(stagedContent.split(/\r?\n/));
 
-					this.cachedHunks = getUnifiedHunks(origText, modText);
-					this.cachedUnstagedChunks = Chunk.build(stagedText, modText);
+					this.cachedHunks = Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG);
+					this.cachedUnstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
 					this.cachedModText = modText;
 					this.cachedOrigContent = origContent;
 					this.cachedStagedContent = stagedContent;
@@ -206,9 +186,11 @@
 		);
 	}
 
+	type ViewEntry = { inline?: EditorView; split?: MergeView };
+
 	// Map to track active EditorView or MergeView per filepath
-	let editorViews = new Map<string, { inline?: EditorView; split?: MergeView }>();
-	let editorResolvers = new Map<string, Array<(views: { inline?: EditorView; split?: MergeView }) => void>>();
+	let editorViews = new Map<string, ViewEntry>();
+	let editorResolvers = new Map<string, Array<(views: ViewEntry) => void>>();
 
 	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
 		return (event: MouseEvent) => {
@@ -271,23 +253,27 @@
 		return direction === 'up' ? curLine <= firstLine : curLine >= lastLine;
 	}
 
+	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
+		if (mode === 'split') {
+			const split = views?.split;
+			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
+		}
+		return views?.inline;
+	}
+
 	async function getOrWaitEditor(filepath: string, mode: 'inline' | 'split', preferSide: 'a' | 'b' = 'b'): Promise<EditorView | undefined> {
-		const existing = editorViews.get(filepath);
-		const targetView = mode === 'split'
-			? (preferSide === 'a' ? (existing?.split?.a || existing?.split?.b) : (existing?.split?.b || existing?.split?.a))
-			: existing?.inline;
+		const targetView = pickView(editorViews.get(filepath), mode, preferSide);
 		if (targetView) return targetView;
 
 		return new Promise<EditorView | undefined>((resolve) => {
 			const timer = setTimeout(() => {
-				const current = editorViews.get(filepath);
-				resolve(mode === 'split' ? (preferSide === 'a' ? (current?.split?.a || current?.split?.b) : (current?.split?.b || current?.split?.a)) : current?.inline);
+				resolve(pickView(editorViews.get(filepath), mode, preferSide));
 			}, 500);
 
 			const list = editorResolvers.get(filepath) || [];
 			list.push((views) => {
 				clearTimeout(timer);
-				resolve(mode === 'split' ? (preferSide === 'a' ? (views.split?.a || views.split?.b) : (views.split?.b || views.split?.a)) : views.inline);
+				resolve(pickView(views, mode, preferSide));
 			});
 			editorResolvers.set(filepath, list);
 		});
@@ -394,7 +380,7 @@
 		);
 	}
 
-	function registerEditorView(filepath: string, entry: { inline?: EditorView; split?: MergeView }) {
+	function registerEditorView(filepath: string, entry: ViewEntry) {
 		const current = editorViews.get(filepath) || {};
 		const updated = { ...current, ...entry };
 		editorViews.set(filepath, updated);
@@ -416,6 +402,8 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
+			hunks?: readonly Chunk[];
+			unstagedChunks?: readonly Chunk[];
 		}
 	) {
 		let view: EditorView | undefined;
@@ -435,11 +423,13 @@
 					diffCompartment.of(
 						unifiedMergeView({
 							original: currentOptions.originalContent,
-							collapseUnchanged: DIFF_COLLAPSE_CONFIG
+							collapseUnchanged: DIFF_COLLAPSE_CONFIG,
+							diffConfig: DEFAULT_DIFF_CONFIG,
+							mergeControls: false,
 						})
 					),
 					hunkCompartment.of(
-						createHunkWidgetExtension(currentOptions.fileChange, appState)
+						createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 					),
 					...langExtensions,
 					syntaxHighlighting(markdownHighlight),
@@ -481,7 +471,9 @@
 							diffCompartment.reconfigure(
 								unifiedMergeView({
 									original: currentOptions.originalContent,
-									collapseUnchanged: DIFF_COLLAPSE_CONFIG
+									collapseUnchanged: DIFF_COLLAPSE_CONFIG,
+									diffConfig: DEFAULT_DIFF_CONFIG,
+									mergeControls: false,
 								})
 							)
 						);
@@ -489,7 +481,7 @@
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effects.push(
 							hunkCompartment.reconfigure(
-								createHunkWidgetExtension(currentOptions.fileChange, appState)
+								createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 							)
 						);
 					}
@@ -530,6 +522,8 @@
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
+			hunks?: readonly Chunk[];
+			unstagedChunks?: readonly Chunk[];
 			onDocChange?: (newVal: string) => void;
 		}
 	) {
@@ -562,7 +556,7 @@
 					extensions: [
 						EditorState.readOnly.of(true),
 						hunkCompartmentB.of(
-							createHunkWidgetExtension(currentOptions.fileChange, appState)
+							createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 						),
 						...langExtensions,
 						syntaxHighlighting(markdownHighlight),
@@ -577,6 +571,7 @@
 						wrapCompartmentB.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
+				diffConfig: DEFAULT_DIFF_CONFIG,
 				parent: node,
 				orientation: "a-b",
 				collapseUnchanged: DIFF_COLLAPSE_CONFIG
@@ -668,7 +663,7 @@
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effectsB.push(
 							hunkCompartmentB.reconfigure(
-								createHunkWidgetExtension(currentOptions.fileChange, appState)
+								createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 							)
 						);
 					}
@@ -757,69 +752,91 @@
 	});
 
 	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {
-		const map = new Map<string, GitChange[]>();
-		for (const c of changeList) {
-			const existing = map.get(c.filepath);
-			if (existing) {
-				existing.push(c);
-			} else {
-				map.set(c.filepath, [c]);
-			}
-		}
-
 		const result: GitChange[] = [];
-		for (const [filepath, group] of map.entries()) {
+		for (const [filepath, group] of Map.groupBy(changeList, (c) => c.filepath)) {
 			if (group.length === 1) {
 				result.push(group[0]);
-			} else {
-				const stagedChange = group.find((c) => c.staged);
-				const unstagedChange = group.find((c) => !c.staged);
+				continue;
+			}
+			const stagedChange = group.find((c) => c.staged);
+			const unstagedChange = group.find((c) => !c.staged);
 
-				if (stagedChange && unstagedChange) {
-					result.push({
-						filepath,
-						status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
-						staged: false,
-						combined: true,
-						diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
-						originalContent: stagedChange.originalContent,
-						modifiedContent: unstagedChange.modifiedContent,
-						stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent,
-						additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
-						deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
-					});
-				} else {
-					result.push(group[0]);
-				}
+			if (stagedChange && unstagedChange) {
+				result.push({
+					filepath,
+					status: stagedChange.status !== 'U' ? stagedChange.status : unstagedChange.status,
+					staged: false,
+					combined: true,
+					diff: `${stagedChange.diff || ''}\n${unstagedChange.diff || ''}`,
+					originalContent: stagedChange.originalContent,
+					modifiedContent: unstagedChange.modifiedContent,
+					stagedContent: stagedChange.modifiedContent ?? unstagedChange.originalContent,
+					additions: (stagedChange.additions || 0) + (unstagedChange.additions || 0),
+					deletions: (stagedChange.deletions || 0) + (unstagedChange.deletions || 0)
+				});
+			} else {
+				result.push(group[0]);
 			}
 		}
 
 		return result;
 	}
 
-	let loadedDiffs = $state<Record<string, FileDiffDetail>>({});
+	interface CachedDiffDetail extends FileDiffDetail {
+		hunks?: readonly Chunk[];
+		unstagedChunks?: readonly Chunk[];
+	}
+
+	let loadedDiffs = $state<Record<string, CachedDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
 
-	function resolveFileDiff(fileChange: GitChange): FileDiffDetail | null {
+	function getOrComputeDiffHunks(diff: FileDiffDetail, isStaged: boolean = false): { hunks: readonly Chunk[]; unstagedChunks: readonly Chunk[] } {
+		const cached = diff as CachedDiffDetail;
+		if (cached.hunks && cached.unstagedChunks) {
+			return { hunks: cached.hunks, unstagedChunks: cached.unstagedChunks };
+		}
+		const origText = Text.of((diff.originalContent || '').split(/\r?\n/));
+		const modText = Text.of((diff.modifiedContent || '').split(/\r?\n/));
+		const stagedContent = diff.stagedContent ?? (isStaged ? (diff.modifiedContent || '') : (diff.originalContent || ''));
+		const stagedText = Text.of(stagedContent.split(/\r?\n/));
+
+		const hunks = Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG);
+		const unstagedChunks = Chunk.build(stagedText, modText, DEFAULT_DIFF_CONFIG);
+		cached.hunks = hunks;
+		cached.unstagedChunks = unstagedChunks;
+		return { hunks, unstagedChunks };
+	}
+
+	function resolveFileDiff(fileChange: GitChange): CachedDiffDetail | null {
 		const key = diffCacheKey(fileChange);
 		if (loadedDiffs[key]) {
 			return loadedDiffs[key];
 		}
-		return fileDiffFromChange(fileChange);
+		const detail = fileDiffFromChange(fileChange);
+		if (detail) {
+			getOrComputeDiffHunks(detail, fileChange.staged);
+			loadedDiffs[key] = detail;
+			return detail;
+		}
+		return null;
 	}
 
-	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean }) {
+	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean; status?: 'M' | 'A' | 'D' | 'U' }) {
 		const key = diffCacheKey({ filepath, staged: options?.staged, combined: options?.combined });
 		if (loadingDiffs[key] || loadedDiffs[key]) return;
 		loadingDiffs[key] = true;
 		try {
 			if (repo) {
-				const diff = await repo.getFileDiff(filepath, options?.combined ? undefined : { staged: options?.staged });
-				loadedDiffs[key] = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
+				const diff = await repo.getFileDiff(filepath, options?.combined ? { status: options?.status } : { staged: options?.staged, status: options?.status });
+				const detail: CachedDiffDetail = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
+				getOrComputeDiffHunks(detail, options?.staged);
+				loadedDiffs[key] = detail;
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
-			loadedDiffs[key] = { originalContent: '', modifiedContent: '', stagedContent: '' };
+			const fallback: CachedDiffDetail = { originalContent: '', modifiedContent: '', stagedContent: '' };
+			getOrComputeDiffHunks(fallback, options?.staged);
+			loadedDiffs[key] = fallback;
 		} finally {
 			loadingDiffs[key] = false;
 		}
@@ -840,7 +857,7 @@
 			if (!isFileCollapsed(file.filepath)) {
 				const key = diffCacheKey(file);
 				if (file.originalContent === undefined && file.modifiedContent === undefined && !loadedDiffs[key] && !loadingDiffs[key]) {
-					fetchDiff(file.filepath, { staged: file.staged, combined: file.combined });
+					fetchDiff(file.filepath, { staged: file.staged, combined: file.combined, status: file.status });
 				}
 			}
 		}
@@ -891,15 +908,11 @@
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
-			const diff = loadedDiffs[diffCacheKey(change)];
-			const origContent = diff?.originalContent ?? change.originalContent ?? '';
-			const modContent = diff?.modifiedContent ?? change.modifiedContent ?? '';
-			if (!origContent && !modContent) return;
+			const diff = resolveFileDiff(change);
+			if (!diff || (!diff.originalContent && !diff.modifiedContent)) return;
 
-			const origText = Text.of(origContent.split(/\r?\n/));
-			const modText = Text.of(modContent.split(/\r?\n/));
-			const chunks = getUnifiedHunks(origText, modText);
-			chunks.forEach((chunk, chunkIndex) => {
+			const { hunks } = getOrComputeDiffHunks(diff, change.staged);
+			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
 					filepath: change.filepath,
@@ -1050,14 +1063,6 @@
 			toggleCollapse(filepath);
 		}
 	}
-
-	function prevHunk() {
-		jumpToChunk('prev');
-	}
-
-	function nextHunk() {
-		jumpToChunk('next');
-	}
 </script>
 
 <div class="flex flex-col h-full w-full bg-background border-l border-border select-text">
@@ -1144,7 +1149,7 @@
 			<button
 				type="button"
 				onmousedown={(e) => e.preventDefault()}
-				onclick={prevHunk}
+				onclick={() => jumpToChunk('prev')}
 				class="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors cursor-pointer"
 				title="Previous Hunk"
 			>
@@ -1155,7 +1160,7 @@
 			<button
 				type="button"
 				onmousedown={(e) => e.preventDefault()}
-				onclick={nextHunk}
+				onclick={() => jumpToChunk('next')}
 				class="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors cursor-pointer"
 				title="Next Hunk"
 			>
@@ -1267,7 +1272,9 @@
 											readOnly: true,
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap
+											wrap: appState.prefs.wordWrap,
+											hunks: diff.hunks,
+											unstagedChunks: diff.unstagedChunks
 										}}></div>
 									</div>
 								{:else}
@@ -1278,7 +1285,9 @@
 											rightContent: diff.modifiedContent,
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap
+											wrap: appState.prefs.wordWrap,
+											hunks: diff.hunks,
+											unstagedChunks: diff.unstagedChunks
 										}}></div>
 									</div>
 								{/if}

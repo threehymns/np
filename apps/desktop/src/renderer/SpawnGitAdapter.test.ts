@@ -335,6 +335,51 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.getFileDiff('file.txt', { staged: false })).rejects.toThrow(/permission denied/);
 	});
 
+	it('getFileDiff skips git show commands and only reads worktree content for untracked files (status: "U")', async () => {
+		mockReadFile.mockImplementation(async () => new TextEncoder().encode('untracked disk content'));
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('untracked.txt', { status: 'U' });
+
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('untracked disk content');
+		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		expect(showCalls.length).toBe(0);
+	});
+
+	it('getFileDiff skips HEAD git show query for staged added files (status: "A", staged: true)', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === ':added.txt') {
+				return { code: 0, stdout: 'staged index content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('added.txt', { status: 'A', staged: true });
+
+		expect(diff.originalContent).toBe('');
+		expect(diff.modifiedContent).toBe('staged index content');
+		const headCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
+		expect(headCalls.length).toBe(0);
+	});
+
+	it('getFileDiff skips worktree disk read for deleted files (status: "D", staged: false)', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'show' && args[1] === 'HEAD:deleted.txt') {
+				return { code: 0, stdout: 'head content', stderr: '' };
+			}
+			if (args[0] === 'show' && args[1] === ':deleted.txt') {
+				return { code: 0, stdout: 'index content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('deleted.txt', { status: 'D', staged: false });
+
+		expect(diff.originalContent).toBe('index content');
+		expect(diff.modifiedContent).toBe('');
+		expect(mockReadFile).not.toHaveBeenCalled();
+	});
+
 	it('stageAll issues a single native git add -A command', async () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.stageAll();

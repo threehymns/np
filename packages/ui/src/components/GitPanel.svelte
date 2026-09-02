@@ -5,16 +5,18 @@
 	import { ButtonGroup } from './ui/button-group';
 	import {
 		GitBranchIcon, PlusIcon, MinusIcon, ArrowCounterClockwiseIcon, CheckIcon,
-		CaretDownIcon, TrashIcon, PlusMinusIcon, EyeIcon
+		CaretDownIcon, PlusMinusIcon, TrashIcon, GitDiffIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
 	import * as Tooltip from './ui/tooltip/index';
+	import * as ContextMenu from './ui/context-menu';
+	import { runGitAction } from './git-actions';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { resolveDiscardOptions, type GitChange, type GroupedChange } from '@np/core';
+	import { type GitChange, type GroupedChange } from '@np/core';
 
 	const appState = useAppState();
 	let repo = $derived(appState.workspace.repository);
@@ -26,7 +28,6 @@
 	let changesExpanded = $state(true);
 	let untrackedExpanded = $state(true);
 	let dropdownRef = $state<HTMLDivElement | null>(null);
-	let hoveredPath = $state<string | null>(null);
 
 	// View mode: list or tree
 	let viewMode = $state<'list' | 'tree'>('list');
@@ -35,13 +36,6 @@
 	// Multi-selection state
 	let selectedPaths = new SvelteSet<string>();
 	let lastSelectedPath = $state<string | null>(null);
-
-	// Context menu state
-	let showContextMenu = $state(false);
-	let contextMenuX = $state(0);
-	let contextMenuY = $state(0);
-	let contextTargetFile = $state<GitChange | null>(null);
-	let contextMenuRef = $state<HTMLDivElement | null>(null);
 
 	// Split commit button dropdown flags
 	let showCommitDropdown = $state(false);
@@ -263,9 +257,6 @@
 		if (showBranchDropdown && dropdownRef && !dropdownRef.contains(target)) {
 			showBranchDropdown = false;
 		}
-		if (showContextMenu && contextMenuRef && !contextMenuRef.contains(target)) {
-			showContextMenu = false;
-		}
 		if (showCommitDropdown && !target.closest('.button-group-container')) {
 			showCommitDropdown = false;
 		}
@@ -299,41 +290,6 @@
 			repo.selectedPaths = Array.from(selectedPaths);
 		}
 		appState.commands.execute('git.openDiff', path);
-	}
-
-	function handleContextMenu(event: MouseEvent, file: GitChange) {
-		event.preventDefault();
-		contextTargetFile = file;
-		contextMenuX = event.clientX;
-		contextMenuY = event.clientY;
-		showContextMenu = true;
-	}
-
-	async function triggerAction(action: 'stage' | 'unstage' | 'discard' | 'diff') {
-		if (!repo || !contextTargetFile) return;
-		showContextMenu = false;
-
-		const targets = selectedPaths.has(contextTargetFile.filepath)
-			? Array.from(selectedPaths)
-			: [contextTargetFile.filepath];
-
-		if (action === 'stage') {
-			for (const path of targets) {
-				await appState.commands.execute('git.stage', path);
-			}
-		} else if (action === 'unstage') {
-			for (const path of targets) {
-				await appState.commands.execute('git.unstage', path);
-			}
-		} else if (action === 'discard') {
-			for (const path of targets) {
-				const options = resolveDiscardOptions(path, contextTargetFile.staged, repo.changes);
-				const success = await appState.commands.execute('git.discard', path, options);
-				if (!success) break;
-			}
-		} else if (action === 'diff') {
-			appState.commands.execute('git.openDiff', contextTargetFile.filepath);
-		}
 	}
 
 	onMount(() => {
@@ -650,52 +606,6 @@
 			</div>
 		</div>
 
-		<!-- Context Menu -->
-		{#if showContextMenu}
-			<div
-				bind:this={contextMenuRef}
-				style="top: {contextMenuY}px; left: {contextMenuX}px;"
-				class="fixed bg-popover text-popover-foreground border border-border rounded shadow-lg py-1 z-50 min-w-[120px] font-sans"
-			>
-				{#if contextTargetFile}
-					{#if contextTargetFile.staged}
-						<button
-							type="button"
-							onclick={() => triggerAction('unstage')}
-							class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between"
-						>
-							<span>Unstage File</span>
-							<MinusIcon size={11} class="opacity-60" />
-						</button>
-					{:else}
-						<button
-							type="button"
-							onclick={() => triggerAction('stage')}
-							class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between"
-						>
-							<span>Stage File</span>
-							<PlusIcon size={11} class="opacity-60" />
-						</button>
-						<button
-							type="button"
-							onclick={() => triggerAction('discard')}
-							class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent text-destructive hover:bg-destructive/10 flex items-center justify-between"
-						>
-							<span>Discard Changes</span>
-							<TrashIcon size={11} class="opacity-60" />
-						</button>
-					{/if}
-					<button
-						type="button"
-						onclick={() => triggerAction('diff')}
-						class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between"
-					>
-						<span>Open Diff</span>
-						<EyeIcon size={11} class="opacity-60" />
-					</button>
-				{/if}
-			</div>
-		{/if}
 	</div>
 {/if}
 
@@ -706,12 +616,10 @@
 	{@const nodeKey = `${sectionPrefix}${node.path}`}
 	{@const isCollapsed = collapsedDirs.has(nodeKey)}
 
-	<div class="space-y-0.5">
+	{#snippet treeRow()}
 		<div
 			role="button"
 			tabindex="0"
-			onmouseenter={() => hoveredPath = nodeKey}
-			onmouseleave={() => hoveredPath = null}
 			class="group flex items-center justify-between px-2 py-0.5 rounded hover:bg-muted/15 text-foreground/90 font-medium"
 			onclick={(e) => {
 				if (isDir) {
@@ -738,11 +646,6 @@
 					}
 				}
 			}}
-			oncontextmenu={(e) => {
-				if (!isDir && node.change) {
-					handleContextMenu(e, node.change.changes[0]);
-				}
-			}}
 		>
 			<div class="flex items-center gap-1.5 min-w-0">
 				{#if isDir}
@@ -763,63 +666,109 @@
 			</div>
 
 			<div class="flex items-center gap-1.5 shrink-0">
-				{#if hoveredPath === nodeKey}
-					{#if isDir}
-						{@const stagingState = getFolderStagingState(node)}
-						<div class="transition-opacity">
-							<Checkbox
-								checked={stagingState.checked}
-								indeterminate={stagingState.indeterminate}
-								onclick={(e) => { e.stopPropagation(); handleFolderCheckboxClick(node); }}
-								class="scale-75"
-							/>
-						</div>
-					{:else if node.change}
-						<div class="flex items-center gap-1.5 transition-opacity">
-							{#if isStagedSection}
-								<button
-									type="button"
-									onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', node.change!.filepath); }}
-									class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
-									title="Unstage"
-								>
-									<MinusIcon size={9} />
-								</button>
-							{:else}
-								<button
-									type="button"
-									onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', node.change!.filepath, { staged: false }); }}
-									class="p-0.5 rounded bg-muted/40 hover:bg-muted text-destructive"
-									title="Discard"
-								>
-									<ArrowCounterClockwiseIcon size={9} />
-								</button>
-								<button
-									type="button"
-									onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', node.change!.filepath); }}
-									class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
-									title="Stage"
-								>
-									<PlusIcon size={9} />
-								</button>
-							{/if}
+				{#if isDir}
+					{@const stagingState = getFolderStagingState(node)}
+					<div class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+						<Checkbox
+							checked={stagingState.checked}
+							indeterminate={stagingState.indeterminate}
+							onclick={(e) => { e.stopPropagation(); handleFolderCheckboxClick(node); }}
+							class="scale-75"
+						/>
+					</div>
+				{:else if node.change}
+					{#if node.change.additions > 0 || node.change.deletions > 0}
+						<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 pointer-events-none group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
+							{#if node.change.additions > 0}<span class="text-green-500">+{node.change.additions}</span>{/if}
+							{#if node.change.deletions > 0}<span class="text-red-500">-{node.change.deletions}</span>{/if}
 						</div>
 					{/if}
-				{:else if !isDir && node.change && (node.change.additions > 0 || node.change.deletions > 0)}
-					<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 pointer-events-none">
-						{#if node.change.additions > 0}<span class="text-green-500">+{node.change.additions}</span>{/if}
-						{#if node.change.deletions > 0}<span class="text-red-500">-{node.change.deletions}</span>{/if}
+					<div class="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+						{#if isStagedSection}
+							<button
+								type="button"
+								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', node.change!.filepath); }}
+								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
+								title="Unstage"
+							>
+								<MinusIcon size={9} />
+							</button>
+						{:else}
+							<button
+								type="button"
+								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', node.change!.filepath, { staged: false }); }}
+								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-destructive"
+								title="Discard"
+							>
+								<ArrowCounterClockwiseIcon size={9} />
+							</button>
+							<button
+								type="button"
+								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', node.change!.filepath); }}
+								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
+								title="Stage"
+							>
+								<PlusIcon size={9} />
+							</button>
+						{/if}
 					</div>
 				{/if}
 			</div>
 		</div>
+	{/snippet}
 
-		{#if isDir && !isCollapsed && node.children}
-			<div class="pl-3.5 border-l border-border/40 ml-2.5 space-y-0.5">
-				{#each node.children as child (child.path)}
-					{@render renderTreeNode(child, isStagedSection)}
-				{/each}
-			</div>
-		{/if}
-	</div>
+	{#if !isDir && node.change}
+		<ContextMenu.Root>
+			<ContextMenu.Trigger>
+				{@render treeRow()}
+			</ContextMenu.Trigger>
+			<ContextMenu.Content class="w-48 font-sans">
+				{#if isStagedSection}
+					<ContextMenu.Item onclick={() => runGitAction(appState, 'unstage', node.change!.filepath, { isStaged: true, selectedPaths })}>
+						<MinusIcon size={11} />
+						Unstage File
+						<ContextMenu.Shortcut>
+							{appState.keymaps.getShortcutForCommand('git.unstage')}
+						</ContextMenu.Shortcut>
+					</ContextMenu.Item>
+				{:else}
+					<ContextMenu.Item onclick={() => runGitAction(appState, 'stage', node.change!.filepath, { isStaged: false, selectedPaths })}>
+						<PlusIcon size={11} />
+						Stage File
+						<ContextMenu.Shortcut>
+							{appState.keymaps.getShortcutForCommand('git.stage')}
+						</ContextMenu.Shortcut>
+					</ContextMenu.Item>
+					<ContextMenu.Item
+						onclick={() => runGitAction(appState, 'discard', node.change!.filepath, { isStaged: false, selectedPaths })}
+						class="text-destructive focus:text-destructive hover:!bg-destructive/10"
+					>
+						<TrashIcon size={11} />
+						Discard Changes
+						<ContextMenu.Shortcut>
+							{appState.keymaps.getShortcutForCommand('git.discard')}
+						</ContextMenu.Shortcut>
+					</ContextMenu.Item>
+				{/if}
+				<ContextMenu.Separator />
+				<ContextMenu.Item onclick={() => runGitAction(appState, 'diff', node.change!.filepath, { isStaged: isStagedSection })}>
+					<GitDiffIcon size={11} />
+					Open Diff
+					<ContextMenu.Shortcut>
+						{appState.keymaps.getShortcutForCommand('git.openDiff')}
+					</ContextMenu.Shortcut>
+				</ContextMenu.Item>
+			</ContextMenu.Content>
+		</ContextMenu.Root>
+	{:else}
+		{@render treeRow()}
+	{/if}
+
+	{#if isDir && !isCollapsed && node.children}
+		<div class="pl-3.5 border-l border-border/40 ml-2.5 space-y-0.5">
+			{#each node.children as child (child.path)}
+				{@render renderTreeNode(child, isStagedSection)}
+			{/each}
+		</div>
+	{/if}
 {/snippet}
