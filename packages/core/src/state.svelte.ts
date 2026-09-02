@@ -28,6 +28,22 @@ export interface ClipboardService {
 	writeText?(text: string): Promise<void>;
 }
 
+export const windowClipboardService: ClipboardService = {
+	writeText: async (text) => {
+		if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+			// edit.cut deletes the selection only when this resolves.
+			throw new Error('Clipboard API is unavailable');
+		}
+		await navigator.clipboard.writeText(text);
+	},
+	readText: async () => {
+		if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+			return await navigator.clipboard.readText();
+		}
+		return '';
+	}
+};
+
 export interface ExportFileType {
 	description: string;
 	accept: Record<string, string[]>;
@@ -75,8 +91,8 @@ export class AppState {
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
 		this.prefs = new Preferences(options.prefsStorage);
-		this.dialogService = options.dialogService;
-		this.clipboardService = options.clipboardService;
+		this.dialogService = options.dialogService ?? windowDialogService;
+		this.clipboardService = options.clipboardService ?? windowClipboardService;
 		this.exportService = options.exportService;
 		this.icons = options.iconRegistry ?? new HeadlessIconRegistry();
 

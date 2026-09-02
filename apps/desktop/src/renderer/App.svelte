@@ -1,6 +1,6 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
-  import { AppState, KeymapStorageProvider, ManifestIconProvider, windowDialogService, type ExportService } from "@np/core";
+  import { AppState, KeymapStorageProvider, ManifestIconProvider, type ExportService } from "@np/core";
   import { iconRegistry } from "@np/ui";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
@@ -39,24 +39,8 @@
     storage,
     persistence,
     vcsFactory,
-    dialogService: windowDialogService,
     iconRegistry,
-    exportService,
-    clipboardService: {
-      writeText: async (text) => {
-        if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-          // edit.cut deletes the selection only when this resolves.
-          throw new Error('Clipboard API is unavailable');
-        }
-        await navigator.clipboard.writeText(text);
-      },
-      readText: async () => {
-        if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-          return await navigator.clipboard.readText();
-        }
-        return '';
-      }
-    }
+    exportService
   });
   storage.registerProvider("keymap", new KeymapStorageProvider(appState.keymaps));
   setContext("appState", appState);
