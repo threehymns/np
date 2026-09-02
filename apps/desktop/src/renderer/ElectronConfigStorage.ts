@@ -101,6 +101,15 @@ export class ElectronConfigStorage implements PreferenceStorage {
 	}
 
 	/**
+	 * Update cached content from an external file change and validate syntax.
+	 * Returns true if valid JSONC, false if syntax errors were found.
+	 */
+	updateFromExternal(newContent: string): boolean {
+		this.cachedText = newContent;
+		return this.validateSyntax(newContent);
+	}
+
+	/**
 	 * Helper exposed for testing or external reloading.
 	 */
 	getRawContent(): string {

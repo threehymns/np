@@ -20,6 +20,7 @@ export interface ElectronAPI {
 	readConfigFileSync(): string | null;
 	writeConfigFile(content: string): Promise<void>;
 	getConfigPath(): Promise<string>;
+	onConfigChanged(callback: (content: string) => void): () => void;
 	toggleDevTools(): Promise<void>;
 }
 

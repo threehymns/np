@@ -57,6 +57,17 @@
     if (window.electronAPI?.showWindow) {
       window.electronAPI.showWindow();
     }
+
+    const unsubscribeConfig = window.electronAPI?.onConfigChanged?.((newContent: string) => {
+      const isValid = prefsStorage.updateFromExternal(newContent);
+      if (isValid) {
+        appState.prefs.reload();
+      }
+    });
+
+    return () => {
+      unsubscribeConfig?.();
+    };
   });
 </script>
 

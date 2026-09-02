@@ -5,6 +5,7 @@ import fsSync from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
+import { ConfigWatcher } from './ConfigWatcher.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -14,6 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let configWatcher: ConfigWatcher | null = null;
 
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
@@ -78,6 +80,18 @@ function createWindow() {
 app.whenReady().then(() => {
 	Menu.setApplicationMenu(null);
 	registerIpcHandlers();
+
+	const configPath = path.join(app.getPath('userData'), 'config.json');
+	configWatcher = new ConfigWatcher({
+		configPath,
+		onConfigChanged: (content) => {
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send('config:changed', content);
+			}
+		}
+	});
+	configWatcher.start();
+
 	createWindow();
 
 	app.on('activate', () => {
@@ -85,6 +99,13 @@ app.whenReady().then(() => {
 			createWindow();
 		}
 	});
+});
+
+app.on('before-quit', () => {
+	if (configWatcher) {
+		configWatcher.close();
+		configWatcher = null;
+	}
 });
 
 app.on('window-all-closed', () => {
@@ -289,6 +310,9 @@ function registerIpcHandlers() {
 	ipcMain.handle('config:write', async (_, content: string) => {
 		const filePath = path.join(app.getPath('userData'), 'config.json');
 		try {
+			if (configWatcher) {
+				configWatcher.setLastWrittenContent(content);
+			}
 			await fs.mkdir(path.dirname(filePath), { recursive: true });
 			await fs.writeFile(filePath, content, 'utf-8');
 		} catch (e) {

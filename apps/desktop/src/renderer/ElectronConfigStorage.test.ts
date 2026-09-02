@@ -149,4 +149,51 @@ describe('ElectronConfigStorage', () => {
 		expect(writtenText).toContain('// Editor and interface zoom level (percentage).');
 		expect(writtenText).toContain('"zoom": 110');
 	});
+
+	it('6. Live-reload on external update: updateFromExternal updates cached text and prefs.reload() updates state without reciprocal write', () => {
+		const initialJsonc = `{\n  "zoom": 100,\n  "theme": "default"\n}`;
+		mockReadConfigFileSync.mockReturnValue(initialJsonc);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.zoom).toBe(100);
+		expect(prefs.theme).toBe('default');
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
+
+		// External change: zoom changed to 120 and theme changed to "nord"
+		const externalJsonc = `{\n  // Externally edited comment\n  "zoom": 120,\n  "theme": "nord"\n}`;
+		const isValid = storage.updateFromExternal(externalJsonc);
+
+		expect(isValid).toBe(true);
+		expect(storage.getItem('np-prefs-v2')).toContain('"zoom":120');
+
+		// Now simulate App.svelte receiving event and calling prefs.reload()
+		prefs.reload();
+
+		expect(prefs.zoom).toBe(120);
+		expect(prefs.theme).toBe('nord');
+
+		// Crucial acceptance criterion: reloading preferences does not trigger a reciprocal save back to disk!
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
+	});
+
+	it('7. Syntax errors on external update: updateFromExternal detects invalid JSONC, sets syntax error flag, and does not overwrite disk', () => {
+		const initialJsonc = `{\n  "zoom": 100\n}`;
+		mockReadConfigFileSync.mockReturnValue(initialJsonc);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.zoom).toBe(100);
+
+		// External change with syntax error
+		const invalidJsonc = `{\n  "zoom": 120,\n  invalid_syntax\n}`;
+		const isValid = storage.updateFromExternal(invalidJsonc);
+
+		expect(isValid).toBe(false);
+		// Storage should prevent writes because hasSyntaxErrors is true
+		storage.setItem('np-prefs-v2', JSON.stringify({ zoom: 150 }));
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
+	});
 });
