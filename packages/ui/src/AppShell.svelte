@@ -209,6 +209,12 @@
 									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
 								{/if}
 							</Menubar.Item>
+							<Menubar.Item onclick={() => appState.commands.execute('settings.openConfigJson')}>
+								Open Settings (JSON)
+								{#if appState.keymaps.getShortcutForCommand('settings.openConfigJson')}
+									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.openConfigJson')}</Menubar.Shortcut>
+								{/if}
+							</Menubar.Item>
 						{/if}
 					</Menubar.Content>
 				</Menubar.Menu>

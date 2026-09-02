@@ -458,6 +458,35 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	appState.commands.register({
+		id: 'settings.openConfigJson',
+		label: 'Preferences: Open Settings (JSON)',
+		category: 'Preferences',
+		action: async () => {
+			if (typeof window !== 'undefined' && (window as any).electronAPI?.getConfigPath) {
+				try {
+					const configPath = await (window as any).electronAPI.getConfigPath();
+					if (configPath) {
+						if ((window as any).electronAPI.readConfigFileSync) {
+							(window as any).electronAPI.readConfigFileSync();
+						}
+						const name = configPath.split(/[/\\]/).filter(Boolean).pop() || 'config.json';
+						await appState.workspace.openFile({
+							scheme: 'file',
+							path: configPath,
+							name
+						});
+						appState.settingsOpen = false;
+						return;
+					}
+				} catch (e) {
+					console.error('Failed to open config file:', e);
+				}
+			}
+			await showAlert(appState, 'Configuration file is only available in the desktop application.');
+		}
+	});
+
+	appState.commands.register({
 		id: 'keybindings.open',
 		label: 'Preferences: Open Keymaps (JSON)',
 		category: 'Preferences',
