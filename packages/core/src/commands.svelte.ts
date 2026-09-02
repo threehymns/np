@@ -3,6 +3,7 @@ import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
+
 import { transformer } from "./transformer";
 import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
@@ -288,31 +289,23 @@ export function registerCoreCommands(appState: AppState) {
 		action: async () => {
 			if (!appState.activeDocument) return;
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
+			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
 
-			if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
-				try {
-					const handle = await (window as any).showSaveFilePicker({
-						suggestedName: appState.activeDocument.fileName.replace(/\.md$/, '') + '.html',
-						types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
-					});
-					const writable = await handle.createWritable();
-					await writable.write(html);
-					await writable.close();
-				} catch (e) {
-					if ((e as Error).name !== 'AbortError') console.error(e);
+			try {
+				await appState.exportService?.exportFile({
+					content: html,
+					suggestedName,
+					mimeType: 'text/html',
+					types: [{ description: 'HTML Files', accept: { 'text/html': ['.html'] } }]
+				});
+			} catch (e) {
+				if ((e as { name?: string } | null | undefined)?.name !== 'AbortError') {
+					console.error('Failed to export HTML:', e);
 				}
-			} else if (typeof document !== 'undefined') {
-				// Fallback to data URI download
-				const blob = new Blob([html], { type: 'text/html' });
-				const url = URL.createObjectURL(blob);
-				const a = document.createElement('a');
-				a.href = url;
-				a.download = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
-				a.click();
-				URL.revokeObjectURL(url);
 			}
 		}
 	});
+
 
   appState.commands.register({
     id: 'commandPalette.toggle',
