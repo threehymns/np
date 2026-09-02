@@ -1,8 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -264,9 +266,40 @@ function registerIpcHandlers() {
 		await fs.writeFile(filePath, content, 'utf-8');
 	});
 
+	ipcMain.handle('config:getPath', () => {
+		return path.join(app.getPath('userData'), 'config.json');
+	});
+
+	ipcMain.on('config:readSync', (event) => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			if (!fsSync.existsSync(filePath)) {
+				fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
+				fsSync.writeFileSync(filePath, DEFAULT_CONFIG_CONTENT, 'utf-8');
+				event.returnValue = DEFAULT_CONFIG_CONTENT;
+				return;
+			}
+			event.returnValue = fsSync.readFileSync(filePath, 'utf-8');
+		} catch (e) {
+			console.error('Failed to read config.json synchronously:', e);
+			event.returnValue = null;
+		}
+	});
+
+	ipcMain.handle('config:write', async (_, content: string) => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
+			await fs.writeFile(filePath, content, 'utf-8');
+		} catch (e) {
+			console.error('Failed to write config.json:', e);
+		}
+	});
+
 	ipcMain.handle('window:toggleDevTools', () => {
 		if (mainWindow) {
 			mainWindow.webContents.toggleDevTools();
 		}
 	});
 }
+
