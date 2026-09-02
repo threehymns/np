@@ -245,4 +245,31 @@ describe('ElectronConfigStorage', () => {
 		await Promise.resolve();
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 	});
+
+	it('10. Trailing-comment preservation on insert: adding a preference does not steal an inline trailing comment from the final property', () => {
+		const jsoncWithTrailingCommentOnLast = `{
+  "zoom": 100,
+  "theme": "default" // This comment belongs to theme
+}
+`;
+		mockReadConfigFileSync.mockReturnValue(jsoncWithTrailingCommentOnLast);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		// Add a brand-new preference (wordWrap) not present in the file.
+		prefs.wordWrap = false;
+
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+		const writtenText = mockWriteConfigFile.mock.calls[0][0];
+
+		// The inline comment must stay attached to "theme", not the inserted key.
+		expect(writtenText).toContain('"theme": "default" // This comment belongs to theme');
+		// The new property is present and not carrying the stray comment.
+		expect(writtenText).toContain('"wordWrap": false');
+		const themeLine = writtenText.split('\n').find((l) => l.includes('"theme"'));
+		expect(themeLine).toContain('// This comment belongs to theme');
+		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"wordWrap"'));
+		expect(wordWrapLine).not.toContain('// This comment belongs to theme');
+	});
 });

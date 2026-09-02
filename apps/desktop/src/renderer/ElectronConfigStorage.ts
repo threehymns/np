@@ -1,5 +1,5 @@
 import type { PreferenceStorage } from '@np/core';
-import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
+import { parse, modify, applyEdits, parseTree, type ParseError } from 'jsonc-parser';
 
 /**
  * PreferenceStorage implementation for the Electron desktop environment.
@@ -42,6 +42,50 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		return true;
 	}
 
+	/**
+	 * True when adding `key` would make jsonc-parser's append insert it before an
+	 * inline trailing comment on the current last property, misattributing that
+	 * comment. Only applies to keys not yet present in the document.
+	 */
+	private shouldInsertBeforeTrailingComment(text: string, key: string): boolean {
+		const root = parseTree(text);
+		if (!root || root.type !== 'object' || !root.children) return false;
+
+		const props = root.children.filter((c) => c.type === 'property');
+		const lastProp = props[props.length - 1];
+		if (!lastProp) return false;
+
+		// Already present: modify edits in place, so no misattribution risk.
+		const existing = new Set(props.map((p) => p.children?.[0]?.value as string));
+		if (existing.has(key)) return false;
+
+		// Does the final property carry an inline comment on its own line?
+		const lineTail = this.lineTailAfterNode(text, lastProp.offset + lastProp.length);
+		return /\/\/|\/\*/.test(lineTail);
+	}
+
+	/**
+	 * Insert a new property just before the current last property, keeping that
+	 * property's inline trailing comment attached to it rather than to the new key.
+	 */
+	private insertBeforeTrailingComment(text: string, key: string, value: unknown): string {
+		const root = parseTree(text)!;
+		const props = root.children!.filter((c) => c.type === 'property');
+		const lastProp = props[props.length - 1];
+
+		const lineStart = text.lastIndexOf('\n', lastProp.offset - 1);
+		const indent = lineStart >= 0 ? text.slice(lineStart + 1, lastProp.offset) : '';
+		const insertion = `${JSON.stringify(key)}: ${JSON.stringify(value)},\n${indent}`;
+
+		return text.slice(0, lastProp.offset) + insertion + text.slice(lastProp.offset);
+	}
+
+	private lineTailAfterNode(text: string, nodeEnd: number): string {
+		const rest = text.slice(nodeEnd);
+		const eol = rest.indexOf('\n');
+		return eol === -1 ? rest : rest.slice(0, eol);
+	}
+
 	getItem(key: string): string | null {
 		if (this.hasSyntaxError || !this.cachedText) {
 			return null;
@@ -81,13 +125,17 @@ export class ElectronConfigStorage implements PreferenceStorage {
 
 		// Apply CST modifications for each key in newPrefs
 		for (const [propKey, propVal] of Object.entries(newPrefs)) {
-			const edits = modify(currentText, [propKey], propVal, {
-				formattingOptions: {
-					insertSpaces: true,
-					tabSize: 2
-				}
-			});
-			currentText = applyEdits(currentText, edits);
+			if (this.shouldInsertBeforeTrailingComment(currentText, propKey)) {
+				currentText = this.insertBeforeTrailingComment(currentText, propKey, propVal);
+			} else {
+				const edits = modify(currentText, [propKey], propVal, {
+					formattingOptions: {
+						insertSpaces: true,
+						tabSize: 2
+					}
+				});
+				currentText = applyEdits(currentText, edits);
+			}
 		}
 
 		// Identical-write suppression: skip write if content hasn't changed
