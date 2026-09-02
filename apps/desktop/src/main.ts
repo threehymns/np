@@ -318,9 +318,7 @@ function registerIpcHandlers() {
 		} catch (e) {
 			// Clear the pending self-write marker so a later external change or
 			// retry is not wrongly suppressed, then surface the failure to the renderer.
-			if (configWatcher && configWatcher.getLastWrittenContent() === content) {
-				configWatcher.setLastWrittenContent(null);
-			}
+			configWatcher?.clearLastWrittenIfMatches(content);
 			console.error('Failed to write config.json:', e);
 			throw e;
 		}

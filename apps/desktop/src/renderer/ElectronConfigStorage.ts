@@ -169,11 +169,4 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		this.pendingText = null;
 		return this.validateSyntax(newContent);
 	}
-
-	/**
-	 * Helper exposed for testing or external reloading.
-	 */
-	getRawContent(): string {
-		return this.cachedText;
-	}
 }

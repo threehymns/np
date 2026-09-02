@@ -29,12 +29,18 @@ export class ConfigWatcher {
 	 * Inform the watcher that np itself is about to write this content,
 	 * so external change detection can ignore this exact content and avoid circular loops.
 	 */
-	public setLastWrittenContent(content: string): void {
+	public setLastWrittenContent(content: string | null): void {
 		this.lastWrittenContent = content;
 	}
 
-	public getLastWrittenContent(): string | null {
-		return this.lastWrittenContent;
+	/**
+	 * Clear the pending self-write marker if it matches the given content.
+	 * Used when a write fails to ensure a later external change is not wrongly suppressed.
+	 */
+	public clearLastWrittenIfMatches(content: string): void {
+		if (this.lastWrittenContent === content) {
+			this.lastWrittenContent = null;
+		}
 	}
 
 	public start(): void {

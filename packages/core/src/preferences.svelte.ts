@@ -22,22 +22,25 @@ export class LocalStorageAdapter implements PreferenceStorage {
 	}
 }
 
-export class Preferences {
-	private _wordWrap = $state(true);
-	private _statusBar = $state(true);
-	private _vimMode = $state(false);
-	private _vimSyncClipboard = $state(true);
-	private _zoom = $state(100);
-	private _lineEnding = $state('Unix (LF)');
-	private _encoding = $state('UTF-8');
-	private _theme = $state<Theme>('default');
-	private _appearanceMode = $state<AppearanceMode>('system');
-	private _accentColor = $state<string>('default');
-	private _sidebarVisible = $state(true);
-	private _sidebarWidth = $state(256);
-	private _fileIconThemeId = $state<string>('phosphor');
-	private _productIconThemeId = $state<string>('phosphor');
+const DEFAULTS = {
+	wordWrap: true,
+	statusBar: true,
+	vimMode: false,
+	vimSyncClipboard: true,
+	zoom: 100,
+	lineEnding: 'Unix (LF)' as string,
+	encoding: 'UTF-8' as string,
+	theme: 'default' as Theme,
+	appearanceMode: 'system' as AppearanceMode,
+	accentColor: 'default' as string,
+	sidebarVisible: true,
+	sidebarWidth: 256,
+	fileIconThemeId: 'phosphor' as string,
+	productIconThemeId: 'phosphor' as string,
+};
 
+export class Preferences {
+	private _data = $state({ ...DEFAULTS });
 	onIconThemeChange?: (type: 'file' | 'product', id: string) => void;
 
 	private storage: PreferenceStorage;
@@ -47,205 +50,142 @@ export class Preferences {
 
 	constructor(storage: PreferenceStorage = new LocalStorageAdapter()) {
 		this.storage = storage;
-		this.load();
+		this.reload();
 		this.isInitialized = true;
 	}
 
-	get wordWrap() {
-		return this._wordWrap;
-	}
+	get wordWrap() { return this._data.wordWrap; }
 	set wordWrap(val: boolean) {
-		if (this._wordWrap === val) return;
-		this._wordWrap = val;
+		if (this._data.wordWrap === val) return;
+		this._data.wordWrap = val;
 		this.save();
 	}
 
-	get statusBar() {
-		return this._statusBar;
-	}
+	get statusBar() { return this._data.statusBar; }
 	set statusBar(val: boolean) {
-		if (this._statusBar === val) return;
-		this._statusBar = val;
+		if (this._data.statusBar === val) return;
+		this._data.statusBar = val;
 		this.save();
 	}
 
-	get vimMode() {
-		return this._vimMode;
-	}
+	get vimMode() { return this._data.vimMode; }
 	set vimMode(val: boolean) {
-		if (this._vimMode === val) return;
-		this._vimMode = val;
+		if (this._data.vimMode === val) return;
+		this._data.vimMode = val;
 		this.save();
 	}
 
-	get vimSyncClipboard() {
-		return this._vimSyncClipboard;
-	}
+	get vimSyncClipboard() { return this._data.vimSyncClipboard; }
 	set vimSyncClipboard(val: boolean) {
-		if (this._vimSyncClipboard === val) return;
-		this._vimSyncClipboard = val;
+		if (this._data.vimSyncClipboard === val) return;
+		this._data.vimSyncClipboard = val;
 		this.save();
 	}
 
-	get zoom() {
-		return this._zoom;
-	}
+	get zoom() { return this._data.zoom; }
 	set zoom(val: number) {
-		if (this._zoom === val) return;
-		this._zoom = val;
+		if (this._data.zoom === val) return;
+		this._data.zoom = val;
 		this.save();
 	}
 
-	get lineEnding() {
-		return this._lineEnding;
-	}
+	get lineEnding() { return this._data.lineEnding; }
 	set lineEnding(val: string) {
-		if (this._lineEnding === val) return;
-		this._lineEnding = val;
+		if (this._data.lineEnding === val) return;
+		this._data.lineEnding = val;
 		this.save();
 	}
 
-	get encoding() {
-		return this._encoding;
-	}
+	get encoding() { return this._data.encoding; }
 	set encoding(val: string) {
-		if (this._encoding === val) return;
-		this._encoding = val;
+		if (this._data.encoding === val) return;
+		this._data.encoding = val;
 		this.save();
 	}
 
-	get theme() {
-		return this._theme;
-	}
+	get theme() { return this._data.theme; }
 	set theme(val: Theme) {
-		if (this._theme === val) return;
-		this._theme = val;
+		if (this._data.theme === val) return;
+		this._data.theme = val;
 		this.save();
 	}
 
-	get appearanceMode() {
-		return this._appearanceMode;
-	}
+	get appearanceMode() { return this._data.appearanceMode; }
 	set appearanceMode(val: AppearanceMode) {
-		if (this._appearanceMode === val) return;
-		this._appearanceMode = val;
+		if (this._data.appearanceMode === val) return;
+		this._data.appearanceMode = val;
 		this.save();
 	}
 
-	get accentColor() {
-		return this._accentColor;
-	}
+	get accentColor() { return this._data.accentColor; }
 	set accentColor(val: string) {
-		if (this._accentColor === val) return;
-		this._accentColor = val;
+		if (this._data.accentColor === val) return;
+		this._data.accentColor = val;
 		this.save();
 	}
 
-	get sidebarVisible() {
-		return this._sidebarVisible;
-	}
+	get sidebarVisible() { return this._data.sidebarVisible; }
 	set sidebarVisible(val: boolean) {
-		if (this._sidebarVisible === val) return;
-		this._sidebarVisible = val;
+		if (this._data.sidebarVisible === val) return;
+		this._data.sidebarVisible = val;
 		this.save();
 	}
 
-	get sidebarWidth() {
-		return this._sidebarWidth;
-	}
+	get sidebarWidth() { return this._data.sidebarWidth; }
 	set sidebarWidth(val: number) {
-		if (this._sidebarWidth === val) return;
-		this._sidebarWidth = val;
+		if (this._data.sidebarWidth === val) return;
+		this._data.sidebarWidth = val;
 		this.save();
 	}
 
-	get fileIconThemeId() {
-		return this._fileIconThemeId;
-	}
+	get fileIconThemeId() { return this._data.fileIconThemeId; }
 	set fileIconThemeId(val: string) {
-		if (this._fileIconThemeId === val) return;
-		this._fileIconThemeId = val;
+		if (this._data.fileIconThemeId === val) return;
+		this._data.fileIconThemeId = val;
 		this.onIconThemeChange?.('file', val);
 		this.save();
 	}
 
-	get productIconThemeId() {
-		return this._productIconThemeId;
-	}
+	get productIconThemeId() { return this._data.productIconThemeId; }
 	set productIconThemeId(val: string) {
-		if (this._productIconThemeId === val) return;
-		this._productIconThemeId = val;
+		if (this._data.productIconThemeId === val) return;
+		this._data.productIconThemeId = val;
 		this.onIconThemeChange?.('product', val);
 		this.save();
 	}
 
-	/**
-	 * Restore every known preference to its in-memory default. Used whenever a
-	 * configuration snapshot is (re)applied so keys removed from an external file
-	 * do not leave stale values active. Icon callbacks fire only for changed ids.
-	 */
 	private resetToDefaults() {
-		this._wordWrap = true;
-		this._statusBar = true;
-		this._vimMode = false;
-		this._vimSyncClipboard = true;
-		this._zoom = 100;
-		this._lineEnding = 'Unix (LF)';
-		this._encoding = 'UTF-8';
-		this._theme = 'default';
-		this._appearanceMode = 'system';
-		this._accentColor = 'default';
-		this._sidebarVisible = true;
-		this._sidebarWidth = 256;
-		if (this._fileIconThemeId !== 'phosphor') {
-			this._fileIconThemeId = 'phosphor';
+		const prevFile = this._data.fileIconThemeId;
+		const prevProduct = this._data.productIconThemeId;
+		this._data = { ...DEFAULTS };
+		if (prevFile !== 'phosphor') {
 			this.onIconThemeChange?.('file', 'phosphor');
 		}
-		if (this._productIconThemeId !== 'phosphor') {
-			this._productIconThemeId = 'phosphor';
+		if (prevProduct !== 'phosphor') {
 			this.onIconThemeChange?.('product', 'phosphor');
 		}
 	}
 
 	private applyData(raw: string | null) {
-		// Reset known preferences to defaults before applying a valid snapshot so
-		// removed keys fall back to defaults. Empty or invalid input leaves defaults.
 		this.resetToDefaults();
 		if (!raw) return;
 		try {
 			const prefs = JSON.parse(raw);
-			if (prefs.wordWrap !== undefined) this._wordWrap = prefs.wordWrap;
-			if (prefs.statusBar !== undefined) this._statusBar = prefs.statusBar;
-			if (prefs.vimMode !== undefined) this._vimMode = prefs.vimMode;
-			if (prefs.vimSyncClipboard !== undefined) this._vimSyncClipboard = prefs.vimSyncClipboard;
-			if (prefs.zoom !== undefined) this._zoom = prefs.zoom;
-			if (prefs.lineEnding !== undefined) this._lineEnding = prefs.lineEnding;
-			if (prefs.encoding !== undefined) this._encoding = prefs.encoding;
-			if (prefs.theme !== undefined) this._theme = prefs.theme;
-			if (prefs.appearanceMode !== undefined) this._appearanceMode = prefs.appearanceMode;
-			if (prefs.accentColor !== undefined) this._accentColor = prefs.accentColor;
-			if (prefs.sidebarVisible !== undefined) this._sidebarVisible = prefs.sidebarVisible;
-			if (prefs.sidebarWidth !== undefined) this._sidebarWidth = prefs.sidebarWidth;
-			if (prefs.fileIconThemeId !== undefined && prefs.fileIconThemeId !== this._fileIconThemeId) {
-				this._fileIconThemeId = prefs.fileIconThemeId;
+			for (const key of Object.keys(DEFAULTS)) {
+				if (prefs[key] !== undefined && key !== 'fileIconThemeId' && key !== 'productIconThemeId') {
+					(this._data as any)[key] = prefs[key];
+				}
+			}
+			if (prefs.fileIconThemeId !== undefined && prefs.fileIconThemeId !== this._data.fileIconThemeId) {
+				this._data.fileIconThemeId = prefs.fileIconThemeId;
 				this.onIconThemeChange?.('file', prefs.fileIconThemeId);
 			}
-			if (prefs.productIconThemeId !== undefined && prefs.productIconThemeId !== this._productIconThemeId) {
-				this._productIconThemeId = prefs.productIconThemeId;
+			if (prefs.productIconThemeId !== undefined && prefs.productIconThemeId !== this._data.productIconThemeId) {
+				this._data.productIconThemeId = prefs.productIconThemeId;
 				this.onIconThemeChange?.('product', prefs.productIconThemeId);
 			}
 		} catch (e) {
 			console.error('Failed to load preferences', e);
-		}
-	}
-
-	private load() {
-		this.isRestoring = true;
-		try {
-			const saved = this.storage.getItem(this.storageKey);
-			this.applyData(saved);
-		} finally {
-			this.isRestoring = false;
 		}
 	}
 
@@ -262,23 +202,7 @@ export class Preferences {
 	private save() {
 		if (!this.isInitialized || this.isRestoring) return;
 		try {
-			const prefs = {
-				wordWrap: this._wordWrap,
-				statusBar: this._statusBar,
-				vimMode: this._vimMode,
-				vimSyncClipboard: this._vimSyncClipboard,
-				zoom: this._zoom,
-				lineEnding: this._lineEnding,
-				encoding: this._encoding,
-				theme: this._theme,
-				appearanceMode: this._appearanceMode,
-				accentColor: this._accentColor,
-				sidebarVisible: this._sidebarVisible,
-				sidebarWidth: this._sidebarWidth,
-				fileIconThemeId: this._fileIconThemeId,
-				productIconThemeId: this._productIconThemeId
-			};
-			this.storage.setItem(this.storageKey, JSON.stringify(prefs));
+			this.storage.setItem(this.storageKey, JSON.stringify(this._data));
 		} catch (e) {
 			console.error('Failed to save preferences', e);
 		}
