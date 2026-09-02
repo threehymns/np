@@ -287,8 +287,17 @@ function registerIpcHandlers() {
 		await fs.writeFile(filePath, content, 'utf-8');
 	});
 
-	ipcMain.handle('config:getPath', () => {
-		return path.join(app.getPath('userData'), 'config.json');
+	ipcMain.handle('config:getPath', async () => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			if (!fsSync.existsSync(filePath)) {
+				await fs.mkdir(path.dirname(filePath), { recursive: true });
+				await fs.writeFile(filePath, DEFAULT_CONFIG_CONTENT, 'utf-8');
+			}
+		} catch (e) {
+			console.error('Failed to ensure config.json exists in config:getPath:', e);
+		}
+		return filePath;
 	});
 
 	ipcMain.on('config:readSync', (event) => {
