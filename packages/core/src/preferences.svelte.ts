@@ -28,8 +28,6 @@ export class Preferences {
 	vimMode = $state(false);
 	vimSyncClipboard = $state(true);
 	zoom = $state(100);
-	lineEnding = $state('Unix (LF)');
-	encoding = $state('UTF-8');
 	theme = $state<Theme>('default');
 	appearanceMode = $state<AppearanceMode>('system');
 	accentColor = $state<string>('default');
@@ -87,8 +85,6 @@ export class Preferences {
 				if (prefs.vimMode !== undefined) this.vimMode = prefs.vimMode;
 				if (prefs.vimSyncClipboard !== undefined) this.vimSyncClipboard = prefs.vimSyncClipboard;
 				if (prefs.zoom !== undefined) this.zoom = prefs.zoom;
-				if (prefs.lineEnding !== undefined) this.lineEnding = prefs.lineEnding;
-				if (prefs.encoding !== undefined) this.encoding = prefs.encoding;
 				if (prefs.theme !== undefined) this.theme = prefs.theme;
 				if (prefs.appearanceMode !== undefined) this.appearanceMode = prefs.appearanceMode;
 				if (prefs.accentColor !== undefined) this.accentColor = prefs.accentColor;
@@ -110,8 +106,6 @@ export class Preferences {
 				vimMode: this.vimMode,
 				vimSyncClipboard: this.vimSyncClipboard,
 				zoom: this.zoom,
-				lineEnding: this.lineEnding,
-				encoding: this.encoding,
 				theme: this.theme,
 				appearanceMode: this.appearanceMode,
 				accentColor: this.accentColor,
