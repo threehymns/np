@@ -9,7 +9,6 @@ export interface SerializedDocument {
 	 * so a draft can be restored without the file on disk having been touched.
 	 */
 	draftContent?: string;
-	isModified: boolean;
 	/**
 	 * Tab kind for tabs that are not plain file-backed documents, e.g. `'diff'`
 	 * for git-computed diff views. Omitted on ordinary document tabs.
@@ -57,7 +56,6 @@ export interface SessionPersistence {
 }
 
 export type WorkspacePersistence = SessionPersistence;
-
 export class MemorySessionPersistence implements SessionPersistence {
 	private states = new Map<string, {
 		openFiles: SerializedDocument[];

@@ -85,7 +85,6 @@ export class Workspace {
 				const serialized: SerializedDocument = {
 					id: tab.id,
 					origin: null,
-					isModified: false,
 					virtualTabType: 'diff'
 				};
 				const active = this.repository?.activeDiffFile;
@@ -109,8 +108,7 @@ export class Workspace {
 			const serialized: SerializedDocument = {
 				id: doc.id,
 				origin: doc.origin ? $state.snapshot(doc.origin) : null,
-				untitledTitle: doc.untitledTitle,
-				isModified: doc.isModified
+				untitledTitle: doc.untitledTitle
 			};
 			if (doc.isModified || !doc.origin) {
 				serialized.draftContent = doc.content;

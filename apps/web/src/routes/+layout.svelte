@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { setContext } from "svelte";
-	import { AppState, KeymapStorageProvider, ManifestIconProvider, type ExportService } from "@np/core";
+	import { AppState, KeymapStorageProvider, ManifestIconProvider, Repository, type ExportService } from "@np/core";
 	import { iconRegistry } from "@np/ui";
 	import { MultiSchemeStorage } from "@np/core/storage";
-	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBWorkspacePersistence } from "@np/adapters-browser";
+	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence, git } from "@np/adapters-browser";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
 	const storage = new MultiSchemeStorage();
 	storage.registerProvider('browser', new BrowserStorage());
-	const persistence = new IndexedDBWorkspacePersistence();
+	const persistence = new IndexedDBSessionPersistence();
 	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
 
 	const exportService: ExportService = {
@@ -46,20 +46,7 @@
 		persistence,
 		vcsFactory,
 		iconRegistry,
-		exportService,
-		clipboardService: {
-			writeText: async (text) => {
-				if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-					await navigator.clipboard.writeText(text);
-				}
-			},
-			readText: async () => {
-				if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-					return await navigator.clipboard.readText();
-				}
-				return '';
-			}
-		}
+		exportService
 	});
 	storage.registerProvider('keymap', new KeymapStorageProvider(appState.keymaps));
 	setContext("appState", appState);
@@ -67,6 +54,8 @@
 	if (typeof window !== "undefined") {
 		(window as any).appState = appState;
 		(window as any).ManifestIconProvider = ManifestIconProvider;
+		(window as any).Repository = Repository;
+		(window as any).git = git;
 		console.log('[Layout] AppState exposed on window. documents count:', appState.documents.length);
 	}
 
