@@ -1,6 +1,6 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
-  import { AppState, KeymapStorageProvider, ManifestIconProvider, type ExportService } from "@np/core";
+  import { AppState, KeymapStorageProvider, ManifestIconProvider, windowDialogService, type ExportService } from "@np/core";
   import { iconRegistry } from "@np/ui";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
@@ -39,19 +39,7 @@
     storage,
     persistence,
     vcsFactory,
-    dialogService: {
-      alert: (msg) => {
-        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-          window.alert(msg);
-        }
-      },
-      confirm: (msg) => {
-        if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-          return window.confirm(msg);
-        }
-        return false;
-      }
-    },
+    dialogService: windowDialogService,
     iconRegistry,
     exportService,
     clipboardService: {

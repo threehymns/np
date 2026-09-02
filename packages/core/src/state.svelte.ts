@@ -18,6 +18,11 @@ export interface DialogService {
 	confirm?(message: string): Promise<boolean> | boolean;
 }
 
+export const windowDialogService: DialogService = {
+	alert: (message) => window.alert(message),
+	confirm: (message) => window.confirm(message)
+};
+
 export interface ClipboardService {
 	readText?(): Promise<string>;
 	writeText?(text: string): Promise<void>;
