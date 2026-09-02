@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { countDiffStats, resolveDiscardOptions, type GitChange } from "./vcs";
+import { countDiffStats, resolveDiscardOptions, DEFAULT_DIFF_CONFIG, type GitChange } from "./vcs";
 
 describe("countDiffStats", () => {
 	it("returns zero counts for empty input", () => {
@@ -107,6 +107,12 @@ describe("countDiffStats", () => {
 			" context"
 		].join("\n");
 		expect(countDiffStats(diff)).toEqual({ additions: 1, deletions: 1 });
+	});
+});
+
+describe("DEFAULT_DIFF_CONFIG", () => {
+	it("pins the shared diff caps so they are not silently widened", () => {
+		expect(DEFAULT_DIFF_CONFIG).toEqual({ scanLimit: 5000, timeout: 500 });
 	});
 });
 

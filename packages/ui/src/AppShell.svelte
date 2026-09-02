@@ -1,20 +1,24 @@
 <script lang="ts">
 	import { useAppState } from "@np/core/state.svelte";
-	
+
 	const appState = useAppState();
 
-	import * as Menubar from "./components/ui/menubar/index.js";
-	import * as AlertDialog from "./components/ui/alert-dialog/index.js";
+	import * as Menubar from "./components/ui/menubar/index";
+	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
-	import { X, Sidebar } from "phosphor-svelte";
+	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
-	import * as Tooltip from "./components/ui/tooltip/index.js";
+	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
 
-	let SettingsModal = $state<any>(null);
-	let CommandPalette = $state<any>(null);
-	let WhichKey = $state<any>(null);
+	import type SettingsModalComponent from "./components/SettingsModal.svelte";
+	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
+	import type WhichKeyComponent from "./components/WhichKey.svelte";
+
+	let SettingsModal = $state<typeof SettingsModalComponent | null>(null);
+	let CommandPalette = $state<typeof CommandPaletteComponent | null>(null);
+	let WhichKey = $state<typeof WhichKeyComponent | null>(null);
 
 	let { children } = $props<{ children: Snippet }>();
 
@@ -27,7 +31,13 @@
 				e.preventDefault();
 			}
 		};
+		const handleFocus = () => {
+			if (appState.workspace.repository && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
+			}
+		};
 		window.addEventListener('keydown', handleCaptureKeydown, true);
+		window.addEventListener('focus', handleFocus);
 
 		// Persistence backends are async (IndexedDB, Electron IPC), so a flush
 		// started in `beforeunload` may not finish before teardown. `pagehide`
@@ -37,7 +47,12 @@
 			appState.flushSaveOpenFiles();
 		};
 		const handleVisibilityChange = () => {
-			if (document.visibilityState === 'hidden') flushSession();
+			if (typeof document === 'undefined') return;
+			if (document.visibilityState === 'hidden') {
+				flushSession();
+			} else if (document.visibilityState === 'visible') {
+				handleFocus();
+			}
 		};
 		window.addEventListener('pagehide', flushSession);
 		document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -45,6 +60,7 @@
 
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
+			window.removeEventListener('focus', handleFocus);
 			window.removeEventListener('pagehide', flushSession);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			window.removeEventListener('beforeunload', flushSession);
@@ -52,7 +68,11 @@
 	});
 
 	onMount(async () => {
-		await appState.init();
+		try {
+			await appState.init();
+		} catch (err) {
+			console.error("[AppShell] Failed to initialize app state:", err);
+		}
 
 		// Lazy load secondary UI
 		Promise.all([
@@ -107,7 +127,7 @@
 					<Menubar.Content>
 						{#if category === 'File'}
 							{#each appState.commands.getByCategory('File') as command (command.id)}
-								<Menubar.Item 
+								<Menubar.Item
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
@@ -122,7 +142,7 @@
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
 									{#each appState.commands.getByCategory('Export') as command (command.id)}
-										<Menubar.Item 
+										<Menubar.Item
 											onclick={() => command.action()}
 											disabled={command.isEnabled && !command.isEnabled()}
 										>
@@ -169,7 +189,7 @@
 							</Menubar.CheckboxItem>
 						{:else}
 							{#each appState.commands.getByCategory(category) as command (command.id)}
-								<Menubar.Item 
+								<Menubar.Item
 									onclick={() => command.action()}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
@@ -184,7 +204,7 @@
 						{#if category === 'Edit'}
 							<Menubar.Separator />
 							<Menubar.Item onclick={() => appState.settingsOpen = true}>
-								Settings... 
+								Settings...
 								{#if appState.keymaps.getShortcutForCommand('settings.open')}
 									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
 								{/if}
@@ -195,29 +215,91 @@
 			{/each}
 		</Menubar.Root>
 	</div>
-	
+
 	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
 		{@render children()}
 	</main>
 
 	{#if appState.prefs.statusBar}
+		{#snippet statusButton({ icon: Icon, class: btnClass, title, shortcut, onclick: onclickFn, badge }: {
+			icon: typeof SidebarIcon;
+			class: string;
+			title: string;
+			shortcut?: string | null;
+			onclick: (e: MouseEvent) => void;
+			badge?: number;
+		})}
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							variant="ghost"
+							size="icon-xs"
+							{...props}
+							onclick={(e) => {
+								(props as any).onclick?.(e);
+								onclickFn(e);
+							}}
+							class={btnClass}
+						>
+							<Icon class="size-3.5" />
+							{#if badge}
+								<span class="absolute -top-1 -right-1 min-w-3 h-3 bg-primary text-primary-foreground text-[7px] font-bold rounded-full flex items-center justify-center border border-background px-0.5 font-sans pointer-events-none">
+									{badge}
+								</span>
+							{/if}
+						</Button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
+					{title}{#if shortcut}<span class="text-[9px] opacity-60 ml-1">({shortcut})</span>{/if}
+				</Tooltip.Content>
+			</Tooltip.Root>
+		{/snippet}
 		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
-			<div class="flex items-center gap-3">
-				<Tooltip.Provider delayDuration={400}>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<Button variant="ghost" size="icon-xs" {...props} onclick={() => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible} class={appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : ''}>
-									<Sidebar class="size-3.5" />
-								</Button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Content side="top" align="start" class="text-[10px] px-2 py-1">
-							Toggle Sidebar <span class="text-[9px] opacity-60 ml-1">({appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\'})</span>
-						</Tooltip.Content>
-					</Tooltip.Root>
+			<div class="flex items-center gap-1">
+				<Tooltip.Provider>
+					{@render statusButton({
+						icon: SidebarIcon,
+						class: appState.prefs.sidebarVisible ? 'bg-accent text-accent-foreground' : '',
+						title: 'Toggle Sidebar',
+						shortcut: appState.keymaps.getShortcutForCommand('view.toggleSidebar') || '⌘\\',
+						onclick: () => appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible
+					})}
+
+					{@render statusButton({
+						icon: FolderOpenIcon,
+						class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'explorer' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Project Explorer',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showExplorer'),
+						onclick: () => {
+							if (appState.activeSidebarTab === 'explorer' && appState.prefs.sidebarVisible) {
+								appState.prefs.sidebarVisible = false;
+							} else {
+								appState.activeSidebarTab = 'explorer';
+								appState.prefs.sidebarVisible = true;
+							}
+						}
+					})}
+
+					{@render statusButton({
+						icon: GitMergeIcon,
+						class: `flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+						title: 'Source Control',
+						shortcut: appState.keymaps.getShortcutForCommand('view.showGit'),
+						onclick: () => {
+							if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
+								appState.prefs.sidebarVisible = false;
+							} else {
+								appState.activeSidebarTab = 'git';
+								appState.prefs.sidebarVisible = true;
+							}
+						},
+						badge: appState.workspace.repository?.changes?.length
+					})}
 				</Tooltip.Provider>
-				<div class="flex gap-3 opacity-80">
+
+				<div class="flex gap-3 opacity-80 ml-2">
 					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
 					<span>{appState.activeDocument?.charCount ?? 0} chars</span>
 				</div>

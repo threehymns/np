@@ -1,6 +1,6 @@
 import type { FileOrigin } from '../storage';
 import { fileDiffFromChange } from './vcs';
-import type { VCSAdapter, SwitchResult, GitChange, GitCommit, FileDiffDetail } from './vcs';
+import type { VCSAdapter, SwitchResult, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from './vcs';
 
 export interface RepositorySafetyReport {
 	canSwitch: boolean;
@@ -28,7 +28,7 @@ export class Repository {
 		this.adapter = vcsFactory(rootOrigin);
 	}
 
-	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail | null> {
+	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail | null> {
 		if (this.adapter.getFileDiff) {
 			return await this.adapter.getFileDiff(filepath, options);
 		}

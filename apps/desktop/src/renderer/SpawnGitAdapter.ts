@@ -1,4 +1,4 @@
-import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { mapBounded } from '@np/core/utils';
 
@@ -565,22 +565,38 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
-	async getFileDiff(filepath: string, options?: { staged?: boolean }): Promise<FileDiffDetail> {
-		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
-
-		let worktreeContent = '';
-		if (options?.staged !== true) {
-			try {
-				// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
-				const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
-				worktreeContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
-			} catch (e) {
-				if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
-					throw e;
-				}
+	// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
+	private async readWorktreeContent(filepath: string): Promise<string> {
+		try {
+			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch (e) {
+			if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+				throw e;
 			}
+			return '';
+		}
+	}
+
+	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail> {
+		// Optimization: If the file is untracked ('U'), it has no HEAD or index objects.
+		if (options?.status === 'U') {
+			const worktreeContent = options.staged !== true ? await this.readWorktreeContent(filepath) : '';
+			return resolveDiffDetail('', '', worktreeContent, options);
 		}
 
+		// Optimization: If a file is added ('A'), HEAD is guaranteed empty.
+		if (options?.status === 'A') {
+			const worktreeContent = options?.staged !== true ? await this.readWorktreeContent(filepath) : '';
+			const indexObj = await this.readGitObject(`:${filepath}`);
+			return resolveDiffDetail('', indexObj ?? '', worktreeContent, options);
+		}
+
+		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
+		const isDeletedWorktree = options?.status === 'D' && options?.staged !== true;
+		const worktreeContent = options?.staged !== true && !isDeletedWorktree ? await this.readWorktreeContent(filepath) : '';
+
+		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
 
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);

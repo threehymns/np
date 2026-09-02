@@ -9,6 +9,7 @@ import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
+import { LanguageSupport } from './editor/language.svelte';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
@@ -96,13 +97,15 @@ export class AppState {
 			console.error('[AppState] Failed to restore session:', e);
 		}
 
-		// Defer heavy icon initialization until after the first paint
+		// Defer heavy icon initialization and language grammar preloading until after the first paint
 		const deferredInit = async () => {
 			try {
 				await this.icons.initialize?.();
 			} catch (e) {
 				console.error('[AppState] Failed to initialize icons:', e);
 			}
+			// preloadCommonLanguages is synchronous and swallows its own async load errors
+			LanguageSupport.preloadCommonLanguages();
 		};
 
 
