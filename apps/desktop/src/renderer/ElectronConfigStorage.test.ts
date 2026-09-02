@@ -272,4 +272,29 @@ describe('ElectronConfigStorage', () => {
 		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"wordWrap"'));
 		expect(wordWrapLine).not.toContain('// This comment belongs to theme');
 	});
+
+	it('11. Concurrent setItem writes: rapid sequential updates serialize correctly without clobbering', async () => {
+		const initialJsonc = `{\n  "zoom": 100,\n  "wordWrap": true\n}`;
+		mockReadConfigFileSync.mockReturnValue(initialJsonc);
+
+		// Simulate async write delay
+		mockWriteConfigFile.mockImplementation(async (_content: string) => {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		});
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		// Synchronously fire two updates in quick succession before the first async write finishes
+		prefs.zoom = 120;
+		prefs.wordWrap = false;
+
+		// Wait for both writes in the queue to settle
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
+		const lastWritten = mockWriteConfigFile.mock.calls[1][0];
+		expect(lastWritten).toContain('"zoom": 120');
+		expect(lastWritten).toContain('"wordWrap": false');
+	});
 });

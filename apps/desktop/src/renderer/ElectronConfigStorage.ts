@@ -86,6 +86,8 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		return eol === -1 ? rest : rest.slice(0, eol);
 	}
 
+	private writeQueue: Promise<void> = Promise.resolve();
+
 	getItem(key: string): string | null {
 		if (this.hasSyntaxError || !this.cachedText) {
 			return null;
@@ -121,7 +123,9 @@ export class ElectronConfigStorage implements PreferenceStorage {
 			return;
 		}
 
-		let currentText = this.cachedText.trim() ? this.cachedText : '{\n}\n';
+		// Apply CST modifications onto the latest known text (pending or cached)
+		let baseText = this.pendingText ?? this.cachedText;
+		let currentText = baseText.trim() ? baseText : '{\n}\n';
 
 		// Apply CST modifications for each key in newPrefs
 		for (const [propKey, propVal] of Object.entries(newPrefs)) {
@@ -144,20 +148,26 @@ export class ElectronConfigStorage implements PreferenceStorage {
 			return;
 		}
 
-		// Keep pending content separate from confirmed content so a failed write
-		// does not mark uncommitted text as persisted (which would suppress retries
-		// and let preferences revert after restart).
 		this.pendingText = currentText;
-		window.electronAPI.writeConfigFile(currentText).then(
-			() => {
-				this.cachedText = currentText;
-				if (this.pendingText === currentText) this.pendingText = null;
-			},
-			(err) => {
+		const targetText = currentText;
+
+		this.writeQueue = this.writeQueue
+			.then(async () => {
+				if (typeof window === 'undefined' || !window.electronAPI?.writeConfigFile) {
+					return;
+				}
+				await window.electronAPI.writeConfigFile(targetText);
+				this.cachedText = targetText;
+				if (this.pendingText === targetText) {
+					this.pendingText = null;
+				}
+			})
+			.catch((err) => {
 				console.error('Failed to persist config.json:', err);
-				if (this.pendingText === currentText) this.pendingText = null;
-			}
-		);
+				if (this.pendingText === targetText) {
+					this.pendingText = null;
+				}
+			});
 	}
 
 	/**
