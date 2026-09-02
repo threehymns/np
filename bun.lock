@@ -16,6 +16,7 @@
         "@codemirror/view": "^6.43.8",
         "@np/core": "workspace:*",
         "@np/ui": "workspace:*",
+        "jsonc-parser": "^3.3.1",
         "phosphor-svelte": "^3.1.0",
       },
       "devDependencies": {
@@ -84,7 +85,6 @@
         "clsx": "^2.1.1",
         "isomorphic-git": "^1.38.1",
         "marked": "^18.0.4",
-        "phosphor-svelte": "^3.1.0",
         "tailwind-merge": "^3.5.0",
       },
     },
@@ -536,6 +536,8 @@
     "json-buffer": ["json-buffer@3.0.1", "", {}, "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ=="],
 
     "json-stringify-safe": ["json-stringify-safe@5.0.1", "", {}, "sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA=="],
+
+    "jsonc-parser": ["jsonc-parser@3.3.1", "", {}, "sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ=="],
 
     "jsonfile": ["jsonfile@4.0.0", "", { "optionalDependencies": { "graceful-fs": "^4.1.6" } }, "sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg=="],
 

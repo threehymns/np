@@ -27,6 +27,7 @@
 		"@codemirror/view": "^6.43.8",
 		"@np/core": "workspace:*",
 		"@np/ui": "workspace:*",
+		"jsonc-parser": "^3.3.1",
 		"phosphor-svelte": "^3.1.0"
 	}
 }
