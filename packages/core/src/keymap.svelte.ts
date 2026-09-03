@@ -70,6 +70,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+-": "view.zoomOut",
 			"cmd+0": "view.zoomReset",
 			"cmd+,": "settings.open",
+			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools"
 		}

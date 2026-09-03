@@ -20,5 +20,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	onWindowShown: (callback: () => void) => ipcRenderer.once('window-shown', () => callback()),
 	readFileUserKeymap: () => ipcRenderer.invoke('keymap:read'),
 	writeFileUserKeymap: (content: string) => ipcRenderer.invoke('keymap:write', content),
+	readConfigFileSync: () => ipcRenderer.sendSync('config:readSync'),
+	writeConfigFile: (content: string) => ipcRenderer.invoke('config:write', content),
+	getConfigPath: () => ipcRenderer.invoke('config:getPath'),
+	onConfigChanged: (callback: (content: string) => void) => {
+		const listener = (_event: any, content: string) => callback(content);
+		ipcRenderer.on('config:changed', listener);
+		return () => {
+			ipcRenderer.removeListener('config:changed', listener);
+		};
+	},
 	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools')
 });
+

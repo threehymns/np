@@ -1,8 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
+import { ConfigWatcher } from './ConfigWatcher.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -12,6 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let configWatcher: ConfigWatcher | null = null;
 
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
@@ -76,6 +80,18 @@ function createWindow() {
 app.whenReady().then(() => {
 	Menu.setApplicationMenu(null);
 	registerIpcHandlers();
+
+	const configPath = path.join(app.getPath('userData'), 'config.json');
+	configWatcher = new ConfigWatcher({
+		configPath,
+		onConfigChanged: (content) => {
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send('config:changed', content);
+			}
+		}
+	});
+	configWatcher.start();
+
 	createWindow();
 
 	app.on('activate', () => {
@@ -83,6 +99,13 @@ app.whenReady().then(() => {
 			createWindow();
 		}
 	});
+});
+
+app.on('before-quit', () => {
+	if (configWatcher) {
+		configWatcher.close();
+		configWatcher = null;
+	}
 });
 
 app.on('window-all-closed', () => {
@@ -264,9 +287,75 @@ function registerIpcHandlers() {
 		await fs.writeFile(filePath, content, 'utf-8');
 	});
 
+	ipcMain.handle('config:getPath', async () => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			try {
+				await fs.mkdir(path.dirname(filePath), { recursive: true });
+				await fs.writeFile(filePath, DEFAULT_CONFIG_CONTENT, { encoding: 'utf-8', flag: 'wx' });
+			} catch (e) {
+				if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+					const stat = await fs.stat(filePath);
+					if (!stat.isFile()) {
+						throw e;
+					}
+				} else {
+					throw e;
+				}
+			}
+			return filePath;
+		} catch (e) {
+			console.error('Failed to ensure config.json exists in config:getPath:', e);
+			throw e;
+		}
+	});
+
+	ipcMain.on('config:readSync', (event) => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			try {
+				fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
+				fsSync.writeFileSync(filePath, DEFAULT_CONFIG_CONTENT, { encoding: 'utf-8', flag: 'wx' });
+				event.returnValue = DEFAULT_CONFIG_CONTENT;
+				return;
+			} catch (e) {
+				if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+					const stat = fsSync.statSync(filePath);
+					if (!stat.isFile()) {
+						throw e;
+					}
+				} else {
+					throw e;
+				}
+			}
+			event.returnValue = fsSync.readFileSync(filePath, 'utf-8');
+		} catch (e) {
+			console.error('Failed to read config.json synchronously:', e);
+			event.returnValue = null;
+		}
+	});
+
+	ipcMain.handle('config:write', async (_, content: string) => {
+		const filePath = path.join(app.getPath('userData'), 'config.json');
+		try {
+			if (configWatcher) {
+				configWatcher.setLastWrittenContent(content);
+			}
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
+			await fs.writeFile(filePath, content, 'utf-8');
+		} catch (e) {
+			// Clear the pending self-write marker so a later external change or
+			// retry is not wrongly suppressed, then surface the failure to the renderer.
+			configWatcher?.clearLastWrittenIfMatches(content);
+			console.error('Failed to write config.json:', e);
+			throw e;
+		}
+	});
+
 	ipcMain.handle('window:toggleDevTools', () => {
 		if (mainWindow) {
 			mainWindow.webContents.toggleDevTools();
 		}
 	});
 }
+

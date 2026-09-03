@@ -5,6 +5,7 @@
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
   import { ElectronSessionPersistence } from "./ElectronSessionPersistence";
+  import { ElectronConfigStorage } from "./ElectronConfigStorage";
   import { SpawnGitAdapter } from "./SpawnGitAdapter";
 
   import AppShell from "@np/ui/AppShell.svelte";
@@ -13,6 +14,7 @@
   const storage = new MultiSchemeStorage();
   storage.registerProvider("file", new ElectronStorage());
   const persistence = new ElectronSessionPersistence();
+  const prefsStorage = new ElectronConfigStorage();
   const vcsFactory = (origin: any) => new SpawnGitAdapter(origin);
 
   const exportService: ExportService = {
@@ -38,6 +40,7 @@
   const appState = new AppState({
     storage,
     persistence,
+    prefsStorage,
     vcsFactory,
     iconRegistry,
     exportService
@@ -54,6 +57,17 @@
     if (window.electronAPI?.showWindow) {
       window.electronAPI.showWindow();
     }
+
+    const unsubscribeConfig = window.electronAPI?.onConfigChanged?.((newContent: string) => {
+      prefsStorage.updateFromExternal(newContent);
+      // Reload regardless of validity so invalid content resets preferences to
+      // their in-memory defaults until the external file is corrected.
+      appState.prefs.reload();
+    });
+
+    return () => {
+      unsubscribeConfig?.();
+    };
   });
 </script>
 
