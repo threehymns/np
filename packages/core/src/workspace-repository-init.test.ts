@@ -56,4 +56,28 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		await ws.openDirectory();
 		expect(ws.repository).not.toBeNull();
 	});
+	it("keeps repository null in requestRootPermission when the folder is not a git repository", async () => {
+		const storage = createMockStorage({
+			verifyPermission: async () => true
+		});
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => false),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		ws.rootOrigin = rootOrigin;
+
+		const granted = await ws.requestRootPermission();
+
+		// Permission is granted, but because detect() reports no git repo, the
+		// second repository-init path (requestRootPermission) must also leave
+		// workspace.repository null (issue #64).
+		expect(granted).toBe(true);
+		expect(ws.repository).toBeNull();
+	});
 });
