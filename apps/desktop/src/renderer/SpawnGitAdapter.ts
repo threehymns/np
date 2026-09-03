@@ -170,18 +170,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const status = await this.getStatus();
 		if (status.uncommittedFiles.length > 0) {
-			const conflictingFiles: string[] = [];
-			for (const filepath of status.uncommittedFiles) {
-				const headHashRes = await this.runGit(['rev-parse', `HEAD:${filepath}`]);
-				const headOid = headHashRes.code === 0 ? headHashRes.stdout.trim() : null;
-
-				const targetHashRes = await this.runGit(['rev-parse', `${branchName}:${filepath}`]);
-				const targetOid = targetHashRes.code === 0 ? targetHashRes.stdout.trim() : null;
-
-				if (headOid !== targetOid) {
-					conflictingFiles.push(filepath);
-				}
-			}
+			// A dirty file conflicts with the target branch iff its committed HEAD
+			// blob differs from its blob on the target branch. A single tree-to-tree
+			// diff reports exactly those files in one git invocation, instead of the
+			// previous two `git rev-parse` processes per file (O(N) process spawns).
+			const diffRes = await this.runGit(['diff', '--name-only', 'HEAD', branchName, '--', ...status.uncommittedFiles]);
+			const conflictingFiles = diffRes.stdout
+				.split('\n')
+				.map((l) => l.trim())
+				.filter((l) => l.length > 0);
 
 			if (conflictingFiles.length > 0) {
 				return { status: 'blocked', reason: 'conflict', files: conflictingFiles };
