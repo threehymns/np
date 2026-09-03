@@ -20,12 +20,6 @@ export const DEFAULT_CONFIG_CONTENT = `{
   // Editor and interface zoom level (percentage).
   "zoom": 100,
 
-  // Default end-of-line character for newly created files ("Unix (LF)" or "Windows (CRLF)").
-  "lineEnding": "Unix (LF)",
-
-  // Default file encoding.
-  "encoding": "UTF-8",
-
   // Visual color theme for the editor and application.
   "theme": "default",
 
