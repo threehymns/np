@@ -518,9 +518,17 @@ export class Workspace {
 				for (const doc of this.documents) {
 					if (doc.origin) {
 						try {
-							await doc.loadContent();
+							if (doc.isModified) {
+								// Preserve unsaved in-memory edits: rebase the saved
+								// baseline onto the checked-out content so the edits survive
+								// and are re-diffed against the new branch instead of being
+								// silently discarded by loadContent().
+								await doc.rebaseSavedBaseline();
+							} else {
+								await doc.loadContent();
+							}
 						} catch (e) {
-							// Ignored here; doc.loadContent() handles setting deletedOnDisk to true
+							// Ignored here; loadContent/rebaseSavedBaseline handle setting deletedOnDisk to true
 						}
 					}
 				}

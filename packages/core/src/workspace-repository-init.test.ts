@@ -5,6 +5,7 @@ import { createMockStorage } from "../../../tests/mock-storage";
 import { MemorySessionPersistence } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
+import { DocumentSession } from "./document.svelte";
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -13,9 +14,7 @@ beforeAll(async () => {
 	}));
 });
 
-let makeWorkspace: (
-	detected: boolean
-) => Promise<{ ws: Workspace }>;
+let makeWorkspace: (detected: boolean) => Promise<{ ws: Workspace }>;
 let WorkspaceClass: typeof import("./workspace.svelte").Workspace;
 
 beforeAll(async () => {
@@ -42,6 +41,7 @@ beforeAll(async () => {
 });
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/projects/np", name: "np" };
+const fileOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/a.ts", name: "a.ts" };
 
 describe("repository initialization respects VCS detect (issue #64)", () => {
 	it("leaves workspace.repository null when the opened folder is not a git repository", async () => {
@@ -58,6 +58,7 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		await ws.openDirectory();
 		expect(ws.repository).not.toBeNull();
 	});
+
 	it("keeps repository null and scans project tree in requestRootPermission when the folder is not a git repository", async () => {
 		const storage = createMockStorage({
 			verifyPermission: async () => true
@@ -116,5 +117,48 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 
 		expect(ws.repository).toBeNull();
 		expect(scannedWith).toEqual(rootOrigin);
+	});
+});
+
+describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
+	it("keeps modified document content across a successful switch and rebases its baseline", async () => {
+		// New branch content for the open file; readFile returns this after switch.
+		const newBranchContent = "new branch content\n";
+		const oldSavedContent = "old committed content\n";
+		const unsavedEdit = "my unsaved in-memory edit\n";
+
+		const storage = createMockStorage({
+			pickDirectory: async () => rootOrigin,
+			verifyPermission: async () => true
+		});
+		storage.readFile = mock(async (o: FileOrigin) =>
+			o.path === fileOrigin.path ? newBranchContent : ""
+		);
+
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		await ws.openDirectory();
+
+		// A modified document: saved baseline is the old content, in-memory content holds an edit.
+		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
+		doc.content = unsavedEdit;
+		ws.documents.push(doc);
+		expect(doc.isModified).toBe(true);
+
+		await ws.switchBranch("feature");
+
+		// The unsaved in-memory edit must survive the switch...
+		expect(doc.content).toBe(unsavedEdit);
+		// ...and is still treated as modified against the new on-disk baseline.
+		expect(doc.isModified).toBe(true);
 	});
 });
