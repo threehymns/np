@@ -174,10 +174,18 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// blob differs from its blob on the target branch. A single tree-to-tree
 			// diff reports exactly those files in one git invocation, instead of the
 			// previous two `git rev-parse` processes per file (O(N) process spawns).
+			// We avoid spreading uncommittedFiles into CLI arguments to prevent E2BIG
+			// on large repositories, intersecting diff changes with the dirty set in JS.
 			// `-z` NUL-separates the paths so non-ASCII filenames come back raw and
 			// unquoted, matching the raw paths getStatus() returns.
-			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName, '--', ...status.uncommittedFiles]);
-			const conflictingFiles = diffRes.stdout.split('\0').filter((p) => p.length > 0);
+			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName]);
+			if (diffRes.code !== 0) {
+				return { status: 'error', message: diffRes.stderr || `Failed to diff HEAD with ${branchName}` };
+			}
+			const uncommittedSet = new Set(status.uncommittedFiles);
+			const conflictingFiles = diffRes.stdout
+				.split('\0')
+				.filter((p) => p.length > 0 && uncommittedSet.has(p));
 
 			if (conflictingFiles.length > 0) {
 				return { status: 'blocked', reason: 'conflict', files: conflictingFiles };

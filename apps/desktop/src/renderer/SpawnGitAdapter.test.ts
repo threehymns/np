@@ -652,4 +652,67 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await expect(adapter.stageAll()).rejects.toThrow(/index file corrupt/);
 	});
+
+	it('switchBranch returns error status when git diff exits non-zero instead of proceeding to checkout', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
+				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+				return { code: 0, stdout: 'main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('feature')) {
+				return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			}
+			if (args[0] === 'status') {
+				return { code: 0, stdout: ' M dirty.txt\0', stderr: '' };
+			}
+			if (args[0] === 'diff') {
+				return { code: 128, stdout: '', stderr: 'fatal: git diff failed' };
+			}
+			if (args[0] === 'checkout') {
+				throw new Error('checkout should not be called when diff fails');
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		expect(res.status).toBe('error');
+		if (res.status === 'error') {
+			expect(res.message).toContain('git diff failed');
+		}
+	});
+
+	it('switchBranch does not spread uncommitted files into diff CLI arguments', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
+				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+				return { code: 0, stdout: 'main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('feature')) {
+				return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			}
+			if (args[0] === 'status') {
+				return { code: 0, stdout: ' M dirty1.txt\0 M dirty2.txt\0', stderr: '' };
+			}
+			if (args[0] === 'diff') {
+				// Assert args only compare tree to tree without spreading dirty filepaths
+				expect(args).toEqual(['diff', '--name-only', '-z', 'HEAD', 'feature']);
+				return { code: 0, stdout: 'dirty1.txt\0other.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		expect(res.status).toBe('blocked');
+		if (res.status === 'blocked') {
+			expect(res.reason).toBe('conflict');
+			// Intersected with status.uncommittedFiles, so only dirty1.txt is reported
+			expect(res.files).toEqual(['dirty1.txt']);
+		}
+	});
 });
