@@ -290,24 +290,43 @@ function registerIpcHandlers() {
 	ipcMain.handle('config:getPath', async () => {
 		const filePath = path.join(app.getPath('userData'), 'config.json');
 		try {
-			if (!fsSync.existsSync(filePath)) {
+			try {
 				await fs.mkdir(path.dirname(filePath), { recursive: true });
-				await fs.writeFile(filePath, DEFAULT_CONFIG_CONTENT, 'utf-8');
+				await fs.writeFile(filePath, DEFAULT_CONFIG_CONTENT, { encoding: 'utf-8', flag: 'wx' });
+			} catch (e) {
+				if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+					const stat = await fs.stat(filePath);
+					if (!stat.isFile()) {
+						throw e;
+					}
+				} else {
+					throw e;
+				}
 			}
+			return filePath;
 		} catch (e) {
 			console.error('Failed to ensure config.json exists in config:getPath:', e);
+			throw e;
 		}
-		return filePath;
 	});
 
 	ipcMain.on('config:readSync', (event) => {
 		const filePath = path.join(app.getPath('userData'), 'config.json');
 		try {
-			if (!fsSync.existsSync(filePath)) {
+			try {
 				fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
-				fsSync.writeFileSync(filePath, DEFAULT_CONFIG_CONTENT, 'utf-8');
+				fsSync.writeFileSync(filePath, DEFAULT_CONFIG_CONTENT, { encoding: 'utf-8', flag: 'wx' });
 				event.returnValue = DEFAULT_CONFIG_CONTENT;
 				return;
+			} catch (e) {
+				if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+					const stat = fsSync.statSync(filePath);
+					if (!stat.isFile()) {
+						throw e;
+					}
+				} else {
+					throw e;
+				}
 			}
 			event.returnValue = fsSync.readFileSync(filePath, 'utf-8');
 		} catch (e) {
