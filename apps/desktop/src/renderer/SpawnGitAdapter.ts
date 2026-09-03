@@ -174,11 +174,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// blob differs from its blob on the target branch. A single tree-to-tree
 			// diff reports exactly those files in one git invocation, instead of the
 			// previous two `git rev-parse` processes per file (O(N) process spawns).
-			const diffRes = await this.runGit(['diff', '--name-only', 'HEAD', branchName, '--', ...status.uncommittedFiles]);
-			const conflictingFiles = diffRes.stdout
-				.split('\n')
-				.map((l) => l.trim())
-				.filter((l) => l.length > 0);
+			// `-z` NUL-separates the paths so non-ASCII filenames come back raw and
+			// unquoted, matching the raw paths getStatus() returns.
+			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName, '--', ...status.uncommittedFiles]);
+			const conflictingFiles = diffRes.stdout.split('\0').filter((p) => p.length > 0);
 
 			if (conflictingFiles.length > 0) {
 				return { status: 'blocked', reason: 'conflict', files: conflictingFiles };

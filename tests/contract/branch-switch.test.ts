@@ -454,6 +454,31 @@ for (const engine of ENGINES) {
 				expect(await worktreeContents(r, 'c1.txt')).toBe('dirty1\n');
 				expect(await worktreeContents(r, 'c2.txt')).toBe('dirty2\n');
 			});
+
+			it('reports a non-ASCII conflict filename verbatim (unquoted)', async () => {
+				const r = await createTrackedRepo();
+				await commitFiles(r, 'initial', { 'café.txt': 'base\n' });
+				await createBranch(r, 'feature');
+
+				await checkoutBranch(r, 'feature');
+				await commitFiles(r, 'feature commit', { 'café.txt': 'feat\n' });
+				await checkoutBranch(r, 'main');
+
+				await r.write('café.txt', 'dirty\n');
+
+				const adp = engine.adapter(r);
+				const res = await adp.switchBranch('feature');
+
+				expect(res.status).toBe('blocked');
+				if (res.status === 'blocked') {
+					expect(res.reason).toBe('conflict');
+					// Must be the raw (un-C-quoted) path. Regression: the O(1)
+					// `git diff --name-only` in SpawnGitAdapter without `-z`
+					// returned the C-quoted form ("caf\\303\\251.txt") instead.
+					expect(res.files).toEqual(['café.txt']);
+				}
+				expect(await currentBranch(r)).toBe('main');
+			});
 		});
 
 		describe('dryRun option', () => {
