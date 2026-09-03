@@ -382,37 +382,22 @@
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-3">
 											<div class="flex justify-between items-center">
-												<Label class="text-sm font-medium">Zoom Level</Label>
-												<span class="text-xs font-bold bg-primary/10 text-primary px-2 py-1 rounded">{appState.prefs.zoom}%</span>
-											</div>
-											<input 
-												type="range" 
-												min="50" 
-												max="300" 
-												step="10" 
-												bind:value={appState.prefs.zoom}
-												class="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-											/>
+											<Label class="text-sm font-medium">Zoom Level</Label>
+											<span class="text-xs font-bold bg-primary/10 text-primary px-2 py-1 rounded">{appState.prefs.zoom}%</span>
 										</div>
-
-										<div class="grid grid-cols-2 gap-4">
-											<div class="space-y-1.5">
-												<Label class="text-xs">Line Endings</Label>
-												<div class="text-xs p-2 rounded border bg-muted/50 text-muted-foreground">
-													{appState.prefs.lineEnding}
-												</div>
-											</div>
-											<div class="space-y-1.5">
-												<Label class="text-xs">Encoding</Label>
-												<div class="text-xs p-2 rounded border bg-muted/50 text-muted-foreground">
-													{appState.prefs.encoding}
-												</div>
-											</div>
-										</div>
+										<input
+											type="range"
+											min="50"
+											max="300"
+											step="10"
+											bind:value={appState.prefs.zoom}
+											class="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+										/>
 									</div>
 								</div>
 							</div>
 						</div>
+					</div>
 					{:else if activeCategory === 'keymaps'}
 						<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col h-[520px]">
 							<header class="flex justify-between items-center">

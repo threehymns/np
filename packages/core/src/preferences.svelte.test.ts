@@ -29,8 +29,7 @@ describe("Preferences lifecycle and hardening", () => {
 			wordWrap: false,
 			zoom: 120,
 			theme: "catppuccin-mocha",
-			appearanceMode: "dark",
-			lineEnding: "Windows (CRLF)"
+			appearanceMode: "dark"
 		};
 		const storage = createMockStorage({
 			"np-prefs-v2": JSON.stringify(stored)
@@ -43,7 +42,6 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(prefs.zoom).toBe(120);
 		expect(prefs.theme).toBe("catppuccin-mocha");
 		expect(prefs.appearanceMode).toBe("dark");
-		expect(prefs.lineEnding).toBe("Windows (CRLF)");
 		// Default values for unspecified properties:
 		expect(prefs.statusBar).toBe(true);
 		expect(prefs.vimMode).toBe(false);

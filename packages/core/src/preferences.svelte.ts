@@ -28,8 +28,6 @@ const DEFAULTS = {
 	vimMode: false,
 	vimSyncClipboard: true,
 	zoom: 100,
-	lineEnding: 'Unix (LF)' as string,
-	encoding: 'UTF-8' as string,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,
 	accentColor: 'default' as string,
@@ -86,20 +84,6 @@ export class Preferences {
 	set zoom(val: number) {
 		if (this._data.zoom === val) return;
 		this._data.zoom = val;
-		this.save();
-	}
-
-	get lineEnding() { return this._data.lineEnding; }
-	set lineEnding(val: string) {
-		if (this._data.lineEnding === val) return;
-		this._data.lineEnding = val;
-		this.save();
-	}
-
-	get encoding() { return this._data.encoding; }
-	set encoding(val: string) {
-		if (this._data.encoding === val) return;
-		this._data.encoding = val;
 		this.save();
 	}
 
