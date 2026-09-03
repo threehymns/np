@@ -16,9 +16,11 @@ beforeAll(async () => {
 let makeWorkspace: (
 	detected: boolean
 ) => Promise<{ ws: Workspace }>;
+let WorkspaceClass: typeof import("./workspace.svelte").Workspace;
 
 beforeAll(async () => {
 	const mod = await import("./workspace.svelte");
+	WorkspaceClass = mod.Workspace;
 
 	makeWorkspace = async (detected: boolean) => {
 		const storage = createMockStorage({
@@ -56,7 +58,7 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		await ws.openDirectory();
 		expect(ws.repository).not.toBeNull();
 	});
-	it("keeps repository null in requestRootPermission when the folder is not a git repository", async () => {
+	it("keeps repository null and scans project tree in requestRootPermission when the folder is not a git repository", async () => {
 		const storage = createMockStorage({
 			verifyPermission: async () => true
 		});
@@ -71,6 +73,10 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		});
 		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
 		ws.rootOrigin = rootOrigin;
+		let scannedWith: FileOrigin | null = null;
+		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
+			scannedWith = origin;
+		});
 
 		const granted = await ws.requestRootPermission();
 
@@ -79,5 +85,36 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		// workspace.repository null (issue #64).
 		expect(granted).toBe(true);
 		expect(ws.repository).toBeNull();
+		// Project tree scan must still execute so the file explorer is populated.
+		expect(scannedWith).toEqual(rootOrigin);
+	});
+
+	it("scans project tree during session restore even when the folder is not a git repository", async () => {
+		const storage = createMockStorage({
+			queryPermission: async () => "granted"
+		});
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => false),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+		const persistence = new MemorySessionPersistence();
+		await persistence.saveRootFolder(rootOrigin);
+
+		const ws = new WorkspaceClass(storage, vcsFactory, persistence);
+		let scannedWith: FileOrigin | null = null;
+		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
+			scannedWith = origin;
+		});
+
+		await ws.restoreSession();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(ws.repository).toBeNull();
+		expect(scannedWith).toEqual(rootOrigin);
 	});
 });

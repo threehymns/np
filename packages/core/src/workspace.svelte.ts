@@ -376,11 +376,11 @@ export class Workspace {
 				const success = await repo.refresh();
 				this.applyPendingDiffRestore();
 				console.log('[Workspace] Repository initialized after permission:', success);
-
-				await this.projectTree.scan(this.rootOrigin);
 			} else {
 				this.repository = null;
 			}
+
+			await this.projectTree.scan(this.rootOrigin);
 
 			// Refresh permissions for already open files
 			for (const doc of this.documents) {
@@ -661,10 +661,10 @@ export class Workspace {
 									// Session restore loads tabs before the repo exists;
 									// re-apply the persisted diff selection once changes are in.
 									this.applyPendingDiffRestore();
-									await this.projectTree.scan(rootOrigin!);
 								} else {
 									this.repository = null;
 								}
+								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
 							}
