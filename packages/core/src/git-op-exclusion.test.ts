@@ -9,6 +9,13 @@ import type { GitChange, VCSAdapter } from "./project/vcs";
 // so these tests pin the queue semantics with fake adapters. Semantic outcomes
 // of the operations themselves stay covered by tests/contract/.
 
+// Yield to the event loop so the serialized git-op queue drains to its first
+// awaited gate deterministically. A macrotask (setTimeout) is more robust than
+// counting microtasks: `runExclusively` chains on the queue with `.then`, which
+// is entirely microtask-scheduled, so a single macrotask fires after every
+// pending microtask has resolved and the first op is parked on its gate.
+const flushQueue = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 function createTestChange(filepath: string): GitChange {
 	return {
 		filepath,
@@ -50,7 +57,7 @@ describe("repository git operations serialize", () => {
 
 		const first = applyHunkAction(appState, createTestChange('a.txt'), hunk, 'stage');
 		const second = applyHunkAction(appState, createTestChange('b.txt'), hunk, 'stage');
-		for (let i = 0; i < 10; i++) await Promise.resolve();
+		await flushQueue();
 
 		expect(writes).toEqual(['a.txt']);
 		expect(repo.isBusy).toBe(true);
@@ -80,7 +87,7 @@ describe("repository git operations serialize", () => {
 
 		const first = commands.execute('git.stage', 'x.txt');
 		const second = commands.execute('git.stage', 'y.txt');
-		for (let i = 0; i < 10; i++) await Promise.resolve();
+		await flushQueue();
 
 		expect(adapter.stageFile as any).toHaveBeenCalledTimes(1);
 		expect(repo.isBusy).toBe(true);
