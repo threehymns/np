@@ -87,6 +87,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 	}
 
 	private writeQueue: Promise<void> = Promise.resolve();
+	private writeGeneration = 0;
 
 	getItem(key: string): string | null {
 		if (this.hasSyntaxError || !this.cachedText) {
@@ -150,6 +151,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 
 		this.pendingText = currentText;
 		const targetText = currentText;
+		const generation = ++this.writeGeneration;
 
 		this.writeQueue = this.writeQueue
 			.then(async () => {
@@ -157,13 +159,18 @@ export class ElectronConfigStorage implements PreferenceStorage {
 					return;
 				}
 				await window.electronAPI.writeConfigFile(targetText);
-				this.cachedText = targetText;
+				if (this.writeGeneration === generation) {
+					this.cachedText = targetText;
+				}
 				if (this.pendingText === targetText) {
 					this.pendingText = null;
 				}
 			})
 			.catch((err) => {
 				console.error('Failed to persist config.json:', err);
+				if (this.writeGeneration === generation) {
+					this.writeGeneration = generation - 1;
+				}
 				if (this.pendingText === targetText) {
 					this.pendingText = null;
 				}

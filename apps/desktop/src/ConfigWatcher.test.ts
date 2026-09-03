@@ -110,23 +110,38 @@ describe('ConfigWatcher', () => {
 		// Replace readFile with a controllable promise, preserving the rest of fs/promises.
 		mock.module('fs/promises', () => ({ default: { ...fs, readFile: readFileMock } }));
 
-		const broadcast: string[] = [];
-		const watcher = new ConfigWatcher({
-			configPath,
-			debounceMs: 20,
-			onConfigChanged: (content) => broadcast.push(content)
-		});
+		try {
+			const broadcast: string[] = [];
+			const watcher = new ConfigWatcher({
+				configPath,
+				debounceMs: 20,
+				onConfigChanged: (content) => broadcast.push(content)
+			});
 
-		// Overlapping reloads: the first (older) read completes after the second starts.
-		const older = watcher.processChange();
-		const newer = watcher.processChange();
+			// Overlapping reloads: the first (older) read completes after the second starts.
+			const older = watcher.processChange();
+			const newer = watcher.processChange();
 
-		pendingReads[0]('{\n  "zoom": 125\n}');
-		pendingReads[1]('{\n  "zoom": 150\n}');
+			pendingReads[0]('{\n  "zoom": 125\n}');
+			pendingReads[1]('{\n  "zoom": 150\n}');
 
-		await Promise.all([older, newer]);
+			await Promise.all([older, newer]);
 
-		// Only the latest content may be broadcast; stale content is discarded.
-		expect(broadcast).toEqual(['{\n  "zoom": 150\n}']);
+			// Only the latest content may be broadcast; stale content is discarded.
+			expect(broadcast).toEqual(['{\n  "zoom": 150\n}']);
+		} finally {
+			// mock.module() overrides persist past mock.restore() in Bun, so
+			// explicitly re-register the real fs/promises to prevent later tests
+			// (and afterEach cleanup) from hanging on the controllable mock.
+			mock.module('fs/promises', () => ({
+				default: {
+					writeFile: fs.writeFile,
+					readFile: fs.readFile,
+					mkdtemp: fs.mkdtemp,
+					rm: fs.rm
+				}
+			}));
+			mock.restore();
+		}
 	});
 });

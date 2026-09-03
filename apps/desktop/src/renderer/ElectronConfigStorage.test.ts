@@ -297,4 +297,37 @@ describe('ElectronConfigStorage', () => {
 		expect(lastWritten).toContain('"zoom": 120');
 		expect(lastWritten).toContain('"wordWrap": false');
 	});
+
+	it('12. Queued write resolution: the newest write wins the final cached state even when the queue frees one write at a time', async () => {
+		const initialJsonc = `{\n  "zoom": 100\n}`;
+		mockReadConfigFileSync.mockReturnValue(initialJsonc);
+
+		const resolvers: Array<() => void> = [];
+		mockWriteConfigFile.mockImplementation(async (_content: string) => {
+			await new Promise<void>((resolve) => {
+				resolvers.push(resolve);
+			});
+		});
+
+		const storage = new ElectronConfigStorage();
+
+		// Queue two writes in submission order; the second is newer (zoom=300).
+		storage.setItem('np-prefs-v2', JSON.stringify({ zoom: 200 }));
+		storage.setItem('np-prefs-v2', JSON.stringify({ zoom: 300 }));
+
+		// Free the serialized chain one in-flight write at a time and let each
+		// completion fully settle before the next is dispatched.
+		for (let i = 0; i < 2; i++) {
+			while (resolvers.length === 0) {
+				await new Promise((r) => setTimeout(r, 0));
+			}
+			resolvers.shift()!();
+			await new Promise((r) => setTimeout(r, 0));
+			await Promise.resolve();
+		}
+
+		// Both writes ran; the final cached text must be the newest (zoom=300).
+		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
+		expect(storage.getItem('np-prefs-v2')).toContain('"zoom":300');
+	});
 });
