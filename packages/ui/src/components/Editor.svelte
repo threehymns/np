@@ -2,6 +2,7 @@
 	import { untrack } from "svelte";
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
+	import { historyField } from "@codemirror/commands";
 	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
@@ -42,68 +43,141 @@
 		getLanguageExtensions(untrack(() => doc.language)).then((initialExtensions) => {
 			if (isDestroyed || !editorEl) return;
 
-			const startState = EditorState.create({
-				doc: untrack(() => doc.content),
-				extensions: [
-					...createEditorExtensions({
-						wrapCompartment,
-						languageCompartment,
-						vimCompartment,
-						wrap,
-						vimEnabled: untrack(() => appState.prefs.vimMode),
-						initialLanguageExtensions: initialExtensions,
-					}),
-					EditorView.updateListener.of((update) => {
-						if (
-							update.docChanged &&
-							!update.transactions.some((tr) =>
-								tr.annotation(syncAnnotation),
-							)
-						) {
-							const newContent = update.state.doc.toString();
-							if (newContent !== doc.content) {
-								doc.content = newContent;
-							}
+			const extensions = [
+				...createEditorExtensions({
+					wrapCompartment,
+					languageCompartment,
+					vimCompartment,
+					wrap,
+					vimEnabled: untrack(() => appState.prefs.vimMode),
+					initialLanguageExtensions: initialExtensions,
+				}),
+				EditorView.updateListener.of((update) => {
+					if (
+						update.docChanged &&
+						!update.transactions.some((tr) =>
+							tr.annotation(syncAnnotation),
+						)
+					) {
+						const newContent = update.state.doc.toString();
+						if (newContent !== doc.content) {
+							doc.content = newContent;
 						}
+					}
 
-						if (update.selectionSet || update.docChanged) {
-							const state = update.state;
-							const selection = state.selection.main;
-							const line = state.doc.lineAt(selection.head);
+					if (update.selectionSet || update.docChanged) {
+						const state = update.state;
+						const selection = state.selection.main;
+						const line = state.doc.lineAt(selection.head);
 
-							const lineNum = line.number;
-							const colNum = selection.head - line.from + 1;
+						const lineNum = line.number;
+						const colNum = selection.head - line.from + 1;
 
-							if (selection.empty) {
-								selectionState.update(lineNum, colNum, 0, 0);
-							} else {
-								const selectedText = state.doc.sliceString(
-									selection.from,
-									selection.to,
-								);
-								const charCount = selectedText.length;
-								const wordCount = selectedText
-									.trim()
-									.split(/\s+/)
-									.filter(Boolean).length;
-								selectionState.update(lineNum, colNum, charCount, wordCount);
-							}
+						if (selection.empty) {
+							selectionState.update(lineNum, colNum, 0, 0);
+						} else {
+							const selectedText = state.doc.sliceString(
+								selection.from,
+								selection.to,
+							);
+							const charCount = selectedText.length;
+							const wordCount = selectedText
+								.trim()
+								.split(/\s+/)
+								.filter(Boolean).length;
+							selectionState.update(lineNum, colNum, charCount, wordCount);
 						}
-					}),
-				],
-			});
+					}
+				}),
+			];
+
+			let startState: EditorState;
+			const savedState = untrack(() => doc.editorState);
+			const currentContent = untrack(() => doc.content);
+			if (savedState) {
+				try {
+					startState = EditorState.fromJSON(
+						savedState,
+						{ extensions },
+						{ history: historyField },
+					);
+					if (startState.doc.toString() !== currentContent) {
+						const currentSelection = startState.selection;
+						const newHead = Math.min(currentSelection.main.head, currentContent.length);
+						const newAnchor = Math.min(currentSelection.main.anchor, currentContent.length);
+						startState = startState.update({
+							changes: { from: 0, to: startState.doc.length, insert: currentContent },
+							selection: { anchor: newAnchor, head: newHead },
+						}).state;
+					}
+				} catch {
+					startState = EditorState.create({
+						doc: currentContent,
+						extensions,
+					});
+				}
+			} else {
+				startState = EditorState.create({
+					doc: currentContent,
+					extensions,
+				});
+			}
 
 			view = new EditorView({
 				state: startState,
 				parent: editorEl,
 			});
+
+			if (doc.scrollPosition) {
+				view.scrollDOM.scrollTop = doc.scrollPosition.top;
+				view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+				requestAnimationFrame(() => {
+					if (view && doc.scrollPosition) {
+						view.scrollDOM.scrollTop = doc.scrollPosition.top;
+						view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+					}
+				});
+			}
 		});
 
 		return () => {
 			isDestroyed = true;
-			view?.destroy();
-			view = undefined;
+			if (view) {
+				doc.editorState = view.state.toJSON({ history: historyField });
+				doc.scrollPosition = {
+					top: view.scrollDOM.scrollTop,
+					left: view.scrollDOM.scrollLeft,
+				};
+				view.destroy();
+				view = undefined;
+			}
 		};
+	});
+
+	// Sync active state and layout
+	$effect(() => {
+		if (view && active) {
+			view.requestMeasure();
+			const state = view.state;
+			const selection = state.selection.main;
+			const line = state.doc.lineAt(selection.head);
+			const lineNum = line.number;
+			const colNum = selection.head - line.from + 1;
+			if (selection.empty) {
+				selectionState.update(lineNum, colNum, 0, 0);
+			} else {
+				const selectedText = state.doc.sliceString(
+					selection.from,
+					selection.to,
+				);
+				selectionState.update(
+					lineNum,
+					colNum,
+					selectedText.length,
+					selectedText.trim().split(/\s+/).filter(Boolean).length,
+				);
+			}
+		}
 	});
 
 	// Sync wrap setting
@@ -196,7 +270,7 @@
 		}
 	});
 
-	// Sync content from outside (e.g. file open)
+	// Sync content from outside (e.g. file open or disk reload)
 	$effect(() => {
 		const c = doc.content; // Track content
 		if (!active) return;
@@ -205,14 +279,24 @@
 			if (view) {
 				const currentDoc = view.state.doc.toString();
 				if (c !== currentDoc) {
+					const currentSelection = view.state.selection;
+					const newHead = Math.min(currentSelection.main.head, c.length);
+					const newAnchor = Math.min(currentSelection.main.anchor, c.length);
+					const prevScrollTop = view.scrollDOM.scrollTop;
+					const prevScrollLeft = view.scrollDOM.scrollLeft;
+
 					view.dispatch({
 						changes: {
 							from: 0,
 							to: view.state.doc.length,
 							insert: c,
 						},
+						selection: { anchor: newAnchor, head: newHead },
 						annotations: syncAnnotation.of(true),
 					});
+
+					view.scrollDOM.scrollTop = prevScrollTop;
+					view.scrollDOM.scrollLeft = prevScrollLeft;
 				}
 			}
 		});
