@@ -161,4 +161,84 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 		// ...and is still treated as modified against the new on-disk baseline.
 		expect(doc.isModified).toBe(true);
 	});
+
+	it("reloads unmodified documents with the checked-out content after a switch", async () => {
+		const oldSavedContent = "old committed content\n";
+		const newBranchContent = "new branch content\n";
+
+		const storage = createMockStorage({
+			pickDirectory: async () => rootOrigin,
+			verifyPermission: async () => true
+		});
+		storage.readFile = mock(async (o: FileOrigin) =>
+			o.path === fileOrigin.path ? newBranchContent : ""
+		);
+
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		await ws.openDirectory();
+
+		// Unmodified document: content matches its saved baseline.
+		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
+		ws.documents.push(doc);
+		expect(doc.isModified).toBe(false);
+
+		await ws.switchBranch("feature");
+
+		// Unmodified documents reload the checked-out (new branch) content.
+		expect(doc.content).toBe(newBranchContent);
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("preserves edits and marks deletedOnDisk when a modified file is gone after a switch", async () => {
+		const unsavedEdit = "my unsaved in-memory edit\n";
+		const storage = createMockStorage({
+			pickDirectory: async () => rootOrigin,
+			verifyPermission: async () => true
+		});
+		// The file no longer exists on disk after the switch (e.g. removed on the target branch).
+		storage.readFile = mock(async (o: FileOrigin) => {
+			if (o.path === fileOrigin.path) {
+				const err: any = new Error("not found");
+				err.name = "NotFoundError";
+				throw err;
+			}
+			return "";
+		});
+
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		await ws.openDirectory();
+
+		const doc = new DocumentSession(storage, "old committed content\n", fileOrigin, "a.ts", ws);
+		doc.content = unsavedEdit; // in-memory-only edit
+		ws.documents.push(doc);
+		expect(doc.isModified).toBe(true);
+
+		await ws.switchBranch("feature");
+
+		// The unsaved edit is preserved even though the file vanished, and the
+		// session reflects the file is gone on disk rather than silently loading.
+		expect(doc.content).toBe(unsavedEdit);
+		expect(doc.deletedOnDisk).toBe(true);
+		expect(doc.isModified).toBe(true);
+	});
 });
