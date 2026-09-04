@@ -190,7 +190,15 @@
 
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, ViewEntry>();
-	let editorResolvers = new Map<string, Array<(views: ViewEntry) => void>>();
+	// Pending getOrWaitEditor waiters, keyed to the requested mode so a
+	// registration for one mode never resolves a waiter for the other mode
+	// during rapid inline<->split switches (issue #81).
+	type ViewWaiter = {
+		mode: 'inline' | 'split';
+		preferSide: 'a' | 'b';
+		resolve: (view: EditorView | undefined) => void;
+	};
+	let editorResolvers = new Map<string, Array<ViewWaiter>>();
 
 	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
 		return (event: MouseEvent) => {
@@ -266,17 +274,64 @@
 		if (targetView) return targetView;
 
 		return new Promise<EditorView | undefined>((resolve) => {
+			// Last-resort backstop for genuinely slow registrations (view setup
+			// awaits async language extensions). Mode-aware paths below settle
+			// first in every normal flow.
 			const timer = setTimeout(() => {
+				removeWaiter(filepath, waiter);
 				resolve(pickView(editorViews.get(filepath), mode, preferSide));
 			}, 500);
 
+			const waiter: ViewWaiter = {
+				mode,
+				preferSide,
+				resolve: (view) => {
+					clearTimeout(timer);
+					resolve(view);
+				}
+			};
 			const list = editorResolvers.get(filepath) || [];
-			list.push((views) => {
-				clearTimeout(timer);
-				resolve(pickView(views, mode, preferSide));
-			});
+			list.push(waiter);
 			editorResolvers.set(filepath, list);
 		});
+	}
+
+	function removeWaiter(filepath: string, waiter: ViewWaiter) {
+		const list = editorResolvers.get(filepath);
+		if (!list) return;
+		const idx = list.indexOf(waiter);
+		if (idx !== -1) list.splice(idx, 1);
+		if (list.length === 0) editorResolvers.delete(filepath);
+	}
+
+	// Resolve only waiters whose requested mode now has a matching view.
+	// Waiters for other modes stay queued for their own registration.
+	function fireReadyResolvers(filepath: string) {
+		const list = editorResolvers.get(filepath);
+		if (!list || list.length === 0) return;
+		const views = editorViews.get(filepath);
+		for (const waiter of [...list]) {
+			const view = pickView(views, waiter.mode, waiter.preferSide);
+			if (view !== undefined) {
+				removeWaiter(filepath, waiter);
+				waiter.resolve(view);
+			}
+		}
+	}
+
+	// Settle waiters for a view that is being torn down (mode switch or file
+	// removal) with undefined so callers skip instead of hanging on the
+	// backstop or being resolved by a stale registration. When mode is
+	// omitted, all waiters for the filepath are aborted.
+	function abortResolvers(filepath: string, mode?: 'inline' | 'split') {
+		const list = editorResolvers.get(filepath);
+		if (!list || list.length === 0) return;
+		for (const waiter of [...list]) {
+			if (mode === undefined || waiter.mode === mode) {
+				removeWaiter(filepath, waiter);
+				waiter.resolve(undefined);
+			}
+		}
 	}
 
 	function createFileNavKeymap(filepath: string) {
@@ -385,11 +440,7 @@
 		const updated = { ...current, ...entry };
 		editorViews.set(filepath, updated);
 
-		const pending = editorResolvers.get(filepath);
-		if (pending) {
-			pending.forEach((resolve) => resolve(updated));
-			editorResolvers.delete(filepath);
-		}
+		fireReadyResolvers(filepath);
 	}
 
 	// Svelte action to initialize CodeMirror editor for inline unified diff
@@ -508,6 +559,9 @@
 					delete existing.inline;
 					if (!existing.split) editorViews.delete(currentOptions.filepath);
 				}
+				// The inline view is gone: settle its waiters now instead of
+				// leaving them for the backstop or a stale registration.
+				abortResolvers(currentOptions.filepath, 'inline');
 				view?.destroy();
 			}
 		};
@@ -690,6 +744,9 @@
 					delete existing.split;
 					if (!existing.inline) editorViews.delete(currentOptions.filepath);
 				}
+				// The split view is gone: settle its waiters now instead of
+				// leaving them for the backstop or a stale registration.
+				abortResolvers(currentOptions.filepath, 'split');
 				view?.destroy();
 			}
 		};

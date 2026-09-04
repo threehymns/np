@@ -129,4 +129,40 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await expect(page.locator('.cm-editor')).toHaveCount(4);
 		expect(await page.evaluate(() => (window as any).__getFileDiffCalls)).toBe(2);
 	});
+
+	test('arrow traversal across files stays correct when toggling view mode mid-navigation', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files: split view mounts two editors per file
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Toggle to inline mid-navigation: editors remount, one per file
+		await page.locator('button[title="Inline View"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(2);
+
+		// Header ArrowDown resolves the inline editor for the same file
+		await fileHeaders.first().focus();
+		await page.keyboard.press('ArrowDown');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+		// Toggle back to split and traverse across files via header ArrowUp
+		await page.locator('button[title="Split View"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+		await fileHeaders.nth(1).focus();
+		await page.keyboard.press('ArrowUp');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+	});
 });
