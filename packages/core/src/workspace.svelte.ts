@@ -317,6 +317,9 @@ export class Workspace {
 		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 
+		// Drop the previous folder's repository before the async VCS probe so
+		// the UI never shows stale branch/changes for the new folder.
+		this.repository = null;
 		const repo = new Repository(origin, this.vcsFactory);
 		const detected = await repo.adapter.detect(origin.path);
 		if (detected) {
@@ -653,6 +656,9 @@ export class Workspace {
 						// Initialize repo and tree in background
 						(async () => {
 							try {
+								// Drop the previous session's repository before the async
+								// VCS probe so the UI never shows stale state.
+								this.repository = null;
 								const repo = new Repository(rootOrigin!, this.vcsFactory);
 								const detected = await repo.adapter.detect(rootOrigin!.path);
 								if (detected) {
