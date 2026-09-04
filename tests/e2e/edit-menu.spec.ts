@@ -1,11 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
-import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
 test('edit menu items work correctly', async ({ page }) => {
-  forwardBrowserConsole(page);
   // Mock navigator.clipboard to avoid flaky parallel test failures due to browser focus
   await page.addInitScript(() => {
     let clipboardData = '';

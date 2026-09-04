@@ -1,10 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
-import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.describe('Icon Resolution for Folders and Files', () => {
 	test.beforeEach(async ({ page }) => {
-		forwardBrowserConsole(page);
 		await mockIconThemes(page);
 		await page.goto('/');
 		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });

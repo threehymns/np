@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
 

@@ -1,11 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
-import { EDITOR_READY_TIMEOUT, debugLog, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
 test('vim mode - shift+v paste from end of line without clipboard sync', async ({ page }) => {
-  forwardBrowserConsole(page);
   await mockIconThemes(page);
   await page.goto('/');
 
@@ -50,14 +48,12 @@ test('vim mode - shift+v paste from end of line without clipboard sync', async (
 
   // Get the text content of the editor
   const text = await editor.innerText();
-  debugLog('Editor text content after Shift+V + p (no clipboard sync):', JSON.stringify(text));
 
   expect(text).not.toContain('second linep');
   expect(text).toContain('first line\nfirst line');
 });
 
 test('vim mode - shift+v followed by p to paste clipboard content (with clipboard sync)', async ({ page, context }) => {
-  forwardBrowserConsole(page);
   await mockIconThemes(page);
   
   // Grant clipboard permissions
@@ -105,14 +101,12 @@ test('vim mode - shift+v followed by p to paste clipboard content (with clipboar
 
   // Get the text content of the editor
   const text = await editor.innerText();
-  debugLog('Editor text content after Shift+V + p (clipboard sync):', JSON.stringify(text));
 
   expect(text).not.toContain('second linep');
   expect(text).toContain('copied from clipboard');
 });
 
 test('vim mode - WhichKey support', async ({ page }) => {
-  forwardBrowserConsole(page);
   await mockIconThemes(page);
   await page.goto('/');
 

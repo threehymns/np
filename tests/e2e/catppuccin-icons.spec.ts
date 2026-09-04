@@ -1,6 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
-import { EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 
 test.describe('Catppuccin Icon Theme', () => {
 	test.beforeEach(async ({ page }) => {
