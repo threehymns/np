@@ -13,6 +13,8 @@ export class DocumentSession {
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
 	pendingLineToScroll = $state<number | null>(null);
+	editorState = $state.raw<any>(null);
+	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
 	
 	private savedContent = $state('');
 	private storage: Storage;
