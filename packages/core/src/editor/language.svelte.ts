@@ -28,11 +28,13 @@ export class LanguageSupport {
 		if (extension === "svelte") return extraLanguages[0];
 
 		const found = LanguageDescription.matchFilename(allLanguages, filename);
-		return (found || this.getMarkdown()) as LanguageDescription;
+		return found || this.getMarkdown();
 	}
 
 	static getMarkdown(): LanguageDescription {
-		return allLanguages.find((l) => l.name === "Markdown") as LanguageDescription;
+		const markdown = allLanguages.find((l) => l.name === "Markdown");
+		if (!markdown) throw new Error("Markdown language support is missing from @codemirror/language-data");
+		return markdown;
 	}
 
 	static async loadLanguage(lang: LanguageDescription) {
