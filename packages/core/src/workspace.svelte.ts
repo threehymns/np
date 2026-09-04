@@ -317,9 +317,19 @@ export class Workspace {
 		this.rootOrigin = origin;
 		this.hasRootPermission = true;
 
-		this.repository = new Repository(origin, this.vcsFactory);
-		await this.repository.adapter.detect(origin.path);
-		await this.repository.refresh();
+		// Drop the previous folder's repository before the async VCS probe so
+		// the UI never shows stale branch/changes for the new folder.
+		this.repository = null;
+		const repo = new Repository(origin, this.vcsFactory);
+		const detected = await repo.adapter.detect(origin.path);
+		if (detected) {
+			this.repository = repo;
+			await repo.refresh();
+		} else {
+			// Not a git repository: keep repository null so the Git panel shows
+			// its "No Git Repository" empty state instead of a dead panel.
+			this.repository = null;
+		}
 		
 		// Add to recent folders
 		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
@@ -355,19 +365,27 @@ export class Workspace {
 			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
 
-			this.repository = new Repository(this.rootOrigin, this.vcsFactory);
-			
+			// Drop any stale repository before the async VCS probe so the UI
+			// never shows the previous folder's state while detecting.
+			this.repository = null;
+			const repo = new Repository(this.rootOrigin, this.vcsFactory);
+
 			// Fresh start for the adapter
-			const adapter = (this.repository as any).adapter;
+			const adapter = (repo as any).adapter;
 			if (adapter && typeof adapter.reset === 'function') {
 				adapter.reset();
 			}
-			
-			await this.repository.adapter.detect(this.rootOrigin.path);
-			const success = await this.repository.refresh();
-			this.applyPendingDiffRestore();
-			console.log('[Workspace] Repository initialized after permission:', success);
-			
+
+			const detected = await adapter.detect(this.rootOrigin.path);
+			if (detected) {
+				this.repository = repo;
+				const success = await repo.refresh();
+				this.applyPendingDiffRestore();
+				console.log('[Workspace] Repository initialized after permission:', success);
+			} else {
+				this.repository = null;
+			}
+
 			await this.projectTree.scan(this.rootOrigin);
 
 			// Refresh permissions for already open files
@@ -641,11 +659,20 @@ export class Workspace {
 						// Initialize repo and tree in background
 						(async () => {
 							try {
-								this.repository = new Repository(rootOrigin!, this.vcsFactory);
-								await this.repository.refresh();
-								// Session restore loads tabs before the repo exists;
-								// re-apply the persisted diff selection once changes are in.
-								this.applyPendingDiffRestore();
+								// Drop the previous session's repository before the async
+								// VCS probe so the UI never shows stale state.
+								this.repository = null;
+								const repo = new Repository(rootOrigin!, this.vcsFactory);
+								const detected = await repo.adapter.detect(rootOrigin!.path);
+								if (detected) {
+									this.repository = repo;
+									await repo.refresh();
+									// Session restore loads tabs before the repo exists;
+									// re-apply the persisted diff selection once changes are in.
+									this.applyPendingDiffRestore();
+								} else {
+									this.repository = null;
+								}
 								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);

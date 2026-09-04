@@ -35,7 +35,9 @@ function makeChange(filepath: string, staged: boolean): GitChange {
 
 function createVcsFactory(changes: GitChange[]): (root: FileOrigin) => VCSAdapter {
 	return () => ({
-		detect: mock(async () => {}),
+		// Folders opened in these tests are treated as git repositories, so detect
+		// must report true for workspace.repository to be created (issue #64).
+		detect: mock(async () => true),
 		getCurrentBranch: async () => "main",
 		getBranches: async () => ["main"],
 		getChanges: async () => changes,
