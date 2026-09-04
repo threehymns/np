@@ -39,6 +39,9 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e f": "edit.find",
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
+			// Hunk navigation mirrors Zed's vim-mode `]c` / `[c`
+			"] c": "git.nextHunk",
+			"[ c": "git.prevHunk",
 			"space v s": "view.toggleSidebar",
 			"space p": "commandPalette.toggle",
 			"space d": "window.toggleDevTools"

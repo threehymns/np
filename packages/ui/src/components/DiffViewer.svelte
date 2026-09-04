@@ -789,6 +789,22 @@
 
 	let repo = $derived(appState.workspace.repository);
 
+	// Publish hunk navigation for the git.nextHunk / git.prevHunk commands
+	// (issue #80). Cleared on unmount so the commands disable outside the
+	// diff view; identity-checked in case another instance mounted after us.
+	$effect(() => {
+		const navigator = {
+			nextHunk: () => jumpToChunk('next'),
+			prevHunk: () => jumpToChunk('prev')
+		};
+		appState.activeDiffNavigator = navigator;
+		return () => {
+			if (appState.activeDiffNavigator === navigator) {
+				appState.activeDiffNavigator = undefined;
+			}
+		};
+	});
+
 	// Scroll target into view effect
 	let lastScrolledFilepath = '';
 	$effect(() => {

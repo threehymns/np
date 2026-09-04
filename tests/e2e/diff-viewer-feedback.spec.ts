@@ -165,4 +165,61 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await page.keyboard.press('ArrowUp');
 		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
 	});
+
+	test('hunk navigation via ]c / [c keybindings in vim normal mode', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+			(window as any).appState.prefs.vimMode = true;
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files so hunks span multiple editors
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Which file does the focused diff editor belong to?
+		const focusedFile = () =>
+			page.evaluate(() => {
+				const editor = document.querySelector('.cm-editor.cm-focused');
+				if (!editor) return 'none';
+				const text = editor.textContent ?? '';
+				if (text.includes('const')) return 'hello.ts';
+				if (text.includes('Line')) return 'README.md';
+				return 'unknown';
+			});
+
+		// Focus the first diff editor (vim normal mode persists from prefs)
+		await page.locator('.cm-editor').first().click();
+		await page.keyboard.press('Escape');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+		// ]c repeatedly: must traverse into the other file (and wrap around,
+		// since presses outnumber hunks). Same for [c backwards.
+		const seenNext = new Set<string>();
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press(']');
+			await page.keyboard.press('c');
+			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+			seenNext.add(await focusedFile());
+		}
+		expect([...seenNext].sort()).toEqual(['README.md', 'hello.ts']);
+
+		const seenPrev = new Set<string>();
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press('[');
+			await page.keyboard.press('c');
+			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+			seenPrev.add(await focusedFile());
+		}
+		expect([...seenPrev].sort()).toEqual(['README.md', 'hello.ts']);
+	});
 });

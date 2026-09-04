@@ -60,6 +60,16 @@ export interface ExportService {
 	exportFile(options: ExportFileOptions): Promise<void>;
 }
 
+/**
+ * Hunk-navigation bridge published by the mounted diff view (issue #80).
+ * Core `git.nextHunk` / `git.prevHunk` commands call through this slot so
+ * they mirror the DiffViewer's button handlers including wrap behavior.
+ */
+export interface DiffHunkNavigator {
+	nextHunk(): void;
+	prevHunk(): void;
+}
+
 export interface AppStateOptions {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
@@ -87,6 +97,9 @@ export class AppState {
 	
 	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
 	activeEditorView = $state<any>(undefined);
+	// Mounted diff view's hunk navigator, if any. Mirrors the
+	// activeEditorView precedent: UI publishes, core commands consume.
+	activeDiffNavigator = $state<DiffHunkNavigator | undefined>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;

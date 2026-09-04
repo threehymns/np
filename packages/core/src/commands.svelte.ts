@@ -677,6 +677,26 @@ export function registerCoreCommands(appState: AppState) {
 
 
 	appState.commands.register({
+		id: 'git.nextHunk',
+		label: 'Git: Next Hunk',
+		category: 'Source Control',
+		action: () => {
+			appState.activeDiffNavigator?.nextHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
+
+	appState.commands.register({
+		id: 'git.prevHunk',
+		label: 'Git: Previous Hunk',
+		category: 'Source Control',
+		action: () => {
+			appState.activeDiffNavigator?.prevHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
+
+	appState.commands.register({
 		id: 'git.stageHunk',
 		label: 'Git: Stage Hunk',
 		category: 'Source Control',
