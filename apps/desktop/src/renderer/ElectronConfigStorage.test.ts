@@ -8,6 +8,11 @@ describe('ElectronConfigStorage', () => {
 	let mockReadConfigFileSync: ReturnType<typeof mock>;
 	let mockWriteConfigFile: ReturnType<typeof mock>;
 
+	// Config writes are dispatched through ElectronConfigStorage's internal async
+	// writeQueue (serializes concurrent setItem writes). Tests must yield to the
+	// event loop for the queue to drain before asserting on writeConfigFile.
+	const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 	beforeEach(() => {
 		mockReadConfigFileSync = mock(() => null);
 		mockWriteConfigFile = mock(async (_content: string) => {});
@@ -24,7 +29,7 @@ describe('ElectronConfigStorage', () => {
 		delete (globalThis as any).window;
 	});
 
-	it('1. Comment preservation: preceding, inline, and trailing comments stay intact when modifying a key', () => {
+	it('1. Comment preservation: preceding, inline, and trailing comments stay intact when modifying a key', async () => {
 		const originalJsonc = `{
   // Header comment explaining zoom
   "zoom": 100, // inline comment on zoom
@@ -43,6 +48,7 @@ describe('ElectronConfigStorage', () => {
 
 		// Modify zoom
 		prefs.zoom = 120;
+		await flush();
 
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 		const writtenText = mockWriteConfigFile.mock.calls[0][0];
@@ -56,7 +62,7 @@ describe('ElectronConfigStorage', () => {
 		expect(writtenText).toContain('"theme": "default"');
 	});
 
-	it('2. Unknown key preservation: unrecognized keys in config.json remain untouched when modifying settings', () => {
+	it('2. Unknown key preservation: unrecognized keys in config.json remain untouched when modifying settings', async () => {
 		const jsoncWithCustomKeys = `{
   "customPluginSetting": {
     "enabled": true,
@@ -72,6 +78,7 @@ describe('ElectronConfigStorage', () => {
 		const prefs = new Preferences(storage);
 
 		prefs.wordWrap = false;
+		await flush();
 
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 		const writtenText = mockWriteConfigFile.mock.calls[0][0];
@@ -125,7 +132,7 @@ describe('ElectronConfigStorage', () => {
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
 	});
 
-	it('5. Default template creation: DEFAULT_CONFIG_CONTENT is valid JSONC and parseable', () => {
+	it('5. Default template creation: DEFAULT_CONFIG_CONTENT is valid JSONC and parseable', async () => {
 		mockReadConfigFileSync.mockReturnValue(DEFAULT_CONFIG_CONTENT);
 
 		const storage = new ElectronConfigStorage();
@@ -142,6 +149,7 @@ describe('ElectronConfigStorage', () => {
 
 		// Modify a value and verify template comments are preserved
 		prefs.zoom = 110;
+		await flush();
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 		const writtenText = mockWriteConfigFile.mock.calls[0][0];
 
@@ -197,7 +205,7 @@ describe('ElectronConfigStorage', () => {
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
 	});
 
-	it('8. Trailing comma tolerance: a legal trailing comma is not treated as a syntax error and settings still load', () => {
+	it('8. Trailing comma tolerance: a legal trailing comma is not treated as a syntax error and settings still load', async () => {
 		const jsoncWithTrailingComma = `{
   "zoom": 120,
   "theme": "default",
@@ -214,6 +222,7 @@ describe('ElectronConfigStorage', () => {
 
 		// Writes must still work even though the file has a trailing comma
 		prefs.zoom = 140;
+		await flush();
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 	});
 
@@ -234,19 +243,17 @@ describe('ElectronConfigStorage', () => {
 
 		const payload = JSON.stringify({ zoom: 120 });
 		storage.setItem('np-prefs-v2', payload);
-		await Promise.resolve();
-		await Promise.resolve();
+		await flush();
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 
 		// Identical payload again. Under the old behavior the failed text was
 		// cached as persisted, suppressing this write; it must now retry.
 		storage.setItem('np-prefs-v2', payload);
-		await Promise.resolve();
-		await Promise.resolve();
+		await flush();
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 	});
 
-	it('10. Trailing-comment preservation on insert: adding a preference does not steal an inline trailing comment from the final property', () => {
+	it('10. Trailing-comment preservation on insert: adding a preference does not steal an inline trailing comment from the final property', async () => {
 		const jsoncWithTrailingCommentOnLast = `{
   "zoom": 100,
   "theme": "default" // This comment belongs to theme
@@ -259,6 +266,7 @@ describe('ElectronConfigStorage', () => {
 
 		// Add a brand-new preference (wordWrap) not present in the file.
 		prefs.wordWrap = false;
+		await flush();
 
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
 		const writtenText = mockWriteConfigFile.mock.calls[0][0];

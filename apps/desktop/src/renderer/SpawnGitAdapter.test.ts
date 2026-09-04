@@ -33,6 +33,23 @@ describe('SpawnGitAdapter', () => {
 		delete (globalThis as any).window;
 	});
 
+	const mockSwitch = (opts: { status: string; diff?: { code: number; stdout: string; stderr?: string }; checkout?: { code: number; stderr: string } | 'throw' }) => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch') return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			if (args[0] === 'status') return { code: 0, stdout: opts.status, stderr: '' };
+			if (args[0] === 'diff') {
+				if (opts.diff) return { code: opts.diff.code, stdout: opts.diff.stdout, stderr: opts.diff.stderr ?? '' };
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'checkout') {
+				if (opts.checkout === 'throw') throw new Error('checkout should not be called when diff fails');
+				if (opts.checkout) return { code: opts.checkout.code, stdout: '', stderr: opts.checkout.stderr };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+	};
+
 	it('passes -uall to git status and only reads untracked files (no git show) during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
@@ -651,5 +668,60 @@ describe('SpawnGitAdapter', () => {
 		mockGitRun.mockImplementation(async () => ({ code: 128, stdout: '', stderr: 'fatal: index file corrupt' }));
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await expect(adapter.stageAll()).rejects.toThrow(/index file corrupt/);
+	});
+
+	it('switchBranch returns error status when git diff exits non-zero instead of proceeding to checkout', async () => {
+		mockSwitch({
+			status: ' M dirty.txt\0',
+			diff: { code: 128, stdout: '', stderr: 'fatal: git diff failed' },
+			checkout: 'throw'
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		expect(res.status).toBe('error');
+		if (res.status === 'error') {
+			expect(res.message).toContain('git diff failed');
+		}
+	});
+
+	it('switchBranch does not spread uncommitted files into diff CLI arguments', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch') return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			if (args[0] === 'status') return { code: 0, stdout: ' M dirty1.txt\0 M dirty2.txt\0', stderr: '' };
+			if (args[0] === 'diff') {
+				// Assert args only compare tree to tree without spreading dirty filepaths
+				expect(args).toEqual(['diff', '--name-only', '-z', 'HEAD', 'feature']);
+				return { code: 0, stdout: 'dirty1.txt\0other.txt\0', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		expect(res.status).toBe('blocked');
+		if (res.status === 'blocked') {
+			expect(res.reason).toBe('conflict');
+			// Intersected with status.uncommittedFiles, so only dirty1.txt is reported
+			expect(res.files).toEqual(['dirty1.txt']);
+		}
+	});
+
+	it('switchBranch blocks an untracked collision before checkout (matches contract)', async () => {
+		mockSwitch({
+			status: '?? untracked.txt\0',
+			// Real git lists a path absent from HEAD but present on the target,
+			// so the tree-to-tree diff contains the colliding untracked file.
+			diff: { code: 0, stdout: 'untracked.txt\0' },
+			checkout: 'throw'
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		// Same expectation as the contract test 'blocks switch when local
+		// untracked file collides with target branch tracked file'. #69 owns
+		// any future `worktree` vs `conflict` reason harmonization.
+		expect(res).toEqual({ status: 'blocked', reason: 'conflict', files: ['untracked.txt'] });
 	});
 });
