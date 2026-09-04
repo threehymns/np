@@ -222,4 +222,56 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		}
 		expect([...seenPrev].sort()).toEqual(['README.md', 'hello.ts']);
 	});
+
+	test('diff cursor syncs Git panel active entry', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files so each mounts editors
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Reveal the Git panel
+		await page.evaluate(() => {
+			const appState = (window as any).appState;
+			appState.activeSidebarTab = 'git';
+			appState.prefs.sidebarVisible = true;
+		});
+
+		const waitForActiveFile = (filepath: string) =>
+			page.waitForFunction((fp) => (window as any).appState.workspace.repository?.activeDiffFile?.filepath === fp, filepath, { timeout: 5000 });
+		const activeRow = (name: string) =>
+			page.locator('.bg-sidebar-accent.border-border', { hasText: name });
+
+		// Focusing another file's diff editor moves the panel highlight
+		await page.locator('[id="diff-file-hello.ts"] .cm-editor').first().click();
+		await waitForActiveFile('hello.ts');
+		await expect(activeRow('hello.ts')).toBeVisible();
+
+		// And back again
+		await page.locator('[id="diff-file-README.md"] .cm-editor').first().click();
+		await waitForActiveFile('README.md');
+		await expect(activeRow('README.md')).toBeVisible();
+
+		// Hunk navigation across files drags the highlight along (press until
+		// we leave README regardless of how many hunks it holds)
+		for (let i = 0; i < 4; i++) {
+			const current = await page.evaluate(() => (window as any).appState.workspace.repository?.activeDiffFile?.filepath);
+			if (current === 'hello.ts') break;
+			await page.locator('button[title="Next Hunk"]').click();
+		}
+		await waitForActiveFile('hello.ts');
+		await expect(activeRow('hello.ts')).toBeVisible();
+	});
 });

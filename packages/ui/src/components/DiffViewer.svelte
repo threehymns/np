@@ -443,6 +443,38 @@
 		fireReadyResolvers(filepath);
 	}
 
+	// Push diff-editor cursor activity back to the Git panel (issue #79),
+	// mirroring Zed's SelectionsChanged -> select_entry_by_path with its
+	// contains_focused guard: only the focused editor drives
+	// repo.activeDiffFile, so panel clicks and background updates never
+	// fight the user's panel selection.
+	function syncActiveFileFromCursor(filepath: string, view: EditorView) {
+		if (!view.hasFocus) return;
+		const repository = appState.workspace.repository;
+		if (!repository) return;
+		if (repository.activeDiffFile?.filepath === filepath) return;
+		const match = repository.changes.find((c) => c.filepath === filepath);
+		if (match) {
+			repository.activeDiffFile = match;
+		}
+	}
+
+	function cursorSyncExtension(getFilepath: () => string) {
+		return EditorView.updateListener.of((update) => {
+			if (update.docChanged || update.selectionSet) {
+				syncActiveFileFromCursor(getFilepath(), update.view);
+			}
+		});
+	}
+
+	// Focus without a selection change (e.g. jumpToChunk focuses the editor
+	// after dispatching the new selection) still counts as cursor activity.
+	function trackCursorFocus(view: EditorView, getFilepath: () => string) {
+		const onFocusIn = () => syncActiveFileFromCursor(getFilepath(), view);
+		view.dom.addEventListener('focusin', onFocusIn);
+		return () => view.dom.removeEventListener('focusin', onFocusIn);
+	}
+
 	// Svelte action to initialize CodeMirror editor for inline unified diff
 	function setupEditor(
 		node: HTMLDivElement,
@@ -460,6 +492,7 @@
 		let view: EditorView | undefined;
 		let currentOptions = options;
 		let disposed = false;
+		let untrackCursorFocus: (() => void) | undefined;
 		const wrapCompartment = new Compartment();
 		const diffCompartment = new Compartment();
 		const hunkCompartment = new Compartment();
@@ -487,6 +520,7 @@
 					editorTheme,
 					diffTheme,
 					createFileNavKeymap(options.filepath),
+					cursorSyncExtension(() => currentOptions.filepath),
 					wrapCompartment.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 				]
 			});
@@ -495,6 +529,7 @@
 				state,
 				parent: node
 			});
+			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
 			registerEditorView(currentOptions.filepath, { inline: view });
 		});
 
@@ -554,6 +589,7 @@
 			destroy() {
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
+				untrackCursorFocus?.();
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.inline;
@@ -584,6 +620,7 @@
 		let view: MergeView | undefined;
 		let currentOptions = options;
 		let cleanupSync: (() => void) | undefined;
+		let untrackCursorFocus: (() => void) | undefined;
 		let disposed = false;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
@@ -602,6 +639,7 @@
 						editorTheme,
 						diffTheme,
 						createFileNavKeymap(options.filepath),
+						cursorSyncExtension(() => currentOptions.filepath),
 						wrapCompartmentA.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -622,6 +660,7 @@
 						}),
 						diffTheme,
 						createFileNavKeymap(options.filepath),
+						cursorSyncExtension(() => currentOptions.filepath),
 						wrapCompartmentB.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -671,6 +710,12 @@
 			}
 
 			registerEditorView(currentOptions.filepath, { split: view });
+			const untrackA = trackCursorFocus(view.a, () => currentOptions.filepath);
+			const untrackB = trackCursorFocus(view.b, () => currentOptions.filepath);
+			untrackCursorFocus = () => {
+				untrackA();
+				untrackB();
+			};
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
@@ -739,6 +784,7 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
+				untrackCursorFocus?.();
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.split;
