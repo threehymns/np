@@ -68,6 +68,7 @@ import { horizontalRulePlugin } from "./extensions/hr";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
+import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
 	if (!langDesc) return [];
@@ -79,16 +80,19 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			lang,
 			markdown({
 				codeLanguages: allLanguages as any,
-				extensions: [Table, GFM] as any,
+				extensions: [Table, GFM, WikiLinkExtension] as any,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
+			}),
+			markdownLanguage.data.of({
+				autocomplete: wikilinkAutocompletion,
 			}),
 			markdownTables({
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM] as any,
+					extensions: [Table, GFM, WikiLinkExtension] as any,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),
@@ -208,6 +212,7 @@ export * from "./extensions/blockquote";
 export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
+export * from "./extensions/wikilinks";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";

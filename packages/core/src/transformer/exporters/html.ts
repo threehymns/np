@@ -1,13 +1,74 @@
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import type { Exporter } from '../types';
+import { parseInternalLink } from '../../links';
+
+const wikilinkExtension = {
+	name: 'wikilink',
+	level: 'inline' as const,
+	start(src: string) {
+		const match = src.match(/!?\[\[/);
+		return match ? match.index : -1;
+	},
+	tokenizer(src: string) {
+		const rule = /^(!)?\[\[([^\]\n]+)\]\]/;
+		const match = rule.exec(src);
+		if (match) {
+			const isEmbed = Boolean(match[1]);
+			const inner = match[2];
+			return {
+				type: 'wikilink',
+				raw: match[0],
+				isEmbed,
+				inner,
+			};
+		}
+	},
+	renderer(token: any) {
+		const parsed = parseInternalLink((token.isEmbed ? '!' : '') + '[[' + token.inner + ']]');
+		if (parsed.isEmbed) {
+			const alt = parsed.alias || parsed.path;
+			return `<img src="${parsed.path}" alt="${alt}" />`;
+		}
+
+		let href = '';
+		if (parsed.path) {
+			const hasExt = /\.[a-zA-Z0-9]+$/.test(parsed.path);
+			href = hasExt ? parsed.path.replace(/\.md$/, '.html') : `${parsed.path}.html`;
+		}
+		if (parsed.subpath) {
+			const slug = parsed.subpath.value
+				.toLowerCase()
+				.replace(/[^\w\s-]/g, '')
+				.replace(/\s+/g, '-');
+			href = href ? `${href}#${slug}` : `#${slug}`;
+		}
+		const displayText =
+			parsed.alias ||
+			(parsed.path
+				? parsed.subpath
+					? `${parsed.path}#${parsed.subpath.value}`
+					: parsed.path
+				: parsed.subpath?.value || '');
+
+		return `<a href="${href}">${displayText}</a>`;
+	},
+};
 
 export class HTMLExporter implements Exporter {
 	format = 'html';
 	extension = '.html';
+	private markedInstance: Marked;
+
+	constructor() {
+		this.markedInstance = new Marked();
+		this.markedInstance.use({
+			extensions: [wikilinkExtension],
+		});
+	}
 
 	async export(content: string): Promise<string> {
-		const body = await marked.parse(content);
-		
+		const body = await this.markedInstance.parse(content);
+
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>

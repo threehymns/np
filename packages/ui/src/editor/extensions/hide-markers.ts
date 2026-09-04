@@ -107,6 +107,47 @@ class HideMarkersPlugin {
 						}
 					}
 
+					if (type === "WikiLink") {
+						const isExpanded =
+							view.hasFocus &&
+							selection.from <= node.to &&
+							selection.to >= node.from;
+						if (isExpanded) {
+							builder.add(
+								node.from,
+								node.to,
+								Decoration.mark({
+									class: "cm-link-expanded",
+								}),
+							);
+						} else {
+							let aliasNode: { from: number; to: number } | null = null;
+							let cursor = node.node.cursor();
+							if (cursor.firstChild()) {
+								do {
+									if (cursor.name === "WikiLinkAlias") {
+										aliasNode = { from: cursor.from, to: cursor.to };
+										break;
+									}
+								} while (cursor.nextSibling());
+							}
+
+							if (aliasNode) {
+								builder.add(node.from, aliasNode.from, Decoration.replace({}));
+								builder.add(node.to - 2, node.to, Decoration.replace({}));
+							} else {
+								const openMarkLen = view.state.doc.sliceString(node.from, node.from + 1) === "!" ? 3 : 2;
+								builder.add(node.from, node.from + openMarkLen, Decoration.replace({}));
+								builder.add(node.to - 2, node.to, Decoration.replace({}));
+							}
+						}
+						return false;
+					}
+
+					if (type === "WikiLinkMark") {
+						return false;
+					}
+
 					const isMarker =
 						type.includes("Mark") ||
 						type.includes("Delimiter") ||
@@ -265,6 +306,7 @@ class HideMarkersPlugin {
 	}
 }
 
+export { HideMarkersPlugin };
 export const hideMarkersPlugin = ViewPlugin.fromClass(HideMarkersPlugin, {
 	decorations: (v) => v.decorations,
 });

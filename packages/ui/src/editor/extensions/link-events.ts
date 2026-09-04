@@ -1,5 +1,7 @@
 import { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { workspaceFacet, currentDocFacet } from "./wikilinks";
+import { openInternalLink } from "@np/core/links";
 
 export const linkHandlers = EditorView.domEventHandlers({
 	mousedown: (event, view) => {
@@ -16,11 +18,15 @@ export const linkHandlers = EditorView.domEventHandlers({
 		let isLink = false;
 		let isMarkerOrURL = false;
 		while (curr && curr.name !== "Document") {
-			if (curr.name === "Link") {
+			if (curr.name === "Link" || curr.name === "WikiLink") {
 				isLink = true;
 				break;
 			}
-			if (curr.name === "LinkMark" || curr.name === "URL") {
+			if (
+				curr.name === "LinkMark" ||
+				curr.name === "WikiLinkMark" ||
+				curr.name === "URL"
+			) {
 				isMarkerOrURL = true;
 			}
 			curr = curr.parent;
@@ -55,11 +61,15 @@ export const linkHandlers = EditorView.domEventHandlers({
 		let isLink = false;
 		let isMarkerOrURL = false;
 		while (curr && curr.name !== "Document") {
-			if (curr.name === "Link") {
+			if (curr.name === "Link" || curr.name === "WikiLink") {
 				isLink = true;
 				break;
 			}
-			if (curr.name === "LinkMark" || curr.name === "URL") {
+			if (
+				curr.name === "LinkMark" ||
+				curr.name === "WikiLinkMark" ||
+				curr.name === "URL"
+			) {
 				isMarkerOrURL = true;
 			}
 			curr = curr.parent;
@@ -88,9 +98,25 @@ export const linkHandlers = EditorView.domEventHandlers({
 				while (
 					linkNode &&
 					linkNode.name !== "Link" &&
+					linkNode.name !== "WikiLink" &&
 					linkNode.name !== "Document"
 				) {
 					linkNode = linkNode.parent;
+				}
+
+				if (linkNode && linkNode.name === "WikiLink") {
+					const rawText = view.state.doc.sliceString(
+						linkNode.from,
+						linkNode.to
+					);
+					const workspace = view.state.facet(workspaceFacet);
+					const currentDoc = view.state.facet(currentDocFacet);
+					if (workspace) {
+						openInternalLink(workspace, currentDoc, rawText);
+						event.preventDefault();
+						event.stopPropagation();
+						return true;
+					}
 				}
 
 				if (linkNode && linkNode.name === "Link") {
@@ -109,8 +135,23 @@ export const linkHandlers = EditorView.domEventHandlers({
 					}
 
 					if (url) {
-						window.open(url, "_blank", "noopener,noreferrer");
-						return true;
+						if (
+							url.startsWith("http://") ||
+							url.startsWith("https://") ||
+							url.startsWith("mailto:")
+						) {
+							window.open(url, "_blank", "noopener,noreferrer");
+							return true;
+						}
+
+						const workspace = view.state.facet(workspaceFacet);
+						const currentDoc = view.state.facet(currentDocFacet);
+						if (workspace) {
+							openInternalLink(workspace, currentDoc, url);
+							event.preventDefault();
+							event.stopPropagation();
+							return true;
+						}
 					}
 				}
 			}

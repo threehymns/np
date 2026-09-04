@@ -2,7 +2,7 @@
 	import { untrack } from "svelte";
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation } from "@codemirror/state";
-	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -45,6 +45,8 @@
 			const startState = EditorState.create({
 				doc: untrack(() => doc.content),
 				extensions: [
+					workspaceFacet.of(doc.workspace),
+					currentDocFacet.of(doc),
 					...createEditorExtensions({
 						wrapCompartment,
 						languageCompartment,
