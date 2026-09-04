@@ -715,4 +715,40 @@ describe('SpawnGitAdapter', () => {
 			expect(res.files).toEqual(['dirty1.txt']);
 		}
 	});
+
+	it('switchBranch surfaces untracked collisions as checkout error (pinned for #69 worktree upgrade)', async () => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
+				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+				return { code: 0, stdout: 'main\n', stderr: '' };
+			}
+			if (args[0] === 'rev-parse' && args.includes('feature')) {
+				return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			}
+			if (args[0] === 'status') {
+				return { code: 0, stdout: '?? untracked.txt\0', stderr: '' };
+			}
+			if (args[0] === 'diff') {
+				// Tracked tree-to-tree diff is empty: untracked paths are not in
+				// either tree, so the O(1) path reports no conflict here.
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'checkout') {
+				return {
+					code: 128,
+					stdout: '',
+					stderr: 'error: The following untracked working tree files would be overwritten by checkout:\n\tuntracked.txt'
+				};
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const res = await adapter.switchBranch('feature');
+		// Pinned current behavior: untracked overwrite surfaces as error.
+		// #69 owns upgrading this to { status: 'blocked', reason: 'worktree' }.
+		expect(res.status).toBe('error');
+	});
 });

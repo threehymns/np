@@ -14,7 +14,9 @@ beforeAll(async () => {
 	}));
 });
 
-let makeWorkspace: (detected: boolean) => Promise<{ ws: Workspace }>;
+let makeWorkspace: (
+	detected: boolean
+) => Promise<{ ws: Workspace }>;
 let WorkspaceClass: typeof import("./workspace.svelte").Workspace;
 
 beforeAll(async () => {
@@ -58,7 +60,6 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		await ws.openDirectory();
 		expect(ws.repository).not.toBeNull();
 	});
-
 	it("keeps repository null and scans project tree in requestRootPermission when the folder is not a git repository", async () => {
 		const storage = createMockStorage({
 			verifyPermission: async () => true
