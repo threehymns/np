@@ -170,21 +170,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const status = await this.getStatus();
 		if (status.uncommittedFiles.length > 0) {
-			// A dirty tracked file conflicts with the target branch iff its committed
-			// HEAD blob differs from its blob on the target branch. A single
-			// tree-to-tree diff reports exactly those files in one git invocation,
-			// instead of the previous two `git rev-parse` processes per file
-			// (O(N) process spawns). Desktop-only O(1): the browser
-			// IsomorphicGitAdapter still walks files one-by-one (see
-			// packages/adapters-browser/src/isomorphic-git.ts).
-			// We avoid spreading uncommittedFiles into CLI arguments to prevent E2BIG
-			// on large repositories, intersecting diff changes with the dirty set in JS.
-			// `-z` NUL-separates the paths so non-ASCII filenames come back raw and
-			// unquoted, matching the raw paths getStatus() returns.
-			// Limitation: `diff HEAD <branch>` only covers tracked paths, so an
-			// untracked collision is not reported here as blocked/worktree — it
-			// surfaces below as a checkout error. Untouched on purpose; #69 owns
-			// the `worktree` vs `conflict` harmonization.
+		// A dirty file conflicts with the target branch iff its path differs
+		// between the HEAD and target trees. A single tree-to-tree diff reports
+		// exactly those files in one git invocation, instead of the previous
+		// two `git rev-parse` processes per file (O(N) process spawns). Desktop-only
+		// O(1): the browser IsomorphicGitAdapter still walks files one-by-one (see
+		// packages/adapters-browser/src/isomorphic-git.ts).
+		// We avoid spreading uncommittedFiles into CLI arguments to prevent E2BIG
+		// on large repositories, intersecting diff changes with the dirty set in JS.
+		// `-z` NUL-separates the paths so non-ASCII filenames come back raw and
+		// unquoted, matching the raw paths getStatus() returns.
+		// Untracked collisions are covered too: a path absent from HEAD but
+		// present on the target appears in the diff, and getStatus() reports
+		// untracked files in uncommittedFiles, so the intersection catches them
+		// (see contract test 'blocks switch when local untracked file collides
+		// with target branch tracked file'). #69 owns any future `worktree` vs
+		// `conflict` reason harmonization.
 			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName]);
 			if (diffRes.code !== 0) {
 				return { status: 'error', message: diffRes.stderr || `Failed to diff HEAD with ${branchName}` };
