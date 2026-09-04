@@ -1,15 +1,17 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
-import { EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
+import type { CDPSession } from '@playwright/test';
 
 test.describe('Icon Loading Error Handling', () => {
+	let cdpSession: CDPSession | null = null;
+
 	test.beforeEach(async ({ page }) => {
 		await mockIconThemes(page);
 		try {
-			const session = await page.context().newCDPSession(page);
-			await session.send('Network.setCacheDisabled', { cacheDisabled: true });
-		} catch (e) {
-			console.warn('Could not disable cache via CDP:', e);
+			cdpSession = await page.context().newCDPSession(page);
+			await cdpSession.send('Network.setCacheDisabled', { cacheDisabled: true });
+		} catch {
+			cdpSession = null;
 		}
 
 		await page.goto('/');
@@ -41,6 +43,9 @@ test.describe('Icon Loading Error Handling', () => {
 		
 		if (iconSrc) {
 			await page.route(iconSrc, route => route.fulfill({ status: 404 }));
+			if (cdpSession) {
+				await cdpSession.send('Network.clearBrowserCache');
+			}
 			
 			const themeDefaultUrl = await page.evaluate(() => (window as any).appState.icons.getThemeDefaultFileIcon());
 			expect(themeDefaultUrl).toContain('.svg');
@@ -59,6 +64,9 @@ test.describe('Icon Loading Error Handling', () => {
 			const fallbackSrc = await themeFallback.getAttribute('src');
 			if (fallbackSrc) {
 				await page.route(fallbackSrc, route => route.fulfill({ status: 404 }));
+				if (cdpSession) {
+					await cdpSession.send('Network.clearBrowserCache');
+				}
 
 				await page.evaluate(() => {
 					(window as any).appState.prefs.fileIconThemeId = 'phosphor';
