@@ -19,7 +19,7 @@ test('WhichKey should open immediately on space', async ({ page }) => {
     localStorage.setItem('np-prefs-v2', JSON.stringify({ vimMode: true }));
   });
   await page.reload();
-  await expect(editor).toBeVisible();
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
   await editor.click();
 
   // Press space
