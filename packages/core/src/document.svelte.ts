@@ -115,9 +115,12 @@ export class DocumentSession {
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
-			console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
+				// Expected when the file was removed on the checked-out branch;
+				// not an error worth logging.
 				this.deletedOnDisk = true;
+			} else {
+				console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
 			}
 			throw e;
 		}
