@@ -33,6 +33,23 @@ describe('SpawnGitAdapter', () => {
 		delete (globalThis as any).window;
 	});
 
+	const mockSwitch = (opts: { status: string; diff?: { code: number; stdout: string; stderr?: string }; checkout?: { code: number; stderr: string } | 'throw' }) => {
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'branch') return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			if (args[0] === 'status') return { code: 0, stdout: opts.status, stderr: '' };
+			if (args[0] === 'diff') {
+				if (opts.diff) return { code: opts.diff.code, stdout: opts.diff.stdout, stderr: opts.diff.stderr ?? '' };
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			if (args[0] === 'checkout') {
+				if (opts.checkout === 'throw') throw new Error('checkout should not be called when diff fails');
+				if (opts.checkout) return { code: opts.checkout.code, stdout: '', stderr: opts.checkout.stderr };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+	};
+
 	it('passes -uall to git status and only reads untracked files (no git show) during getChanges', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			const cmd = args.join(' ');
@@ -654,26 +671,10 @@ describe('SpawnGitAdapter', () => {
 	});
 
 	it('switchBranch returns error status when git diff exits non-zero instead of proceeding to checkout', async () => {
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
-				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
-				return { code: 0, stdout: 'main\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('feature')) {
-				return { code: 0, stdout: 'abc1234\n', stderr: '' };
-			}
-			if (args[0] === 'status') {
-				return { code: 0, stdout: ' M dirty.txt\0', stderr: '' };
-			}
-			if (args[0] === 'diff') {
-				return { code: 128, stdout: '', stderr: 'fatal: git diff failed' };
-			}
-			if (args[0] === 'checkout') {
-				throw new Error('checkout should not be called when diff fails');
-			}
-			return { code: 0, stdout: '', stderr: '' };
+		mockSwitch({
+			status: ' M dirty.txt\0',
+			diff: { code: 128, stdout: '', stderr: 'fatal: git diff failed' },
+			checkout: 'throw'
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
@@ -686,18 +687,9 @@ describe('SpawnGitAdapter', () => {
 
 	it('switchBranch does not spread uncommitted files into diff CLI arguments', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
-				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
-				return { code: 0, stdout: 'main\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('feature')) {
-				return { code: 0, stdout: 'abc1234\n', stderr: '' };
-			}
-			if (args[0] === 'status') {
-				return { code: 0, stdout: ' M dirty1.txt\0 M dirty2.txt\0', stderr: '' };
-			}
+			if (args[0] === 'branch') return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
+			if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+			if (args[0] === 'status') return { code: 0, stdout: ' M dirty1.txt\0 M dirty2.txt\0', stderr: '' };
 			if (args[0] === 'diff') {
 				// Assert args only compare tree to tree without spreading dirty filepaths
 				expect(args).toEqual(['diff', '--name-only', '-z', 'HEAD', 'feature']);
@@ -717,32 +709,10 @@ describe('SpawnGitAdapter', () => {
 	});
 
 	it('switchBranch surfaces untracked collisions as checkout error (pinned for #69 worktree upgrade)', async () => {
-		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'branch' && args.includes('--format=%(refname:short)')) {
-				return { code: 0, stdout: 'main\nfeature\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
-				return { code: 0, stdout: 'main\n', stderr: '' };
-			}
-			if (args[0] === 'rev-parse' && args.includes('feature')) {
-				return { code: 0, stdout: 'abc1234\n', stderr: '' };
-			}
-			if (args[0] === 'status') {
-				return { code: 0, stdout: '?? untracked.txt\0', stderr: '' };
-			}
-			if (args[0] === 'diff') {
-				// Tracked tree-to-tree diff is empty: untracked paths are not in
-				// either tree, so the O(1) path reports no conflict here.
-				return { code: 0, stdout: '', stderr: '' };
-			}
-			if (args[0] === 'checkout') {
-				return {
-					code: 128,
-					stdout: '',
-					stderr: 'error: The following untracked working tree files would be overwritten by checkout:\n\tuntracked.txt'
-				};
-			}
-			return { code: 0, stdout: '', stderr: '' };
+		mockSwitch({
+			status: '?? untracked.txt\0',
+			diff: { code: 0, stdout: '' },
+			checkout: { code: 128, stderr: 'error: The following untracked working tree files would be overwritten by checkout:\n\tuntracked.txt' }
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);

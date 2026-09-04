@@ -122,20 +122,12 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 });
 
 describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
-	it("keeps modified document content across a successful switch and rebases its baseline", async () => {
-		// New branch content for the open file; readFile returns this after switch.
-		const newBranchContent = "new branch content\n";
-		const oldSavedContent = "old committed content\n";
-		const unsavedEdit = "my unsaved in-memory edit\n";
-
+	const makeSwitchWs = async (readFile: (o: FileOrigin) => Promise<string>) => {
 		const storage = createMockStorage({
 			pickDirectory: async () => rootOrigin,
 			verifyPermission: async () => true
 		});
-		storage.readFile = mock(async (o: FileOrigin) =>
-			o.path === fileOrigin.path ? newBranchContent : ""
-		);
-
+		storage.readFile = mock(readFile);
 		const vcsFactory = (): VCSAdapter => ({
 			detect: mock(async () => true),
 			getCurrentBranch: async () => "main",
@@ -145,9 +137,20 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
 			switchBranch: mock(async () => ({ status: "switched" as const }))
 		});
-
 		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
 		await ws.openDirectory();
+		return { storage, ws };
+	};
+
+	it("keeps modified document content across a successful switch and rebases its baseline", async () => {
+		// New branch content for the open file; readFile returns this after switch.
+		const newBranchContent = "new branch content\n";
+		const oldSavedContent = "old committed content\n";
+		const unsavedEdit = "my unsaved in-memory edit\n";
+
+		const { storage, ws } = await makeSwitchWs(async (o: FileOrigin) =>
+			o.path === fileOrigin.path ? newBranchContent : ""
+		);
 
 		// A modified document: saved baseline is the old content, in-memory content holds an edit.
 		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
@@ -167,26 +170,9 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 		const oldSavedContent = "old committed content\n";
 		const newBranchContent = "new branch content\n";
 
-		const storage = createMockStorage({
-			pickDirectory: async () => rootOrigin,
-			verifyPermission: async () => true
-		});
-		storage.readFile = mock(async (o: FileOrigin) =>
+		const { storage, ws } = await makeSwitchWs(async (o: FileOrigin) =>
 			o.path === fileOrigin.path ? newBranchContent : ""
 		);
-
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getChanges: async () => [],
-			getCommits: async () => [],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		await ws.openDirectory();
 
 		// Unmodified document: content matches its saved baseline.
 		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
@@ -202,12 +188,8 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 
 	it("preserves edits and marks deletedOnDisk when a modified file is gone after a switch", async () => {
 		const unsavedEdit = "my unsaved in-memory edit\n";
-		const storage = createMockStorage({
-			pickDirectory: async () => rootOrigin,
-			verifyPermission: async () => true
-		});
 		// The file no longer exists on disk after the switch (e.g. removed on the target branch).
-		storage.readFile = mock(async (o: FileOrigin) => {
+		const { storage, ws } = await makeSwitchWs(async (o: FileOrigin) => {
 			if (o.path === fileOrigin.path) {
 				const err: any = new Error("not found");
 				err.name = "NotFoundError";
@@ -215,19 +197,6 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 			}
 			return "";
 		});
-
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getChanges: async () => [],
-			getCommits: async () => [],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		await ws.openDirectory();
 
 		const doc = new DocumentSession(storage, "old committed content\n", fileOrigin, "a.ts", ws);
 		doc.content = unsavedEdit; // in-memory-only edit

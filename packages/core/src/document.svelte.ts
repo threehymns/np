@@ -107,26 +107,13 @@ export class DocumentSession {
 	 * new baseline. Used after an operation that changes files on disk (e.g. a
 	 * branch switch) so unsaved in-memory edits survive and are re-diffed against
 	 * the checked-out content instead of being silently overwritten.
-	 *
-	 * Returns the comparison #100/#101 needs to populate `DocumentConflict`
-	 * (`diskContent`, `detectedAt`) without re-reading: `diverged` is true when
-	 * the on-disk content differs from the pre-rebase `savedContent`. No banner
-	 * state is set here — that belongs to #101.
 	 */
-	async rebaseSavedBaseline(): Promise<{
-		diverged: boolean;
-		previousSavedContent: string;
-		newSavedContent: string | null;
-		deleted: boolean;
-	}> {
-		const previousSavedContent = this.savedContent;
-		if (!this.origin) return { diverged: false, previousSavedContent, newSavedContent: null, deleted: false };
+	async rebaseSavedBaseline(): Promise<void> {
+		if (!this.origin) return;
 		try {
-			const next = await this.storage.readFile(this.origin);
-			this.savedContent = next;
+			this.savedContent = await this.storage.readFile(this.origin);
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
-			return { diverged: next !== previousSavedContent, previousSavedContent, newSavedContent: next, deleted: false };
 		} catch (e: any) {
 			console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {

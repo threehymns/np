@@ -520,12 +520,8 @@ export class Workspace {
 						try {
 							if (doc.isModified) {
 								// Preserve unsaved in-memory edits: rebase the saved
-								// baseline onto the checked-out content so the edits survive
-								// and are re-diffed against the new branch instead of being
-								// silently discarded by loadContent(). The returned
-								// { diverged, previousSavedContent, newSavedContent }
-								// is intentionally unused here; #100/#101 will use it
-								// to populate DocumentConflict without re-reading disk.
+								// baseline onto the checked-out content instead of
+								// silently discarding it via loadContent().
 								await doc.rebaseSavedBaseline();
 							} else {
 								await doc.loadContent();
