@@ -63,4 +63,30 @@ describe("Hunk navigation default keybindings", () => {
 		expect(parseKeySequence("[ c").map((k) => k.key)).toEqual(["[", "c"]);
 		expect(parseKeySequence("] c").some((k) => k.ctrl || k.meta || k.alt)).toBe(false);
 	});
+
+	it("binds Zed-style cmd+f8 / cmd+shift+f8 in standard editor and global keymaps", () => {
+		const editorBlock = defaultKeymap.find((b) => b.context === "editor");
+		expect(editorBlock).toBeDefined();
+		expect(editorBlock!.bindings["cmd+f8"]).toBe("git.nextHunk");
+		expect(editorBlock!.bindings["cmd+shift+f8"]).toBe("git.prevHunk");
+
+		const globalBlock = defaultKeymap.find((b) => !b.context);
+		expect(globalBlock).toBeDefined();
+		expect(globalBlock!.bindings["cmd+f8"]).toBe("git.nextHunk");
+		expect(globalBlock!.bindings["cmd+shift+f8"]).toBe("git.prevHunk");
+	});
+
+	it("parses cmd+f8 and cmd+shift+f8 with correct modifiers", () => {
+		const next = parseKeySequence("cmd+f8");
+		expect(next).toHaveLength(1);
+		expect(next[0].key).toBe("f8");
+		expect(next[0].ctrl || next[0].meta).toBe(true);
+		expect(next[0].shift).toBe(false);
+
+		const prev = parseKeySequence("cmd+shift+f8");
+		expect(prev).toHaveLength(1);
+		expect(prev[0].key).toBe("f8");
+		expect(prev[0].ctrl || prev[0].meta).toBe(true);
+		expect(prev[0].shift).toBe(true);
+	});
 });

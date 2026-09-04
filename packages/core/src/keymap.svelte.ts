@@ -57,7 +57,10 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+v": "edit.paste",
 			"cmd+f": "edit.find",
 			"cmd+a": "edit.selectAll",
-			"cmd+k m": "edit.changeLanguageMode"
+			"cmd+k m": "edit.changeLanguageMode",
+			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
+			"cmd+f8": "git.nextHunk",
+			"cmd+shift+f8": "git.prevHunk"
 		}
 	},
 	{
@@ -75,7 +78,9 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+,": "settings.open",
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
-			"ctrl+shift+i": "window.toggleDevTools"
+			"ctrl+shift+i": "window.toggleDevTools",
+			"cmd+f8": "git.nextHunk",
+			"cmd+shift+f8": "git.prevHunk"
 		}
 	}
 ];
@@ -366,7 +371,7 @@ export class KeymapRegistry {
 		const content = await this.readUserKeymap();
 		try {
 			// Clean up potential trailing commas before parsing
-			const cleaned = content.replace(/,[ \t\r\n]*([}\]])/g, '$1');
+			const cleaned = content.replace(/,[ \t\r\n]*([}\\]])/g, '$1');
 			let userKeymap = JSON.parse(cleaned);
 			
 			if (!Array.isArray(userKeymap)) {
@@ -392,7 +397,7 @@ export class KeymapRegistry {
 		if (!content || !content.trim()) return;
 		try {
 			// Basic cleanup to handle trailing commas
-			const cleaned = content.replace(/,[ \t\r\n]*([}\]])/g, '$1');
+			const cleaned = content.replace(/,[ \t\r\n]*([}\\]])/g, '$1');
 			const userKeymap = JSON.parse(cleaned);
 			if (Array.isArray(userKeymap)) {
 				this.loadBindings([...defaultKeymap, ...userKeymap]);
