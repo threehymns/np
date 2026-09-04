@@ -170,18 +170,30 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 		const status = await this.getStatus();
 		if (status.uncommittedFiles.length > 0) {
-			const conflictingFiles: string[] = [];
-			for (const filepath of status.uncommittedFiles) {
-				const headHashRes = await this.runGit(['rev-parse', `HEAD:${filepath}`]);
-				const headOid = headHashRes.code === 0 ? headHashRes.stdout.trim() : null;
-
-				const targetHashRes = await this.runGit(['rev-parse', `${branchName}:${filepath}`]);
-				const targetOid = targetHashRes.code === 0 ? targetHashRes.stdout.trim() : null;
-
-				if (headOid !== targetOid) {
-					conflictingFiles.push(filepath);
-				}
+		// A dirty file conflicts with the target branch iff its path differs
+		// between the HEAD and target trees. A single tree-to-tree diff reports
+		// exactly those files in one git invocation, instead of the previous
+		// two `git rev-parse` processes per file (O(N) process spawns). Desktop-only
+		// O(1): the browser IsomorphicGitAdapter still walks files one-by-one (see
+		// packages/adapters-browser/src/isomorphic-git.ts).
+		// We avoid spreading uncommittedFiles into CLI arguments to prevent E2BIG
+		// on large repositories, intersecting diff changes with the dirty set in JS.
+		// `-z` NUL-separates the paths so non-ASCII filenames come back raw and
+		// unquoted, matching the raw paths getStatus() returns.
+		// Untracked collisions are covered too: a path absent from HEAD but
+		// present on the target appears in the diff, and getStatus() reports
+		// untracked files in uncommittedFiles, so the intersection catches them
+		// (see contract test 'blocks switch when local untracked file collides
+		// with target branch tracked file'). #69 owns any future `worktree` vs
+		// `conflict` reason harmonization.
+			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName]);
+			if (diffRes.code !== 0) {
+				return { status: 'error', message: diffRes.stderr || `Failed to diff HEAD with ${branchName}` };
 			}
+			const uncommittedSet = new Set(status.uncommittedFiles);
+			const conflictingFiles = diffRes.stdout
+				.split('\0')
+				.filter((p) => p.length > 0 && uncommittedSet.has(p));
 
 			if (conflictingFiles.length > 0) {
 				return { status: 'blocked', reason: 'conflict', files: conflictingFiles };

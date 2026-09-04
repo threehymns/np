@@ -314,37 +314,39 @@ export class Workspace {
 
 		this.isRestoring = true;
 
-		this.rootOrigin = origin;
-		this.hasRootPermission = true;
+		try {
+			this.rootOrigin = origin;
+			this.hasRootPermission = true;
 
-		// Drop the previous folder's repository before the async VCS probe so
-		// the UI never shows stale branch/changes for the new folder.
-		this.repository = null;
-		const repo = new Repository(origin, this.vcsFactory);
-		const detected = await repo.adapter.detect(origin.path);
-		if (detected) {
-			this.repository = repo;
-			await repo.refresh();
-		} else {
-			// Not a git repository: keep repository null so the Git panel shows
-			// its "No Git Repository" empty state instead of a dead panel.
+			// Drop the previous folder's repository before the async VCS probe so
+			// the UI never shows stale branch/changes for the new folder.
 			this.repository = null;
+			const repo = new Repository(origin, this.vcsFactory);
+			const detected = await repo.adapter.detect(origin.path);
+			if (detected) {
+				this.repository = repo;
+				await repo.refresh();
+			} else {
+				// Not a git repository: keep repository null so the Git panel shows
+				// its "No Git Repository" empty state instead of a dead panel.
+				this.repository = null;
+			}
+
+			// Add to recent folders
+			const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
+			this.recentFolders = [origin, ...newRecent].slice(0, 10);
+
+			// Reset project tree expansion state
+			this.projectTree.resetExpansionState();
+
+			await this.projectTree.scan(origin);
+
+			// Load new folder state
+			const folderUri = toURI(origin);
+			await this.loadFolderState(folderUri);
+		} finally {
+			this.isRestoring = false;
 		}
-		
-		// Add to recent folders
-		const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
-		this.recentFolders = [origin, ...newRecent].slice(0, 10);
-
-		// Reset project tree expansion state
-		this.projectTree.resetExpansionState();
-
-		await this.projectTree.scan(origin);
-
-		// Load new folder state
-		const folderUri = toURI(origin);
-		await this.loadFolderState(folderUri);
-
-		this.isRestoring = false;
 
 		// Refresh permissions for already open files
 		for (const doc of this.documents) {
@@ -518,9 +520,16 @@ export class Workspace {
 				for (const doc of this.documents) {
 					if (doc.origin) {
 						try {
-							await doc.loadContent();
+							if (doc.isModified) {
+								// Preserve unsaved in-memory edits: rebase the saved
+								// baseline onto the checked-out content instead of
+								// silently discarding it via loadContent().
+								await doc.rebaseSavedBaseline();
+							} else {
+								await doc.loadContent();
+							}
 						} catch (e) {
-							// Ignored here; doc.loadContent() handles setting deletedOnDisk to true
+							// Ignored here; loadContent/rebaseSavedBaseline handle setting deletedOnDisk to true
 						}
 					}
 				}

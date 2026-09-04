@@ -100,6 +100,32 @@ export class DocumentSession {
 		}
 	}
 
+	/**
+	 * Rebase the saved baseline onto the current on-disk content without
+	 * discarding in-memory edits. `content` (and therefore `isModified`) is left
+	 * untouched; only `savedContent`, `deletedOnDisk`, and `isLoaded` reflect the
+	 * new baseline. Used after an operation that changes files on disk (e.g. a
+	 * branch switch) so unsaved in-memory edits survive and are re-diffed against
+	 * the checked-out content instead of being silently overwritten.
+	 */
+	async rebaseSavedBaseline(): Promise<void> {
+		if (!this.origin) return;
+		try {
+			this.savedContent = await this.storage.readFile(this.origin);
+			this.deletedOnDisk = false;
+			this.isLoaded = true;
+		} catch (e: any) {
+			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
+				// Expected when the file was removed on the checked-out branch;
+				// not an error worth logging.
+				this.deletedOnDisk = true;
+			} else {
+				console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
+			}
+			throw e;
+		}
+	}
+
 	async hasRootPermissionForFile(): Promise<boolean> {
 		if (!this.workspace || !this.workspace.rootOrigin || !this.workspace.hasRootPermission || !this.origin) {
 			return false;
