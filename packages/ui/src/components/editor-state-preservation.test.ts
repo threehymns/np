@@ -1,6 +1,6 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect } from "bun:test";
-import { EditorState, EditorSelection, Compartment } from "@codemirror/state";
+import { EditorState, EditorSelection, Compartment, Transaction } from "@codemirror/state";
 import { history, historyField, undo, undoDepth, isolateHistory } from "@codemirror/commands";
 import { DocumentSession } from "../../../core/src/document.svelte";
 import { createMockStorage } from "../../../../tests/mock-storage";
@@ -168,6 +168,98 @@ describe("Editor state preservation across tab switches and saves", () => {
 		expect(restored2.doc.toString()).toBe("Doc 2 - modified twice! initial");
 	});
 
+	it("preserves multi-cursor ranges and excludes restore-time replacement from undo history", () => {
+		let state = EditorState.create({
+			doc: "line 1\nline 2\n",
+			extensions: [history(), EditorState.allowMultipleSelections.of(true)]
+		});
+
+		// User has two cursors; main is the second one
+		state = state.update({
+			selection: EditorSelection.create(
+				[EditorSelection.cursor(3), EditorSelection.cursor(10)],
+				1
+			)
+		}).state;
+
+		// Simulate disk content replacing the doc, mirroring Editor.svelte restore path
+		const currentContent = "line 1\nline 2\nline 3\nline 4\n";
+		const savedSelection = state.selection;
+		const clampedSelection = EditorSelection.create(
+			savedSelection.ranges.map((r) =>
+				EditorSelection.range(
+					Math.min(r.anchor, currentContent.length),
+					Math.min(r.head, currentContent.length)
+				)
+			),
+			savedSelection.mainIndex
+		);
+		state = state.update({
+			changes: { from: 0, to: state.doc.length, insert: currentContent },
+			selection: clampedSelection,
+			annotations: Transaction.addToHistory.of(false)
+		}).state;
+
+		expect(state.doc.toString()).toBe(currentContent);
+		// Both ranges preserved (not collapsed to one), mainIndex intact
+		expect(state.selection.ranges.length).toBe(2);
+		expect(state.selection.mainIndex).toBe(1);
+		expect(state.selection.ranges.map((r) => r.head)).toEqual([3, 10]);
+		// Replacement itself was excluded from history (no prior history, none added)
+		expect(undoDepth(state)).toBe(0);
+	});
+
+	it("preserves multi-cursor ranges and excludes sync-time replacement from undo history", () => {
+		let state = EditorState.create({
+			doc: "line 1\nline 2\n",
+			extensions: [history(), EditorState.allowMultipleSelections.of(true)]
+		});
+
+		state = state.update({
+			selection: EditorSelection.create(
+				[EditorSelection.cursor(3), EditorSelection.cursor(13)],
+				0
+			)
+		}).state;
+
+		// Mirror Editor.svelte sync path (external content replacement via dispatch);
+		// new content is shorter so ranges must be clamped but stay distinct.
+		const c = "line 1\nline";
+		const currentSelection = state.selection;
+		const clampedSelection = EditorSelection.create(
+			currentSelection.ranges.map((r) =>
+				EditorSelection.range(
+					Math.min(r.anchor, c.length),
+					Math.min(r.head, c.length)
+				)
+			),
+			currentSelection.mainIndex
+		);
+		state = state.update({
+			changes: { from: 0, to: state.doc.length, insert: c },
+			selection: clampedSelection,
+			annotations: Transaction.addToHistory.of(false)
+		}).state;
+
+		expect(state.doc.toString()).toBe(c);
+		expect(state.selection.ranges.length).toBe(2);
+		expect(state.selection.mainIndex).toBe(0);
+		expect(state.selection.ranges.map((r) => r.head)).toEqual([3, c.length]);
+		// Replacement itself was excluded from history
+		expect(undoDepth(state)).toBe(0);
+
+		// Undo cannot restore the stale pre-replacement content
+		let staleState: EditorState | null = null;
+		const undone = undo({
+			state,
+			dispatch: (tr) => {
+				staleState = tr.state;
+			}
+		});
+		expect(undone).toBe(false);
+		expect(staleState).toBeNull();
+	});
+
 	it("preserves undo history and selection without full state wipe when content changes on disk externally", () => {
 		const storage = createMockStorage();
 		const doc = new DocumentSession(storage, "function hello() {\n  return 1;\n}");
@@ -204,30 +296,38 @@ describe("Editor state preservation across tab switches and saves", () => {
 
 		if (restoredState.doc.toString() !== doc.content) {
 			const currentSelection = restoredState.selection;
-			const newHead = Math.min(currentSelection.main.head, doc.content.length);
-			const newAnchor = Math.min(currentSelection.main.anchor, doc.content.length);
+			const clampedSelection = EditorSelection.create(
+				currentSelection.ranges.map((r) =>
+					EditorSelection.range(
+						Math.min(r.anchor, doc.content.length),
+						Math.min(r.head, doc.content.length)
+					)
+				),
+				currentSelection.mainIndex
+			);
 			restoredState = restoredState.update({
 				changes: { from: 0, to: restoredState.doc.length, insert: doc.content },
-				selection: { anchor: newAnchor, head: newHead }
+				selection: clampedSelection,
+				annotations: Transaction.addToHistory.of(false)
 			}).state;
 		}
 
 		expect(restoredState.doc.toString()).toBe(diskContent);
-		// Undo depth is retained (not wiped to 0)
-		expect(undoDepth(restoredState)).toBeGreaterThanOrEqual(1);
-		// Cursor is preserved
+		// Cursor is preserved (clamped into the new content)
 		expect(restoredState.selection.main.head).toBe(30);
 		// Scroll position is intact
 		expect(doc.scrollPosition).toEqual({ top: 50, left: 0 });
 
-		// Can undo the edit
+		// The external replacement itself is excluded from history, so undo
+		// cannot restore the stale pre-reload content.
 		let undoneState: EditorState | null = null;
-		undo({
+		const undone = undo({
 			state: restoredState,
 			dispatch: (tr) => {
 				undoneState = tr.state;
 			}
 		});
-		expect(undoneState).not.toBeNull();
+		expect(undone).toBe(false);
+		expect(undoneState).toBeNull();
 	});
 });

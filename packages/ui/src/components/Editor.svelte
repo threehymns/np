@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from "svelte";
 	import { EditorView } from "@codemirror/view";
-	import { EditorState, Compartment, Annotation } from "@codemirror/state";
+	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
 	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
@@ -35,6 +35,33 @@
 	const vimCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
+	function clampSelection(sel: EditorSelection, len: number): EditorSelection {
+		return EditorSelection.create(
+			sel.ranges.map((r: SelectionRange) =>
+				EditorSelection.range(Math.min(r.anchor, len), Math.min(r.head, len)),
+			),
+			sel.mainIndex,
+		);
+	}
+
+	function syncSelectionStats(state: EditorState): void {
+		const selection = state.selection.main;
+		const line = state.doc.lineAt(selection.head);
+		const lineNum = line.number;
+		const colNum = selection.head - line.from + 1;
+		if (selection.empty) {
+			selectionState.update(lineNum, colNum, 0, 0);
+		} else {
+			const selectedText = state.doc.sliceString(selection.from, selection.to);
+			selectionState.update(
+				lineNum,
+				colNum,
+				selectedText.length,
+				selectedText.trim().split(/\s+/).filter(Boolean).length,
+			);
+		}
+	}
+
 	$effect(() => {
 		if (!editorEl) return;
 
@@ -66,62 +93,37 @@
 					}
 
 					if (update.selectionSet || update.docChanged) {
-						const state = update.state;
-						const selection = state.selection.main;
-						const line = state.doc.lineAt(selection.head);
-
-						const lineNum = line.number;
-						const colNum = selection.head - line.from + 1;
-
-						if (selection.empty) {
-							selectionState.update(lineNum, colNum, 0, 0);
-						} else {
-							const selectedText = state.doc.sliceString(
-								selection.from,
-								selection.to,
-							);
-							const charCount = selectedText.length;
-							const wordCount = selectedText
-								.trim()
-								.split(/\s+/)
-								.filter(Boolean).length;
-							selectionState.update(lineNum, colNum, charCount, wordCount);
-						}
+						syncSelectionStats(update.state);
 					}
 				}),
 			];
 
-			let startState: EditorState;
+			let startState: EditorState | undefined;
 			const savedState = untrack(() => doc.editorState);
 			const currentContent = untrack(() => doc.content);
 			if (savedState) {
 				try {
-					startState = EditorState.fromJSON(
+					let restored = EditorState.fromJSON(
 						savedState,
 						{ extensions },
 						{ history: historyField },
 					);
-					if (startState.doc.toString() !== currentContent) {
-						const currentSelection = startState.selection;
-						const newHead = Math.min(currentSelection.main.head, currentContent.length);
-						const newAnchor = Math.min(currentSelection.main.anchor, currentContent.length);
-						startState = startState.update({
-							changes: { from: 0, to: startState.doc.length, insert: currentContent },
-							selection: { anchor: newAnchor, head: newHead },
+					if (restored.doc.toString() !== currentContent) {
+						restored = restored.update({
+							changes: { from: 0, to: restored.doc.length, insert: currentContent },
+							selection: clampSelection(restored.selection, currentContent.length),
+							annotations: Transaction.addToHistory.of(false),
 						}).state;
 					}
+					startState = restored;
 				} catch {
-					startState = EditorState.create({
-						doc: currentContent,
-						extensions,
-					});
+					// Corrupt serialized state falls through to a fresh editor below.
 				}
-			} else {
-				startState = EditorState.create({
-					doc: currentContent,
-					extensions,
-				});
 			}
+			startState ??= EditorState.create({
+				doc: currentContent,
+				extensions,
+			});
 
 			view = new EditorView({
 				state: startState,
@@ -154,29 +156,12 @@
 		};
 	});
 
-	// Sync active state and layout
+	// Sync active state and layout (status bar isn't refreshed by the
+	// updateListener on remount, since creating a view fires no update event)
 	$effect(() => {
 		if (view && active) {
 			view.requestMeasure();
-			const state = view.state;
-			const selection = state.selection.main;
-			const line = state.doc.lineAt(selection.head);
-			const lineNum = line.number;
-			const colNum = selection.head - line.from + 1;
-			if (selection.empty) {
-				selectionState.update(lineNum, colNum, 0, 0);
-			} else {
-				const selectedText = state.doc.sliceString(
-					selection.from,
-					selection.to,
-				);
-				selectionState.update(
-					lineNum,
-					colNum,
-					selectedText.length,
-					selectedText.trim().split(/\s+/).filter(Boolean).length,
-				);
-			}
+			syncSelectionStats(view.state);
 		}
 	});
 
@@ -279,9 +264,7 @@
 			if (view) {
 				const currentDoc = view.state.doc.toString();
 				if (c !== currentDoc) {
-					const currentSelection = view.state.selection;
-					const newHead = Math.min(currentSelection.main.head, c.length);
-					const newAnchor = Math.min(currentSelection.main.anchor, c.length);
+					const clampedSelection = clampSelection(view.state.selection, c.length);
 					const prevScrollTop = view.scrollDOM.scrollTop;
 					const prevScrollLeft = view.scrollDOM.scrollLeft;
 
@@ -291,8 +274,8 @@
 							to: view.state.doc.length,
 							insert: c,
 						},
-						selection: { anchor: newAnchor, head: newHead },
-						annotations: syncAnnotation.of(true),
+						selection: clampedSelection,
+						annotations: [syncAnnotation.of(true), Transaction.addToHistory.of(false)],
 					});
 
 					view.scrollDOM.scrollTop = prevScrollTop;
