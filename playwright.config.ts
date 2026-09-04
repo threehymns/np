@@ -4,12 +4,26 @@ export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: 1,
-  workers: process.env.CI ? 1 : 4,
-  reporter: 'list',
+  // Fail fast: no retries locally or in CI. A red run surfaces the first
+  // failure immediately instead of re-running slow editor-ready waits.
+  retries: 0,
+  // 2 local workers keeps a dev machine usable; CI stays serial.
+  workers: process.env.CI ? 1 : 2,
+  reporter: 'line',
+  // Per-test ceiling is only a backstop for hangs; editor-ready waits fail
+  // fast on their own via EDITOR_READY_TIMEOUT. 60s keeps slow-but-green
+  // specs (measured ~20s cold) from flaking on the ceiling.
+  timeout: 60_000,
+  expect: {
+    // Editor-ready assertions use EDITOR_READY_TIMEOUT (10s) explicitly;
+    // everything else defaults to this instead of Playwright's 5s.
+    timeout: 10_000,
+  },
   use: {
     baseURL: 'http://127.0.0.1:5173',
-    trace: 'on-first-retry',
+    // With retries disabled, retain traces only for failures so a red run
+    // still leaves actionable artifacts without per-retry trace overhead.
+    trace: 'retain-on-failure',
   },
   projects: [
     {
@@ -20,7 +34,7 @@ export default defineConfig({
   webServer: {
     command: 'bun run dev:web',
     url: 'http://127.0.0.1:5173',
-    timeout: 300_000,
+    timeout: 120_000,
     reuseExistingServer: !process.env.CI,
   },
 });

@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
+import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.describe('VCS and Branch Switching Integration Tests', () => {
 	test.beforeEach(async ({ page }) => {
+		forwardBrowserConsole(page);
 		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
 		// Install mock filesystem classes and the repo setup helper inside the browser context
 		await page.evaluate(installMockFS);
@@ -130,7 +132,6 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 	});
 
 	test('should block branch switching when there are conflicting staged changes', async ({ page }) => {
-		page.on('console', msg => console.log('PAGE LOG:', msg.text()));
 		const report = await page.evaluate(async () => {
 			const appState = (window as any).appState;
 			const git = (window as any).git;

@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
+import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
 test('edit menu items work correctly', async ({ page }) => {
-  page.on('console', msg => console.log('BROWSER LOG:', msg.text()));
+  forwardBrowserConsole(page);
   // Mock navigator.clipboard to avoid flaky parallel test failures due to browser focus
   await page.addInitScript(() => {
     let clipboardData = '';
@@ -47,7 +48,7 @@ test('edit menu items work correctly', async ({ page }) => {
   await page.goto('/');
 
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   await editor.click();
   await expect(editor).toBeFocused();

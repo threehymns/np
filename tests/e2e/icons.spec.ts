@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
+import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test.describe('Icon Registry and Manifest Provider', () => {
 	test.beforeEach(async ({ page }) => {
-		page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
+		forwardBrowserConsole(page);
 		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 	});
 
 	test('should resolve file icon using ManifestIconProvider', async ({ page }) => {

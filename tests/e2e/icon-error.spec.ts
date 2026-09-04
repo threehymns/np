@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
+import { EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 
 test.describe('Icon Loading Error Handling', () => {
 	test.beforeEach(async ({ page }) => {
@@ -12,7 +13,7 @@ test.describe('Icon Loading Error Handling', () => {
 		}
 
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 	});
 
 	test('should fallback to theme default icon before Phosphor when image fails (404)', async ({ page }) => {

@@ -1,14 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
+import { EDITOR_READY_TIMEOUT, forwardBrowserConsole } from './helpers/e2e-debug';
 
 test('editor should correctly handle markdown syntax', async ({ page }) => {
-  page.on('console', msg => console.log('BROWSER:', msg.text()));
+  forwardBrowserConsole(page);
   await mockIconThemes(page);
   await page.goto('/');
 
   // Target the CodeMirror editor
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   // Focus and clear
   await editor.click();

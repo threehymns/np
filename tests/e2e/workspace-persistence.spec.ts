@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
+import { EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 
 test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 	test.beforeEach(async ({ page }) => {
 		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('.cm-content').first()).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 		await page.waitForFunction(() => typeof (window as any).appState !== 'undefined' && typeof (window as any).browserHandleRegistry !== 'undefined');
 
 		// Install mock filesystem classes inside the browser context
