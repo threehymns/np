@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 
 /**
  * Shared e2e helpers for quiet-by-default runs (issue #62).
@@ -7,25 +7,25 @@ import type { Page } from '@playwright/test';
  * dropped. Set `E2E_DEBUG=1` (or run `bun run test:e2e:debug`) to forward
  * browser console messages and node-side debug logs to stdout.
  *
- * EDITOR_READY_TIMEOUT is calibrated, not arbitrary: cold dev-server boots
- * measured 13-18s per spec under parallel load in constrained environments,
- * so 20s stays green there while a genuinely missing editor still fails at
- * 20s instead of the old 30s-plus-retry (~60s) per spec.
+ * EDITOR_READY_TIMEOUT is calibrated: fast enough to fail red runs quickly,
+ * while leaving sufficient headroom for dev-server cold boot under load.
  */
 
-export const EDITOR_READY_TIMEOUT = 20_000;
+export const EDITOR_READY_TIMEOUT = 15_000;
 
 export function isE2EDebug(): boolean {
 	return !!process.env.E2E_DEBUG;
 }
 
-export function forwardBrowserConsole(page: Page): void {
-	if (!isE2EDebug()) return;
-	page.on('console', (msg) => {
-		console.log('BROWSER:', msg.type(), msg.text());
-	});
-}
+export const test = base.extend({
+	page: async ({ page }, use) => {
+		if (isE2EDebug()) {
+			page.on('console', (msg) => {
+				console.log('BROWSER:', msg.type(), msg.text());
+			});
+		}
+		await use(page);
+	},
+});
 
-export function debugLog(...args: unknown[]): void {
-	if (isE2EDebug()) console.log(...args);
-}
+export { expect, type Page };

@@ -11,14 +11,9 @@ export default defineConfig({
   workers: process.env.CI ? 1 : 2,
   reporter: 'line',
   // Per-test ceiling is only a backstop for hangs; editor-ready waits fail
-  // fast on their own via EDITOR_READY_TIMEOUT. 60s keeps slow-but-green
-  // specs (measured ~20s cold) from flaking on the ceiling.
+  // fast on their own via EDITOR_READY_TIMEOUT (15s). Default assertion timeout
+  // remains Playwright's standard 5s so non-editor assertions fail fast.
   timeout: 60_000,
-  expect: {
-    // Editor-ready assertions use EDITOR_READY_TIMEOUT (10s) explicitly;
-    // everything else defaults to this instead of Playwright's 5s.
-    timeout: 10_000,
-  },
   use: {
     baseURL: 'http://127.0.0.1:5173',
     // With retries disabled, retain traces only for failures so a red run
