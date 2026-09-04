@@ -365,6 +365,9 @@ export class Workspace {
 			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
 
+			// Drop any stale repository before the async VCS probe so the UI
+			// never shows the previous folder's state while detecting.
+			this.repository = null;
 			const repo = new Repository(this.rootOrigin, this.vcsFactory);
 
 			// Fresh start for the adapter
