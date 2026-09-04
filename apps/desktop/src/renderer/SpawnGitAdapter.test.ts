@@ -708,17 +708,20 @@ describe('SpawnGitAdapter', () => {
 		}
 	});
 
-	it('switchBranch surfaces untracked collisions as checkout error (pinned for #69 worktree upgrade)', async () => {
+	it('switchBranch blocks an untracked collision before checkout (matches contract)', async () => {
 		mockSwitch({
 			status: '?? untracked.txt\0',
-			diff: { code: 0, stdout: '' },
-			checkout: { code: 128, stderr: 'error: The following untracked working tree files would be overwritten by checkout:\n\tuntracked.txt' }
+			// Real git lists a path absent from HEAD but present on the target,
+			// so the tree-to-tree diff contains the colliding untracked file.
+			diff: { code: 0, stdout: 'untracked.txt\0' },
+			checkout: 'throw'
 		});
 
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const res = await adapter.switchBranch('feature');
-		// Pinned current behavior: untracked overwrite surfaces as error.
-		// #69 owns upgrading this to { status: 'blocked', reason: 'worktree' }.
-		expect(res.status).toBe('error');
+		// Same expectation as the contract test 'blocks switch when local
+		// untracked file collides with target branch tracked file'. #69 owns
+		// any future `worktree` vs `conflict` reason harmonization.
+		expect(res).toEqual({ status: 'blocked', reason: 'conflict', files: ['untracked.txt'] });
 	});
 });
