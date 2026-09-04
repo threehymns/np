@@ -255,13 +255,11 @@ export class Workspace {
 	}
 
 	async newFile() {
-		console.log('[Workspace] newFile called. Counter:', this.untitledCounter + 1);
 		this.untitledCounter++;
 		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
-		console.log('[Workspace] newFile finished. documents count:', this.documents.length);
 		return newDoc;
 	}
 
@@ -364,7 +362,6 @@ export class Workspace {
 		if (!this.rootOrigin) return false;
 		const granted = await this.storage.verifyPermission(this.rootOrigin, true);
 		if (granted) {
-			console.log('[Workspace] Permission granted manually. Initializing repository...');
 			this.hasRootPermission = true;
 
 			// Drop any stale repository before the async VCS probe so the UI
@@ -381,9 +378,8 @@ export class Workspace {
 			const detected = await adapter.detect(this.rootOrigin.path);
 			if (detected) {
 				this.repository = repo;
-				const success = await repo.refresh();
+				await repo.refresh();
 				this.applyPendingDiffRestore();
-				console.log('[Workspace] Repository initialized after permission:', success);
 			} else {
 				this.repository = null;
 			}
@@ -544,22 +540,17 @@ export class Workspace {
 
 
 	async saveFolderState(folderUri: string) {
-		console.log('[Workspace] saveFolderState start for:', folderUri);
 		const serializedDocs = this.serializeTabs();
 
 		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 		await this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
-		console.log('[Workspace] saveFolderState finished for:', folderUri);
 	}
 
 	async loadFolderState(folderUri: string) {
-		console.log('[Workspace] loadFolderState start for:', folderUri);
 		this.pendingDiffRestore.clear();
 		try {
 			const origins = await this.persistence.loadOpenFiles(folderUri);
-			console.log('[Workspace] loadOpenFiles returned:', origins);
 			const activeId = await this.persistence.loadActiveDocumentId(folderUri);
-			console.log('[Workspace] loadActiveDocumentId returned:', activeId);
 
 			if (origins && origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
@@ -615,12 +606,10 @@ export class Workspace {
 				// Repository already refreshed (folder-open path): apply now.
 				this.applyPendingDiffRestore();
 			} else {
-				console.log('[Workspace] No origins found, creating new file');
 				this.documents = [];
 				this.tabs = [];
 				await this.newFile();
 			}
-			console.log('[Workspace] loadFolderState finished. documents count:', this.documents.length);
 		} catch (e) {
 			console.error('[Workspace] Failed to load folder state', e);
 			this.pendingDiffRestore.clear();
@@ -648,10 +637,8 @@ export class Workspace {
 				}
 			}
 
-			console.log('[Workspace] restoreSession start');
 			try {
 				const all = await this.persistence.loadAll();
-				console.log('[Workspace] loadAll returned:', all);
 				
 				const rootOrigin: FileOrigin | null = all.rootFolder || null;
 				const recentFolders: FileOrigin[] = all.recentFolders || [];
@@ -694,7 +681,6 @@ export class Workspace {
 
 				// Load namespaced state for the restored folder URI
 				const folderUri = rootOrigin ? toURI(rootOrigin) : '';
-				console.log('[Workspace] Restoring state for folderUri:', folderUri);
 				await this.loadFolderState(folderUri);
 
 			} catch (e) {
@@ -705,7 +691,6 @@ export class Workspace {
 			} finally {
 				if (this.latestRestoreId === currentRestoreId) {
 					this.isRestoring = false;
-					console.log('[Workspace] restoreSession finished. isRestoring = false');
 				}
 			}
 		})();
