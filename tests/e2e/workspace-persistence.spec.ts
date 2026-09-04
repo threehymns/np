@@ -174,4 +174,20 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 		expect(restoredData[0].content).toBe('Auto-persisted via visibilitychange hidden');
 		expect(restoredData[0].isModified).toBe(true);
 	});
+
+	test('draft typed within the debounce window survives an immediate reload', async ({ page }) => {
+		const editor = page.locator('.cm-content').first();
+		await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+		await editor.click();
+		await page.keyboard.press('Control+A');
+		await page.keyboard.press('Backspace');
+		await page.keyboard.type('Unload-race draft content');
+
+		// Reload immediately: the 500ms debounced save cannot have fired,
+		// so only the unload flush can persist this draft.
+		await page.reload();
+		const reloadedEditor = page.locator('.cm-content').first();
+		await expect(reloadedEditor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+		await expect(reloadedEditor).toContainText('Unload-race draft content');
+	});
 });
