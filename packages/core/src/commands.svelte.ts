@@ -666,11 +666,8 @@ export function registerCoreCommands(appState: AppState) {
 				ws.tabs.push({ id, type: 'diff' });
 			}
 			ws.activeTabId = id;
-			if (filepath && ws.repository) {
-				const change = ws.repository.changes.find(c => c.filepath === filepath);
-				if (change) {
-					ws.repository.activeDiffFile = change;
-				}
+			if (ws.repository) {
+				ws.repository.setActiveDiffFileByPath(filepath);
 			}
 		}
 	});
