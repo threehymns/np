@@ -443,6 +443,12 @@
 		fireReadyResolvers(filepath);
 	}
 
+	function syncActiveFile(filepath: string) {
+		const repository = appState.workspace.repository;
+		if (!repository) return;
+		repository.setActiveDiffFileByPath(filepath);
+	}
+
 	// Push diff-editor cursor activity back to the Git panel (issue #79),
 	// mirroring Zed's SelectionsChanged -> select_entry_by_path with its
 	// contains_focused guard: only the focused editor drives
@@ -450,13 +456,7 @@
 	// fight the user's panel selection.
 	function syncActiveFileFromCursor(filepath: string, view: EditorView) {
 		if (!view.hasFocus) return;
-		const repository = appState.workspace.repository;
-		if (!repository) return;
-		if (repository.activeDiffFile?.filepath === filepath) return;
-		const match = repository.changes.find((c) => c.filepath === filepath);
-		if (match) {
-			repository.activeDiffFile = match;
-		}
+		syncActiveFile(filepath);
 	}
 
 	function cursorSyncExtension(getFilepath: () => string) {
@@ -835,6 +835,20 @@
 
 	let repo = $derived(appState.workspace.repository);
 
+	// Sync keymap context for DiffViewer so vim-mode and editor shortcuts function
+	$effect(() => {
+		appState.keymaps.setContext('editor', true);
+		if (appState.prefs.vimMode) {
+			appState.keymaps.setContext('vim_mode', 'normal');
+		} else {
+			appState.keymaps.setContext('vim_mode', undefined);
+		}
+		return () => {
+			appState.keymaps.setContext('editor', undefined);
+			appState.keymaps.setContext('vim_mode', undefined);
+		};
+	});
+
 	// Publish hunk navigation for the git.nextHunk / git.prevHunk commands
 	// (issue #80). Cleared on unmount so the commands disable outside the
 	// diff view; identity-checked in case another instance mounted after us.
@@ -1182,6 +1196,26 @@
 			toggleCollapse(filepath);
 		}
 	}
+
+	let diffContainerEl = $state<HTMLDivElement | null>(null);
+
+	function handleContainerScroll() {
+		if (!diffContainerEl) return;
+		// Guard: only drive activeDiffFile if diff container holds focus (mirroring Zed contains_focused)
+		if (!diffContainerEl.contains(document.activeElement)) return;
+
+		const containerRect = diffContainerEl.getBoundingClientRect();
+		for (const fileChange of activeChanges) {
+			const el = document.getElementById(`diff-file-${fileChange.filepath}`);
+			if (el) {
+				const rect = el.getBoundingClientRect();
+				if (rect.bottom > containerRect.top + 40 && rect.top <= containerRect.top + 80) {
+					syncActiveFile(fileChange.filepath);
+					break;
+				}
+			}
+		}
+	}
 </script>
 
 <div class="flex flex-col h-full w-full bg-background border-l border-border select-text">
@@ -1289,7 +1323,11 @@
 	</div>
 
 	<!-- Scrollable stacked Multibuffer Diffs -->
-	<div class="flex flex-col gap-2 flex-1 overflow-y-auto select-text bg-background">
+	<div
+		bind:this={diffContainerEl}
+		onscroll={handleContainerScroll}
+		class="flex flex-col gap-2 flex-1 overflow-y-auto select-text bg-background"
+	>
 		{#if activeChanges.length === 0}
 			<div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground h-full">
 				<InfoIcon class="size-6 text-primary mb-2 opacity-80" />
@@ -1307,12 +1345,14 @@
 							tabindex="0"
 							id="diff-header-{fileChange.filepath}"
 							class="flex items-center rounded-lg justify-between px-3 py-1 bg-muted/40 hover:bg-muted/70 border border-border/80 hover:border-border select-none shrink-0 font-mono text-[10.5px] h-9 transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:bg-muted/80 focus-visible:border-primary/60 cursor-pointer"
+							onfocusin={() => syncActiveFile(fileChange.filepath)}
 							onclick={(e) => {
-								if ((e.target as HTMLElement).closest('button, input, [role=\"checkbox\"]')) return;
+								syncActiveFile(fileChange.filepath);
+								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
 								toggleCollapse(fileChange.filepath);
 							}}
 							onkeydown={(e) => {
-								if ((e.target as HTMLElement).closest('button, input, [role=\"checkbox\"]')) return;
+								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
 								handleHeaderKeydown(e, fileChange.filepath);
 							}}
 						>
