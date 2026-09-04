@@ -666,15 +666,32 @@ export function registerCoreCommands(appState: AppState) {
 				ws.tabs.push({ id, type: 'diff' });
 			}
 			ws.activeTabId = id;
-			if (filepath && ws.repository) {
-				const change = ws.repository.changes.find(c => c.filepath === filepath);
-				if (change) {
-					ws.repository.activeDiffFile = change;
-				}
+			if (ws.repository) {
+				ws.repository.setActiveDiffFileByPath(filepath);
 			}
 		}
 	});
 
+
+	appState.commands.register({
+		id: 'git.nextHunk',
+		label: 'Git: Next Hunk',
+		category: 'Source Control',
+		action: () => {
+			appState.activeDiffNavigator?.nextHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
+
+	appState.commands.register({
+		id: 'git.prevHunk',
+		label: 'Git: Previous Hunk',
+		category: 'Source Control',
+		action: () => {
+			appState.activeDiffNavigator?.prevHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
 
 	appState.commands.register({
 		id: 'git.stageHunk',

@@ -196,16 +196,29 @@
 		
 		if (!appState.prefs.vimMode) {
 			appState.keymaps.setContext("vim_mode", undefined);
-			return;
+			return () => {
+				appState.keymaps.setContext("editor", undefined);
+				appState.keymaps.setContext("vim_mode", undefined);
+			};
 		}
 
 		// Initial set
 		appState.keymaps.setContext("vim_mode", "normal");
 		
-		if (!view) return;
+		if (!view) {
+			return () => {
+				appState.keymaps.setContext("editor", undefined);
+				appState.keymaps.setContext("vim_mode", undefined);
+			};
+		}
 
 		const cm = getCM(view);
-		if (!cm) return;
+		if (!cm) {
+			return () => {
+				appState.keymaps.setContext("editor", undefined);
+				appState.keymaps.setContext("vim_mode", undefined);
+			};
+		}
 
 		const updateMode = (args: any) => {
 			appState.keymaps.setContext("vim_mode", args.mode);
@@ -215,6 +228,8 @@
 		
 		return () => {
 			cm.off("vim-mode-change", updateMode);
+			appState.keymaps.setContext("editor", undefined);
+			appState.keymaps.setContext("vim_mode", undefined);
 		};
 	});
 

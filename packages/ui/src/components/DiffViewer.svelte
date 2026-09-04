@@ -190,7 +190,15 @@
 
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, ViewEntry>();
-	let editorResolvers = new Map<string, Array<(views: ViewEntry) => void>>();
+	// Pending getOrWaitEditor waiters, keyed to the requested mode so a
+	// registration for one mode never resolves a waiter for the other mode
+	// during rapid inline<->split switches (issue #81).
+	type ViewWaiter = {
+		mode: 'inline' | 'split';
+		preferSide: 'a' | 'b';
+		resolve: (view: EditorView | undefined) => void;
+	};
+	let editorResolvers = new Map<string, Array<ViewWaiter>>();
 
 	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
 		return (event: MouseEvent) => {
@@ -266,17 +274,64 @@
 		if (targetView) return targetView;
 
 		return new Promise<EditorView | undefined>((resolve) => {
+			// Last-resort backstop for genuinely slow registrations (view setup
+			// awaits async language extensions). Mode-aware paths below settle
+			// first in every normal flow.
 			const timer = setTimeout(() => {
+				removeWaiter(filepath, waiter);
 				resolve(pickView(editorViews.get(filepath), mode, preferSide));
 			}, 500);
 
+			const waiter: ViewWaiter = {
+				mode,
+				preferSide,
+				resolve: (view) => {
+					clearTimeout(timer);
+					resolve(view);
+				}
+			};
 			const list = editorResolvers.get(filepath) || [];
-			list.push((views) => {
-				clearTimeout(timer);
-				resolve(pickView(views, mode, preferSide));
-			});
+			list.push(waiter);
 			editorResolvers.set(filepath, list);
 		});
+	}
+
+	function removeWaiter(filepath: string, waiter: ViewWaiter) {
+		const list = editorResolvers.get(filepath);
+		if (!list) return;
+		const idx = list.indexOf(waiter);
+		if (idx !== -1) list.splice(idx, 1);
+		if (list.length === 0) editorResolvers.delete(filepath);
+	}
+
+	// Resolve only waiters whose requested mode now has a matching view.
+	// Waiters for other modes stay queued for their own registration.
+	function fireReadyResolvers(filepath: string) {
+		const list = editorResolvers.get(filepath);
+		if (!list || list.length === 0) return;
+		const views = editorViews.get(filepath);
+		for (const waiter of [...list]) {
+			const view = pickView(views, waiter.mode, waiter.preferSide);
+			if (view !== undefined) {
+				removeWaiter(filepath, waiter);
+				waiter.resolve(view);
+			}
+		}
+	}
+
+	// Settle waiters for a view that is being torn down (mode switch or file
+	// removal) with undefined so callers skip instead of hanging on the
+	// backstop or being resolved by a stale registration. When mode is
+	// omitted, all waiters for the filepath are aborted.
+	function abortResolvers(filepath: string, mode?: 'inline' | 'split') {
+		const list = editorResolvers.get(filepath);
+		if (!list || list.length === 0) return;
+		for (const waiter of [...list]) {
+			if (mode === undefined || waiter.mode === mode) {
+				removeWaiter(filepath, waiter);
+				waiter.resolve(undefined);
+			}
+		}
 	}
 
 	function createFileNavKeymap(filepath: string) {
@@ -385,11 +440,39 @@
 		const updated = { ...current, ...entry };
 		editorViews.set(filepath, updated);
 
-		const pending = editorResolvers.get(filepath);
-		if (pending) {
-			pending.forEach((resolve) => resolve(updated));
-			editorResolvers.delete(filepath);
-		}
+		fireReadyResolvers(filepath);
+	}
+
+	function syncActiveFile(filepath: string) {
+		const repository = appState.workspace.repository;
+		if (!repository) return;
+		repository.setActiveDiffFileByPath(filepath);
+	}
+
+	// Push diff-editor cursor activity back to the Git panel (issue #79),
+	// mirroring Zed's SelectionsChanged -> select_entry_by_path with its
+	// contains_focused guard: only the focused editor drives
+	// repo.activeDiffFile, so panel clicks and background updates never
+	// fight the user's panel selection.
+	function syncActiveFileFromCursor(filepath: string, view: EditorView) {
+		if (!view.hasFocus) return;
+		syncActiveFile(filepath);
+	}
+
+	function cursorSyncExtension(getFilepath: () => string) {
+		return EditorView.updateListener.of((update) => {
+			if (update.docChanged || update.selectionSet) {
+				syncActiveFileFromCursor(getFilepath(), update.view);
+			}
+		});
+	}
+
+	// Focus without a selection change (e.g. jumpToChunk focuses the editor
+	// after dispatching the new selection) still counts as cursor activity.
+	function trackCursorFocus(view: EditorView, getFilepath: () => string) {
+		const onFocusIn = () => syncActiveFileFromCursor(getFilepath(), view);
+		view.dom.addEventListener('focusin', onFocusIn);
+		return () => view.dom.removeEventListener('focusin', onFocusIn);
 	}
 
 	// Svelte action to initialize CodeMirror editor for inline unified diff
@@ -409,6 +492,7 @@
 		let view: EditorView | undefined;
 		let currentOptions = options;
 		let disposed = false;
+		let untrackCursorFocus: (() => void) | undefined;
 		const wrapCompartment = new Compartment();
 		const diffCompartment = new Compartment();
 		const hunkCompartment = new Compartment();
@@ -436,6 +520,7 @@
 					editorTheme,
 					diffTheme,
 					createFileNavKeymap(options.filepath),
+					cursorSyncExtension(() => currentOptions.filepath),
 					wrapCompartment.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 				]
 			});
@@ -444,6 +529,7 @@
 				state,
 				parent: node
 			});
+			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
 			registerEditorView(currentOptions.filepath, { inline: view });
 		});
 
@@ -503,11 +589,15 @@
 			destroy() {
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
+				untrackCursorFocus?.();
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.inline;
 					if (!existing.split) editorViews.delete(currentOptions.filepath);
 				}
+				// The inline view is gone: settle its waiters now instead of
+				// leaving them for the backstop or a stale registration.
+				abortResolvers(currentOptions.filepath, 'inline');
 				view?.destroy();
 			}
 		};
@@ -530,6 +620,7 @@
 		let view: MergeView | undefined;
 		let currentOptions = options;
 		let cleanupSync: (() => void) | undefined;
+		let untrackCursorFocus: (() => void) | undefined;
 		let disposed = false;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
@@ -548,6 +639,7 @@
 						editorTheme,
 						diffTheme,
 						createFileNavKeymap(options.filepath),
+						cursorSyncExtension(() => currentOptions.filepath),
 						wrapCompartmentA.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -568,6 +660,7 @@
 						}),
 						diffTheme,
 						createFileNavKeymap(options.filepath),
+						cursorSyncExtension(() => currentOptions.filepath),
 						wrapCompartmentB.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -617,6 +710,12 @@
 			}
 
 			registerEditorView(currentOptions.filepath, { split: view });
+			const untrackA = trackCursorFocus(view.a, () => currentOptions.filepath);
+			const untrackB = trackCursorFocus(view.b, () => currentOptions.filepath);
+			untrackCursorFocus = () => {
+				untrackA();
+				untrackB();
+			};
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
@@ -685,11 +784,15 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
+				untrackCursorFocus?.();
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.split;
 					if (!existing.inline) editorViews.delete(currentOptions.filepath);
 				}
+				// The split view is gone: settle its waiters now instead of
+				// leaving them for the backstop or a stale registration.
+				abortResolvers(currentOptions.filepath, 'split');
 				view?.destroy();
 			}
 		};
@@ -731,6 +834,36 @@
 	}
 
 	let repo = $derived(appState.workspace.repository);
+
+	// Sync keymap context for DiffViewer so vim-mode and editor shortcuts function
+	$effect(() => {
+		appState.keymaps.setContext('editor', true);
+		if (appState.prefs.vimMode) {
+			appState.keymaps.setContext('vim_mode', 'normal');
+		} else {
+			appState.keymaps.setContext('vim_mode', undefined);
+		}
+		return () => {
+			appState.keymaps.setContext('editor', undefined);
+			appState.keymaps.setContext('vim_mode', undefined);
+		};
+	});
+
+	// Publish hunk navigation for the git.nextHunk / git.prevHunk commands
+	// (issue #80). Cleared on unmount so the commands disable outside the
+	// diff view; identity-checked in case another instance mounted after us.
+	$effect(() => {
+		const navigator = {
+			nextHunk: () => jumpToChunk('next'),
+			prevHunk: () => jumpToChunk('prev')
+		};
+		appState.activeDiffNavigator = navigator;
+		return () => {
+			if (appState.activeDiffNavigator === navigator) {
+				appState.activeDiffNavigator = undefined;
+			}
+		};
+	});
 
 	// Scroll target into view effect
 	let lastScrolledFilepath = '';
@@ -1063,6 +1196,26 @@
 			toggleCollapse(filepath);
 		}
 	}
+
+	let diffContainerEl = $state<HTMLDivElement | null>(null);
+
+	function handleContainerScroll() {
+		if (!diffContainerEl) return;
+		// Guard: only drive activeDiffFile if diff container holds focus (mirroring Zed contains_focused)
+		if (!diffContainerEl.contains(document.activeElement)) return;
+
+		const containerRect = diffContainerEl.getBoundingClientRect();
+		for (const fileChange of activeChanges) {
+			const el = document.getElementById(`diff-file-${fileChange.filepath}`);
+			if (el) {
+				const rect = el.getBoundingClientRect();
+				if (rect.bottom > containerRect.top + 40 && rect.top <= containerRect.top + 80) {
+					syncActiveFile(fileChange.filepath);
+					break;
+				}
+			}
+		}
+	}
 </script>
 
 <div class="flex flex-col h-full w-full bg-background border-l border-border select-text">
@@ -1170,7 +1323,11 @@
 	</div>
 
 	<!-- Scrollable stacked Multibuffer Diffs -->
-	<div class="flex flex-col gap-2 flex-1 overflow-y-auto select-text bg-background">
+	<div
+		bind:this={diffContainerEl}
+		onscroll={handleContainerScroll}
+		class="flex flex-col gap-2 flex-1 overflow-y-auto select-text bg-background"
+	>
 		{#if activeChanges.length === 0}
 			<div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground h-full">
 				<InfoIcon class="size-6 text-primary mb-2 opacity-80" />
@@ -1188,12 +1345,14 @@
 							tabindex="0"
 							id="diff-header-{fileChange.filepath}"
 							class="flex items-center rounded-lg justify-between px-3 py-1 bg-muted/40 hover:bg-muted/70 border border-border/80 hover:border-border select-none shrink-0 font-mono text-[10.5px] h-9 transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:bg-muted/80 focus-visible:border-primary/60 cursor-pointer"
+							onfocusin={() => syncActiveFile(fileChange.filepath)}
 							onclick={(e) => {
-								if ((e.target as HTMLElement).closest('button, input, [role=\"checkbox\"]')) return;
+								syncActiveFile(fileChange.filepath);
+								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
 								toggleCollapse(fileChange.filepath);
 							}}
 							onkeydown={(e) => {
-								if ((e.target as HTMLElement).closest('button, input, [role=\"checkbox\"]')) return;
+								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
 								handleHeaderKeydown(e, fileChange.filepath);
 							}}
 						>
