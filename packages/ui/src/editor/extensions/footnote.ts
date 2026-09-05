@@ -3,16 +3,51 @@ import { styleTags } from "@lezer/highlight";
 import { footnoteTag } from "./highlight";
 
 /**
- * Obsidian footnotes (references + inline). `[^label]` references are parsed
- * before the base Link parser and styled raised/link-like with hidden markers;
- * `^[inline note]` parses as a footnote and wins over any block-anchor scan.
- * `[^label]: definition` collection is handled separately (see gap note).
+ * Obsidian footnotes (references, inline, and definitions). `[^label]` references
+ * are parsed before the base Link parser and styled raised/link-like with hidden
+ * markers; `^[inline note]` parses as a footnote and wins over any block-anchor scan.
+ * `[^label]: definition` blocks are collected without breaking surrounding blocks.
  */
 export const FootnoteExtension: MarkdownConfig = {
 	defineNodes: [
 		{ name: "Footnote" },
 		{ name: "FootnoteMark" },
 		{ name: "FootnoteLabel" },
+		{ name: "FootnoteDefinition", block: true },
+	],
+	parseBlock: [
+		{
+			name: "FootnoteDefinition",
+			before: "LinkReference",
+			parse(cx, line) {
+				if (line.pos >= line.text.length) return false;
+				const rest = line.text.slice(line.pos);
+				const match = rest.match(/^\[\^([^\]\s]+)\]:\s*/);
+				if (!match) return false;
+				const start = cx.lineStart + line.pos;
+				const labelStart = start + 2;
+				const labelEnd = labelStart + match[1].length;
+				const markEnd = start + match[0].indexOf("]") + 2;
+				const from = start;
+				let to = cx.lineStart + line.text.length;
+				cx.nextLine();
+				while (
+					line.depth >= 0 &&
+					(line.text.startsWith("    ") || line.text.startsWith("\t"))
+				) {
+					to = cx.lineStart + line.text.length;
+					cx.nextLine();
+				}
+				cx.addElement(
+					cx.elt("FootnoteDefinition", from, to, [
+						cx.elt("FootnoteMark", start, start + 2),
+						cx.elt("FootnoteLabel", labelStart, labelEnd),
+						cx.elt("FootnoteMark", labelEnd, markEnd),
+					]),
+				);
+				return true;
+			},
+		},
 	],
 	parseInline: [
 		{
@@ -78,6 +113,7 @@ export const FootnoteExtension: MarkdownConfig = {
 			Footnote: footnoteTag,
 			FootnoteMark: footnoteTag,
 			FootnoteLabel: footnoteTag,
+			FootnoteDefinition: footnoteTag,
 		}),
 	],
 };

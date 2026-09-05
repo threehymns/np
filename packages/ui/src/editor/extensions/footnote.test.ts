@@ -97,4 +97,11 @@ describe("#141 footnotes (references + inline)", () => {
 		]);
 		expect(replacedRanges("a footnote[^1] here", 12, true)).toEqual([]);
 	});
+
+	it("collects [^1]: definition as FootnoteDefinition without breaking surrounding blocks", () => {
+		const doc = "Paragraph one.\n\n[^1]: First definition text.\n\nParagraph two.";
+		expect(hasNode(doc, "FootnoteDefinition")).toBe(true);
+		expect(footnoteLabels(doc)).toEqual(["1"]);
+		expect(hasNode(doc, "Paragraph")).toBe(true);
+	});
 });
