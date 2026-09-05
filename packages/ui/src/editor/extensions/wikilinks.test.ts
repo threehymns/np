@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import {
 	WikiLinkExtension,
@@ -18,7 +19,7 @@ describe("WikiLink Lezer Markdown Extension", () => {
 			extensions: [mdExt],
 		});
 
-		const tree = (state as any).tree;
+		const tree = syntaxTree(state);
 		expect(tree).toBeDefined();
 
 		let foundWikiLink = false;
@@ -60,7 +61,7 @@ describe("WikiLink Lezer Markdown Extension", () => {
 			extensions: [mdExt],
 		});
 
-		const tree = (state as any).tree;
+		const tree = syntaxTree(state);
 		let foundEmbed = false;
 		let targetText = "";
 

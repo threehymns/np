@@ -112,7 +112,9 @@ export const linkHandlers = EditorView.domEventHandlers({
 					const workspace = view.state.facet(workspaceFacet);
 					const currentDoc = view.state.facet(currentDocFacet);
 					if (workspace) {
-						openInternalLink(workspace, currentDoc, rawText);
+						openInternalLink(workspace, currentDoc, rawText).catch((error) => {
+							console.error("Failed to open internal link:", error);
+						});
 						event.preventDefault();
 						event.stopPropagation();
 						return true;
@@ -135,11 +137,7 @@ export const linkHandlers = EditorView.domEventHandlers({
 					}
 
 					if (url) {
-						if (
-							url.startsWith("http://") ||
-							url.startsWith("https://") ||
-							url.startsWith("mailto:")
-						) {
+						if (/^(https?:|mailto:)/i.test(url)) {
 							window.open(url, "_blank", "noopener,noreferrer");
 							return true;
 						}
@@ -147,7 +145,9 @@ export const linkHandlers = EditorView.domEventHandlers({
 						const workspace = view.state.facet(workspaceFacet);
 						const currentDoc = view.state.facet(currentDocFacet);
 						if (workspace) {
-							openInternalLink(workspace, currentDoc, url);
+							openInternalLink(workspace, currentDoc, url).catch((error) => {
+								console.error("Failed to open internal link:", error);
+							});
 							event.preventDefault();
 							event.stopPropagation();
 							return true;

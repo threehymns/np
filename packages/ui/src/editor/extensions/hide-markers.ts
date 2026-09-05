@@ -110,8 +110,8 @@ class HideMarkersPlugin {
 					if (type === "WikiLink") {
 						const isExpanded =
 							view.hasFocus &&
-							selection.from <= node.to &&
-							selection.to >= node.from;
+							selection.from < node.to &&
+							selection.to > node.from;
 						if (isExpanded) {
 							builder.add(
 								node.from,
