@@ -69,6 +69,7 @@ import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
+import { StrikethroughExtension } from "./extensions/strikethrough";
 
 // Central Markdown language composition (WikiLinkExtension precedent). The
 // Editor's Markdown language must be a single markdown() superset — never a
@@ -76,7 +77,12 @@ import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilink
 // which would break [[Note]] parsing/hiding). To add a Markdown feature: define
 // its MarkdownConfig in its own module, then append it here. New feature
 // registrations collide only on these adjacent lines.
-const markdownFeatureConfigs: any[] = [Table, GFM, WikiLinkExtension];
+const markdownFeatureConfigs: any[] = [
+	Table,
+	GFM,
+	WikiLinkExtension,
+	StrikethroughExtension,
+];
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
 	if (!langDesc) return [];
@@ -228,6 +234,7 @@ export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
+export * from "./extensions/strikethrough";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";

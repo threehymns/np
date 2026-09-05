@@ -166,6 +166,7 @@ class HideMarkersPlugin {
 						const inlineTypes = [
 							"Emphasis",
 							"StrongEmphasis",
+							"Strikethrough",
 							"InlineCode",
 							"Link",
 							"Image",

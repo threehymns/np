@@ -32,6 +32,7 @@ const headingStyles: StyleSpec[] = [
 	},
 	{ tag: t.strong, fontWeight: "bold", color: "var(--foreground)" },
 	{ tag: t.emphasis, fontStyle: "italic" },
+	{ tag: t.strikethrough, textDecoration: "line-through" },
 	{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 	{
 		tag: [t.link, t.labelName],
