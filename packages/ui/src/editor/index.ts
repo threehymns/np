@@ -71,6 +71,7 @@ import { sizeBadgePlugin } from "./extensions/image-size";
 import { embedPlugin } from "./extensions/embeds";
 import { FootnoteExtension } from "./extensions/footnote";
 import { FadedExtension } from "./extensions/faded";
+import { frontmatterPlugin } from "./extensions/frontmatter";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
@@ -145,6 +146,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			toggleTaskKeymap,
 			sizeBadgePlugin,
 			embedPlugin,
+			frontmatterPlugin,
 			EditorView.editorAttributes.of({ class: "is-markdown" }),
 		];
 	}
@@ -263,6 +265,7 @@ export * from "./extensions/hash-tags";
 export * from "./extensions/math";
 export * from "./extensions/footnote";
 export * from "./extensions/faded";
+export * from "./extensions/frontmatter";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
