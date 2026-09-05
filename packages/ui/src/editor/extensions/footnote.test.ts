@@ -104,4 +104,10 @@ describe("#141 footnotes (references + inline)", () => {
 		expect(footnoteLabels(doc)).toEqual(["1"]);
 		expect(hasNode(doc, "Paragraph")).toBe(true);
 	});
+
+	it("parses multi-line footnote definition at end-of-document without infinite loop", () => {
+		const doc = "[^1]: First line\n    Second line indented";
+		expect(hasNode(doc, "FootnoteDefinition")).toBe(true);
+		expect(footnoteLabels(doc)).toEqual(["1"]);
+	});
 });

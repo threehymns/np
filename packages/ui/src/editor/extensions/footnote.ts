@@ -30,13 +30,15 @@ export const FootnoteExtension: MarkdownConfig = {
 				const markEnd = start + match[0].indexOf("]") + 2;
 				const from = start;
 				let to = cx.lineStart + line.text.length;
-				cx.nextLine();
-				while (
-					line.depth >= 0 &&
-					(line.text.startsWith("    ") || line.text.startsWith("\t"))
-				) {
-					to = cx.lineStart + line.text.length;
-					cx.nextLine();
+				while (cx.nextLine()) {
+					if (
+						line.depth >= 0 &&
+						(line.text.startsWith("    ") || line.text.startsWith("\t"))
+					) {
+						to = cx.lineStart + line.text.length;
+					} else {
+						break;
+					}
 				}
 				cx.addElement(
 					cx.elt("FootnoteDefinition", from, to, [
