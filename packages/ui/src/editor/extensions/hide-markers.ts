@@ -10,6 +10,7 @@ import { syntaxTree } from "@codemirror/language";
 import { LanguageLabelWidget } from "../widgets/LanguageLabelWidget";
 import { markerHideRules } from "./hide-rules";
 import { parseSizeToken } from "@np/core/links";
+import { getListItemTaskInfo } from "./tasks";
 
 class HideMarkersPlugin {
 	decorations: DecorationSet;
@@ -223,6 +224,35 @@ class HideMarkersPlugin {
 							"Image",
 						];
 						let parent = node.node.parent;
+
+						// Special case for ListMark on task items: only show if cursor is in the checkbox syntax area
+						if (type === "ListMark") {
+							let listItemNode = parent;
+							while (
+								listItemNode &&
+								listItemNode.name !== "ListItem" &&
+								listItemNode.name !== "Document"
+							) {
+								listItemNode = listItemNode.parent;
+							}
+							const taskInfo =
+								listItemNode &&
+								listItemNode.name === "ListItem"
+									? getListItemTaskInfo(listItemNode)
+									: null;
+							if (taskInfo?.taskMarker) {
+								const syntaxFrom =
+									taskInfo.listMark?.from ?? node.from;
+								const syntaxTo = taskInfo.taskMarker.to;
+								shouldShow =
+									view.hasFocus &&
+									view.state.selection.ranges.some(
+										(r) =>
+											r.from <= syntaxTo &&
+											r.to >= syntaxFrom,
+									);
+							}
+						}
 
 						// Special case for Link: Hide [ ] around label and (url) part
 						if (type === "LinkMark") {

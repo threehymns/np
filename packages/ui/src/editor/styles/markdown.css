@@ -225,12 +225,64 @@
 	font-weight: 600;
 }
 
-/* Task checkboxes (#152): mirrored checkbox for `[ ]`/`[x]` */
+/* Task checkboxes (#152): custom checkbox styled to match UI theme */
 .cm-task-checkbox {
-  cursor: pointer;
-  margin: 0 0.3em 0 0;
-  vertical-align: baseline;
-  accent-color: var(--primary);
+	appearance: none;
+	-webkit-appearance: none;
+	box-sizing: border-box;
+	width: 1.05em;
+	height: 1.05em;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background-color: var(--background);
+	cursor: pointer;
+	display: inline-block;
+	margin: 0 0.45em 0 0.05em;
+	vertical-align: -0.15em;
+	position: relative;
+	transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+	outline: none;
+	flex-shrink: 0;
+}
+
+.dark .cm-task-checkbox {
+	background-color: color-mix(in srgb, var(--input), transparent 70%);
+	border-color: var(--border);
+}
+
+.cm-task-checkbox:hover {
+	border-color: var(--primary);
+}
+
+.cm-task-checkbox:focus-visible {
+	border-color: var(--ring);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring), transparent 70%);
+}
+
+.cm-task-checkbox:checked {
+	background-color: var(--primary);
+	border-color: var(--primary);
+}
+
+.cm-task-checkbox::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	margin: auto;
+	width: 0.75em;
+	height: 0.75em;
+	background-color: var(--primary-foreground);
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%23000'%3E%3Cpath d='M229.66 77.66l-128 128a8 8 0 0 1-11.32 0l-56-56a8 8 0 0 1 11.32-11.32L96 188.69 218.34 66.34a8 8 0 0 1 11.32 11.32Z'/%3E%3C/svg%3E") center / contain no-repeat;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%23000'%3E%3Cpath d='M229.66 77.66l-128 128a8 8 0 0 1-11.32 0l-56-56a8 8 0 0 1 11.32-11.32L96 188.69 218.34 66.34a8 8 0 0 1 11.32 11.32Z'/%3E%3C/svg%3E") center / contain no-repeat;
+	opacity: 0;
+	transform: scale(0.6);
+	transition: opacity 0.12s ease, transform 0.12s ease;
+	pointer-events: none;
+}
+
+.cm-task-checkbox:checked::after {
+	opacity: 1;
+	transform: scale(1);
 }
 
 /* Embed/image size badge (#149) */
