@@ -724,4 +724,43 @@ describe('SpawnGitAdapter', () => {
 		// any future `worktree` vs `conflict` reason harmonization.
 		expect(res).toEqual({ status: 'blocked', reason: 'conflict', files: ['untracked.txt'] });
 	});
+
+	describe('init', () => {
+		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
+			const commands: Array<{ workingDir: string; args: string[] }> = [];
+			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
+				commands.push({ workingDir, args });
+				return { code: 0, stdout: 'Initialized empty Git repository', stderr: '' };
+			});
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await adapter.init();
+
+			expect(commands).toEqual([{ workingDir: '/test/repo', args: ['init'] }]);
+		});
+
+		it('initializes repository with explicit rootPath when provided', async () => {
+			const commands: Array<{ workingDir: string; args: string[] }> = [];
+			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
+				commands.push({ workingDir, args });
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await adapter.init('/custom/repo/path');
+
+			expect(commands).toEqual([{ workingDir: '/custom/repo/path', args: ['init'] }]);
+		});
+
+		it('throws when git init fails', async () => {
+			mockGitRun.mockImplementation(async () => ({
+				code: 1,
+				stdout: '',
+				stderr: 'fatal: cannot mkdir .git: Permission denied'
+			}));
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');
+		});
+	});
 });

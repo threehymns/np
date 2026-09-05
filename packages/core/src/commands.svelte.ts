@@ -39,7 +39,7 @@ async function readClipboard(appState: AppState): Promise<string> {
 
 /**
  * True for absolute filesystem paths in any common form: POSIX ('/a/b'),
- * Windows drive ('C:\a\b', 'C:/a/b'), and UNC ('\\\\server\share').
+ * Windows drive ('C:\a\b', 'C:/a/b'), and UNC ('\\\\server\\share').
  * URI strings ('scheme://...') are classified separately before this runs.
  */
 function isAbsoluteFilesystemPath(target: string): boolean {

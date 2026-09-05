@@ -42,6 +42,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return res.code === 0 && res.stdout.trim() === 'true';
 	}
 
+	async init(rootPath?: string): Promise<void> {
+		const targetPath = rootPath ?? this.rootOrigin.path;
+		const res = await this.gitRunner(targetPath, ['init']);
+		if (res.code !== 0) {
+			throw new Error(res.stderr || `Failed to initialize git repository at ${targetPath}`);
+		}
+	}
+
 	private static readonly PATH_NOT_FOUND_MARKERS = [
 		'not in index',
 		'does not exist in',
