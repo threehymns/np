@@ -108,7 +108,7 @@ export function sanitizeHtml(html: string): string {
 	}
 
 	// 2. Tokenize and sanitize all HTML tags and comments
-	const TAG_OR_COMMENT_REGEX = /<!--[\s\S]*?-->|<\/?[a-zA-Z0-9:-]+(?:\s+[^>]*?)?\/?>/g;
+	const TAG_OR_COMMENT_REGEX = /<!--[\s\S]*?-->|<\/?[a-zA-Z0-9:-]+(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)?\/?>/g;
 
 	return sanitized.replace(TAG_OR_COMMENT_REGEX, (token) => {
 		// Preserve HTML comments

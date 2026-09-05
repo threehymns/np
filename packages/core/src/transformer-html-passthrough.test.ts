@@ -203,5 +203,11 @@ describe("Obsidian HTML Passthrough & Sanitization", () => {
 			const sanitized = sanitizeHtml(md);
 			expect(sanitized).toContain("Here is my important document text that must not be deleted.");
 		});
+
+		it("retains complete quoted attribute values containing literal > without ending early", () => {
+			const input = '<span title="Value containing > greater than">Content</span>';
+			const sanitized = sanitizeHtml(input);
+			expect(sanitized).toBe('<span title="Value containing &gt; greater than">Content</span>');
+		});
 	});
 });
