@@ -71,6 +71,7 @@ import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
 import { StrikethroughExtension } from "./extensions/strikethrough";
 import { HighlightExtension } from "./extensions/inline-highlight";
+import { HashTagExtension } from "./extensions/hash-tags";
 
 // Central Markdown language composition (WikiLinkExtension precedent). The
 // Editor's Markdown language must be a single markdown() superset — never a
@@ -84,6 +85,7 @@ const markdownFeatureConfigs: any[] = [
 	WikiLinkExtension,
 	StrikethroughExtension,
 	HighlightExtension,
+	HashTagExtension,
 ];
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
@@ -238,6 +240,7 @@ export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
 export * from "./extensions/strikethrough";
 export * from "./extensions/inline-highlight";
+export * from "./extensions/hash-tags";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";

@@ -5,6 +5,9 @@ import type { StyleSpec } from "@lezer/highlight";
 // Custom tag for Obsidian `==highlight==` so the composed style can target it.
 export const markHighlightTag = Tag.define("mark");
 
+// Custom tag for Obsidian taxonomy tags (#tag / #a/b).
+export const taxTag = Tag.define("taxonomy");
+
 // Per-feature statement style chunks, composed into one HighlightStyle.define
 // below. We keep a single define (rather than several HighlightStyle.define +
 // syntaxHighlighting() calls) so feature tags keep a stable intra-array
@@ -41,6 +44,14 @@ const headingStyles: StyleSpec[] = [
 		backgroundColor: "color-mix(in srgb, var(--accent), transparent 58%)",
 		borderRadius: "2px",
 		className: "cm-mark",
+	},
+	{
+		tag: taxTag,
+		color: "var(--accent-foreground)",
+		backgroundColor: "color-mix(in srgb, var(--accent), transparent 72%)",
+		borderRadius: "3px",
+		padding: "0 0.3em",
+		className: "cm-tag",
 	},
 	{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 	{
