@@ -263,6 +263,63 @@ class HTMLPassthroughPlugin {
 			);
 		};
 
+		const pushBlockDecorations = (
+			from: number,
+			to: number,
+			rawHtml: string,
+		) => {
+			const startLine = doc.lineAt(from);
+			const endLine = doc.lineAt(to);
+
+			if (startLine.number === endLine.number) {
+				items.push({
+					from,
+					to,
+					deco: Decoration.replace({
+						widget: new HTMLBlockWidget(rawHtml, from, to),
+					}),
+					isReplace: true,
+				});
+			} else {
+				items.push({
+					from,
+					to: startLine.to,
+					deco: Decoration.replace({
+						widget: new HTMLBlockWidget(rawHtml, from, to),
+					}),
+					isReplace: true,
+				});
+
+				for (
+					let l = startLine.number + 1;
+					l <= endLine.number;
+					l++
+				) {
+					const line = doc.line(l);
+					const lineFrom = Math.max(from, line.from);
+					const lineTo = Math.min(to, line.to);
+
+					items.push({
+						from: line.from,
+						to: line.from,
+						deco: Decoration.line({
+							class: "cm-html-block-hidden-line",
+						}),
+						isLine: true,
+					});
+
+					if (lineFrom < lineTo) {
+						items.push({
+							from: lineFrom,
+							to: lineTo,
+							deco: Decoration.replace({}),
+							isReplace: true,
+						});
+					}
+				}
+			}
+		};
+
 		// 2. Scan paired HTML blocks (div, table, details, iframe, etc. including across blank lines)
 		for (const block of this.pairedBlocks) {
 			const isFocused =
@@ -271,64 +328,7 @@ class HTMLPassthroughPlugin {
 				selection.to >= block.from;
 
 			if (!isFocused) {
-				const startLine = doc.lineAt(block.from);
-				const endLine = doc.lineAt(block.to);
-
-				if (startLine.number === endLine.number) {
-					items.push({
-						from: block.from,
-						to: block.to,
-						deco: Decoration.replace({
-							widget: new HTMLBlockWidget(
-								block.rawHtml,
-								block.from,
-								block.to,
-							),
-						}),
-						isReplace: true,
-					});
-				} else {
-					items.push({
-						from: block.from,
-						to: startLine.to,
-						deco: Decoration.replace({
-							widget: new HTMLBlockWidget(
-								block.rawHtml,
-								block.from,
-								block.to,
-							),
-						}),
-						isReplace: true,
-					});
-
-					for (
-						let l = startLine.number + 1;
-						l <= endLine.number;
-						l++
-					) {
-						const line = doc.line(l);
-						const lineFrom = Math.max(block.from, line.from);
-						const lineTo = Math.min(block.to, line.to);
-
-						items.push({
-							from: line.from,
-							to: line.from,
-							deco: Decoration.line({
-								class: "cm-html-block-hidden-line",
-							}),
-							isLine: true,
-						});
-
-						if (lineFrom < lineTo) {
-							items.push({
-								from: lineFrom,
-								to: lineTo,
-								deco: Decoration.replace({}),
-								isReplace: true,
-							});
-						}
-					}
-				}
+				pushBlockDecorations(block.from, block.to, block.rawHtml);
 			}
 		}
 
@@ -353,64 +353,7 @@ class HTMLPassthroughPlugin {
 
 						if (!isFocused) {
 							const rawHtml = doc.sliceString(node.from, node.to);
-							const startLine = doc.lineAt(node.from);
-							const endLine = doc.lineAt(node.to);
-
-							if (startLine.number === endLine.number) {
-								items.push({
-									from: node.from,
-									to: node.to,
-									deco: Decoration.replace({
-										widget: new HTMLBlockWidget(
-											rawHtml,
-											node.from,
-											node.to,
-										),
-									}),
-									isReplace: true,
-								});
-							} else {
-								items.push({
-									from: node.from,
-									to: startLine.to,
-									deco: Decoration.replace({
-										widget: new HTMLBlockWidget(
-											rawHtml,
-											node.from,
-											node.to,
-										),
-									}),
-									isReplace: true,
-								});
-
-								for (
-									let l = startLine.number + 1;
-									l <= endLine.number;
-									l++
-								) {
-									const line = doc.line(l);
-									const lineFrom = Math.max(node.from, line.from);
-									const lineTo = Math.min(node.to, line.to);
-
-									items.push({
-										from: line.from,
-										to: line.from,
-										deco: Decoration.line({
-											class: "cm-html-block-hidden-line",
-										}),
-										isLine: true,
-									});
-
-									if (lineFrom < lineTo) {
-										items.push({
-											from: lineFrom,
-											to: lineTo,
-											deco: Decoration.replace({}),
-											isReplace: true,
-										});
-									}
-								}
-							}
+							pushBlockDecorations(node.from, node.to, rawHtml);
 						}
 						return false;
 					}
