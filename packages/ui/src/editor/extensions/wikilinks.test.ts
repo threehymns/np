@@ -210,6 +210,24 @@ describe("wikilinkAutocompletion", () => {
 
 	it("completes note names on [[", () => {
 		const state = EditorState.create({
+			doc: "See [[",
+			selection: { anchor: 6 },
+			extensions: [
+				workspaceFacet.of(mockWorkspace),
+				currentDocFacet.of(mockCurrentDoc),
+			],
+		});
+
+		const context = new CompletionContext(state, 6, false);
+		const result = wikilinkAutocompletion(context);
+		expect(result).not.toBeNull();
+		expect(result!.from).toBe(6); // starts after [[
+		expect(result!.options.map((o) => o.label)).toContain("Note A");
+		expect(result!.options.map((o) => o.label)).toContain("Research");
+	});
+
+	it("filters note names by typed query", () => {
+		const state = EditorState.create({
 			doc: "See [[Not",
 			selection: { anchor: 9 },
 			extensions: [
@@ -221,9 +239,25 @@ describe("wikilinkAutocompletion", () => {
 		const context = new CompletionContext(state, 9, false);
 		const result = wikilinkAutocompletion(context);
 		expect(result).not.toBeNull();
-		expect(result!.from).toBe(6); // starts after [[
 		expect(result!.options.map((o) => o.label)).toContain("Note A");
-		expect(result!.options.map((o) => o.label)).toContain("Research");
+		expect(result!.options.map((o) => o.label)).not.toContain("Research");
+	});
+
+	it("filters headings by typed query", () => {
+		const state = EditorState.create({
+			doc: "Jump [[#Deep",
+			selection: { anchor: 12 },
+			extensions: [
+				workspaceFacet.of(mockWorkspace),
+				currentDocFacet.of(mockCurrentDoc),
+			],
+		});
+
+		const context = new CompletionContext(state, 12, false);
+		const result = wikilinkAutocompletion(context);
+		expect(result).not.toBeNull();
+		expect(result!.options.map((o) => o.label)).toContain("Deep Dive");
+		expect(result!.options.map((o) => o.label)).not.toContain("Introduction");
 	});
 
 	it("completes headings on [[#", () => {

@@ -138,10 +138,14 @@ export function wikilinkAutocompletion(
 
 		const blocks = getBlocks(content);
 		const prefixPos = match.from + match.text.lastIndexOf("^") + 1;
+		const q = query.trim().toLowerCase();
+		const filtered = q
+			? blocks.filter((b) => b.id.toLowerCase().includes(q))
+			: blocks;
 
 		return {
 			from: prefixPos,
-			options: blocks.map((b) => ({
+			options: filtered.map((b) => ({
 				label: b.id,
 				detail: b.preview.slice(0, 40),
 				type: "variable",
@@ -173,10 +177,14 @@ export function wikilinkAutocompletion(
 
 		const headings = getHeadings(content);
 		const prefixPos = match.from + match.text.lastIndexOf("#") + 1;
+		const q = query.trim().toLowerCase();
+		const filtered = q
+			? headings.filter((h) => h.text.toLowerCase().includes(q))
+			: headings;
 
 		return {
 			from: prefixPos,
-			options: headings.map((h) => ({
+			options: filtered.map((h) => ({
 				label: h.text,
 				detail: `H${h.level}`,
 				type: "section",
@@ -187,6 +195,7 @@ export function wikilinkAutocompletion(
 
 	// Case 3: Note search ([[...)
 	const options: { label: string; detail?: string; type: string; apply: string }[] = [];
+	const noteQuery = fullInside.trim().toLowerCase();
 
 	if (workspace) {
 		const allTreeFiles = getAllFilesFromTree(workspace.projectTree.nodes);
@@ -215,6 +224,12 @@ export function wikilinkAutocompletion(
 
 	return {
 		from: match.from + (match.text.startsWith("!") ? 3 : 2),
-		options,
+		options: noteQuery
+			? options.filter(
+					(o) =>
+						o.label.toLowerCase().includes(noteQuery) ||
+						(o.detail?.toLowerCase().includes(noteQuery) ?? false)
+				)
+			: options,
 	};
 }
