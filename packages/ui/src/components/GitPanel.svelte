@@ -313,7 +313,9 @@
 	<div class="h-full flex flex-col items-center justify-center p-6 text-center text-muted-foreground select-none">
 		<GitBranchIcon class="size-8 mb-2 opacity-50 animate-pulse text-muted-foreground" />
 		<p class="text-sm font-medium">No Git Repository</p>
-		{#if !appState.workspace.hasRootPermission}
+		{#if !appState.workspace.rootOrigin}
+			<p class="text-xs opacity-75 mt-1 max-w-[200px]">Open a folder containing a Git repository to use source control.</p>
+		{:else if !appState.workspace.hasRootPermission}
 			<p class="text-xs opacity-75 mt-1 max-w-[220px]">Write permission is required to initialize a Git repository.</p>
 		{:else}
 			<p class="text-xs opacity-75 mt-1 max-w-[200px]">Open a folder containing a Git repository to use source control.</p>
