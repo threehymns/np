@@ -76,8 +76,14 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 	const lang = await langDesc.load();
 	
 	if (langDesc.name === "Markdown") {
+		// NOTE: do not include the plain `lang` here. It is a second,
+		// WikiLink-less Markdown language and CodeMirror resolves the
+		// syntax tree from the first language in the stack — so keeping it
+		// makes [[Note]] parse as the inner single-bracket Link instead of
+		// the outer WikiLink (breaking click/Enter, marker hiding, styling).
+		// The custom markdown() below is a superset (codeLanguages + Table,
+		// GFM, WikiLinkExtension) and must be the sole language.
 		return [
-			lang,
 			markdown({
 				codeLanguages: allLanguages as any,
 				extensions: [Table, GFM, WikiLinkExtension] as any,
