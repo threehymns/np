@@ -405,25 +405,43 @@ export class Workspace {
 			return false;
 		}
 
+		const targetOrigin = this.rootOrigin;
+		const targetUri = toURI(targetOrigin);
+
 		// Clear stale repository state before async initialization
 		this.repository = null;
 
+		let repo: Repository | null = null;
 		try {
-			const repo = new Repository(this.rootOrigin, this.vcsFactory);
+			repo = new Repository(targetOrigin, this.vcsFactory);
 			const adapter = repo.adapter;
 
 			if (!adapter.init || typeof adapter.init !== 'function') {
 				throw new Error('VCS adapter does not support repository initialization');
 			}
 
-			await adapter.init(this.rootOrigin.path);
+			await adapter.init(targetOrigin.path);
+
+			// The folder may have switched while init was deferred; do not
+			// publish results for an outdated folder.
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				return false;
+			}
 
 			this.repository = repo;
 			await repo.refresh();
-			await this.projectTree.scan(this.rootOrigin);
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
+			await this.projectTree.scan(targetOrigin);
 			return true;
 		} catch (e) {
-			this.repository = null;
+			if (!repo || this.repository === repo) {
+				this.repository = null;
+			}
 			throw e;
 		}
 	}

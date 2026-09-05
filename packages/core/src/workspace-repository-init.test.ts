@@ -242,6 +242,54 @@ describe("Workspace.initializeRepository action (ticket #118)", () => {
 		expect(ws.repository).not.toBeNull();
 	});
 
+	it("does not publish repository or scan results when folder switches during deferred init", async () => {
+		let resolveInit!: () => void;
+		const initGate = new Promise<void>((r) => (resolveInit = r));
+
+		const storage = createMockStorage({});
+		const ws = new WorkspaceClass(
+			storage,
+			(): VCSAdapter => ({
+				detect: mock(async () => true),
+				init: mock(async () => {
+					await initGate;
+				}),
+				getCurrentBranch: async () => "main",
+				getBranches: async () => ["main"],
+				getChanges: async () => [],
+				getCommits: async () => [],
+				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+				switchBranch: mock(async () => ({ status: "switched" as const }))
+			}),
+			new MemorySessionPersistence()
+		);
+		ws.rootOrigin = rootOrigin;
+		ws.hasRootPermission = true;
+		const scanned: FileOrigin[] = [];
+		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
+			scanned.push(origin);
+		});
+
+		const initTask = ws.initializeRepository();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ws.repository).toBeNull();
+
+		// Switch folders while adapter.init is still deferred.
+		const otherOrigin: FileOrigin = { scheme: "file", path: "/projects/other", name: "other" };
+		ws.rootOrigin = otherOrigin;
+		const newerRepository = { currentBranch: "newer" } as any;
+		ws.repository = newerRepository;
+
+		resolveInit();
+		const result = await initTask;
+
+		expect(result).toBe(false);
+		// Stale init must not overwrite the newer folder's repository.
+		expect(ws.repository).toBe(newerRepository);
+		// Stale init must not scan the outdated folder.
+		expect(scanned).toEqual([]);
+	});
+
 	it("throws and leaves repository null when VCS adapter lacks init capability", async () => {
 		const storage = createMockStorage({});
 		const vcsFactory = (): VCSAdapter => ({
