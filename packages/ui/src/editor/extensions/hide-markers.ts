@@ -7,8 +7,8 @@ import {
 import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
-import { BulletWidget } from "../widgets/BulletWidget";
 import { LanguageLabelWidget } from "../widgets/LanguageLabelWidget";
+import { markerHideRules } from "./hide-rules";
 
 class HideMarkersPlugin {
 	decorations: DecorationSet;
@@ -222,82 +222,14 @@ class HideMarkersPlugin {
 								selection.to >= parent.from;
 						}
 
-						if (!shouldShow) {
-							if (type === "ListMark") {
-								const text = view.state.doc.sliceString(
-									node.from,
-									node.to,
+							if (!shouldShow) {
+								const rule = markerHideRules.find((r) =>
+									r.matches(type),
 								);
-								const isOrdered = /\d/.test(text);
-								if (isOrdered) {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.mark({
-											class: "md-list-number",
-										}),
-									);
-								} else {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.replace({
-											widget: new BulletWidget(),
-										}),
-									);
+								if (rule) {
+									rule.decorate(node, view, builder);
 								}
-							} else if (type === "HeaderMark") {
-								let parentName = node.node.parent?.name;
-								if (
-									parentName === "SetextHeading1" ||
-									parentName === "SetextHeading2"
-								) {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.mark({
-											class: "md-faded",
-										}),
-									);
-								} else {
-									let to = node.to;
-									if (
-										view.state.doc.sliceString(
-											to,
-											to + 1,
-										) === " "
-									) {
-										to++;
-									}
-									builder.add(
-										node.from,
-										to,
-										Decoration.replace({}),
-									);
-								}
-							} else if (type === "QuoteMark") {
-								let to = node.to;
-								if (
-									view.state.doc.sliceString(
-										to,
-										to + 1,
-									) === " "
-								) {
-									to++;
-								}
-								builder.add(
-									node.from,
-									to,
-									Decoration.replace({}),
-								);
-							} else {
-								builder.add(
-									node.from,
-									node.to,
-									Decoration.replace({}),
-								);
 							}
-						}
 					}
 				},
 			});
