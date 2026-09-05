@@ -74,6 +74,20 @@ export function decideLinkClick(
 	const node = syntaxTree(state).resolveInner(pos, -1);
 	const { isLink, isMarkerOrURL } = classifyLinkNode(node);
 
+	// Bare URL (a URL node with no Link ancestor) opens externally. Resolve with
+	// forward bias so a press on the URL's leading edge still lands on the node.
+	const urlNode = syntaxTree(state).resolveInner(pos, 1);
+	if (
+		urlNode.name === "URL" &&
+		!isLink &&
+		pos >= urlNode.from &&
+		pos < urlNode.to
+	) {
+		let url = state.doc.sliceString(urlNode.from, urlNode.to);
+		if (/^www\./i.test(url)) url = "https://" + url;
+		return { kind: "link", raw: url };
+	}
+
 	let isLabel = isLink && !isMarkerOrURL && !altKey;
 	const onLinkContent = eventOnLinkContent(target);
 
