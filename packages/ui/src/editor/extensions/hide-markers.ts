@@ -168,6 +168,7 @@ class HideMarkersPlugin {
 							"Emphasis",
 							"StrongEmphasis",
 							"Strikethrough",
+							"Highlight",
 							"InlineCode",
 							"Link",
 							"Image",
