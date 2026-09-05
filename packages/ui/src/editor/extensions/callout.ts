@@ -7,7 +7,6 @@ import {
 import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder, Facet } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
-import { keymap } from "@codemirror/view";
 
 /**
  * Fold state: 1-based start lines of callouts whose body is collapsed. Purely
@@ -31,6 +30,7 @@ const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
 	bug: { label: "bug" },
 	example: { label: "example" },
 	quote: { label: "quote", aliases: ["cite"] },
+	failure: { label: "failure", aliases: ["fail", "missing"] },
 };
 
 function canonicalType(type: string): string | null {
@@ -83,18 +83,24 @@ class CalloutPlugin {
 						if (lineText[li] === " ") li++;
 					}
 					const rest = lineText.slice(li);
-					const m = rest.match(/^\[!(\w+)\](.*)$/);
+					const m = rest.match(/^\[!(\w+)([-+])?\]([-+])?(.*)$/);
 					const type = m ? canonicalType(m[1]) : null;
 					if (!type || !m) return; // plain quote / unknown type
 
+					const foldMarker = m[2] || m[3];
+					const isDefaultCollapsed = foldMarker === "-";
+
 					const markerStart = firstLine.from + li + m[0].indexOf("[!");
-					const markerEnd = markerStart + m[0].indexOf("]") + 1;
+					const closeBracketRel = m[0].indexOf("]");
+					const markerEnd = markerStart + closeBracketRel + 1 + (m[3] ? 1 : 0);
 
 					// Accent each line of the callout block.
 					const startLine = doc.lineAt(node.from).number;
 					const endLine = doc.lineAt(node.to).number;
 					const collapsed = view.state.facet(calloutFoldState);
-					const isCollapsed = collapsed.includes(startLine);
+					const isCollapsed = isDefaultCollapsed
+						? !collapsed.includes(startLine)
+						: collapsed.includes(startLine);
 					const baseClass = `cm-callout cm-callout-${type}${
 						depth > 1 ? " cm-callout-nested" : ""
 					}`;
@@ -106,27 +112,30 @@ class CalloutPlugin {
 					);
 
 					const title =
-						(m[2] || "").trim() || CALLOUT_TYPES[type].label;
+						(m[4] || "").trim() || CALLOUT_TYPES[type].label;
 					add(
 						markerStart,
 						markerEnd,
 						Decoration.mark({ className: "cm-callout-type", title }),
 					);
-					if (m[2].trim()) {
+					if (m[4] && m[4].trim()) {
 						const titleEnd = firstLine.from + li + rest.length;
-						add(
-							markerEnd + 1,
-							titleEnd,
-							Decoration.mark({ className: "cm-callout-title" }),
-						);
+						const titleStart = markerEnd + (m[4].startsWith(" ") ? 1 : 0);
+						if (titleStart < titleEnd) {
+							add(
+								titleStart,
+								titleEnd,
+								Decoration.mark({ className: "cm-callout-title" }),
+							);
+						}
 					}
 
-					if (isCollapsed) {
+					if (isCollapsed && startLine < endLine) {
 						// Fold: hide the body lines (source text untouched).
 						add(
 							doc.line(startLine + 1).from,
 							doc.line(endLine).to,
-							Decoration.replace({ class: "cm-callout-folded" }),
+							Decoration.replace({}),
 						);
 					} else {
 						for (let n = startLine + 1; n <= endLine; n++) {
@@ -165,7 +174,7 @@ function calloutStartLine(state: any, pos: number): number | null {
 	// Confirm it's actually a callout (first line opens with `[!type]`).
 	let t = state.doc.line(startLine).text.trim();
 	while (t.startsWith(">")) t = t.slice(1).trimStart();
-	if (!/^\[!\w+\]/.test(t)) return null;
+	if (!/^\[!\w+[-+]?\][-+]?/.test(t)) return null;
 	return startLine;
 }
 
@@ -179,5 +188,3 @@ export function toggleCallout(view: EditorView): boolean {
 	view.dispatch({ effects: calloutFoldState.of([...set]) });
 	return true;
 }
-
-export const calloutFoldKeymap = keymap.of([{ key: "Mod-Alt-f", run: toggleCallout }]);

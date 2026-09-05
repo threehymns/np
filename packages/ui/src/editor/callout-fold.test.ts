@@ -87,4 +87,17 @@ describe("#154 callout fold + nesting", () => {
 		const open = await makeState("> [!note] Title\n> body");
 		expect(lineClasses(calloutPlugin, open)).toContain("cm-callout");
 	});
+
+	it("collapses by default when marked with - fold marker", async () => {
+		const doc = "> [!note]- Collapsed by default\n> body line";
+		const state = await makeState(doc, []); // no explicit fold state needed
+		const ranges = replaceRanges(calloutPlugin, state);
+		expect(ranges.some(([f, t]) => f === 32 && t >= 43)).toBe(true);
+	});
+
+	it("does not crash on single-line callouts even when in fold state", async () => {
+		const doc = "> [!note] Single line callout";
+		const state = await makeState(doc, [1]);
+		expect(() => replaceRanges(calloutPlugin, state)).not.toThrow();
+	});
 });

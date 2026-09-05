@@ -66,6 +66,32 @@ describe("#151 callout base", () => {
 		expect(decode(calloutPlugin, cState)).toContain(
 			"line:cm-callout cm-callout-warning",
 		);
+		const fState = await makeState("> [!failure] oops");
+		expect(decode(calloutPlugin, fState)).toContain(
+			"line:cm-callout cm-callout-failure",
+		);
+		const failState = await makeState("> [!fail] broken");
+		expect(decode(calloutPlugin, failState)).toContain(
+			"line:cm-callout cm-callout-failure",
+		);
+		const missingState = await makeState("> [!missing] lost");
+		expect(decode(calloutPlugin, missingState)).toContain(
+			"line:cm-callout cm-callout-failure",
+		);
+	});
+
+	it("recognizes callouts with + and - fold markers", async () => {
+		const foldedState = await makeState("> [!note]- Folded Title\n> body");
+		expect(decode(calloutPlugin, foldedState)).toContain(
+			"line:cm-callout cm-callout-note",
+		);
+		expect(decode(calloutPlugin, foldedState)).toContain("cm-callout-title");
+
+		const expandedState = await makeState("> [!note]+ Open Title\n> body");
+		expect(decode(calloutPlugin, expandedState)).toContain(
+			"line:cm-callout cm-callout-note",
+		);
+		expect(decode(calloutPlugin, expandedState)).toContain("cm-callout-title");
 	});
 
 	it("styles custom and default titles", async () => {
