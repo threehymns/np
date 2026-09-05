@@ -333,4 +333,15 @@ describe("openInternalLink resolution in Workspace", () => {
 		expect(resultDoc?.fileName).toBe("New Idea Note.md");
 		expect(storage.files.has("file:///vault/New Idea Note.md")).toBe(true);
 	});
+
+	it("never creates note when allowCreate is false", async () => {
+		const resultDoc = await openInternalLink(
+			workspace,
+			null,
+			"[[Missing Image.png]]",
+			{ allowCreate: false }
+		);
+		expect(resultDoc).toBeNull();
+		expect(storage.files.has("file:///vault/Missing Image.png")).toBe(false);
+	});
 });

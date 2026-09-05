@@ -37,7 +37,7 @@ function eventOnLinkContent(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	return (
 		!!el &&
-		(el.classList.contains("cm-link") || !!el.closest(".cm-link"))
+		(el.classList.contains("cm-link") || !(!el.closest(".cm-link")))
 	);
 }
 
@@ -46,7 +46,7 @@ function eventOnExpandedLink(target: EventTarget | null): boolean {
 	return (
 		!!el &&
 		(el.classList.contains("cm-link-expanded") ||
-			!!el.closest(".cm-link-expanded"))
+			!(!el.closest(".cm-link-expanded")))
 	);
 }
 
@@ -272,7 +272,7 @@ export const linkHandlers = EditorView.domEventHandlers({
 			const workspace = view.state.facet(workspaceFacet);
 			const currentDoc = view.state.facet(currentDocFacet);
 			if (workspace) {
-				openInternalLink(workspace, currentDoc, image.dest).catch((error) => {
+				openInternalLink(workspace, currentDoc, image.dest, { allowCreate: false }).catch((error) => {
 					console.error("Failed to open image target:", error);
 				});
 				event.preventDefault();

@@ -60,33 +60,42 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		}
 	}
 
-	// Check for block reference (#^block-id or bare ^block-id for same-note)
-	const blockMatch = str.match(/(?:^|#)\^([a-zA-Z0-9-]+)$/);
-	if (blockMatch) {
-		const blockId = blockMatch[1];
-		let pathPart = str.slice(0, blockMatch.index).trim();
-		// Strip a trailing '#' left over when the match started at the caret
-		// (e.g. "Note#^id" matches "^id", leaving "Note#").
-		if (pathPart.endsWith('#')) {
-			pathPart = pathPart.slice(0, -1).trim();
-		}
-		return {
-			raw: rawLink,
-			path: pathPart,
-			subpath: {
-				type: 'block',
-				value: blockId,
-			},
-			alias,
-			isEmbed,
-		};
-	}
+	// Heading or Block subpath syntax
+	const hashIndex = str.indexOf('#');
+	if (hashIndex !== -1) {
+		const pathPart = str.slice(0, hashIndex).trim();
+		const afterHash = str.slice(hashIndex + 1).trim();
 
-	// Check for heading link (#Heading or #Heading#Subheading)
-	const firstHashIndex = str.indexOf('#');
-	if (firstHashIndex !== -1) {
-		const pathPart = str.slice(0, firstHashIndex).trim();
-		const headingPart = str.slice(firstHashIndex + 1).trim();
+		// Block subpath: starts with ^ or contains #^
+		if (afterHash.startsWith('^')) {
+			return {
+				raw: rawLink,
+				path: pathPart,
+				subpath: {
+					type: 'block',
+					value: afterHash.slice(1).trim(),
+				},
+				alias,
+				isEmbed,
+			};
+		}
+
+		// Heading subpath (can be multi-level: Section 2#Sub-item A)
+		let headingPart = afterHash;
+		const blockMatch = afterHash.match(/#\^([a-zA-Z0-9-]+)$/);
+		if (blockMatch) {
+			return {
+				raw: rawLink,
+				path: pathPart,
+				subpath: {
+					type: 'block',
+					value: blockMatch[1],
+				},
+				alias,
+				isEmbed,
+			};
+		}
+
 		return {
 			raw: rawLink,
 			path: pathPart,
@@ -517,7 +526,8 @@ function isWithinPath(candidatePath: string, rootPath: string): boolean {
 export async function openInternalLink(
 	workspace: Workspace,
 	currentDoc: DocumentSession | null,
-	rawLink: string
+	rawLink: string,
+	options: { allowCreate?: boolean } = {}
 ): Promise<DocumentSession | null> {
 	const parsed = parseInternalLink(rawLink);
 
@@ -528,17 +538,18 @@ export async function openInternalLink(
 		targetDoc = currentDoc ?? workspace.activeDocument;
 	} else {
 		// Target is in a note
+		const allowCreate = options.allowCreate !== undefined ? options.allowCreate : !parsed.isEmbed;
 		const targetOrigin = await resolveTargetOrigin(
 			workspace,
 			currentDoc,
 			parsed.path,
-			{ allowCreate: !parsed.isEmbed }
+			{ allowCreate }
 		);
 
 		if (targetOrigin) {
 			const opened = await workspace.openFile(targetOrigin);
 			targetDoc = opened ?? null;
-		} else if (!workspace.rootOrigin) {
+		} else if (!workspace.rootOrigin && allowCreate) {
 			// No folder open, check open documents
 			const existing = workspace.documents.find(
 				(d) =>
@@ -599,7 +610,7 @@ export function getAllFilesFromTree(nodes: TreeNodeLike[] = []): TreeNodeLike[] 
 		for (const item of items) {
 			if (item.kind === 'file') {
 				files.push(item);
-			} else if (item.children) {
+			} else if (item.kind === 'directory' && item.children) {
 				walk(item.children);
 			}
 		}
