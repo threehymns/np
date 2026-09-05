@@ -1,4 +1,5 @@
 import { EditorView } from "@codemirror/view";
+import type { EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { workspaceFacet, currentDocFacet } from "./wikilinks";
 import { openInternalLink } from "@np/core/links";
@@ -32,6 +33,108 @@ function classifyLinkNode(node: any): { isLink: boolean; isMarkerOrURL: boolean 
 	return { isLink, isMarkerOrURL };
 }
 
+function eventOnLinkContent(target: EventTarget | null): boolean {
+	const el = target as HTMLElement | null;
+	return (
+		!!el &&
+		(el.classList.contains("cm-link") || !!el.closest(".cm-link"))
+	);
+}
+
+function eventOnExpandedLink(target: EventTarget | null): boolean {
+	const el = target as HTMLElement | null;
+	return (
+		!!el &&
+		(el.classList.contains("cm-link-expanded") ||
+			!!el.closest(".cm-link-expanded"))
+	);
+}
+
+export interface LinkClickVerdict {
+	readonly kind: "wikilink" | "link" | null;
+	/** WikiLink raw text (`[[..]]`) or Link URL destination. */
+	readonly raw: string;
+}
+
+/**
+ * Pure click verdict for link presses (no side effects, headless-testable).
+ *
+ * `posAtCoords` snaps clicks in trailing empty space to the label edge of a
+ * collapsed link, so the tree alone reports a label hit. The event target
+ * disambiguates: only presses landing on rendered link content (`.cm-link`)
+ * count as link clicks; the rest fall through to cursor placement.
+ */
+export function decideLinkClick(
+	state: EditorState,
+	pos: number,
+	target: EventTarget | null,
+	altKey: boolean
+): LinkClickVerdict {
+	const none: LinkClickVerdict = { kind: null, raw: "" };
+	const node = syntaxTree(state).resolveInner(pos, -1);
+	const { isLink, isMarkerOrURL } = classifyLinkNode(node);
+
+	let isLabel = isLink && !isMarkerOrURL && !altKey;
+	const onLinkContent = eventOnLinkContent(target);
+
+	if (isLabel && !onLinkContent) {
+		isLabel = false;
+	} else if (!isLabel && onLinkContent) {
+		isLabel = true;
+	}
+
+	if (!isLabel || eventOnExpandedLink(target)) return none;
+
+	const linkNode: any = findLinkNode(node);
+	if (linkNode && linkNode.name === "WikiLink") {
+		return {
+			kind: "wikilink",
+			raw: state.doc.sliceString(linkNode.from, linkNode.to),
+		};
+	}
+
+	if (linkNode && linkNode.name === "Link") {
+		let url = "";
+		const cursor = linkNode.node.cursor();
+		if (cursor.firstChild()) {
+			do {
+				if (cursor.name === "URL") {
+					url = state.doc.sliceString(cursor.from, cursor.to);
+					break;
+				}
+			} while (cursor.nextSibling());
+		}
+
+		if (url) return { kind: "link", raw: url };
+	}
+
+	return none;
+}
+
+/**
+ * Pure mousedown verdict: true claims the event (preventDefault + focus),
+ * which suppresses cursor placement — so it must only fire for presses on
+ * rendered link content, never for snapped trailing-space clicks.
+ */
+export function decideLinkMousedown(
+	state: EditorState,
+	pos: number,
+	target: EventTarget | null,
+	altKey: boolean
+): boolean {
+	// We still need preventDefault to stop cursor move on collapsed links
+	const node = syntaxTree(state).resolveInner(pos, -1);
+	const { isLink, isMarkerOrURL } = classifyLinkNode(node);
+
+	return (
+		isLink &&
+		!isMarkerOrURL &&
+		!altKey &&
+		!eventOnExpandedLink(target) &&
+		eventOnLinkContent(target)
+	);
+}
+
 export const linkHandlers = EditorView.domEventHandlers({
 	keydown: (event, view) => {
 		if (event.defaultPrevented) return false;
@@ -53,32 +156,20 @@ export const linkHandlers = EditorView.domEventHandlers({
 		return true;
 	},
 	mousedown: (event, view) => {
-		// We still need preventDefault to stop cursor move on collapsed links
 		const pos = view.posAtCoords({
 			x: event.clientX,
 			y: event.clientY,
 		});
 		if (pos == null) return;
 
-		const node = syntaxTree(view.state).resolveInner(pos, -1);
-
-		const { isLink, isMarkerOrURL } = classifyLinkNode(node);
-
-		if (isLink && !isMarkerOrURL && !event.altKey) {
-			// Check if the link is currently expanded in the DOM
-			const target = event.target as HTMLElement;
-			const isExpanded =
-				target.classList.contains("cm-link-expanded") ||
-				target.closest(".cm-link-expanded");
-
-			if (!isExpanded) {
-				event.preventDefault();
-				event.stopPropagation();
-				view.focus();
-				return true;
-			}
+		if (!decideLinkMousedown(view.state, pos, event.target, event.altKey)) {
+			return false;
 		}
-		return false;
+
+		event.preventDefault();
+		event.stopPropagation();
+		view.focus();
+		return true;
 	},
 	click: (event, view) => {
 		const pos = view.posAtCoords({
@@ -87,83 +178,47 @@ export const linkHandlers = EditorView.domEventHandlers({
 		});
 		if (pos == null) return false;
 
-		const node = syntaxTree(view.state).resolveInner(pos, -1);
+		const verdict = decideLinkClick(
+			view.state,
+			pos,
+			event.target,
+			event.altKey
+		);
 
-		const { isLink, isMarkerOrURL } = classifyLinkNode(node);
-
-		let isLabel = isLink && !isMarkerOrURL && !event.altKey;
-
-		if (!isLabel) {
-			const target = event.target as HTMLElement;
-			if (
-				target.classList.contains("cm-link") ||
-				target.closest(".cm-link")
-			) {
-				isLabel = true;
+		if (verdict.kind === "wikilink") {
+			const workspace = view.state.facet(workspaceFacet);
+			const currentDoc = view.state.facet(currentDocFacet);
+			if (workspace) {
+				openInternalLink(workspace, currentDoc, verdict.raw).catch(
+					(error) => {
+						console.error("Failed to open internal link:", error);
+					}
+				);
+				event.preventDefault();
+				event.stopPropagation();
+				return true;
 			}
 		}
 
-		if (isLabel) {
-			const target = event.target as HTMLElement;
-			const isExpanded =
-				target.classList.contains("cm-link-expanded") ||
-				target.closest(".cm-link-expanded");
+		if (verdict.kind === "link") {
+			const url = verdict.raw;
+			if (/^(https?:|mailto:)/i.test(url)) {
+				window.open(url, "_blank", "noopener,noreferrer");
+				return true;
+			}
 
-			if (!isExpanded) {
-				const linkNode: any = findLinkNode(node);
-
-				if (linkNode && linkNode.name === "WikiLink") {
-					const rawText = view.state.doc.sliceString(
-						linkNode.from,
-						linkNode.to
-					);
-					const workspace = view.state.facet(workspaceFacet);
-					const currentDoc = view.state.facet(currentDocFacet);
-					if (workspace) {
-						openInternalLink(workspace, currentDoc, rawText).catch((error) => {
-							console.error("Failed to open internal link:", error);
-						});
-						event.preventDefault();
-						event.stopPropagation();
-						return true;
-					}
-				}
-
-				if (linkNode && linkNode.name === "Link") {
-					let url = "";
-					const cursor = linkNode.node.cursor();
-					if (cursor.firstChild()) {
-						do {
-							if (cursor.name === "URL") {
-								url = view.state.doc.sliceString(
-									cursor.from,
-									cursor.to,
-								);
-								break;
-							}
-						} while (cursor.nextSibling());
-					}
-
-					if (url) {
-						if (/^(https?:|mailto:)/i.test(url)) {
-							window.open(url, "_blank", "noopener,noreferrer");
-							return true;
-						}
-
-						const workspace = view.state.facet(workspaceFacet);
-						const currentDoc = view.state.facet(currentDocFacet);
-						if (workspace) {
-							openInternalLink(workspace, currentDoc, url).catch((error) => {
-								console.error("Failed to open internal link:", error);
-							});
-							event.preventDefault();
-							event.stopPropagation();
-							return true;
-						}
-					}
-				}
+			const workspace = view.state.facet(workspaceFacet);
+			const currentDoc = view.state.facet(currentDocFacet);
+			if (workspace) {
+				openInternalLink(workspace, currentDoc, url).catch((error) => {
+					console.error("Failed to open internal link:", error);
+				});
+				event.preventDefault();
+				event.stopPropagation();
+				return true;
 			}
 		}
+
 		return false;
 	},
 });
