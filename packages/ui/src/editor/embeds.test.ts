@@ -8,6 +8,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { Table, GFM } from "@lezer/markdown";
 import { WikiLinkExtension } from "./extensions/wikilinks";
 import { decideLinkClick } from "./extensions/link-events";
+import { HideMarkersPlugin } from "./extensions/hide-markers";
 
 let getLanguageExtensions: any;
 let embedPlugin: ViewPlugin<any>;
@@ -36,7 +37,8 @@ function embedMarks(plugin: ViewPlugin<any>, state: EditorState): string[] {
 	);
 	const out: string[] = [];
 	inst.decorations.between(0, state.doc.length, (_f: number, _t: number, d: any) => {
-		if (d.spec?.className) out.push(d.spec.className);
+		if (d.spec?.class) out.push(d.spec.class);
+		else if (d.spec?.className) out.push(d.spec.className);
 	});
 	return out;
 }
@@ -75,9 +77,26 @@ describe("#148 embeds", () => {
 	});
 
 	it("keeps marker-hiding collapse on embeds (no replace overlap)", async () => {
-		// Rendering the cm-embed mark must not throw; the embed still builds.
-		const state = await makeState("![[Note]]");
+		const doc = "![[Note]]";
+		const state = await makeState(doc);
 		expect(() => embedMarks(embedPlugin, state)).not.toThrow();
+
+		const mockView: any = {
+			state,
+			visibleRanges: [{ from: 0, to: doc.length }],
+			hasFocus: false,
+		};
+		const plugin = new HideMarkersPlugin(mockView);
+		const ranges: [number, number][] = [];
+		const cursor = plugin.decorations.iter();
+		while (cursor.value !== null) {
+			ranges.push([cursor.from, cursor.to]);
+			cursor.next();
+		}
+		expect(ranges).toEqual([
+			[0, 3],
+			[7, 9],
+		]);
 	});
 
 	it("clicking an embed navigates (wikilink verdict)", () => {

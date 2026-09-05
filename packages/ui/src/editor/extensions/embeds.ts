@@ -50,7 +50,7 @@ class EmbedPlugin {
 					builder.add(
 						targetFrom,
 						targetTo,
-						Decoration.mark({ className: "cm-embed" }),
+						Decoration.mark({ class: "cm-embed" }),
 					);
 				},
 			});
