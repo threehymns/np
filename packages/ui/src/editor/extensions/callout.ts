@@ -97,23 +97,23 @@ class CalloutPlugin {
 					const lineText = firstLine.text;
 					// Strip leading `>` (and one space) to reach the marker and compute depth.
 					let depth = 0;
-					let li = 0;
-					while (li < lineText.length && lineText[li] === ">") {
+					let lineOffset = 0;
+					while (lineOffset < lineText.length && lineText[lineOffset] === ">") {
 						depth++;
-						li++;
-						if (lineText[li] === " ") li++;
+						lineOffset++;
+						if (lineText[lineOffset] === " ") lineOffset++;
 					}
-					const rest = lineText.slice(li);
-					const m = rest.match(/^\[!(\w+)([-+])?\]([-+])?(.*)$/);
-					const type = m ? canonicalType(m[1]) : null;
-					if (!type || !m) return; // plain quote / unknown type
+					const rest = lineText.slice(lineOffset);
+					const calloutMatch = rest.match(/^\[!(\w+)([-+])?\]([-+])?(.*)$/);
+					const type = calloutMatch ? canonicalType(calloutMatch[1]) : null;
+					if (!type || !calloutMatch) return; // plain quote / unknown type
 
-					const foldMarker = m[2] || m[3];
+					const foldMarker = calloutMatch[2] || calloutMatch[3];
 					const isDefaultCollapsed = foldMarker === "-";
 
-					const markerStart = firstLine.from + li + m[0].indexOf("[!");
-					const closeBracketRel = m[0].indexOf("]");
-					const markerEnd = markerStart + closeBracketRel + 1 + (m[3] ? 1 : 0);
+					const markerStart = firstLine.from + lineOffset + calloutMatch[0].indexOf("[!");
+					const closeBracketRel = calloutMatch[0].indexOf("]");
+					const markerEnd = markerStart + closeBracketRel + 1 + (calloutMatch[3] ? 1 : 0);
 
 					// Accent each line of the callout block.
 					const startLine = doc.lineAt(node.from).number;
@@ -133,15 +133,15 @@ class CalloutPlugin {
 					);
 
 					const title =
-						(m[4] || "").trim() || CALLOUT_TYPES[type].label;
+						(calloutMatch[4] || "").trim() || CALLOUT_TYPES[type].label;
 					add(
 						markerStart,
 						markerEnd,
 						Decoration.mark({ class: "cm-callout-type", attributes: { title } }),
 					);
-					if (m[4] && m[4].trim()) {
-						const titleEnd = firstLine.from + li + rest.length;
-						const titleStart = markerEnd + (m[4].startsWith(" ") ? 1 : 0);
+					if (calloutMatch[4] && calloutMatch[4].trim()) {
+						const titleEnd = firstLine.from + lineOffset + rest.length;
+						const titleStart = markerEnd + (calloutMatch[4].startsWith(" ") ? 1 : 0);
 						if (titleStart < titleEnd) {
 							add(
 								titleStart,
