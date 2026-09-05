@@ -15,6 +15,132 @@ const mockGit = git as unknown as {
 	checkout: typeof git.checkout;
 };
 
+interface MemoryNode {
+	kind: "file" | "directory";
+	name: string;
+	content?: Uint8Array;
+	children?: Map<string, MemoryNode>;
+	mtime?: number;
+}
+
+function createMemoryDirectoryHandle(name = "repo", permissionState: "granted" | "denied" | "prompt" = "granted") {
+	const rootNode: MemoryNode = {
+		kind: "directory",
+		name,
+		children: new Map()
+	};
+
+	let permission = permissionState;
+
+	function createDirHandle(node: MemoryNode): any {
+		return {
+			kind: "directory",
+			name: node.name,
+			queryPermission: mock(async () => permission),
+			requestPermission: mock(async () => permission),
+			getDirectoryHandle: mock(async (childName: string, opts?: { create?: boolean }) => {
+				let child = node.children!.get(childName);
+				if (!child) {
+					if (opts?.create) {
+						child = {
+							kind: "directory",
+							name: childName,
+							children: new Map()
+						};
+						node.children!.set(childName, child);
+					} else {
+						const err: any = new Error(`Directory not found: ${childName}`);
+						err.name = "NotFoundError";
+						throw err;
+					}
+				}
+				if (child.kind !== "directory") {
+					const err: any = new Error(`TypeMismatchError: ${childName} is a file`);
+					err.name = "TypeMismatchError";
+					throw err;
+				}
+				return createDirHandle(child);
+			}),
+			getFileHandle: mock(async (childName: string, opts?: { create?: boolean }) => {
+				let child = node.children!.get(childName);
+				if (!child) {
+					if (opts?.create) {
+						child = {
+							kind: "file",
+							name: childName,
+							content: new Uint8Array(),
+						mtime: Date.now()
+						};
+						node.children!.set(childName, child);
+					} else {
+						const err: any = new Error(`File not found: ${childName}`);
+						err.name = "NotFoundError";
+						throw err;
+					}
+				}
+				if (child.kind !== "file") {
+					const err: any = new Error(`TypeMismatchError: ${childName} is a directory`);
+					err.name = "TypeMismatchError";
+					throw err;
+				}
+				return createFileHandle(child);
+			}),
+			removeEntry: mock(async (childName: string, _opts?: { recursive?: boolean }) => {
+				if (!node.children!.has(childName)) {
+					const err: any = new Error(`NotFoundError: ${childName} not found`);
+					err.name = "NotFoundError";
+					throw err;
+				}
+				node.children!.delete(childName);
+			}),
+			keys: async function* () {
+				for (const key of node.children!.keys()) {
+					yield key;
+				}
+			},
+			values: async function* () {
+				for (const child of node.children!.values()) {
+					yield child.kind === "directory" ? createDirHandle(child) : createFileHandle(child);
+				}
+			},
+			entries: async function* () {
+				for (const [key, child] of node.children!.entries()) {
+					yield [key, child.kind === "directory" ? createDirHandle(child) : createFileHandle(child)];
+				}
+			}
+		};
+	}
+
+	function createFileHandle(node: MemoryNode): any {
+		return {
+			kind: "file",
+			name: node.name,
+			getFile: mock(async () => ({
+				name: node.name,
+				size: node.content?.length ?? 0,
+				lastModified: node.mtime ?? Date.now(),
+				text: mock(async () => new TextDecoder().decode(node.content ?? new Uint8Array())),
+				arrayBuffer: mock(async () => (node.content ?? new Uint8Array()).buffer)
+			})),
+			createWritable: mock(async () => ({
+				write: mock(async (data: Uint8Array | string) => {
+					node.content = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
+					node.mtime = Date.now();
+				}),
+				close: mock(async () => {})
+			}))
+		};
+	}
+
+	return {
+		rootNode,
+		rootHandle: createDirHandle(rootNode),
+		setPermission: (p: "granted" | "denied" | "prompt") => {
+			permission = p;
+		}
+	};
+}
+
 describe('IsomorphicGitAdapter', () => {
 	const rootOrigin: FileOrigin = { scheme: 'browser', path: '/test/repo', name: 'repo' };
 	let mockDirectoryHandle: any;
@@ -344,6 +470,87 @@ describe('IsomorphicGitAdapter', () => {
 		mockDirectoryHandle.queryPermission = mock(async () => 'prompt');
 		const result = await adapter.detect(rootOrigin.path);
 		expect(result).toBe(false);
+	});
+
+	describe("init", () => {
+		it("initializes repository and subsequent detect returns true", async () => {
+			const { rootHandle, rootNode } = createMemoryDirectoryHandle("empty-repo");
+			const origin: FileOrigin = { scheme: "browser", path: "/test/empty-repo", name: "empty-repo" };
+			browserHandleRegistry.register("browser:///test/empty-repo", rootHandle);
+
+			const adapter = new IsomorphicGitAdapter(origin);
+			expect(await adapter.detect("/test/empty-repo")).toBe(false);
+
+			await adapter.init();
+
+			expect(rootNode.children?.has(".git")).toBe(true);
+			expect(await adapter.detect("/test/empty-repo")).toBe(true);
+		});
+
+		it("newly initialized repository returns clean status", async () => {
+			const { rootHandle } = createMemoryDirectoryHandle("clean-repo");
+			const origin: FileOrigin = { scheme: "browser", path: "/test/clean-repo", name: "clean-repo" };
+			browserHandleRegistry.register("browser:///test/clean-repo", rootHandle);
+
+			const adapter = new IsomorphicGitAdapter(origin);
+			await adapter.init();
+
+			const status = await adapter.getStatus();
+			expect(status).toEqual({
+				isDirty: false,
+				uncommittedFiles: []
+			});
+		});
+
+		it("supports initializing with an explicit rootPath argument", async () => {
+			const { rootHandle, rootNode } = createMemoryDirectoryHandle("custom-path-repo");
+			const origin: FileOrigin = { scheme: "browser", path: "/test/default-path", name: "repo" };
+			browserHandleRegistry.register("browser:///test/custom-path-repo", rootHandle);
+
+			const adapter = new IsomorphicGitAdapter(origin);
+			await adapter.init("/test/custom-path-repo");
+
+			expect(rootNode.children?.has(".git")).toBe(true);
+		});
+
+		it("re-initializing an existing repository is idempotent and safe", async () => {
+			const { rootHandle, rootNode } = createMemoryDirectoryHandle("idempotent-repo");
+			const origin: FileOrigin = { scheme: "browser", path: "/test/idempotent-repo", name: "idempotent-repo" };
+			browserHandleRegistry.register("browser:///test/idempotent-repo", rootHandle);
+
+			const adapter = new IsomorphicGitAdapter(origin);
+			await adapter.init();
+			expect(rootNode.children?.has(".git")).toBe(true);
+
+			const fileHandle = await rootHandle.getFileHandle("note.md", { create: true });
+			const writable = await fileHandle.createWritable();
+			await writable.write("hello world");
+			await writable.close();
+
+			await adapter.init();
+
+			expect(rootNode.children?.has("note.md")).toBe(true);
+			expect(rootNode.children?.has(".git")).toBe(true);
+
+			const status = await adapter.getStatus();
+			expect(status.isDirty).toBe(true);
+			expect(status.uncommittedFiles).toContain("note.md");
+		});
+
+		it("throws clean error when permission is denied during init", async () => {
+			const { rootHandle } = createMemoryDirectoryHandle("denied-repo", "denied");
+			const origin: FileOrigin = { scheme: "browser", path: "/test/denied-repo", name: "denied-repo" };
+			browserHandleRegistry.register("browser:///test/denied-repo", rootHandle);
+
+			const adapter = new IsomorphicGitAdapter(origin);
+			await expect(adapter.init()).rejects.toThrow("Permission denied");
+		});
+
+		it("throws clean error when directory handle is not found", async () => {
+			const origin: FileOrigin = { scheme: "browser", path: "/test/nonexistent-repo", name: "nonexistent-repo" };
+			const adapter = new IsomorphicGitAdapter(origin);
+			await expect(adapter.init()).rejects.toThrow("Directory handle not found");
+		});
 	});
 
 	interface SwitchBranchMocks {

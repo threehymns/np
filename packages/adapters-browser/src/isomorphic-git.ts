@@ -251,6 +251,36 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return this.initPromise;
 	}
 
+	async init(rootPath?: string): Promise<void> {
+		const targetPath = rootPath ?? this.rootOrigin.path;
+		const origin: FileOrigin = { scheme: this.rootOrigin.scheme, path: targetPath, name: this.rootOrigin.name };
+		const handle = await browserHandleRegistry.resolve(toURI(origin));
+		if (!handle || handle.kind !== "directory") {
+			const error = new Error(`Directory handle not found for path: ${targetPath}`);
+			(error as any).code = "ENOENT";
+			throw error;
+		}
+
+		const permission = await handle.queryPermission({ mode: "readwrite" });
+		if (permission !== "granted") {
+			const error = new Error(`Permission denied for repository initialization at: ${targetPath}`);
+			(error as any).code = "EACCES";
+			(error as any).name = "NotAllowedError";
+			throw error;
+		}
+
+		const fs = new BrowserGitFS(handle as FileSystemDirectoryHandle);
+		await git.init({
+			fs,
+			dir: this.dir,
+			defaultBranch: "main"
+		});
+
+		this.rootHandle = handle as FileSystemDirectoryHandle;
+		this.fs = fs;
+		this.initialized = true;
+	}
+
 	async detect(rootPath: string): Promise<boolean> {
 		try {
 			// git resolves a work tree from any directory inside it, so probe the
