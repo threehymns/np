@@ -80,6 +80,7 @@ import { StrikethroughExtension } from "./extensions/strikethrough";
 import { HighlightExtension } from "./extensions/inline-highlight";
 import { HashTagExtension } from "./extensions/hash-tags";
 import { MathExtension } from "./extensions/math";
+import { htmlPassthroughPlugin } from "./extensions/html";
 
 // Central Markdown language composition (WikiLinkExtension precedent). The
 // Editor's Markdown language must be a single markdown() superset — never a
@@ -147,6 +148,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			sizeBadgePlugin,
 			embedPlugin,
 			frontmatterPlugin,
+			htmlPassthroughPlugin,
 			EditorView.editorAttributes.of({ class: "is-markdown" }),
 		];
 	}
@@ -266,6 +268,7 @@ export * from "./extensions/math";
 export * from "./extensions/footnote";
 export * from "./extensions/faded";
 export * from "./extensions/frontmatter";
+export * from "./extensions/html";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
@@ -346,4 +349,3 @@ export async function syncVimRegistersFromClipboard() {
 		// Fail silently
 	}
 }
-

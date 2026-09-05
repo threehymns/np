@@ -319,3 +319,102 @@
 .cm-callout-folded {
   font-style: italic;
 }
+
+/* Obsidian HTML Passthrough Live Preview Styles */
+.cm-html-u {
+	text-decoration: underline;
+}
+
+.cm-html-s {
+	text-decoration: line-through;
+}
+
+.cm-html-sub {
+	vertical-align: sub;
+	font-size: 0.8em;
+	line-height: 1;
+}
+
+.cm-html-sup {
+	vertical-align: super;
+	font-size: 0.8em;
+	line-height: 1;
+}
+
+.cm-html-ins {
+	text-decoration: underline;
+}
+
+.cm-html-mark {
+	background-color: color-mix(in srgb, var(--accent), transparent 58%);
+	border-radius: 2px;
+	padding: 0 0.15em;
+}
+
+.cm-html-kbd {
+	font-family: var(--font-mono);
+	background: var(--muted);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 0.1em 0.3em;
+	font-size: 0.85em;
+}
+
+.cm-html-small {
+	font-size: 0.85em;
+}
+
+.cm-html-strong {
+	font-weight: bold;
+}
+
+.cm-html-em {
+	font-style: italic;
+}
+
+.cm-html-block-hidden-line {
+	display: none !important;
+	height: 0 !important;
+	line-height: 0 !important;
+}
+
+.cm-html-block-widget {
+	display: block;
+	white-space: normal;
+	margin: 0.5rem 0;
+	cursor: default;
+	max-width: 100%;
+}
+
+.cm-html-block-widget table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 0.5rem 0;
+}
+
+.cm-html-block-widget th,
+.cm-html-block-widget td {
+	border: 1px solid var(--border, #ccc);
+	padding: 0.35rem 0.6rem;
+	text-align: left;
+}
+
+.cm-html-block-widget th {
+	background: var(--muted, rgba(128, 128, 128, 0.1));
+	font-weight: 600;
+}
+
+.cm-html-block-widget details {
+	margin: 0.5rem 0;
+	padding: 0.25rem 0;
+}
+
+.cm-html-block-widget summary {
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.cm-html-block-widget iframe {
+	border: none;
+	max-width: 100%;
+}

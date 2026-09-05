@@ -317,7 +317,7 @@ export function registerCoreCommands(appState: AppState) {
 			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
 
 			try {
-				await appState.exportService?.exportFile({
+				await appState.exportService?.exportFile?.({
 					content: html,
 					suggestedName,
 					mimeType: 'text/html',
