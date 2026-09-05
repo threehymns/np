@@ -148,6 +148,12 @@ class HideMarkersPlugin {
 						return false;
 					}
 
+					// TaskMarker is owned by the task-checkbox plugin (it replaces
+					// `[ ]`/`[x]` with a widget); don't also collapse it here.
+					if (type === "TaskMarker") {
+						return false;
+					}
+
 					const isMarker =
 						type.includes("Mark") ||
 						type.includes("Delimiter") ||
