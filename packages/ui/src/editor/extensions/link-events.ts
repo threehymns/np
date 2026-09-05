@@ -149,6 +149,35 @@ export function decideLinkMousedown(
 	);
 }
 
+/**
+ * Pure click verdict for Markdown images (`![alt](dest)`): external URLs open
+ * externally; vault-relative paths navigate without ever creating a file.
+ */
+export function decideImageClick(
+	state: EditorState,
+	pos: number
+): { kind: "image"; dest: string; external: boolean } | { kind: null; raw: "" } {
+	let cur: any = syntaxTree(state).resolveInner(pos, 1);
+	while (cur && cur.name !== "Image" && cur.parent) cur = cur.parent;
+	if (!cur || cur.name !== "Image") return { kind: null, raw: "" };
+	let url = "";
+	const c = cur.node.cursor();
+	if (c.firstChild()) {
+		do {
+			if (c.name === "URL") {
+				url = state.doc.sliceString(c.from, c.to);
+				break;
+			}
+		} while (c.nextSibling());
+	}
+	if (!url) return { kind: null, raw: "" };
+	return {
+		kind: "image",
+		dest: url,
+		external: /^(https?:|mailto:)/i.test(url),
+	};
+}
+
 export const linkHandlers = EditorView.domEventHandlers({
 	keydown: (event, view) => {
 		if (event.defaultPrevented) return false;
@@ -226,6 +255,25 @@ export const linkHandlers = EditorView.domEventHandlers({
 			if (workspace) {
 				openInternalLink(workspace, currentDoc, url).catch((error) => {
 					console.error("Failed to open internal link:", error);
+				});
+				event.preventDefault();
+				event.stopPropagation();
+				return true;
+			}
+		}
+
+		const image = decideImageClick(view.state, pos);
+		if (image.kind === "image" && image.external) {
+			window.open(image.dest, "_blank", "noopener,noreferrer");
+			return true;
+		}
+		if (image.kind === "image") {
+			// vault-relative: navigate, never create
+			const workspace = view.state.facet(workspaceFacet);
+			const currentDoc = view.state.facet(currentDocFacet);
+			if (workspace) {
+				openInternalLink(workspace, currentDoc, image.dest).catch((error) => {
+					console.error("Failed to open image target:", error);
 				});
 				event.preventDefault();
 				event.stopPropagation();

@@ -232,3 +232,15 @@
   vertical-align: baseline;
   accent-color: var(--primary);
 }
+
+/* Embed/image size badge (#149) */
+.cm-size-badge {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border-radius: 3px;
+  padding: 0 0.3em;
+  font-size: 0.8em;
+  margin: 0 0.15em;
+  user-select: none;
+  pointer-events: none;
+}
