@@ -317,75 +317,107 @@ export async function searchVaultForFile(
 
 /**
  * Resolves the destination FileOrigin for an internal note link in a workspace.
+ *
+ * The exact target is tried first so explicit paths (e.g. `Figure 1.png`)
+ * and dotted note names (e.g. `Chapter 1.2`) resolve before the `.md`
+ * fallback is applied. Pass `{ allowCreate: false }` for embeds so an
+ * unresolved embed never creates a file.
  */
 export async function resolveTargetOrigin(
 	workspace: Workspace,
 	currentDoc: DocumentSession | null,
-	targetPath: string
+	targetPath: string,
+	options: { allowCreate?: boolean } = {}
 ): Promise<FileOrigin | null> {
 	if (!targetPath) {
 		return currentDoc?.origin ?? null;
 	}
 
 	const normalizedTarget = targetPath.replace(/\\/g, '/');
-	const hasExtension = /\.[a-zA-Z0-9]+$/.test(normalizedTarget);
-	const targetWithExt = hasExtension ? normalizedTarget : `${normalizedTarget}.md`;
-	const targetName = targetWithExt.split('/').pop()!;
+	const hasMdExtension = /\.md$/i.test(normalizedTarget);
+	const candidates = hasMdExtension
+		? [normalizedTarget]
+		: [normalizedTarget, `${normalizedTarget}.md`];
 
 	if (workspace.rootOrigin) {
 		const rootPath = workspace.rootOrigin.path.replace(/\/$/, '');
 		const scheme = workspace.rootOrigin.scheme;
 
-		// 1. Direct path relative to workspace root
-		const directRootOrigin: FileOrigin = {
-			scheme,
-			path: `${rootPath}/${targetWithExt.replace(/^\//, '')}`,
-			name: targetName,
-		};
-		try {
-			await workspace.storage.readFile(directRootOrigin);
-			return directRootOrigin;
-		} catch {
-			// Not found directly at root
-		}
+		for (const candidate of candidates) {
+			const candidateName = candidate.split('/').pop()!;
+			const stripped = candidate.replace(/^\//, '');
 
-		// 2. Path relative to current note directory
-		if (currentDoc?.origin) {
-			const currentDocPath = currentDoc.origin.path;
-			const lastSlash = currentDocPath.lastIndexOf('/');
-			if (lastSlash !== -1) {
-				const currentDir = currentDocPath.slice(0, lastSlash);
-				const relOrigin: FileOrigin = {
-					scheme,
-					path: `${currentDir}/${targetWithExt.replace(/^\//, '')}`,
-					name: targetName,
-				};
-				try {
-					await workspace.storage.readFile(relOrigin);
-					return relOrigin;
-				} catch {
-					// Not found relative to current file
+			// 1. Direct path relative to workspace root
+			const directRootOrigin: FileOrigin = {
+				scheme,
+				path: `${rootPath}/${stripped}`,
+				name: candidateName,
+			};
+			try {
+				await workspace.storage.readFile(directRootOrigin);
+				return directRootOrigin;
+			} catch {
+				// Not found directly at root
+			}
+
+			// 2. Path relative to current note directory
+			if (currentDoc?.origin) {
+				const currentDocPath = currentDoc.origin.path;
+				const lastSlash = currentDocPath.lastIndexOf('/');
+				if (lastSlash !== -1) {
+					const currentDir = currentDocPath.slice(0, lastSlash);
+					const relOrigin: FileOrigin = {
+						scheme,
+						path: `${currentDir}/${stripped}`,
+						name: candidateName,
+					};
+					try {
+						await workspace.storage.readFile(relOrigin);
+						return relOrigin;
+					} catch {
+						// Not found relative to current file
+					}
 				}
+			}
+
+			// 3. Vault-wide search
+			const vaultFound = await searchVaultForFile(
+				workspace.storage,
+				workspace.rootOrigin,
+				candidateName,
+				candidate
+			);
+			if (vaultFound) {
+				return vaultFound;
 			}
 		}
 
-		// 3. Vault-wide search
-		const vaultFound = await searchVaultForFile(
-			workspace.storage,
-			workspace.rootOrigin,
-			targetName,
-			targetWithExt
-		);
-		if (vaultFound) {
-			return vaultFound;
+		// 4. Note does not exist yet. Obsidian rule: create note at the link's folder path.
+		// Unresolved embeds must not create files (e.g. ![[missing.png]]).
+		if (options.allowCreate === false) {
+			return null;
 		}
 
-		// 4. Note does not exist yet. Obsidian rule: create note at the link's folder path.
-		const newPath = `${rootPath}/${targetWithExt.replace(/^\//, '')}`;
+		// Preserve explicit asset paths (e.g. `Figure 1.png`). A trailing
+		// dot-segment without letters (e.g. `Chapter 1.2`) is a version
+		// number, not an extension, so it still gets `.md`.
+		const hasExplicitExtension =
+			/\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$/.test(normalizedTarget);
+		const createTarget =
+			hasMdExtension || hasExplicitExtension
+				? normalizedTarget
+				: `${normalizedTarget}.md`;
+		const newPath = normalizePosixPath(
+			`${rootPath}/${createTarget.replace(/^\//, '')}`
+		);
+		// Reject traversal outside the vault (e.g. [[../outside]]) before creating.
+		if (!isWithinPath(newPath, rootPath)) {
+			return null;
+		}
 		const newOrigin: FileOrigin = {
 			scheme,
 			path: newPath,
-			name: targetName,
+			name: newPath.split('/').pop()!,
 		};
 		// Create empty file
 		await workspace.storage.saveFile('', newOrigin);
@@ -393,6 +425,35 @@ export async function resolveTargetOrigin(
 	}
 
 	return null;
+}
+
+/**
+ * Normalizes a POSIX-style vault path, resolving `.` and `..` segments.
+ */
+function normalizePosixPath(path: string): string {
+	const isAbsolute = path.startsWith('/');
+	const stack: string[] = [];
+	for (const part of path.split('/')) {
+		if (part === '' || part === '.') continue;
+		if (part === '..') {
+			if (stack.length > 0 && stack[stack.length - 1] !== '..') {
+				stack.pop();
+			} else if (!isAbsolute) {
+				stack.push('..');
+			}
+		} else {
+			stack.push(part);
+		}
+	}
+	return (isAbsolute ? '/' : '') + stack.join('/');
+}
+
+/**
+ * Checks that a normalized candidate path stays beneath the vault root.
+ */
+function isWithinPath(candidatePath: string, rootPath: string): boolean {
+	const root = rootPath.replace(/\/$/, '') || '/';
+	return candidatePath === root || candidatePath.startsWith(`${root}/`);
 }
 
 /**
@@ -416,7 +477,8 @@ export async function openInternalLink(
 		const targetOrigin = await resolveTargetOrigin(
 			workspace,
 			currentDoc,
-			parsed.path
+			parsed.path,
+			{ allowCreate: !parsed.isEmbed }
 		);
 
 		if (targetOrigin) {
