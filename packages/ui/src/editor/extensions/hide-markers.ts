@@ -108,6 +108,28 @@ class HideMarkersPlugin {
 					}
 
 					if (type === "WikiLink") {
+						// Sized embeds (`![[photo.png|300]]`) are owned by the
+						// size-badge plugin (it replaces the whole node). Skip
+						// them here to avoid an overlapping replace decoration.
+						if (
+							view.state.doc.sliceString(node.from, node.from + 1) ===
+							"!"
+						) {
+							let cursor = node.node.cursor();
+							let alias = "";
+							if (cursor.firstChild()) {
+								do {
+									if (cursor.name === "WikiLinkAlias") {
+										alias = view.state.doc.sliceString(
+											cursor.from,
+											cursor.to,
+										);
+										break;
+									}
+								} while (cursor.nextSibling());
+							}
+							if (/^\d+(?:x\d+)?$/.test(alias.trim())) return false;
+						}
 						const isExpanded =
 							view.hasFocus &&
 							selection.from < node.to &&
