@@ -244,3 +244,10 @@
   user-select: none;
   pointer-events: none;
 }
+
+/* Embeds (#148): distinct from normal wikilinks, never error-styled */
+.cm-embed {
+  border-radius: 3px;
+  padding: 0 0.2em;
+  background-color: color-mix(in srgb, var(--accent), transparent 92%);
+}
