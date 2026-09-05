@@ -4,18 +4,21 @@ import { RangeSetBuilder } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { parseResizeToken } from "@np/core/links";
 
-/** Non-editing size badge (e.g. `300w`). */
+/** Non-editing size badge (e.g. `300px` or `300x200px`). */
 export class SizeBadgeWidget extends WidgetType {
-	constructor(readonly width: number) {
+	constructor(readonly width: number, readonly height: number | null = null) {
 		super();
 	}
+	get label(): string {
+		return this.height ? `${this.width}x${this.height}px` : `${this.width}px`;
+	}
 	eq(other: SizeBadgeWidget) {
-		return other.width === this.width;
+		return other.width === this.width && other.height === this.height;
 	}
 	toDOM() {
 		const span = document.createElement("span");
 		span.className = "cm-size-badge";
-		span.textContent = `${this.width}w`;
+		span.textContent = this.label;
 		return span;
 	}
 }
@@ -26,19 +29,19 @@ export class SizeBadgeWidget extends WidgetType {
  * overlaps a replace on the same range).
  */
 export class SizedEmbedWidget extends WidgetType {
-	constructor(readonly base: string, readonly width: number) {
+	constructor(readonly base: string, readonly width: number, readonly height: number | null = null) {
 		super();
 	}
 	eq(other: SizedEmbedWidget) {
-		return other.base === this.base && other.width === this.width;
+		return other.base === this.base && other.width === this.width && other.height === this.height;
 	}
 	toDOM() {
 		const wrap = document.createElement("span");
-		wrap.className = "cm-embed";
+		wrap.className = "cm-embed cm-link";
 		const label = document.createElement("span");
 		label.textContent = this.base;
 		wrap.appendChild(label);
-		wrap.appendChild(new SizeBadgeWidget(this.width).toDOM());
+		wrap.appendChild(new SizeBadgeWidget(this.width, this.height).toDOM());
 		return wrap;
 	}
 }
@@ -75,6 +78,13 @@ class ImageSizePlugin {
 						const isEmbed =
 							doc.sliceString(node.from, node.from + 1) === "!";
 						if (!isEmbed) return;
+						const selection = view.state.selection.main;
+						const isExpanded =
+							view.hasFocus &&
+							selection.from <= node.to &&
+							selection.to >= node.from;
+						if (isExpanded) return;
+
 						let target = "";
 						let aliasFrom = -1;
 						let aliasTo = -1;
@@ -103,6 +113,7 @@ class ImageSizePlugin {
 								widget: new SizedEmbedWidget(
 									res.base,
 									res.size.width,
+									res.size.height,
 								),
 							}),
 						);
@@ -125,7 +136,7 @@ class ImageSizePlugin {
 							labelStart + pipeIdx,
 							labelEnd,
 							Decoration.replace({
-								widget: new SizeBadgeWidget(res.size.width),
+								widget: new SizeBadgeWidget(res.size.width, res.size.height),
 							}),
 						);
 					}

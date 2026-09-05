@@ -9,6 +9,7 @@ import { RangeSetBuilder } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { LanguageLabelWidget } from "../widgets/LanguageLabelWidget";
 import { markerHideRules } from "./hide-rules";
+import { parseSizeToken } from "@np/core/links";
 
 class HideMarkersPlugin {
 	decorations: DecorationSet;
@@ -109,8 +110,7 @@ class HideMarkersPlugin {
 
 					if (type === "WikiLink") {
 						// Sized embeds (`![[photo.png|300]]`) are owned by the
-						// size-badge plugin (it replaces the whole node). Skip
-						// them here to avoid an overlapping replace decoration.
+						// size-badge plugin when collapsed.
 						if (
 							view.state.doc.sliceString(node.from, node.from + 1) ===
 							"!"
@@ -128,7 +128,22 @@ class HideMarkersPlugin {
 									}
 								} while (cursor.nextSibling());
 							}
-							if (/^\d+(?:x\d+)?$/.test(alias.trim())) return false;
+							if (parseSizeToken(alias)) {
+								const isExpanded =
+									view.hasFocus &&
+									selection.from <= node.to &&
+									selection.to >= node.from;
+								if (isExpanded) {
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.mark({
+											class: "cm-link cm-link-expanded",
+										}),
+									);
+								}
+								return false;
+							}
 						}
 						const isExpanded =
 							view.hasFocus &&

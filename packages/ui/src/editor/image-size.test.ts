@@ -96,4 +96,37 @@ describe("#149 embed size badges + image click", () => {
 			raw: "",
 		});
 	});
+
+	it("formats badge text with px units and includes cm-link on SizedEmbedWidget", () => {
+		const b1 = new SizeBadgeWidget(300);
+		expect(b1.label).toBe("300px");
+
+		const b2 = new SizeBadgeWidget(300, 200);
+		expect(b2.label).toBe("300x200px");
+
+		const embed = new SizedEmbedWidget("photo.png", 300);
+		expect(embed.width).toBe(300);
+		expect(embed.base).toBe("photo.png");
+	});
+
+	it("does not render SizedEmbedWidget when cursor is inside the embed (expands syntax)", async () => {
+		const doc = "see ![[photo.png|300]] ok";
+		const desc = languages.find((l) => l.name === "Markdown")!;
+		const exts = await getLanguageExtensions(desc);
+		const support = exts.filter((e) => (e as any) instanceof LanguageSupport);
+		const state = EditorState.create({
+			doc,
+			selection: { anchor: 10 }, // inside `![[photo.png|300]]` (4..22)
+			extensions: support,
+		});
+		const inst: any = sizeBadgePlugin.create(
+			{ state, hasFocus: true, visibleRanges: [{ from: 0, to: doc.length }] },
+			undefined,
+		);
+		const found: any[] = [];
+		inst.decorations.between(0, doc.length, (_f: number, _t: number, d: any) => {
+			if (d.spec?.widget instanceof SizedEmbedWidget) found.push(d.spec.widget);
+		});
+		expect(found.length).toBe(0);
+	});
 });
