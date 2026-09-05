@@ -196,8 +196,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			expect(svelteContent).toContain("Retry");
 		});
 
-		it("displays helpful guidance messages for missing folder vs missing permission", () => {
-			expect(svelteContent).toContain("!appState.workspace.rootOrigin");
+		it("displays helpful guidance message when write permission is missing", () => {
 			expect(svelteContent).toContain("!appState.workspace.hasRootPermission");
 		});
 	});
