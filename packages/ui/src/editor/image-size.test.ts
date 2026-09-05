@@ -7,7 +7,7 @@ import type { ViewPlugin } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { Table, GFM } from "@lezer/markdown";
 import { WikiLinkExtension } from "./extensions/wikilinks";
-import { SizeBadgeWidget } from "./extensions/image-size";
+import { SizeBadgeWidget, SizedEmbedWidget } from "./extensions/image-size";
 import { decideImageClick } from "./extensions/link-events";
 
 let getLanguageExtensions: any;
@@ -39,6 +39,7 @@ function badges(plugin: ViewPlugin<any>, state: EditorState): number[] {
 	inst.decorations.between(0, state.doc.length, (_f: number, _t: number, d: any) => {
 		const w = d.spec?.widget;
 		if (w instanceof SizeBadgeWidget) found.push(w.width);
+		else if (w instanceof SizedEmbedWidget) found.push(w.width);
 	});
 	return found;
 }

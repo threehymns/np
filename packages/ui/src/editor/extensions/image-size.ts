@@ -21,6 +21,29 @@ export class SizeBadgeWidget extends WidgetType {
 }
 
 /**
+ * Composite widget for a sized wikilink embed: shows the target label plus the
+ * size badge, fully owning the node's rendering (so marker-hiding plugin never
+ * overlaps a replace on the same range).
+ */
+export class SizedEmbedWidget extends WidgetType {
+	constructor(readonly base: string, readonly width: number) {
+		super();
+	}
+	eq(other: SizedEmbedWidget) {
+		return other.base === this.base && other.width === this.width;
+	}
+	toDOM() {
+		const wrap = document.createElement("span");
+		wrap.className = "cm-embed";
+		const label = document.createElement("span");
+		label.textContent = this.base;
+		wrap.appendChild(label);
+		wrap.appendChild(new SizeBadgeWidget(this.width).toDOM());
+		return wrap;
+	}
+}
+
+/**
  * Renders a non-editing size badge for sized embeds/images, reusing the shared
  * resize parser. `![[photo.png|300]]` and `![alt|400](photo.png)` get a badge
  * over their numeric size token; marker-hiding collapse is unaffected.
@@ -70,12 +93,17 @@ class ImageSizePlugin {
 						const aliasText = doc.sliceString(aliasFrom, aliasTo);
 						const res = parseResizeToken(`${target}|${aliasText}`);
 						if (!res.size) return;
-						// Replace `|300` (the pipe + numeric alias) with the badge.
+						// Own the whole embed: show target label + size badge. This
+						// replaces the marker span, so hide-markers must skip
+						// sized embeds (see hide-markers.ts) to avoid overlap.
 						builder.add(
-							aliasFrom - 1,
-							aliasTo,
+							node.from,
+							node.to,
 							Decoration.replace({
-								widget: new SizeBadgeWidget(res.size.width),
+								widget: new SizedEmbedWidget(
+									res.base,
+									res.size.width,
+								),
 							}),
 						);
 						return;
