@@ -68,6 +68,7 @@ import { horizontalRulePlugin } from "./extensions/hr";
 import { calloutPlugin } from "./extensions/callout";
 import { taskCheckboxPlugin, toggleTaskKeymap } from "./extensions/tasks";
 import { sizeBadgePlugin } from "./extensions/image-size";
+import { embedPlugin } from "./extensions/embeds";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
@@ -139,6 +140,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			taskCheckboxPlugin,
 			toggleTaskKeymap,
 			sizeBadgePlugin,
+			embedPlugin,
 			EditorView.editorAttributes.of({ class: "is-markdown" }),
 		];
 	}
@@ -247,6 +249,7 @@ export * from "./extensions/hr";
 export * from "./extensions/callout";
 export * from "./extensions/tasks";
 export * from "./extensions/image-size";
+export * from "./extensions/embeds";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
