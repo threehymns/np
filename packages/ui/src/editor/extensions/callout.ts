@@ -5,16 +5,37 @@ import {
 	EditorView,
 } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
-import { RangeSetBuilder, Facet } from "@codemirror/state";
+import { RangeSetBuilder, StateField, StateEffect } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+
+export const setCalloutFoldEffect = StateEffect.define<number[]>();
+export const toggleCalloutFoldEffect = StateEffect.define<number>();
 
 /**
  * Fold state: 1-based start lines of callouts whose body is collapsed. Purely
  * visual — toggling never edits the source text.
  */
-export const calloutFoldState = Facet.define<number[], number[]>({
-	combine: (values) => values.flat(),
+export const calloutFoldField = StateField.define<number[]>({
+	create() {
+		return [];
+	},
+	update(folded, tr) {
+		for (const e of tr.effects) {
+			if (e.is(setCalloutFoldEffect)) {
+				return e.value;
+			}
+			if (e.is(toggleCalloutFoldEffect)) {
+				const line = e.value;
+				return folded.includes(line)
+					? folded.filter((l) => l !== line)
+					: [...folded, line];
+			}
+		}
+		return folded;
+	},
 });
+
+export const calloutFoldState = calloutFoldField;
 
 /** Obsidian callout type map: type -> { label, aliases }. */
 const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
@@ -74,11 +95,11 @@ class CalloutPlugin {
 					if (node.name !== "Blockquote") return;
 					const firstLine = doc.lineAt(node.from);
 					const lineText = firstLine.text;
-					// Nested callouts are one depth per leading `>`.
-					const depth = (lineText.match(/^>+/) || [''])[0].length;
-					// Strip leading `>` (and one space) to reach the marker.
+					// Strip leading `>` (and one space) to reach the marker and compute depth.
+					let depth = 0;
 					let li = 0;
 					while (li < lineText.length && lineText[li] === ">") {
+						depth++;
 						li++;
 						if (lineText[li] === " ") li++;
 					}
@@ -97,7 +118,7 @@ class CalloutPlugin {
 					// Accent each line of the callout block.
 					const startLine = doc.lineAt(node.from).number;
 					const endLine = doc.lineAt(node.to).number;
-					const collapsed = view.state.facet(calloutFoldState);
+					const collapsed = view.state.field(calloutFoldField, false) ?? [];
 					const isCollapsed = isDefaultCollapsed
 						? !collapsed.includes(startLine)
 						: collapsed.includes(startLine);
@@ -116,7 +137,7 @@ class CalloutPlugin {
 					add(
 						markerStart,
 						markerEnd,
-						Decoration.mark({ className: "cm-callout-type", title }),
+						Decoration.mark({ class: "cm-callout-type", attributes: { title } }),
 					);
 					if (m[4] && m[4].trim()) {
 						const titleEnd = firstLine.from + li + rest.length;
@@ -125,7 +146,7 @@ class CalloutPlugin {
 							add(
 								titleStart,
 								titleEnd,
-								Decoration.mark({ className: "cm-callout-title" }),
+								Decoration.mark({ class: "cm-callout-title" }),
 							);
 						}
 					}
@@ -182,9 +203,6 @@ function calloutStartLine(state: any, pos: number): number | null {
 export function toggleCallout(view: EditorView): boolean {
 	const startLine = calloutStartLine(view.state, view.state.selection.main.head);
 	if (startLine == null) return false;
-	const set = new Set(view.state.facet(calloutFoldState));
-	if (set.has(startLine)) set.delete(startLine);
-	else set.add(startLine);
-	view.dispatch({ effects: calloutFoldState.of([...set]) });
+	view.dispatch({ effects: toggleCalloutFoldEffect.of(startLine) });
 	return true;
 }

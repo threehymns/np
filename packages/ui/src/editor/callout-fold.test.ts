@@ -4,7 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { LanguageSupport } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import type { ViewPlugin } from "@codemirror/view";
-import { calloutFoldState } from "./extensions/callout";
+import { calloutFoldField, toggleCalloutFoldEffect } from "./extensions/callout";
 
 let getLanguageExtensions: any;
 let calloutPlugin: ViewPlugin<any>;
@@ -25,7 +25,7 @@ async function makeState(doc: string, folded: number[] = []): Promise<EditorStat
 	const support = exts.filter((e) => e instanceof LanguageSupport);
 	return EditorState.create({
 		doc,
-		extensions: [...support, calloutFoldState.of(folded)],
+		extensions: [...support, calloutFoldField.init(() => folded)],
 	});
 }
 
@@ -60,6 +60,9 @@ describe("#154 callout fold + nesting", () => {
 		const deep = await makeState(">> [!note] Deep\n>> body");
 		expect(lineClasses(calloutPlugin, deep)).toContain("cm-callout-nested");
 
+		const spacedDeep = await makeState("> > [!note] Spaced Deep\n> > body");
+		expect(lineClasses(calloutPlugin, spacedDeep)).toContain("cm-callout-nested");
+
 		const flat = await makeState("> [!note] Flat\n> body");
 		expect(lineClasses(calloutPlugin, flat)).not.toContain("cm-callout-nested");
 	});
@@ -71,6 +74,18 @@ describe("#154 callout fold + nesting", () => {
 		const ranges = replaceRanges(calloutPlugin, state);
 		// the body (line 2, chars 16..27) is replaced/hidden
 		expect(ranges.some(([f, t]) => f === 16 && t >= 27)).toBe(true);
+	});
+
+	it("updates callout fold field via StateEffect", async () => {
+		const doc = "> [!note] Title\n> body line";
+		let state = await makeState(doc, []);
+		expect(state.field(calloutFoldField)).toEqual([]);
+
+		state = state.update({ effects: toggleCalloutFoldEffect.of(1) }).state;
+		expect(state.field(calloutFoldField)).toEqual([1]);
+
+		state = state.update({ effects: toggleCalloutFoldEffect.of(1) }).state;
+		expect(state.field(calloutFoldField)).toEqual([]);
 	});
 
 	it("fold round-trips with source bytes unchanged", async () => {

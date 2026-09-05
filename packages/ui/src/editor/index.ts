@@ -21,7 +21,7 @@ import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { closeBrackets, closeBracketsKeymap, autocompletion } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { Table, GFM } from "@lezer/markdown";
+import { Table, GFM, type MarkdownExtension } from "@lezer/markdown";
 import { languages } from "@codemirror/language-data";
 import {
 	markdownTables,
@@ -65,7 +65,7 @@ import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
 import { blockquotePlugin } from "./extensions/blockquote";
 import { horizontalRulePlugin } from "./extensions/hr";
-import { calloutPlugin } from "./extensions/callout";
+import { calloutPlugin, calloutFoldField } from "./extensions/callout";
 import { taskCheckboxPlugin, toggleTaskKeymap } from "./extensions/tasks";
 import { sizeBadgePlugin } from "./extensions/image-size";
 import { embedPlugin } from "./extensions/embeds";
@@ -88,7 +88,7 @@ import { htmlPassthroughPlugin } from "./extensions/html";
 // which would break [[Note]] parsing/hiding). To add a Markdown feature: define
 // its MarkdownConfig in its own module, then append it here. New feature
 // registrations collide only on these adjacent lines.
-const markdownFeatureConfigs: any[] = [
+const markdownFeatureConfigs: MarkdownExtension[] = [
 	Table,
 	GFM,
 	WikiLinkExtension,
@@ -143,6 +143,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			blockquotePlugin,
 			horizontalRulePlugin,
 			calloutPlugin,
+			calloutFoldField,
 			taskCheckboxPlugin,
 			toggleTaskKeymap,
 			sizeBadgePlugin,

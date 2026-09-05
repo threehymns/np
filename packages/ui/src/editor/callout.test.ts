@@ -36,7 +36,11 @@ function decode(plugin: ViewPlugin<any>, state: EditorState): (string | null)[] 
 		state.doc.length,
 		(_f: number, _t: number, d: any) => {
 			const s = d.spec;
-			if (s?.class) out.push(`line:${s.class}`);
+			if (s?.attributes?.title) {
+				out.push(`title:${s.attributes.title}`);
+			}
+			if (s?.class?.startsWith("cm-callout-")) out.push(s.class);
+			else if (s?.class) out.push(`line:${s.class}`);
 			else if (s?.className) out.push(s.className);
 		},
 	);
@@ -50,11 +54,12 @@ function nodeNames(state: EditorState): string[] {
 }
 
 describe("#151 callout base", () => {
-	it("recognizes a known type and styles lines + type label", async () => {
+	it("recognizes a known type and styles lines + type label with tooltip title", async () => {
 		const state = await makeState("> [!note] Title here");
 		const deco = decode(calloutPlugin, state);
 		expect(deco).toContain("line:cm-callout cm-callout-note");
 		expect(deco).toContain("cm-callout-type");
+		expect(deco).toContain("title:Title here");
 	});
 
 	it("recognizes case-insensitive and aliased types", async () => {
