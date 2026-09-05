@@ -210,3 +210,17 @@
 .cm-gutter.cm-foldGutter {
   display: none !important;
 }
+
+/* Obsidian callouts (#151): accent'd blockquote + type/title label */
+.cm-callout {
+	background-color: color-mix(in srgb, var(--accent), transparent 92%);
+	border-left: 3px solid var(--accent);
+}
+.cm-callout-type {
+	color: var(--accent-foreground);
+	font-weight: 600;
+}
+.cm-callout-title {
+	color: var(--foreground);
+	font-weight: 600;
+}
