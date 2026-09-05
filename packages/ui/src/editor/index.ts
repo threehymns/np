@@ -65,6 +65,7 @@ import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
 import { blockquotePlugin } from "./extensions/blockquote";
 import { horizontalRulePlugin } from "./extensions/hr";
+import { calloutPlugin } from "./extensions/callout";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
@@ -132,6 +133,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			codeBlockPlugin,
 			blockquotePlugin,
 			horizontalRulePlugin,
+			calloutPlugin,
 			EditorView.editorAttributes.of({ class: "is-markdown" }),
 		];
 	}
@@ -237,6 +239,7 @@ export * from "./extensions/highlight";
 export * from "./extensions/codeblocks";
 export * from "./extensions/blockquote";
 export * from "./extensions/hr";
+export * from "./extensions/callout";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
