@@ -39,7 +39,7 @@ async function readClipboard(appState: AppState): Promise<string> {
 
 /**
  * True for absolute filesystem paths in any common form: POSIX ('/a/b'),
- * Windows drive ('C:\a\b', 'C:/a/b'), and UNC ('\\\\server\\share').
+ * Windows drive ('C:\a\b', 'C:/a/b'), and UNC ('\\\\server\share').
  * URI strings ('scheme://...') are classified separately before this runs.
  */
 function isAbsoluteFilesystemPath(target: string): boolean {
@@ -515,6 +515,21 @@ export function registerCoreCommands(appState: AppState) {
 		action: () => {
 			appState.workspace.openFile(parseURI('keymap://user/keymap.json'));
 			appState.settingsOpen = false;
+		}
+	});
+
+	appState.commands.register({
+		id: 'git.init',
+		label: 'Git: Initialize Repository',
+		category: 'Source Control',
+		action: async () => {
+			try {
+				return await appState.workspace.initializeRepository();
+			} catch (e) {
+				console.error('Failed to initialize repository', e);
+				await showAlert(appState, `Failed to initialize repository: ${(e as Error).message}`);
+				return false;
+			}
 		}
 	});
 
