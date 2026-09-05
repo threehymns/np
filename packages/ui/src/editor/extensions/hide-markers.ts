@@ -225,7 +225,7 @@ class HideMarkersPlugin {
 						];
 						let parent = node.node.parent;
 
-						// Special case for ListMark on task items: only show if cursor is in the checkbox syntax area
+						// Special case for ListMark: only show syntax when cursor is in the syntax area
 						if (type === "ListMark") {
 							let listItemNode = parent;
 							while (
@@ -244,6 +244,19 @@ class HideMarkersPlugin {
 								const syntaxFrom =
 									taskInfo.listMark?.from ?? node.from;
 								const syntaxTo = taskInfo.taskMarker.to;
+								shouldShow =
+									view.hasFocus &&
+									view.state.selection.ranges.some(
+										(r) =>
+											r.from <= syntaxTo &&
+											r.to >= syntaxFrom,
+									);
+							} else {
+								const lineDoc = view.state.doc.lineAt(node.from);
+								const afterText = lineDoc.text.slice(node.to - lineDoc.from);
+								const spaceLen = (afterText.match(/^\s*/)?.[0] || "").length;
+								const syntaxFrom = node.from;
+								const syntaxTo = node.to + spaceLen;
 								shouldShow =
 									view.hasFocus &&
 									view.state.selection.ranges.some(

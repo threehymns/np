@@ -196,18 +196,32 @@ describe("#152 task checkboxes", () => {
 		});
 		expect(hasBullet).toBe(true);
 
-		// Focused on line: "- plain item" should show raw dash (no BulletWidget)
-		const stateFocused = await makeState("- plain item", { anchor: 4 });
-		const viewFocused = {
-			state: stateFocused,
+		// Focused in text body (pos 4): "- plain item" should still show BulletWidget
+		const stateBody = await makeState("- plain item", { anchor: 4 });
+		const viewBody = {
+			state: stateBody,
 			hasFocus: true,
 			visibleRanges: [{ from: 0, to: 12 }],
 		};
-		const hideFocused: any = mod.hideMarkersPlugin.create(viewFocused as any, undefined);
-		let hasBulletFocused = false;
-		hideFocused.decorations.between(0, 12, (_f: number, _t: number, d: any) => {
-			if (d.spec?.widget?.constructor?.name === "BulletWidget") hasBulletFocused = true;
+		const hideBody: any = mod.hideMarkersPlugin.create(viewBody as any, undefined);
+		let hasBulletBody = false;
+		hideBody.decorations.between(0, 12, (_f: number, _t: number, d: any) => {
+			if (d.spec?.widget?.constructor?.name === "BulletWidget") hasBulletBody = true;
 		});
-		expect(hasBulletFocused).toBe(false);
+		expect(hasBulletBody).toBe(true);
+
+		// Focused in syntax area (pos 0): "- plain item" should show raw dash (no BulletWidget)
+		const stateSyntax = await makeState("- plain item", { anchor: 0 });
+		const viewSyntax = {
+			state: stateSyntax,
+			hasFocus: true,
+			visibleRanges: [{ from: 0, to: 12 }],
+		};
+		const hideSyntax: any = mod.hideMarkersPlugin.create(viewSyntax as any, undefined);
+		let hasBulletSyntax = false;
+		hideSyntax.decorations.between(0, 12, (_f: number, _t: number, d: any) => {
+			if (d.spec?.widget?.constructor?.name === "BulletWidget") hasBulletSyntax = true;
+		});
+		expect(hasBulletSyntax).toBe(false);
 	});
 });
