@@ -204,6 +204,7 @@ export interface GetFileDiffOptions {
 
 export interface VCSAdapter {
 	detect(rootPath: string): Promise<boolean>;
+	init?(rootPath?: string): Promise<void>;
 	getCurrentBranch(): Promise<string | null>;
 	getBranches(): Promise<string[]>;
 	getStatus(): Promise<VCSStatus>;
@@ -223,6 +224,3 @@ export interface VCSAdapter {
 	updateIndexContent?(filepath: string, content: string): Promise<void>;
 	updateFileContent?(filepath: string, content: string): Promise<void>;
 }
-
-
-

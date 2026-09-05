@@ -400,6 +400,34 @@ export class Workspace {
 		return granted;
 	}
 
+	async initializeRepository(): Promise<boolean> {
+		if (!this.rootOrigin || !this.hasRootPermission) {
+			return false;
+		}
+
+		// Clear stale repository state before async initialization
+		this.repository = null;
+
+		try {
+			const repo = new Repository(this.rootOrigin, this.vcsFactory);
+			const adapter = repo.adapter;
+
+			if (!adapter.init || typeof adapter.init !== 'function') {
+				throw new Error('VCS adapter does not support repository initialization');
+			}
+
+			await adapter.init(this.rootOrigin.path);
+
+			this.repository = repo;
+			await repo.refresh();
+			await this.projectTree.scan(this.rootOrigin);
+			return true;
+		} catch (e) {
+			this.repository = null;
+			throw e;
+		}
+	}
+
 	closeDocument(id: string) {
 		this.closeTab(id);
 	}
