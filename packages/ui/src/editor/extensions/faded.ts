@@ -1,16 +1,7 @@
 import type { MarkdownConfig } from "@lezer/markdown";
 import { styleTags } from "@lezer/highlight";
 import { fadedTag } from "./highlight";
-
-function isWord(c: number): boolean {
-	return (
-		(c >= 48 && c <= 57) || // 0-9
-		(c >= 65 && c <= 90) || // A-Z
-		(c >= 97 && c <= 122) || // a-z
-		c === 95 || // _
-		c === 45 // -
-	);
-}
+import { isWord } from "./char";
 
 /**
  * Obsidian hidden text (`%%…%%`) and trailing block anchors (`^id`), both
