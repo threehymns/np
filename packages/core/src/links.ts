@@ -22,6 +22,7 @@ export interface InternalLinkTarget {
  * - [[Note#Heading]]
  * - [[Note#Subheading 1#Subheading 2]]
  * - [[#^block-id]]
+ * - [[^block-id]]
  * - [[Note#^block-id]]
  * - [[Note|Display Text]]
  * - [[Note#Heading|Display Text]]
@@ -59,11 +60,16 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		}
 	}
 
-	// Check for block reference (#^block-id)
-	const blockMatch = str.match(/#\^([a-zA-Z0-9-]+)$/);
+	// Check for block reference (#^block-id or bare ^block-id for same-note)
+	const blockMatch = str.match(/(?:^|#)\^([a-zA-Z0-9-]+)$/);
 	if (blockMatch) {
 		const blockId = blockMatch[1];
-		const pathPart = str.slice(0, blockMatch.index).trim();
+		let pathPart = str.slice(0, blockMatch.index).trim();
+		// Strip a trailing '#' left over when the match started at the caret
+		// (e.g. "Note#^id" matches "^id", leaving "Note#").
+		if (pathPart.endsWith('#')) {
+			pathPart = pathPart.slice(0, -1).trim();
+		}
 		return {
 			raw: rawLink,
 			path: pathPart,
