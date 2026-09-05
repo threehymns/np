@@ -251,3 +251,10 @@
   padding: 0 0.2em;
   background-color: color-mix(in srgb, var(--accent), transparent 92%);
 }
+
+/* Footnotes (#141): raised, link-colored */
+.cm-footnote {
+  vertical-align: super;
+  font-size: 0.8em;
+  line-height: 0;
+}

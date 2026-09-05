@@ -8,6 +8,9 @@ export const markHighlightTag = Tag.define("mark");
 // Custom tag for Obsidian taxonomy tags (#tag / #a/b).
 export const taxTag = Tag.define("taxonomy");
 
+// Obsidian footnote references: link-styled (derived) + raised via cm-footnote.
+export const footnoteTag = Tag.define("footnote", t.link);
+
 // Per-feature statement style chunks, composed into one HighlightStyle.define
 // below. We keep a single define (rather than several HighlightStyle.define +
 // syntaxHighlighting() calls) so feature tags keep a stable intra-array
@@ -52,6 +55,10 @@ const headingStyles: StyleSpec[] = [
 		borderRadius: "3px",
 		padding: "0 0.3em",
 		className: "cm-tag",
+	},
+	{
+		tag: footnoteTag,
+		className: "cm-footnote",
 	},
 	{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 	{

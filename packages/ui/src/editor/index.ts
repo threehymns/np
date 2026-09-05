@@ -69,6 +69,7 @@ import { calloutPlugin } from "./extensions/callout";
 import { taskCheckboxPlugin, toggleTaskKeymap } from "./extensions/tasks";
 import { sizeBadgePlugin } from "./extensions/image-size";
 import { embedPlugin } from "./extensions/embeds";
+import { FootnoteExtension } from "./extensions/footnote";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
@@ -92,6 +93,7 @@ const markdownFeatureConfigs: any[] = [
 	HighlightExtension,
 	HashTagExtension,
 	MathExtension,
+	FootnoteExtension,
 ];
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
@@ -257,6 +259,7 @@ export * from "./extensions/strikethrough";
 export * from "./extensions/inline-highlight";
 export * from "./extensions/hash-tags";
 export * from "./extensions/math";
+export * from "./extensions/footnote";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
