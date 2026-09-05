@@ -5,8 +5,17 @@ import {
 	EditorView,
 } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
-import { RangeSetBuilder } from "@codemirror/state";
+import { RangeSetBuilder, Facet } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import { keymap } from "@codemirror/view";
+
+/**
+ * Fold state: 1-based start lines of callouts whose body is collapsed. Purely
+ * visual — toggling never edits the source text.
+ */
+export const calloutFoldState = Facet.define<number[], number[]>({
+	combine: (values) => values.flat(),
+});
 
 /** Obsidian callout type map: type -> { label, aliases }. */
 const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
@@ -52,7 +61,9 @@ class CalloutPlugin {
 	}
 
 	getDecorations(view: EditorView) {
-		const builder = new RangeSetBuilder<Decoration>();
+		const collected: { from: number; to: number; value: Decoration }[] = [];
+		const add = (from: number, to: number, value: Decoration) =>
+			collected.push({ from, to, value });
 		const doc = view.state.doc;
 
 		for (let { from, to } of view.visibleRanges) {
@@ -63,6 +74,8 @@ class CalloutPlugin {
 					if (node.name !== "Blockquote") return;
 					const firstLine = doc.lineAt(node.from);
 					const lineText = firstLine.text;
+					// Nested callouts are one depth per leading `>`.
+					const depth = (lineText.match(/^>+/) || [''])[0].length;
 					// Strip leading `>` (and one space) to reach the marker.
 					let li = 0;
 					while (li < lineText.length && lineText[li] === ">") {
@@ -80,48 +93,59 @@ class CalloutPlugin {
 					// Accent each line of the callout block.
 					const startLine = doc.lineAt(node.from).number;
 					const endLine = doc.lineAt(node.to).number;
+					const collapsed = view.state.facet(calloutFoldState);
+					const isCollapsed = collapsed.includes(startLine);
+					const baseClass = `cm-callout cm-callout-${type}${
+						depth > 1 ? " cm-callout-nested" : ""
+					}`;
 
-					// Decorations must be added in ascending `from` order: line 1
-					// accent, the `[!type]` mark, the custom title mark, then the
-					// accent for lines 2..end.
-					builder.add(
+					add(
 						firstLine.from,
 						firstLine.from,
-						Decoration.line({
-							class: `cm-callout cm-callout-${type}`,
-						}),
+						Decoration.line({ class: baseClass }),
 					);
 
-					// Colored type label over the `[!type]` marker (default title =
-					// the type name when no custom title is given).
-					const title = (m[2] || "").trim() || CALLOUT_TYPES[type].label;
-					builder.add(
+					const title =
+						(m[2] || "").trim() || CALLOUT_TYPES[type].label;
+					add(
 						markerStart,
 						markerEnd,
 						Decoration.mark({ className: "cm-callout-type", title }),
 					);
 					if (m[2].trim()) {
 						const titleEnd = firstLine.from + li + rest.length;
-						builder.add(
+						add(
 							markerEnd + 1,
 							titleEnd,
 							Decoration.mark({ className: "cm-callout-title" }),
 						);
 					}
 
-					for (let n = startLine + 1; n <= endLine; n++) {
-						const line = doc.line(n);
-						builder.add(
-							line.from,
-							line.from,
-							Decoration.line({
-								class: `cm-callout cm-callout-${type}`,
-							}),
+					if (isCollapsed) {
+						// Fold: hide the body lines (source text untouched).
+						add(
+							doc.line(startLine + 1).from,
+							doc.line(endLine).to,
+							Decoration.replace({ class: "cm-callout-folded" }),
 						);
+					} else {
+						for (let n = startLine + 1; n <= endLine; n++) {
+							const line = doc.line(n);
+							add(
+								line.from,
+								line.from,
+								Decoration.line({ class: baseClass }),
+							);
+						}
 					}
 				},
 			});
 		}
+		// Nested blockquotes iterate outer-then-inner, so collect + sort by
+		// `from` (then `to`) so the builder receives strictly-ascending ranges.
+		collected.sort((a, b) => a.from - b.from || a.to - b.to);
+		const builder = new RangeSetBuilder<Decoration>();
+		for (const c of collected) builder.add(c.from, c.to, c.value);
 		return builder.finish();
 	}
 }
@@ -129,3 +153,31 @@ class CalloutPlugin {
 export const calloutPlugin = ViewPlugin.fromClass(CalloutPlugin, {
 	decorations: (v) => v.decorations,
 });
+
+/** 1-based start line of the callout blockquote enclosing `pos`, or null. */
+function calloutStartLine(state: any, pos: number): number | null {
+	let node: any = syntaxTree(state).resolveInner(pos, -1);
+	while (node && node.name !== "Blockquote" && node.parent) {
+		node = node.parent;
+	}
+	if (!node || node.name !== "Blockquote") return null;
+	const startLine = state.doc.lineAt(node.from).number;
+	// Confirm it's actually a callout (first line opens with `[!type]`).
+	let t = state.doc.line(startLine).text.trim();
+	while (t.startsWith(">")) t = t.slice(1).trimStart();
+	if (!/^\[!\w+\]/.test(t)) return null;
+	return startLine;
+}
+
+/** Toggle a callout's body fold (purely visual; source bytes unchanged). */
+export function toggleCallout(view: EditorView): boolean {
+	const startLine = calloutStartLine(view.state, view.state.selection.main.head);
+	if (startLine == null) return false;
+	const set = new Set(view.state.facet(calloutFoldState));
+	if (set.has(startLine)) set.delete(startLine);
+	else set.add(startLine);
+	view.dispatch({ effects: calloutFoldState.of([...set]) });
+	return true;
+}
+
+export const calloutFoldKeymap = keymap.of([{ key: "Mod-Alt-f", run: toggleCallout }]);

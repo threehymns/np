@@ -258,3 +258,12 @@
   font-size: 0.8em;
   line-height: 0;
 }
+
+/* Callout nesting + fold (#154) */
+.cm-callout-nested {
+  border-left-width: 1px;
+  margin-left: 0.6em;
+}
+.cm-callout-folded {
+  font-style: italic;
+}
