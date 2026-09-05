@@ -59,7 +59,7 @@ class ImageSizePlugin {
 	}
 
 	update(update: ViewUpdate) {
-		if (update.docChanged || update.viewportChanged)
+		if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged)
 			this.decorations = this.getDecorations(update.view);
 	}
 

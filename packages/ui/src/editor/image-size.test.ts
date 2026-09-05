@@ -129,4 +129,39 @@ describe("#149 embed size badges + image click", () => {
 		});
 		expect(found.length).toBe(0);
 	});
+
+	it("updates decorations when selectionSet or focusChanged triggers update", async () => {
+		const doc = "see ![[photo.png|300]] ok";
+		const desc = languages.find((l) => l.name === "Markdown")!;
+		const exts = await getLanguageExtensions(desc);
+		const support = exts.filter((e) => (e as any) instanceof LanguageSupport);
+		const state1 = EditorState.create({
+			doc,
+			selection: { anchor: 0 },
+			extensions: support,
+		});
+		const mockView: any = {
+			state: state1,
+			hasFocus: true,
+			visibleRanges: [{ from: 0, to: doc.length }],
+		};
+		const inst: any = sizeBadgePlugin.create(mockView, undefined);
+		let count = 0;
+		inst.decorations.between(0, doc.length, () => { count++; });
+		expect(count).toBeGreaterThan(0);
+
+		// Move selection into embed
+		const state2 = state1.update({ selection: { anchor: 10 } }).state;
+		mockView.state = state2;
+		inst.update({
+			docChanged: false,
+			viewportChanged: false,
+			selectionSet: true,
+			focusChanged: false,
+			view: mockView,
+		});
+		let newCount = 0;
+		inst.decorations.between(0, doc.length, () => { newCount++; });
+		expect(newCount).toBe(0);
+	});
 });
