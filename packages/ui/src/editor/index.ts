@@ -18,7 +18,7 @@ import {
 	LanguageDescription,
 } from "@codemirror/language";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap, autocompletion } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { Table, GFM } from "@lezer/markdown";
@@ -187,6 +187,7 @@ export function createEditorExtensions(options: {
 		indentOnInput(),
 		bracketMatching(),
 		closeBrackets(),
+		autocompletion(),
 		rectangularSelection(),
 		crosshairCursor(),
 		highlightActiveLine(),
