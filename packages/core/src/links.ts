@@ -123,7 +123,20 @@ export function getHeadings(content: string): HeadingItem[] {
 
 	let inCodeBlock = false;
 
-	for (let i = 0; i < lines.length; i++) {
+	// Skip YAML frontmatter: a leading `---` block whose keys would otherwise
+	// be misread as Setext H2 underlines (e.g. `tags: [a]` followed by `---`).
+	let startIndex = 0;
+	if (lines.length > 0 && lines[0].trim() === '---') {
+		for (let j = 1; j < lines.length; j++) {
+			const marker = lines[j].trim();
+			if (marker === '---' || marker === '...') {
+				startIndex = j + 1;
+				break;
+			}
+		}
+	}
+
+	for (let i = startIndex; i < lines.length; i++) {
 		const line = lines[i];
 		const trimmed = line.trim();
 
