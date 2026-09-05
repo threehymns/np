@@ -42,7 +42,7 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		const html = await transformer.transform(markdown, "html");
 
 		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("<h1>Heading 1</h1>");
+		expect(html).toContain("<h1 id=\"heading-1\">Heading 1</h1>");
 		expect(html).toContain("<li>Item 1</li>");
 		expect(html).toContain("const x = 1;");
 	});
