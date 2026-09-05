@@ -1,7 +1,14 @@
 import { HighlightStyle } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
+import type { StyleSpec } from "@lezer/highlight";
 
-export const markdownHighlight = HighlightStyle.define([
+// Per-feature statement style chunks, composed into one HighlightStyle.define
+// below. We keep a single define (rather than several HighlightStyle.define +
+// syntaxHighlighting() calls) so feature tags keep a stable intra-array
+// precedence and the composed style tree stays byte-identical. To add a
+// feature's live-source styling, append its chunk array to `markdownHighlightChunks`
+// (e.g. spread `...s1HighlightStyles`); this one registration line is the seam.
+const headingStyles: StyleSpec[] = [
 	{
 		tag: t.heading1,
 		fontSize: "2.25rem",
@@ -44,8 +51,10 @@ export const markdownHighlight = HighlightStyle.define([
 		color: "var(--muted-foreground)",
 		class: "md-marker",
 	},
+];
 
-	// Code highlighting - Safely using basic tags
+// Inline-code highlighting — using basic tags only to stay CM-safe.
+const codeStyles: StyleSpec[] = [
 	{ tag: t.keyword, color: "var(--code-keyword)", fontWeight: "600" },
 	{
 		tag: [t.name, t.variableName, t.macroName, t.attributeName],
@@ -81,4 +90,12 @@ export const markdownHighlight = HighlightStyle.define([
 	{ tag: [t.comment], color: "var(--code-comment)", fontStyle: "italic" },
 	{ tag: t.string, color: "var(--code-string)" },
 	{ tag: t.invalid, color: "var(--destructive)" },
-]);
+];
+
+export const markdownHighlightChunks: StyleSpec[] = [
+	...headingStyles,
+	...codeStyles,
+	// New feature style chunks register here, e.g. `...s1HighlightStyles`.
+];
+
+export const markdownHighlight = HighlightStyle.define(markdownHighlightChunks);

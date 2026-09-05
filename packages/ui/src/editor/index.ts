@@ -70,6 +70,14 @@ import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
 
+// Central Markdown language composition (WikiLinkExtension precedent). The
+// Editor's Markdown language must be a single markdown() superset — never a
+// second stacked `lang` (CodeMirror resolves the tree from the first language,
+// which would break [[Note]] parsing/hiding). To add a Markdown feature: define
+// its MarkdownConfig in its own module, then append it here. New feature
+// registrations collide only on these adjacent lines.
+const markdownFeatureConfigs: any[] = [Table, GFM, WikiLinkExtension];
+
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
 	if (!langDesc) return [];
 
@@ -86,7 +94,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 		return [
 			markdown({
 				codeLanguages: allLanguages as any,
-				extensions: [Table, GFM, WikiLinkExtension] as any,
+				extensions: markdownFeatureConfigs,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
@@ -98,7 +106,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM, WikiLinkExtension] as any,
+					extensions: markdownFeatureConfigs,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),
