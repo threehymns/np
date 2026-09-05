@@ -154,7 +154,8 @@ class HideMarkersPlugin {
 						type === "HeaderMark" ||
 						type === "CodeMark" ||
 						type === "CodeInfo" ||
-						type === "URL";
+						type === "URL" ||
+						type === "LinkTitle";
 
 					if (isMarker) {
 						const line = view.state.doc.lineAt(
