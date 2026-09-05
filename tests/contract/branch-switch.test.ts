@@ -454,6 +454,65 @@ for (const engine of ENGINES) {
 				expect(await worktreeContents(r, 'c1.txt')).toBe('dirty1\n');
 				expect(await worktreeContents(r, 'c2.txt')).toBe('dirty2\n');
 			});
+
+			it('reports a non-ASCII conflict filename verbatim (unquoted)', async () => {
+				const r = await createTrackedRepo();
+				await commitFiles(r, 'initial', { 'café.txt': 'base\n' });
+				await createBranch(r, 'feature');
+
+				await checkoutBranch(r, 'feature');
+				await commitFiles(r, 'feature commit', { 'café.txt': 'feat\n' });
+				await checkoutBranch(r, 'main');
+
+				await r.write('café.txt', 'dirty\n');
+
+				const adp = engine.adapter(r);
+				const res = await adp.switchBranch('feature');
+
+				expect(res.status).toBe('blocked');
+				if (res.status === 'blocked') {
+					expect(res.reason).toBe('conflict');
+					// Must be the raw (un-C-quoted) path. Regression: the O(1)
+					// `git diff --name-only` in SpawnGitAdapter without `-z`
+					// returned the C-quoted form ("caf\\303\\251.txt") instead.
+					expect(res.files).toEqual(['café.txt']);
+				}
+				expect(await currentBranch(r)).toBe('main');
+			});
+
+			it('reports only truly conflicting files among many dirty files', async () => {
+				const r = await createTrackedRepo();
+				// ok1..ok4 are identical on both branches (non-conflicting dirty carry-forward),
+				// c1/c2 differ between branches (real conflicts).
+				const files: Record<string, string> = { 'c1.txt': 'base1\n', 'c2.txt': 'base2\n' };
+				for (let i = 1; i <= 4; i++) files[`ok${i}.txt`] = 'base\n';
+				await commitFiles(r, 'initial', files);
+				await createBranch(r, 'feature');
+
+				await checkoutBranch(r, 'feature');
+				await commitFiles(r, 'feature commit', { 'c1.txt': 'feat1\n', 'c2.txt': 'feat2\n' });
+				await checkoutBranch(r, 'main');
+
+				// Dirty all six files in the worktree.
+				for (let i = 1; i <= 4; i++) await r.write(`ok${i}.txt`, `local${i}\n`);
+				await r.write('c1.txt', 'dirty1\n');
+				await r.write('c2.txt', 'dirty2\n');
+
+				const adp = engine.adapter(r);
+				const res = await adp.switchBranch('feature');
+
+				expect(res.status).toBe('blocked');
+				if (res.status === 'blocked') {
+					expect(res.reason).toBe('conflict');
+					// Only the two files whose committed content differs across branches conflict.
+					expect(res.files.sort()).toEqual(['c1.txt', 'c2.txt']);
+				}
+				expect(await currentBranch(r)).toBe('main');
+				// Non-conflicting dirty files are carried forward untouched.
+				for (let i = 1; i <= 4; i++) {
+					expect(await worktreeContents(r, `ok${i}.txt`)).toBe(`local${i}\n`);
+				}
+			});
 		});
 
 		describe('dryRun option', () => {

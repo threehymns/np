@@ -1,15 +1,14 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
 test('vim mode - shift+v paste from end of line without clipboard sync', async ({ page }) => {
-  page.on('console', msg => console.log('BROWSER:', msg.type(), msg.text()));
   await mockIconThemes(page);
   await page.goto('/');
 
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   // Focus and clear
   await editor.click();
@@ -49,14 +48,12 @@ test('vim mode - shift+v paste from end of line without clipboard sync', async (
 
   // Get the text content of the editor
   const text = await editor.innerText();
-  console.log('Editor text content after Shift+V + p (no clipboard sync):', JSON.stringify(text));
 
   expect(text).not.toContain('second linep');
   expect(text).toContain('first line\nfirst line');
 });
 
 test('vim mode - shift+v followed by p to paste clipboard content (with clipboard sync)', async ({ page, context }) => {
-  page.on('console', msg => console.log('BROWSER:', msg.type(), msg.text()));
   await mockIconThemes(page);
   
   // Grant clipboard permissions
@@ -65,7 +62,7 @@ test('vim mode - shift+v followed by p to paste clipboard content (with clipboar
   await page.goto('/');
 
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   // Focus and clear
   await editor.click();
@@ -104,19 +101,17 @@ test('vim mode - shift+v followed by p to paste clipboard content (with clipboar
 
   // Get the text content of the editor
   const text = await editor.innerText();
-  console.log('Editor text content after Shift+V + p (clipboard sync):', JSON.stringify(text));
 
   expect(text).not.toContain('second linep');
   expect(text).toContain('copied from clipboard');
 });
 
 test('vim mode - WhichKey support', async ({ page }) => {
-  page.on('console', msg => console.log('BROWSER:', msg.type(), msg.text()));
   await mockIconThemes(page);
   await page.goto('/');
 
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   // Enable Vim Mode via window.appState
   await page.evaluate(() => {

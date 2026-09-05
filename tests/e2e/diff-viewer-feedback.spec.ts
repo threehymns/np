@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
 
@@ -128,5 +128,150 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
 		await expect(page.locator('.cm-editor')).toHaveCount(4);
 		expect(await page.evaluate(() => (window as any).__getFileDiffCalls)).toBe(2);
+	});
+
+	test('arrow traversal across files stays correct when toggling view mode mid-navigation', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files: split view mounts two editors per file
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Toggle to inline mid-navigation: editors remount, one per file
+		await page.locator('button[title="Inline View"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(2);
+
+		// Header ArrowDown resolves the inline editor for the same file
+		await fileHeaders.first().focus();
+		await page.keyboard.press('ArrowDown');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+		// Toggle back to split and traverse across files via header ArrowUp
+		await page.locator('button[title="Split View"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+		await fileHeaders.nth(1).focus();
+		await page.keyboard.press('ArrowUp');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+	});
+
+	test('hunk navigation via ]c / [c keybindings in vim normal mode', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+			(window as any).appState.prefs.vimMode = true;
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files so hunks span multiple editors
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Which file does the focused diff editor belong to?
+		const focusedFile = () =>
+			page.evaluate(() => {
+				const editor = document.querySelector('.cm-editor.cm-focused');
+				if (!editor) return 'none';
+				const text = editor.textContent ?? '';
+				if (text.includes('const')) return 'hello.ts';
+				if (text.includes('Line')) return 'README.md';
+				return 'unknown';
+			});
+
+		// Focus the first diff editor (vim normal mode persists from prefs)
+		await page.locator('.cm-editor').first().click();
+		await page.keyboard.press('Escape');
+		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+
+		// ]c repeatedly: must traverse into the other file (and wrap around,
+		// since presses outnumber hunks). Same for [c backwards.
+		const seenNext = new Set<string>();
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press(']');
+			await page.keyboard.press('c');
+			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+			seenNext.add(await focusedFile());
+		}
+		expect([...seenNext].sort()).toEqual(['README.md', 'hello.ts']);
+
+		const seenPrev = new Set<string>();
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press('[');
+			await page.keyboard.press('c');
+			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
+			seenPrev.add(await focusedFile());
+		}
+		expect([...seenPrev].sort()).toEqual(['README.md', 'hello.ts']);
+	});
+
+	test('diff cursor syncs Git panel active entry', async ({ page }) => {
+		await page.waitForFunction(() => (window as any).appState !== undefined);
+
+		await page.evaluate(async () => {
+			await (window as any).setupDiffTestRepo();
+		});
+
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
+
+		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
+		const fileHeaders = page.locator('[id^="diff-header-"]');
+		await expect(fileHeaders.first()).toBeVisible({ timeout: 5000 });
+
+		// Expand both files so each mounts editors
+		await fileHeaders.nth(1).locator('button[title="Expand"]').click();
+		await expect(page.locator('.cm-editor')).toHaveCount(4);
+
+		// Reveal the Git panel
+		await page.evaluate(() => {
+			const appState = (window as any).appState;
+			appState.activeSidebarTab = 'git';
+			appState.prefs.sidebarVisible = true;
+		});
+
+		const waitForActiveFile = (filepath: string) =>
+			page.waitForFunction((fp) => (window as any).appState.workspace.repository?.activeDiffFile?.filepath === fp, filepath, { timeout: 5000 });
+		const activeRow = (name: string) =>
+			page.locator('.bg-sidebar-accent.border-border', { hasText: name });
+
+		// Focusing another file's diff editor moves the panel highlight
+		await page.locator('[id="diff-file-hello.ts"] .cm-editor').first().click();
+		await waitForActiveFile('hello.ts');
+		await expect(activeRow('hello.ts')).toBeVisible();
+
+		// And back again
+		await page.locator('[id="diff-file-README.md"] .cm-editor').first().click();
+		await waitForActiveFile('README.md');
+		await expect(activeRow('README.md')).toBeVisible();
+
+		// Hunk navigation across files drags the highlight along (press until
+		// we leave README regardless of how many hunks it holds)
+		for (let i = 0; i < 4; i++) {
+			const current = await page.evaluate(() => (window as any).appState.workspace.repository?.activeDiffFile?.filepath);
+			if (current === 'hello.ts') break;
+			await page.locator('button[title="Next Hunk"]').click();
+		}
+		await waitForActiveFile('hello.ts');
+		await expect(activeRow('hello.ts')).toBeVisible();
 	});
 });

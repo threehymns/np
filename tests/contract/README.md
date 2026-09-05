@@ -8,6 +8,18 @@ This directory contains the contract test suite for `VCSAdapter` implementations
 
 ## Running Contract Tests
 
+### Prerequisites
+
+Dependencies must be installed first (a committed `bun.lock` is present, but
+`node_modules` is not checked in). Without this, `bun test` fails locally with
+module-resolution errors (`cannot find @codemirror/state`, `@np/core/*`, …):
+
+```bash
+bun install
+```
+
+### Run
+
 ```bash
 bun test tests/contract/
 ```

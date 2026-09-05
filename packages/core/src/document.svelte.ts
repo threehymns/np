@@ -13,6 +13,8 @@ export class DocumentSession {
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
 	pendingLineToScroll = $state<number | null>(null);
+	editorState = $state.raw<any>(null);
+	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
 	
 	private savedContent = $state('');
 	private storage: Storage;
@@ -93,6 +95,32 @@ export class DocumentSession {
 			console.error(`Failed to load content for ${this.origin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				this.deletedOnDisk = true;
+			}
+			throw e;
+		}
+	}
+
+	/**
+	 * Rebase the saved baseline onto the current on-disk content without
+	 * discarding in-memory edits. `content` (and therefore `isModified`) is left
+	 * untouched; only `savedContent`, `deletedOnDisk`, and `isLoaded` reflect the
+	 * new baseline. Used after an operation that changes files on disk (e.g. a
+	 * branch switch) so unsaved in-memory edits survive and are re-diffed against
+	 * the checked-out content instead of being silently overwritten.
+	 */
+	async rebaseSavedBaseline(): Promise<void> {
+		if (!this.origin) return;
+		try {
+			this.savedContent = await this.storage.readFile(this.origin);
+			this.deletedOnDisk = false;
+			this.isLoaded = true;
+		} catch (e: any) {
+			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
+				// Expected when the file was removed on the checked-out branch;
+				// not an error worth logging.
+				this.deletedOnDisk = true;
+			} else {
+				console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
 			}
 			throw e;
 		}

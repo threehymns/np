@@ -56,7 +56,6 @@
 		(window as any).ManifestIconProvider = ManifestIconProvider;
 		(window as any).Repository = Repository;
 		(window as any).git = git;
-		console.log('[Layout] AppState exposed on window. documents count:', appState.documents.length);
 	}
 
 	let { children } = $props();

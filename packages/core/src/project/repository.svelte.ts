@@ -28,6 +28,20 @@ export class Repository {
 		this.adapter = vcsFactory(rootOrigin);
 	}
 
+	setActiveDiffFileByPath(filepath: string | undefined): boolean {
+		if (!filepath) {
+			this.activeDiffFile = null;
+			return true;
+		}
+		if (this.activeDiffFile?.filepath === filepath) return true;
+		const match = this.changes.find(c => c.filepath === filepath);
+		if (match) {
+			this.activeDiffFile = match;
+			return true;
+		}
+		return false;
+	}
+
 	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail | null> {
 		if (this.adapter.getFileDiff) {
 			return await this.adapter.getFileDiff(filepath, options);
@@ -204,6 +218,3 @@ export function runExclusively<T>(repo: { isBusy: boolean }, op: () => Promise<T
 		if (--state.depth === 0) repo.isBusy = false;
 	});
 }
-
-
-

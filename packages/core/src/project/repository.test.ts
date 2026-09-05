@@ -89,6 +89,43 @@ describe('Repository.refresh', () => {
 	});
 });
 
+describe('Repository.setActiveDiffFileByPath', () => {
+	it('sets activeDiffFile by path when found in changes', () => {
+		const repo = new Repository(mockOrigin, () => createMockAdapter());
+		const change1: GitChange = { filepath: 'a.ts', status: 'M', additions: 1, deletions: 0, diff: '', staged: false };
+		const change2: GitChange = { filepath: 'b.ts', status: 'M', additions: 2, deletions: 1, diff: '', staged: true };
+		repo.changes = [change1, change2];
+
+		const found = repo.setActiveDiffFileByPath('b.ts');
+		expect(found).toBe(true);
+		expect(repo.activeDiffFile).toBe(change2);
+
+		// No-op if already set to same path
+		expect(repo.setActiveDiffFileByPath('b.ts')).toBe(true);
+		expect(repo.activeDiffFile).toBe(change2);
+	});
+
+	it('clears activeDiffFile when path is undefined or null', () => {
+		const repo = new Repository(mockOrigin, () => createMockAdapter());
+		const change1: GitChange = { filepath: 'a.ts', status: 'M', additions: 1, deletions: 0, diff: '', staged: false };
+		repo.changes = [change1];
+		repo.activeDiffFile = change1;
+
+		expect(repo.setActiveDiffFileByPath(undefined)).toBe(true);
+		expect(repo.activeDiffFile).toBeNull();
+	});
+
+	it('returns false and keeps current activeDiffFile when path is not found in changes', () => {
+		const repo = new Repository(mockOrigin, () => createMockAdapter());
+		const change1: GitChange = { filepath: 'a.ts', status: 'M', additions: 1, deletions: 0, diff: '', staged: false };
+		repo.changes = [change1];
+		repo.activeDiffFile = change1;
+
+		expect(repo.setActiveDiffFileByPath('missing.ts')).toBe(false);
+		expect(repo.activeDiffFile).toBe(change1);
+	});
+});
+
 describe('Repository bulk actions', () => {
 	function createRepoWithBulk(overrides: Partial<VCSAdapter> = {}) {
 		const stageAll = mock(async () => {});

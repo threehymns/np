@@ -1,14 +1,13 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 
 test('WhichKey should open immediately on space', async ({ page }) => {
-  page.on('console', msg => console.log('BROWSER:', msg.text()));
   await mockIconThemes(page);
   await page.goto('/');
 
   // Target the CodeMirror editor
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible({ timeout: 30000 });
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
   // Focus the editor
   await editor.click();
@@ -20,7 +19,7 @@ test('WhichKey should open immediately on space', async ({ page }) => {
     localStorage.setItem('np-prefs-v2', JSON.stringify({ vimMode: true }));
   });
   await page.reload();
-  await expect(editor).toBeVisible();
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
   await editor.click();
 
   // Press space

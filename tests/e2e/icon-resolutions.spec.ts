@@ -1,12 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 
 test.describe('Icon Resolution for Folders and Files', () => {
 	test.beforeEach(async ({ page }) => {
-		page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
 		await mockIconThemes(page);
 		await page.goto('/');
-		await expect(page.locator('.cm-content')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 	});
 
 	const themes = [
@@ -22,7 +21,6 @@ test.describe('Icon Resolution for Folders and Files', () => {
 				const icons = appState.icons;
 				
 				appState.prefs.fileIconThemeId = themeId;
-				console.log('Setting fileIconThemeId to:', themeId);
 				
 				// Wait for the theme to load
 				for (let i = 0; i < 50; i++) {
@@ -32,24 +30,8 @@ test.describe('Icon Resolution for Folders and Files', () => {
 					await new Promise(r => setTimeout(r, 50));
 				}
 				
-				console.log('Loaded themes:', icons.getFileThemes().map((t: any) => t.id));
-				console.log('Active theme id:', icons.activeFileThemeId);
-				
-				const provider = icons.fileThemes[themeId];
-				console.log('Provider for theme exists:', !!provider);
-				if (provider) {
-					console.log('Provider resolved structure:', !!provider.resolved);
-					if (provider.resolved) {
-						console.log('Provider namedDirectories keys count:', Object.keys(provider.resolved.namedDirectories).length);
-						console.log('node_modules in namedDirectories:', 'node_modules' in provider.resolved.namedDirectories);
-						console.log('node_modules value:', provider.resolved.namedDirectories['node_modules']);
-						console.log('resolveFolderIcon node_modules:', provider.resolveFolderIcon('node_modules'));
-					}
-				}
-				
 				const getFolderIconVal = (folder: string) => {
 					const val = icons.getFolderIcon(folder);
-					console.log(`getFolderIcon(${folder}) raw:`, val);
 					return typeof val === 'string' ? val : 'component';
 				};
 				
