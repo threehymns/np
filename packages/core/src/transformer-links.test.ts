@@ -34,4 +34,27 @@ describe("HTMLExporter Obsidian Wikilinks", () => {
 		const html = await exporter.export("![[diagram.png|Circuit Diagram]]");
 		expect(html).toContain('<img src="diagram.png" alt="Circuit Diagram"');
 	});
+
+	it("emits heading ids matching wikilink fragment slugs", async () => {
+		const html = await exporter.export("# Section One\n\nJump to [[#Section One]].");
+		expect(html).toContain('<h1 id="section-one">Section One</h1>');
+		expect(html).toContain('<a href="#section-one">Section One</a>');
+	});
+
+	it("rewrites uppercase markdown extensions to .html", async () => {
+		const html = await exporter.export("See [[Note.MD]] for details.");
+		expect(html).toContain('<a href="Note.html">Note.MD</a>');
+	});
+
+	it("escapes wikilink values to prevent markup injection", async () => {
+		const html = await exporter.export('![[x" onerror="alert(1)]]');
+		expect(html).not.toContain('onerror="alert(1)"');
+		expect(html).toContain('x&quot; onerror=&quot;alert(1)');
+	});
+
+	it("escapes alias HTML in link text", async () => {
+		const html = await exporter.export("See [[Note|<script>alert(1)</script>]].");
+		expect(html).not.toContain("<script>");
+		expect(html).toContain("&lt;script&gt;");
+	});
 });
