@@ -154,6 +154,11 @@ class HideMarkersPlugin {
 						return false;
 					}
 
+					// FadedMark/BlockAnchorMark are faded-but-visible (never replaced-hidden).
+					if (type === "FadedMark" || type === "BlockAnchorMark") {
+						return false;
+					}
+
 					const isMarker =
 						type.includes("Mark") ||
 						type.includes("Delimiter") ||
