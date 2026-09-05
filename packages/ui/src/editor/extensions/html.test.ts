@@ -345,4 +345,81 @@ describe("Obsidian HTML Passthrough Live Preview", () => {
 		expect(cssContent).toContain(".cm-html-block-hidden-line");
 		expect(cssContent).toContain("white-space: normal;");
 	});
+
+	it("reuses cached document-level results on selection change without recomputing, but updates focus-dependent decorations", () => {
+		const doc = "<div>\nHello\n</div>\n\nSome text";
+		const state = EditorState.create({
+			doc,
+			selection: { anchor: doc.length },
+			extensions: [markdown(), htmlPassthroughPlugin],
+		});
+		const view = new EditorView({ state });
+		Object.defineProperty(view, "hasFocus", { value: true, configurable: true });
+		const plugin = view.plugin(htmlPassthroughPlugin) as any;
+		expect(plugin).toBeDefined();
+
+		const initialPairedBlocks = plugin.pairedBlocks;
+		const initialCodeRanges = plugin.codeRanges;
+		expect(initialPairedBlocks).toBeDefined();
+		expect(initialPairedBlocks.length).toBe(1);
+
+		// Initially cursor is at the end (not focused on div), widget decoration is present
+		let widgetCount = 0;
+		plugin.decorations.between(0, doc.length, (_from: number, _to: number, value: any) => {
+			if (value.spec?.widget instanceof HTMLBlockWidget) widgetCount++;
+		});
+		expect(widgetCount).toBe(1);
+
+		// Dispatch selection change moving cursor inside <div>
+		view.dispatch({ selection: { anchor: 2 } });
+
+		// Document results should be reused (same reference)
+		expect(plugin.pairedBlocks).toBe(initialPairedBlocks);
+		expect(plugin.codeRanges).toBe(initialCodeRanges);
+
+		// Focus-dependent decoration should update (widget removed because it's focused)
+		widgetCount = 0;
+		plugin.decorations.between(0, doc.length, (_from: number, _to: number, value: any) => {
+			if (value.spec?.widget instanceof HTMLBlockWidget) widgetCount++;
+		});
+		expect(widgetCount).toBe(0);
+
+		// Dispatch back outside
+		view.dispatch({ selection: { anchor: doc.length } });
+		expect(plugin.pairedBlocks).toBe(initialPairedBlocks);
+		expect(plugin.codeRanges).toBe(initialCodeRanges);
+
+		widgetCount = 0;
+		plugin.decorations.between(0, doc.length, (_from: number, _to: number, value: any) => {
+			if (value.spec?.widget instanceof HTMLBlockWidget) widgetCount++;
+		});
+		expect(widgetCount).toBe(1);
+
+		view.destroy();
+	});
+
+	it("invalidates and recomputes document-level results when docChanged is true", () => {
+		const doc = "<div>\nHello\n</div>";
+		const state = EditorState.create({
+			doc,
+			extensions: [markdown(), htmlPassthroughPlugin],
+		});
+		const view = new EditorView({ state });
+		const plugin = view.plugin(htmlPassthroughPlugin) as any;
+
+		const initialPairedBlocks = plugin.pairedBlocks;
+		const initialCodeRanges = plugin.codeRanges;
+		expect(initialPairedBlocks.length).toBe(1);
+
+		// Insert another block
+		view.dispatch({
+			changes: { from: doc.length, insert: "\n\n<table><tr><td>world</td></tr></table>" },
+		});
+
+		// Document changed, so cached results must be invalidated & recomputed (different reference and updated contents)
+		expect(plugin.pairedBlocks).not.toBe(initialPairedBlocks);
+		expect(plugin.pairedBlocks.length).toBe(2);
+
+		view.destroy();
+	});
 });

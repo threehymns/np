@@ -199,31 +199,18 @@ interface DecoItem {
 
 class HTMLPassthroughPlugin {
 	decorations: DecorationSet;
+	codeRanges: { from: number; to: number }[] = [];
+	pairedBlocks: PairedBlock[] = [];
 
 	constructor(view: EditorView) {
+		this.recomputeDoc(view);
 		this.decorations = this.getDecorations(view);
 	}
 
-	update(update: ViewUpdate) {
-		if (
-			update.docChanged ||
-			update.selectionSet ||
-			update.viewportChanged ||
-			update.focusChanged
-		) {
-			this.decorations = this.getDecorations(update.view);
-		}
-	}
-
-	getDecorations(view: EditorView) {
+	recomputeDoc(view: EditorView) {
 		const doc = view.state.doc;
 		const fullDocText = doc.toString();
-		const selection = view.state.selection.main;
-		const hasFocus = view.hasFocus;
-		const items: DecoItem[] = [];
-
 		const codeRanges: { from: number; to: number }[] = [];
-		const excludedRanges: { from: number; to: number }[] = [];
 
 		// 1. AST traversal for Code blocks
 		syntaxTree(view.state).iterate({
@@ -238,10 +225,37 @@ class HTMLPassthroughPlugin {
 					type === "CodeText"
 				) {
 					codeRanges.push({ from: node.from, to: node.to });
-					excludedRanges.push({ from: node.from, to: node.to });
 				}
 			},
 		});
+
+		this.codeRanges = codeRanges;
+		this.pairedBlocks = findPairedHtmlBlocks(fullDocText, codeRanges);
+	}
+
+	update(update: ViewUpdate) {
+		if (update.docChanged) {
+			this.recomputeDoc(update.view);
+			this.decorations = this.getDecorations(update.view);
+		} else if (
+			update.selectionSet ||
+			update.viewportChanged ||
+			update.focusChanged
+		) {
+			this.decorations = this.getDecorations(update.view);
+		}
+	}
+
+	getDecorations(view: EditorView) {
+		const doc = view.state.doc;
+		const selection = view.state.selection.main;
+		const hasFocus = view.hasFocus;
+		const items: DecoItem[] = [];
+
+		const excludedRanges: { from: number; to: number }[] = [
+			...this.codeRanges,
+			...this.pairedBlocks,
+		];
 
 		const isExcluded = (start: number, end: number) => {
 			return excludedRanges.some(
@@ -250,10 +264,7 @@ class HTMLPassthroughPlugin {
 		};
 
 		// 2. Scan paired HTML blocks (div, table, details, iframe, etc. including across blank lines)
-		const pairedBlocks = findPairedHtmlBlocks(fullDocText, codeRanges);
-		for (const block of pairedBlocks) {
-			excludedRanges.push({ from: block.from, to: block.to });
-
+		for (const block of this.pairedBlocks) {
 			const isFocused =
 				hasFocus &&
 				selection.from <= block.to &&
