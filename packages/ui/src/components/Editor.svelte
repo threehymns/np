@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -71,6 +71,8 @@
 			if (isDestroyed || !editorEl) return;
 
 			const extensions = [
+				workspaceFacet.of(appState.workspace),
+				currentDocFacet.of(doc),
 				...createEditorExtensions({
 					wrapCompartment,
 					languageCompartment,

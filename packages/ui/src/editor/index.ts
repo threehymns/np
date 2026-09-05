@@ -18,7 +18,7 @@ import {
 	LanguageDescription,
 } from "@codemirror/language";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap, autocompletion } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { Table, GFM } from "@lezer/markdown";
@@ -68,6 +68,7 @@ import { horizontalRulePlugin } from "./extensions/hr";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
+import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
 	if (!langDesc) return [];
@@ -75,20 +76,29 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 	const lang = await langDesc.load();
 	
 	if (langDesc.name === "Markdown") {
+		// NOTE: do not include the plain `lang` here. It is a second,
+		// WikiLink-less Markdown language and CodeMirror resolves the
+		// syntax tree from the first language in the stack — so keeping it
+		// makes [[Note]] parse as the inner single-bracket Link instead of
+		// the outer WikiLink (breaking click/Enter, marker hiding, styling).
+		// The custom markdown() below is a superset (codeLanguages + Table,
+		// GFM, WikiLinkExtension) and must be the sole language.
 		return [
-			lang,
 			markdown({
 				codeLanguages: allLanguages as any,
-				extensions: [Table, GFM] as any,
+				extensions: [Table, GFM, WikiLinkExtension] as any,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
+			}),
+			markdownLanguage.data.of({
+				autocomplete: wikilinkAutocompletion,
 			}),
 			markdownTables({
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM] as any,
+					extensions: [Table, GFM, WikiLinkExtension] as any,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),
@@ -177,6 +187,7 @@ export function createEditorExtensions(options: {
 		indentOnInput(),
 		bracketMatching(),
 		closeBrackets(),
+		autocompletion(),
 		rectangularSelection(),
 		crosshairCursor(),
 		highlightActiveLine(),
@@ -208,6 +219,7 @@ export * from "./extensions/blockquote";
 export * from "./extensions/hr";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
+export * from "./extensions/wikilinks";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";

@@ -1,7 +1,7 @@
 import { EditorView } from "@codemirror/view";
 
 export const editorTheme = EditorView.theme({
-	"&": { 
+	"&": {
 		height: "100%",
 		fontSize: "1.05rem",
 		backgroundColor: "transparent",
@@ -170,5 +170,56 @@ export const editorTheme = EditorView.theme({
 	},
 	".cm-panel.cm-search [name=close]:hover": {
 		color: "var(--foreground)",
+	},
+	// Autocomplete popup (wikilinks, tables). The tooltip container carries
+	// the editor theme classes, so these track the dynamic light/dark theme
+	// via the shared tokens and override the autocomplete baseTheme.
+	".cm-tooltip.cm-tooltip-autocomplete": {
+		backgroundColor: "var(--popover)",
+		color: "var(--popover-foreground)",
+		border: "1px solid var(--border)",
+		borderRadius: "var(--radius)",
+		boxShadow: "0 8px 24px rgba(0, 0, 0, 0.18)",
+		overflow: "hidden",
+		fontFamily: "ui-sans-serif, system-ui, sans-serif",
+		fontSize: "0.85rem",
+	},
+	".cm-tooltip.cm-tooltip-autocomplete > ul": {
+		fontFamily: "inherit",
+		padding: "0.25rem",
+	},
+	".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+		borderRadius: "calc(var(--radius) - 4px)",
+    padding: "0.3rem 0.5rem",
+    cursor: "default",
+	},
+	".cm-tooltip.cm-tooltip-autocomplete ul li[aria-selected]": {
+		backgroundColor: "var(--accent)",
+		color: "var(--accent-foreground)",
+	},
+	".cm-tooltip.cm-tooltip-autocomplete ul li:not([aria-selected]) .cm-completionMatchedText":
+		{
+			color: "var(--primary)",
+		},
+	".cm-tooltip.cm-tooltip-autocomplete ul li[aria-selected] .cm-completionDetail":
+		{
+			color: "var(--accent-foreground)",
+			opacity: "0.75",
+		},
+	".cm-completionDetail": {
+    color: "var(--muted-foreground)",
+		fontSize: "0.65rem",
+	},
+	".cm-completionIcon": {
+		color: "var(--foreground)",
+	},
+	// The base theme only ships glyphs for a subset of completion types
+	// (e.g. `variable`, used for block refs). Our note and heading options
+	// would otherwise render a blank gap where their icon belongs.
+	".cm-completionIcon-file": {
+		"&:after": { content: "'🗎'" },
+	},
+	".cm-completionIcon-section": {
+		"&:after": { content: "'§'" },
 	},
 });

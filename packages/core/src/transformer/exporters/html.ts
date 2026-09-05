@@ -1,13 +1,133 @@
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import type { Exporter } from '../types';
+import { parseInternalLink } from '../../links';
+
+/**
+ * Slug for heading fragment links. Rendered Markdown headings receive the
+ * same value as their `id` (see below) so `[[#Section One]]` targets them.
+ */
+export function slugifyHeading(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^\w\s-]/g, '')
+		.replace(/\s+/g, '-');
+}
+
+function escapeHtmlText(value: string): string {
+	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttr(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/"/g, '&quot;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
+/**
+ * Wikilink destinations are relative. Reject serializable schemes that
+ * could execute code or exfiltrate data (e.g. `javascript:`, `data:`).
+ */
+function isSafeRelativeUrl(url: string): boolean {
+	if (!url) return true;
+	const trimmed = url.trim();
+	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+		return /^(https?:|mailto:)/i.test(trimmed);
+	}
+	return true;
+}
+
+/** Plain text of inline tokens, for heading slugs (avoids HTML entities). */
+function tokensToPlainText(tokens: any[] | undefined): string {
+	let out = '';
+	for (const token of tokens ?? []) {
+		if (token.tokens?.length) {
+			out += tokensToPlainText(token.tokens);
+		} else if (typeof token.text === 'string') {
+			out += token.text;
+		}
+	}
+	return out.replace(/<[^>]*>/g, '');
+}
+
+const wikilinkExtension = {
+	name: 'wikilink',
+	level: 'inline' as const,
+	start(src: string) {
+		const match = src.match(/!?\[\[/);
+		return match ? match.index : -1;
+	},
+	tokenizer(src: string) {
+		const rule = /^(!)?\[\[([^\]\n]+)\]\]/;
+		const match = rule.exec(src);
+		if (match) {
+			const isEmbed = Boolean(match[1]);
+			const inner = match[2];
+			return {
+				type: 'wikilink',
+				raw: match[0],
+				isEmbed,
+				inner,
+			};
+		}
+	},
+	renderer(token: any) {
+		const parsed = parseInternalLink((token.isEmbed ? '!' : '') + '[[' + token.inner + ']]');
+		if (parsed.isEmbed) {
+			const alt = parsed.alias || parsed.path;
+			const src = isSafeRelativeUrl(parsed.path) ? parsed.path : '';
+			return `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(alt)}" />`;
+		}
+
+		let href = '';
+		if (parsed.path) {
+			const hasExt = /\.[a-zA-Z0-9]+$/.test(parsed.path);
+			href = hasExt ? parsed.path.replace(/\.md$/i, '.html') : `${parsed.path}.html`;
+		}
+		if (parsed.subpath) {
+			const slug = slugifyHeading(parsed.subpath.value);
+			href = href ? `${href}#${slug}` : `#${slug}`;
+		}
+		if (!isSafeRelativeUrl(href)) {
+			href = '#';
+		}
+		const displayText =
+			parsed.alias ||
+			(parsed.path
+				? parsed.subpath
+					? `${parsed.path}#${parsed.subpath.value}`
+					: parsed.path
+				: parsed.subpath?.value || '');
+
+		return `<a href="${escapeHtmlAttr(href)}">${escapeHtmlText(displayText)}</a>`;
+	},
+};
 
 export class HTMLExporter implements Exporter {
 	format = 'html';
 	extension = '.html';
+	private markedInstance: Marked;
+
+	constructor() {
+		this.markedInstance = new Marked();
+		this.markedInstance.use({
+			extensions: [wikilinkExtension],
+			renderer: {
+				// Marked 18 emits no heading IDs by default, which would
+				// leave wikilink `#fragment` links without a target.
+				heading(this: any, { tokens, depth }: any) {
+					const body: string = this.parser.parseInline(tokens);
+					const id = slugifyHeading(tokensToPlainText(tokens));
+					return `<h${depth} id="${escapeHtmlAttr(id)}">${body}</h${depth}>\n`;
+				},
+			},
+		});
+	}
 
 	async export(content: string): Promise<string> {
-		const body = await marked.parse(content);
-		
+		const body = await this.markedInstance.parse(content);
+
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>

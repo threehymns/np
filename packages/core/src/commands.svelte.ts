@@ -255,6 +255,31 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	appState.commands.register({
+		id: 'edit.addInternalLink',
+		label: 'Add internal link',
+		category: 'Edit',
+		action: () => {
+			if (!appState.activeEditorView) return;
+			const view = appState.activeEditorView;
+			const selection = view.state.selection.main;
+			if (selection.empty) {
+				view.dispatch({
+					changes: { from: selection.from, insert: '[[]]' },
+					selection: { anchor: selection.from + 2 }
+				});
+			} else {
+				const text = view.state.doc.sliceString(selection.from, selection.to);
+				view.dispatch({
+					changes: { from: selection.from, to: selection.to, insert: `[[${text}]]` },
+					selection: { anchor: selection.from + 2, head: selection.to + 2 }
+				});
+			}
+			view.focus();
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
 		id: 'edit.selectAll',
 		label: 'Select All',
 		category: 'Edit',
