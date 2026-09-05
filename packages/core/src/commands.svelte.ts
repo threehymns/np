@@ -43,7 +43,7 @@ async function readClipboard(appState: AppState): Promise<string> {
  * URI strings ('scheme://...') are classified separately before this runs.
  */
 function isAbsoluteFilesystemPath(target: string): boolean {
-	return target.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(target) || target.startsWith('\\\\');
+	return target.startsWith('/') || /^[a-zA-Z]:[/\\\\]/.test(target) || target.startsWith('\\\\');
 }
 
 export interface Command {
@@ -103,7 +103,7 @@ export function registerCoreCommands(appState: AppState) {
 		if (target.includes('://')) {
 			await appState.workspace.openFile(parseURI(target));
 		} else if (isAbsoluteFilesystemPath(target)) {
-			const name = target.split(/[/\\]/).filter(Boolean).pop() || target;
+			const name = target.split(/[/\\\\]/).filter(Boolean).pop() || target;
 			await appState.workspace.openFile({
 				scheme: 'file',
 				path: target,
@@ -313,11 +313,15 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Export',
 		action: async () => {
 			if (!appState.activeDocument) return;
+			if (!appState.exportService?.exportFile) {
+				await showAlert(appState, 'Export service is unavailable');
+				return;
+			}
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
 			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
 
 			try {
-				await appState.exportService?.exportFile?.({
+				await appState.exportService.exportFile({
 					content: html,
 					suggestedName,
 					mimeType: 'text/html',
@@ -491,7 +495,7 @@ export function registerCoreCommands(appState: AppState) {
 				try {
 					const configPath = await (window as any).electronAPI.getConfigPath();
 					if (configPath) {
-						const name = configPath.split(/[/\\]/).filter(Boolean).pop() || 'config.json';
+						const name = configPath.split(/[/\\\\]/).filter(Boolean).pop() || 'config.json';
 						await appState.workspace.openFile({
 							scheme: 'file',
 							path: configPath,

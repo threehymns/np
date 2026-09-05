@@ -14,13 +14,15 @@ beforeAll(async () => {
 function createTestAppState(overrides: {
 	exportService?: ExportService;
 	clipboardService?: ClipboardService;
+	dialogService?: any;
 } = {}) {
 	const storage = createMockStorage();
 	const appState = new AppState({
 		storage,
 		vcsFactory: () => ({} as any),
 		exportService: overrides.exportService,
-		clipboardService: overrides.clipboardService
+		clipboardService: overrides.clipboardService,
+		dialogService: overrides.dialogService
 	});
 	return appState;
 }
@@ -105,8 +107,9 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 		}
 	});
 
-	it("handles missing exportService gracefully without crashing", async () => {
-		const appState = createTestAppState({});
+	it("handles missing exportService gracefully without crashing and alerts user", async () => {
+		const alertMock = mock(async () => {});
+		const appState = createTestAppState({ dialogService: { alert: alertMock } });
 		const doc = new DocumentSession(
 			appState.storage,
 			"Content",
@@ -118,9 +121,26 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
 		appState.workspace.activeTabId = doc.id;
 
-		expect(async () => {
-			await appState.commands.execute("transformer.exportHTML");
-		}).not.toThrow();
+		await appState.commands.execute("transformer.exportHTML");
+		expect(alertMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("alerts user when exportFile method is unavailable on exportService", async () => {
+		const alertMock = mock(async () => {});
+		const appState = createTestAppState({ exportService: {} as any, dialogService: { alert: alertMock } });
+		const doc = new DocumentSession(
+			appState.storage,
+			"Content",
+			{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
+			"Test.md",
+			appState.workspace
+		);
+		appState.workspace.documents = [doc];
+		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
+		appState.workspace.activeTabId = doc.id;
+
+		await appState.commands.execute("transformer.exportHTML");
+		expect(alertMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("no-ops when activeDocument is not present", async () => {
