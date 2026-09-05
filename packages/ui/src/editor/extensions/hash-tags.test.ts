@@ -65,7 +65,7 @@ describe("#140 taxonomy tags", () => {
 	it("applies a cm-tag style chunk", () => {
 		expect(
 			markdownHighlightChunks.some(
-				(c) => (c as any).className === "cm-tag",
+				(c) => (c as any).class === "cm-tag",
 			),
 		).toBe(true);
 	});

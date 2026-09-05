@@ -84,7 +84,7 @@ describe("#141 footnotes (references + inline)", () => {
 	it("applies raised cm-footnote styling", () => {
 		expect(
 			markdownHighlightChunks.some(
-				(c) => (c as any).className === "cm-footnote",
+				(c) => (c as any).class === "cm-footnote",
 			),
 		).toBe(true);
 	});

@@ -90,7 +90,7 @@ describe("#143 faded hidden text + block anchors", () => {
 	it("applies the faded style chunk", () => {
 		expect(
 			markdownHighlightChunks.some(
-				(c) => (c as any).className === "md-faded",
+				(c) => (c as any).class === "md-faded",
 			),
 		).toBe(true);
 	});

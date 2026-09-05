@@ -49,7 +49,7 @@ const headingStyles: StyleSpec[] = [
 		tag: markHighlightTag,
 		backgroundColor: "color-mix(in srgb, var(--accent), transparent 58%)",
 		borderRadius: "2px",
-		className: "cm-mark",
+		class: "cm-mark",
 	},
 	{
 		tag: taxTag,
@@ -57,15 +57,15 @@ const headingStyles: StyleSpec[] = [
 		backgroundColor: "color-mix(in srgb, var(--accent), transparent 72%)",
 		borderRadius: "3px",
 		padding: "0 0.3em",
-		className: "cm-tag",
+		class: "cm-tag",
 	},
 	{
 		tag: footnoteTag,
-		className: "cm-footnote",
+		class: "cm-footnote",
 	},
 	{
 		tag: fadedTag,
-		className: "md-faded",
+		class: "md-faded",
 	},
 	{ tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
 	{
@@ -130,7 +130,7 @@ const codeStyles: StyleSpec[] = [
 export const markdownHighlightChunks: StyleSpec[] = [
 	...headingStyles,
 	...codeStyles,
-	// New feature style chunks register here, e.g. `...s1HighlightStyles`.
+	// New feature style chunks register here, e.g. `...s1HighlightStyles`..
 ];
 
 export const markdownHighlight = HighlightStyle.define(markdownHighlightChunks);

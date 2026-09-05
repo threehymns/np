@@ -78,7 +78,7 @@ describe("#139 inline highlight", () => {
 	it("applies a mark-like style chunk", () => {
 		expect(
 			markdownHighlightChunks.some(
-				(c) => (c as any).className === "cm-mark",
+				(c) => (c as any).class === "cm-mark",
 			),
 		).toBe(true);
 	});
