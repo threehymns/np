@@ -37,7 +37,12 @@ export class SessionPersistenceEngine {
 			const filePath = this.getFilePath();
 			try {
 				const content = await fs.readFile(filePath, 'utf-8');
-				this.persistenceData = JSON.parse(content);
+				const parsed = JSON.parse(content);
+				if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+					this.persistenceData = parsed;
+				} else {
+					this.persistenceData = {};
+				}
 			} catch {
 				this.persistenceData = {};
 			} finally {
