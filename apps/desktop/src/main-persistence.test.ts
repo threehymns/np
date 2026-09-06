@@ -205,6 +205,34 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		expect(await corruptEngine.loadAll()).toEqual({});
 	});
 
+	it('falls back to empty record when JSON root is null, array, or primitive', async () => {
+		const cases = [
+			'null',
+			'["array", "root"]',
+			'"string root"',
+			'12345',
+			'true'
+		];
+
+		for (let i = 0; i < cases.length; i++) {
+			const filePath = path.join(testDir, `non-object-${i}.json`);
+			await fs.writeFile(filePath, cases[i], 'utf-8');
+
+			const engine = new SessionPersistenceEngine({
+				getFilePath: () => filePath,
+				debounceMs: 500
+			});
+
+			expect(await engine.loadAll()).toEqual({});
+			expect(await engine.load('testKey')).toBeNull();
+
+			// Should allow saving without throwing
+			await engine.save('key1', 'value1');
+			expect(await engine.load('key1')).toBe('value1');
+			expect(engine.getInMemoryCache()).toEqual({ key1: 'value1' });
+		}
+	});
+
 	it('ensures async flush() persists pending dirty changes immediately', async () => {
 		const engine = new SessionPersistenceEngine({
 			getFilePath: () => sessionFilePath,
