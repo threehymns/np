@@ -70,7 +70,7 @@ export class Workspace {
 		}
 	}
 
-	private debouncedSaveOpenFiles() {
+	debouncedSaveOpenFiles() {
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
 		}
@@ -143,7 +143,7 @@ export class Workspace {
 		$effect.root(() => {
 			$effect(() => {
 				const activeDoc = this.activeDocument;
-				if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
+				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded) {
 					activeDoc.loadContent();
 				}
 			});
@@ -153,12 +153,7 @@ export class Workspace {
 				
 				const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				const _tabs = this.tabs.map(t => t.id).join(',');
-				this.documents.forEach(doc => {
-					const _c = doc.content;
-					const _m = doc.isModified;
-					const _o = doc.origin;
-					const _t = doc.untitledTitle;
-				});
+				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
 				
 				this.debouncedSaveOpenFiles();
 			});
@@ -167,6 +162,7 @@ export class Workspace {
 				if (this.isRestoring) return;
 				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+				this.flushSaveOpenFiles();
 			});
 
 			$effect(() => {
