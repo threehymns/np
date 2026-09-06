@@ -6,7 +6,7 @@ export type PermissionState = 'granted' | 'prompt' | 'denied';
 
 export class DocumentSession {
 	id = crypto.randomUUID();
-	content = $state('');
+	private _content = $state('');
 	origin = $state.raw<FileOrigin | null>(null);
 	untitledTitle = $state('Untitled');
 	permissionState = $state<PermissionState>('granted');
@@ -18,11 +18,11 @@ export class DocumentSession {
 	
 	private savedContent = $state('');
 	private storage: Storage;
-	private workspace?: Workspace;
+	workspace?: Workspace;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', workspace?: Workspace) {
 		this.storage = storage;
-		this.content = initialContent;
+		this._content = initialContent;
 		this.savedContent = initialContent;
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
@@ -43,12 +43,24 @@ export class DocumentSession {
 		}
 	}
 
+	get content() {
+		return this._content;
+	}
+
+	set content(value: string) {
+		if (this._content === value) return;
+		this._content = value;
+		if (this.workspace) {
+			this.workspace.debouncedSaveOpenFiles();
+		}
+	}
+
 	get fileName() {
 		return this.origin?.name ?? this.untitledTitle;
 	}
 
 	get isModified() {
-		return this.content !== this.savedContent;
+		return this._content !== this.savedContent;
 	}
 
 	userLanguageOverride = $state<string | null>(null);
@@ -62,10 +74,10 @@ export class DocumentSession {
 		return LanguageSupport.getLanguageForFile(this.fileName);
 	});
 
-	charCount = $derived(this.content.length);
+	charCount = $derived(this._content.length);
 
 	wordCount = $derived.by(() => {
-		const text = this.content;
+		const text = this._content;
 		let count = 0;
 		let inWord = false;
 		for (let i = 0; i < text.length; i++) {
@@ -87,8 +99,9 @@ export class DocumentSession {
 	async loadContent() {
 		if (!this.origin) return;
 		try {
-			this.content = await this.storage.readFile(this.origin);
-			this.savedContent = this.content;
+			const fileContent = await this.storage.readFile(this.origin);
+			this._content = fileContent;
+			this.savedContent = fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -145,7 +158,7 @@ export class DocumentSession {
 		}
 		const granted = await this.storage.verifyPermission(this.origin, true);
 		this.permissionState = granted ? 'granted' : 'denied';
-		if (granted && !this.content && this.savedContent === '') {
+		if (granted && !this._content && this.savedContent === '') {
 			await this.loadContent();
 		}
 		return granted;
@@ -158,14 +171,17 @@ export class DocumentSession {
 		}
 
 		const targetOrigin = options.forceNewOrigin ? undefined : (this.origin ?? undefined);
-		const newOrigin = await this.storage.saveFile(this.content, targetOrigin);
+		const newOrigin = await this.storage.saveFile(this._content, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
-			this.savedContent = this.content;
+			this.savedContent = this._content;
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
 			if (this.workspace?.repository) {
 				this.workspace.repository.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+			}
+			if (this.workspace) {
+				this.workspace.debouncedSaveOpenFiles();
 			}
 			return true;
 		}
@@ -173,7 +189,7 @@ export class DocumentSession {
 	}
 
 	restoreDraft(draftContent: string) {
-		this.content = draftContent;
+		this._content = draftContent;
 		this.isLoaded = true;
 		if (this.origin) {
 			this.storage.readFile(this.origin).then(

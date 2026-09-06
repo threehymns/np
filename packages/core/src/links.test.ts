@@ -276,6 +276,19 @@ describe("openInternalLink resolution in Workspace", () => {
 		expect(resultDoc?.pendingLineToScroll).toBe(3);
 	});
 
+	it("returns null for same-note link when currentDoc is absent even if active document exists", async () => {
+		const doc = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/Projects/Note B.md",
+			name: "Note B.md",
+		});
+		expect(doc).toBeDefined();
+		expect(workspace.activeDocument).toBeDefined();
+
+		const resultDoc = await openInternalLink(workspace, null, "[[#Sub Section]]");
+		expect(resultDoc).toBeNull();
+	});
+
 	it("navigates to block within currently active note", async () => {
 		const doc = await workspace.openFile({
 			scheme: "file",

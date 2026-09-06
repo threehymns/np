@@ -4,9 +4,6 @@ import type { SessionPersistence, FileOrigin, SerializedDocument } from '@np/cor
  * Desktop session storage backed by the Electron preload IPC bridge
  * (`window.electronAPI.persistenceSave`/`persistenceLoad`). Only usable inside
  * the Electron renderer; web and tests use other implementations.
- *
- * Folder-scoped keys use the `openFiles:${folderUri}` spelling on write and are
- * migrated to the normalized `open-files:` spelling on read via {@link SessionPersistence.loadAll}.
  */
 export class ElectronSessionPersistence implements SessionPersistence {
 	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
@@ -55,33 +52,7 @@ export class ElectronSessionPersistence implements SessionPersistence {
 		return await window.electronAPI.persistenceLoad(key);
 	}
 
-	/**
-	 * Migrates legacy IPC keys to the normalized spelling on read: `openFiles:`,
-	 * `activeDocumentId:`, `expandedPaths:` become `open-files:`, `active-id:`,
-	 * `expanded-paths:`. A migrated value only fills in when the normalized key
-	 * is absent, so fresh writes are never clobbered by stale legacy data.
-	 */
 	async loadAll(): Promise<Record<string, any>> {
-		const all = await window.electronAPI.persistenceLoadAll();
-		const keyPrefixes = {
-			openFiles: 'open-files',
-			activeDocumentId: 'active-id',
-			expandedPaths: 'expanded-paths'
-		};
-
-		for (const key of Object.keys(all)) {
-			for (const [legacyPrefix, normalizedPrefix] of Object.entries(keyPrefixes)) {
-				if (key.startsWith(`${legacyPrefix}:`)) {
-					const normalizedKey = `${normalizedPrefix}:${key.slice(legacyPrefix.length + 1)}`;
-					if (!(normalizedKey in all)) {
-						all[normalizedKey] = all[key];
-					}
-					delete all[key];
-					break;
-				}
-			}
-		}
-
-		return all;
+		return (await window.electronAPI.persistenceLoadAll()) || {};
 	}
 }
