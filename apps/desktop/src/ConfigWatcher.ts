@@ -59,10 +59,11 @@ export class ConfigWatcher {
 
 		try {
 			// Watch the directory rather than the file directly, so atomic renames/editor replacements don't stop the watcher
-			this.watcher = fsSync.watch(dir, (eventType, filename) => {
-				if (!filename || filename === targetFile) {
-					this.handleFileChange();
+			this.watcher = fsSync.watch(dir, (_eventType, filename) => {
+				if (!filename || filename !== targetFile) {
+					return;
 				}
+				this.handleFileChange();
 			});
 		} catch (e) {
 			console.error('Failed to start config watcher:', e);
