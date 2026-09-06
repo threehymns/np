@@ -72,11 +72,11 @@ export class TaskCheckboxWidget extends WidgetType {
 
 /** Pure replacement needed to toggle a task marker: `[ ]` <-> `[x]`. */
 export function taskToggleChange(
-	docText: string,
+	marker: string,
 	from: number,
 	to: number,
 ): { from: number; to: number; insert: string } | null {
-	const cur = docText.slice(from, to);
+	const cur = marker;
 	if (cur !== "[ ]" && cur !== "[x]" && cur !== "[X]") return null;
 	const insert = cur === "[ ]" ? "[x]" : "[ ]";
 	return { from, to, insert };
@@ -84,7 +84,7 @@ export function taskToggleChange(
 
 /** Toggle the task at a TaskMarker range via an undoable transaction. */
 export function dispatchTaskToggle(view: EditorView, from: number, to: number) {
-	const change = taskToggleChange(view.state.doc.toString(), from, to);
+	const change = taskToggleChange(view.state.doc.sliceString(from, to), from, to);
 	if (!change) return;
 	view.dispatch({
 		changes: [change],

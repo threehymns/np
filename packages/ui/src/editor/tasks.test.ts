@@ -71,17 +71,17 @@ describe("#152 task checkboxes", () => {
 	});
 
 	it("computes toggle replacements [ ] <-> [x]", () => {
-		expect(taskToggleChange("- [ ] x", 2, 5)).toEqual({
+		expect(taskToggleChange("[ ]", 2, 5)).toEqual({
 			from: 2,
 			to: 5,
 			insert: "[x]",
 		});
-		expect(taskToggleChange("- [x] x", 2, 5)).toEqual({
+		expect(taskToggleChange("[x]", 2, 5)).toEqual({
 			from: 2,
 			to: 5,
 			insert: "[ ]",
 		});
-		expect(taskToggleChange("- plain", 0, 4)).toBeNull();
+		expect(taskToggleChange("- pl", 0, 4)).toBeNull();
 	});
 
 	it("hides bullet marker and shows checkbox widget when cursor is outside the syntax area", async () => {
