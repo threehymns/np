@@ -174,4 +174,30 @@ describe("#151 callout base", () => {
 		// the callout plugin does not strip the type marker text
 		expect(decode(calloutPlugin, state)).toContain("cm-callout-type");
 	});
+
+	it("scopes nested callout lines to the inner type with its local color", async () => {
+		const state = await makeState(
+			"> [!example] Outer callout\n> Content in the outer callout.\n> \n> > [!tip]\n> > Callouts can be nested inside other callouts.",
+		);
+		const inst: any = calloutPlugin.create(
+			{ state, hasFocus: false, visibleRanges: [{ from: 0, to: state.doc.length }] },
+			undefined,
+		);
+		const lineClasses = new Map<number, string[]>();
+		inst.decorations.between(0, state.doc.length, (f: number, t: number, d: any) => {
+			const cls: string | undefined = d.spec?.class;
+			if (cls?.includes("cm-callout") && !cls.includes("type") && !cls.includes("title")) {
+				const line = state.doc.lineAt(f === t ? f : f).number;
+				lineClasses.set(line, [...(lineClasses.get(line) ?? []), cls]);
+			}
+		});
+		// Outer lines keep the outer accent.
+		for (const n of [1, 2, 3]) {
+			expect(lineClasses.get(n)).toEqual(["cm-callout cm-callout-example"]);
+		}
+		// Nested lines get only the inner accent (local color), indented as nested.
+		for (const n of [4, 5]) {
+			expect(lineClasses.get(n)).toEqual(["cm-callout cm-callout-tip cm-callout-nested"]);
+		}
+	});
 });

@@ -184,6 +184,21 @@ class CalloutPlugin {
 			collected.push({ from, to, value });
 		const doc = view.state.doc;
 		const processedStartLines = new Set<number>();
+		interface CalloutInfo {
+			startLine: number;
+			endLine: number;
+			depth: number;
+			type: string;
+			firstLineFrom: number;
+			lineOffset: number;
+			rest: string;
+			calloutMatch: RegExpMatchArray;
+			markerStart: number;
+			markerEnd: number;
+			baseClass: string;
+			isCollapsed: boolean;
+		}
+		const callouts: CalloutInfo[] = [];
 
 		for (let { from, to } of view.visibleRanges) {
 			syntaxTree(view.state).iterate({
@@ -226,64 +241,108 @@ class CalloutPlugin {
 						depth > 1 ? " cm-callout-nested" : ""
 					}`;
 
-					add(
-						firstLine.from,
-						firstLine.from,
-						Decoration.line({ class: baseClass }),
-					);
-
-					const title =
-						(calloutMatch[4] || "").trim() || CALLOUT_TYPES[type].label;
-
-					// Add icon widget before the type marker
-					add(
-						markerStart,
-						markerStart,
-						Decoration.widget({
-							widget: new CalloutIconWidget(type),
-							side: -1,
-						}),
-					);
-
-					add(
+					callouts.push({
+						startLine,
+						endLine,
+						depth,
+						type,
+						firstLineFrom: firstLine.from,
+						lineOffset,
+						rest,
+						calloutMatch,
 						markerStart,
 						markerEnd,
-						Decoration.mark({ class: "cm-callout-type", attributes: { title } }),
-					);
-					if (calloutMatch[4] && calloutMatch[4].trim()) {
-						const titleEnd = firstLine.from + lineOffset + rest.length;
-						const titleStart = markerEnd + (calloutMatch[4].startsWith(" ") ? 1 : 0);
-						if (titleStart < titleEnd) {
-							add(
-								titleStart,
-								titleEnd,
-								Decoration.mark({ class: "cm-callout-title" }),
-							);
-						}
-					}
-
-					if (isCollapsed && startLine < endLine) {
-						// Fold: hide the body lines (source text untouched).
-						for (let n = startLine + 1; n <= endLine; n++) {
-							const line = doc.line(n);
-							add(
-								line.from,
-								line.to,
-								Decoration.replace({}),
-							);
-						}
-					} else {
-						for (let n = startLine + 1; n <= endLine; n++) {
-							const line = doc.line(n);
-							add(
-								line.from,
-								line.from,
-								Decoration.line({ class: baseClass }),
-							);
-						}
-					}
+						baseClass,
+						isCollapsed,
+					});
 				},
 			});
+		}
+
+		// Folded bodies hide every line beneath the header, including nested
+		// callouts, so compute the hidden set before emitting line accents.
+		const hidden = new Set<number>();
+		for (const c of callouts) {
+			if (c.isCollapsed && c.startLine < c.endLine) {
+				for (let n = c.startLine + 1; n <= c.endLine; n++) hidden.add(n);
+			}
+		}
+		for (const n of hidden) {
+			if (n < 1 || n > doc.lines) continue;
+			const line = doc.line(n);
+			add(line.from, line.to, Decoration.replace({}));
+		}
+
+		// Deepest callout owns each line's accent so a nested type keeps its
+		// local color instead of inheriting the outer callout's variable.
+		const ownerOf = (lineNum: number): CalloutInfo | null => {
+			let owner: CalloutInfo | null = null;
+			for (const c of callouts) {
+				if (lineNum < c.startLine || lineNum > c.endLine) continue;
+				if (
+					!owner ||
+					c.depth > owner.depth ||
+					(c.depth === owner.depth && c.startLine > owner.startLine)
+				) {
+					owner = c;
+				}
+			}
+			return owner;
+		};
+
+		for (const c of callouts) {
+			if (hidden.has(c.startLine)) continue;
+			const owner = ownerOf(c.startLine);
+			if (owner !== c) continue; // header owned by a deeper callout
+			add(
+				c.firstLineFrom,
+				c.firstLineFrom,
+				Decoration.line({ class: c.baseClass }),
+			);
+
+			const title =
+				(c.calloutMatch[4] || "").trim() || CALLOUT_TYPES[c.type].label;
+
+			// Add icon widget before the type marker
+			add(
+				c.markerStart,
+				c.markerStart,
+				Decoration.widget({
+					widget: new CalloutIconWidget(c.type),
+					side: -1,
+				}),
+			);
+
+			add(
+				c.markerStart,
+				c.markerEnd,
+				Decoration.mark({ class: "cm-callout-type", attributes: { title } }),
+			);
+			if (c.calloutMatch[4] && c.calloutMatch[4].trim()) {
+				const firstLine = doc.line(c.startLine);
+				const titleEnd = c.firstLineFrom + c.lineOffset + c.rest.length;
+				const titleStart = c.markerEnd + (c.calloutMatch[4].startsWith(" ") ? 1 : 0);
+				if (titleStart < titleEnd && titleEnd <= firstLine.to + 1) {
+					add(
+						titleStart,
+						titleEnd,
+						Decoration.mark({ class: "cm-callout-title" }),
+					);
+				}
+			}
+		}
+
+		for (const c of callouts) {
+			for (let n = c.startLine + 1; n <= c.endLine; n++) {
+				if (hidden.has(n)) continue;
+				if (ownerOf(n) !== c) continue;
+				const line = doc.line(n);
+				add(
+					line.from,
+					line.from,
+					Decoration.line({ class: c.baseClass }),
+				);
+			}
 		}
 		// Nested blockquotes iterate outer-then-inner, so collect + sort by
 		// `from` (then `to`) so the builder receives strictly-ascending ranges.
