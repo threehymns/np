@@ -183,6 +183,7 @@ class CalloutPlugin {
 		const add = (from: number, to: number, value: Decoration) =>
 			collected.push({ from, to, value });
 		const doc = view.state.doc;
+		const processedStartLines = new Set<number>();
 
 		for (let { from, to } of view.visibleRanges) {
 			syntaxTree(view.state).iterate({
@@ -204,6 +205,9 @@ class CalloutPlugin {
 					const calloutMatch = rest.match(/^\[!(\w+)([-+])?\]([-+])?(.*)$/);
 					const type = calloutMatch ? canonicalType(calloutMatch[1]) : null;
 					if (!type || !calloutMatch) return; // plain quote / unknown type
+					const startLine = doc.lineAt(node.from).number;
+					if (processedStartLines.has(startLine)) return;
+					processedStartLines.add(startLine);
 
 					const foldMarker = calloutMatch[2] || calloutMatch[3];
 					const isDefaultCollapsed = foldMarker === "-";
@@ -213,7 +217,6 @@ class CalloutPlugin {
 					const markerEnd = markerStart + closeBracketRel + 1 + (calloutMatch[3] ? 1 : 0);
 
 					// Accent each line of the callout block.
-					const startLine = doc.lineAt(node.from).number;
 					const endLine = doc.lineAt(node.to).number;
 					const collapsed = view.state.field(calloutFoldField, false) ?? [];
 					const isCollapsed = isDefaultCollapsed
