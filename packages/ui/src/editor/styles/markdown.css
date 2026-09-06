@@ -381,7 +381,7 @@
 }
 
 /* Callout nesting + fold (#154) */
-.cm-callout-nested {
+.cm-content .cm-callout-nested {
 	--nest-indent: 0.9em;
 	border-left-color: var(--callout-outer, var(--callout-color));
 	background-color: color-mix(in srgb, var(--callout-outer, var(--callout-color)), transparent 92%);
