@@ -156,13 +156,15 @@ describe("#151 callout base", () => {
 	it("falls back to a plain quote for an unknown type", async () => {
 		const state = await makeState("> [!bogus] unknown");
 		const deco = decode(calloutPlugin, state);
-		expect(deco).not.toContain("line:cm-callout");
+		expect(deco.some((d) => d?.includes("cm-callout"))).toBe(false);
 		expect(deco).not.toContain("cm-callout-type");
 	});
 
 	it("leaves plain blockquotes undecorated", async () => {
 		const state = await makeState("> plain quote");
-		expect(decode(calloutPlugin, state)).not.toContain("line:cm-callout");
+		const deco = decode(calloutPlugin, state);
+		expect(deco.some((d) => d?.includes("cm-callout"))).toBe(false);
+		expect(deco).toEqual([]);
 	});
 
 	it("keeps inner content parsing (bold/list/link intact)", async () => {
