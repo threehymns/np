@@ -6,7 +6,7 @@
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
 	import { type GroupedChange } from '@np/core';
-	import { runGitAction, type GitFileAction } from './git-actions';
+	import { runGitAction, type GitFileAction } from './git-actions.svelte';
 	import * as ContextMenu from './ui/context-menu';
 	import * as Tooltip from './ui/tooltip/index';
 	import GitStatusChip from './GitStatusChip.svelte';

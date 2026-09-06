@@ -1063,6 +1063,21 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	appState.commands.register({
+		id: 'git.init',
+		label: 'Git: Initialize Repository',
+		category: 'Source Control',
+		action: async () => {
+			try {
+				return await appState.workspace.initializeRepository();
+			} catch (e) {
+				console.error('Failed to initialize repository', e);
+				await showAlert(appState, `Failed to initialize repository: ${(e as Error).message}`);
+				return false;
+			}
+		}
+	});
+
 	async function runGitOp(
 		label: string,
 		op: (repo: NonNullable<typeof appState.workspace.repository>) => Promise<void>

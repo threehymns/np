@@ -12,7 +12,7 @@
 	import GitStatusChip from './GitStatusChip.svelte';
 	import * as Tooltip from './ui/tooltip/index';
 	import * as ContextMenu from './ui/context-menu';
-	import { runGitAction } from './git-actions';
+	import { runGitAction, GitInitController } from './git-actions.svelte';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -20,6 +20,12 @@
 
 	const appState = useAppState();
 	let repo = $derived(appState.workspace.repository);
+	const initController = new GitInitController(() => appState);
+
+	$effect(() => {
+		const _root = appState?.workspace?.rootOrigin;
+		initController.reset();
+	});
 
 	let commitMessage = $state('');
 	let showBranchDropdown = $state(false);
@@ -312,7 +318,48 @@
 	<div class="h-full flex flex-col items-center justify-center p-6 text-center text-muted-foreground select-none">
 		<GitBranchIcon class="size-8 mb-2 opacity-50 animate-pulse text-muted-foreground" />
 		<p class="text-sm font-medium">No Git Repository</p>
-		<p class="text-xs opacity-75 mt-1 max-w-[200px]">Open a folder containing a Git repository to use source control.</p>
+		{#if !appState.workspace.rootOrigin}
+			<p class="text-xs opacity-75 mt-1 max-w-[200px]">Open a folder containing a Git repository to use source control.</p>
+		{:else if !appState.workspace.hasRootPermission}
+			<p class="text-xs opacity-75 mt-1 max-w-[220px]">Write permission is required to initialize a Git repository.</p>
+		{:else}
+			<p class="text-xs opacity-75 mt-1 max-w-[200px]">Open a folder containing a Git repository to use source control.</p>
+		{/if}
+
+		{#if initController.error}
+			<div class="mt-3 p-2 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs max-w-[240px] text-center break-words" role="alert">
+				<p class="font-medium text-[11px]">{initController.error}</p>
+			</div>
+			<Button
+				onclick={() => initController.retry()}
+				disabled={!initController.canInitialize || initController.isInitializing}
+				size="sm"
+				variant="outline"
+				class="mt-3 gap-1.5"
+			>
+				{#if initController.isInitializing}
+					<div class="size-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+					<span>Initializing...</span>
+				{:else}
+					<ArrowCounterClockwiseIcon size={13} />
+					<span>Retry</span>
+				{/if}
+			</Button>
+		{:else}
+			<Button
+				onclick={() => initController.initialize()}
+				disabled={!initController.canInitialize || initController.isInitializing}
+				size="sm"
+				class="mt-4 gap-1.5"
+			>
+				{#if initController.isInitializing}
+					<div class="size-3 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
+					<span>Initializing...</span>
+				{:else}
+					<span>Initialize repository</span>
+				{/if}
+			</Button>
+		{/if}
 	</div>
 {:else}
 	<div class="flex flex-col h-full bg-sidebar border-r border-border select-none relative font-sans text-xs">

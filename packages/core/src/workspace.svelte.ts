@@ -400,6 +400,64 @@ export class Workspace {
 		return granted;
 	}
 
+	async initializeRepository(): Promise<boolean> {
+		if (!this.rootOrigin || !this.hasRootPermission) {
+			return false;
+		}
+
+		const targetOrigin = this.rootOrigin;
+		const targetUri = toURI(targetOrigin);
+
+		// Clear stale repository state before async initialization
+		this.repository = null;
+
+		let repo: Repository | null = null;
+		try {
+			repo = new Repository(targetOrigin, this.vcsFactory);
+			const adapter = repo.adapter;
+
+			if (!adapter.init || typeof adapter.init !== 'function') {
+				throw new Error('VCS adapter does not support repository initialization');
+			}
+
+			await adapter.init(targetOrigin.path);
+
+			// The folder may have switched while init was deferred; do not
+			// publish results for an outdated folder.
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				return false;
+			}
+
+			this.repository = repo;
+			const refreshed = await repo.refresh();
+			if (!refreshed) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
+			await this.projectTree.scan(targetOrigin);
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
+			return true;
+		} catch (e) {
+			if (!repo || this.repository === repo) {
+				this.repository = null;
+			}
+			throw e;
+		}
+	}
+
 	closeDocument(id: string) {
 		this.closeTab(id);
 	}
