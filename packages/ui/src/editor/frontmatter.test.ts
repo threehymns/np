@@ -70,4 +70,18 @@ describe("#155 leading YAML frontmatter", () => {
 		expect(headings.map((h) => h.text)).toEqual(["Real"]);
 		expect(headings.map((h) => h.text)).not.toContain("NotAHeading");
 	});
+
+	it("memoizes closedFrontmatterEnd result per Text instance", async () => {
+		const state = await makeState("---\ntags: [a]\n---\n# Hi");
+		const doc = state.doc;
+		const { closedFrontmatterEnd } = await import("./extensions/frontmatter");
+		const first = closedFrontmatterEnd(doc);
+		const second = closedFrontmatterEnd(doc);
+		expect(first).toBe(3);
+		expect(second).toBe(3);
+
+		const nonFmState = await makeState("# Just title\n---\n# Next");
+		expect(closedFrontmatterEnd(nonFmState.doc)).toBeNull();
+		expect(closedFrontmatterEnd(nonFmState.doc)).toBeNull();
+	});
 });

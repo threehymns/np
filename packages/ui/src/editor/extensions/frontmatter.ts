@@ -8,20 +8,33 @@ import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Text } from "@codemirror/state";
 
+const frontmatterCache = new WeakMap<Text, number | null>();
+
 /**
  * Find a properly-closed leading YAML frontmatter block: document starts with
  * `---` and a later line is `---` or `...`. Returns the 1-based end line, or
  * null when there is no closed leading frontmatter (an unclosed leading `---`
  * stays a HorizontalRule, matching the #150 characterization).
+ *
+ * Memoized per immutable `Text` instance so multiple plugins (frontmatter, hr)
+ * and decoration rebuilds avoid redundant line scans.
  */
 export function closedFrontmatterEnd(doc: Text): number | null {
-	if (doc.lines < 2) return null;
-	if (doc.line(1).text.trim() !== "---") return null;
-	for (let l = 2; l <= doc.lines; l++) {
-		const t = doc.line(l).text.trim();
-		if (t === "---" || t === "...") return l;
+	const cached = frontmatterCache.get(doc);
+	if (cached !== undefined) return cached;
+
+	let res: number | null = null;
+	if (doc.lines >= 2 && doc.line(1).text.trim() === "---") {
+		for (let l = 2; l <= doc.lines; l++) {
+			const t = doc.line(l).text.trim();
+			if (t === "---" || t === "...") {
+				res = l;
+				break;
+			}
+		}
 	}
-	return null;
+	frontmatterCache.set(doc, res);
+	return res;
 }
 
 /**
