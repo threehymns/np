@@ -1,6 +1,6 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeEach } from "bun:test";
-import { GitInitController } from "./git-actions";
+import { GitInitController } from "./git-actions.svelte";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

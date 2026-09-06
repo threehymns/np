@@ -12,7 +12,7 @@
 	import GitStatusChip from './GitStatusChip.svelte';
 	import * as Tooltip from './ui/tooltip/index';
 	import * as ContextMenu from './ui/context-menu';
-	import { runGitAction, GitInitController } from './git-actions';
+	import { runGitAction, GitInitController } from './git-actions.svelte';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
