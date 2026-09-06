@@ -20,7 +20,7 @@ let configWatcher: ConfigWatcher | null = null;
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
 	const userPath = app.getPath('userData');
-	return path.join(userPath, 'np-workspace-persistence.json');
+	return path.join(userPath, 'state', 'workspace-session.json');
 };
 
 async function readPersistenceFile(): Promise<Record<string, any>> {
