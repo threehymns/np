@@ -33,7 +33,8 @@ export const HighlightExtension: MarkdownConfig = {
 					if (
 						ch === 61 &&
 						cx.char(i + 1) === 61 &&
-						cx.char(i + 2) !== 61
+						cx.char(i + 2) !== 61 &&
+						cx.char(i - 1) !== 61
 					) {
 						end = i + 2;
 						break;
