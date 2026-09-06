@@ -3,7 +3,10 @@ import { EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { markdownHighlightChunks } from "./highlight";
+import { highlightTree } from "@lezer/highlight";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { markdownHighlight, markdownHighlightChunks } from "./highlight";
 import { HideMarkersPlugin } from "./hide-markers";
 import { HighlightExtension } from "./inline-highlight";
 
@@ -81,6 +84,39 @@ describe("#139 inline highlight", () => {
 				(c) => (c as any).class === "cm-mark",
 			),
 		).toBe(true);
+	});
+
+	it("keeps the cm-mark chunk class-only (TagStyle drops style props when class is set)", () => {
+		const chunk: any = markdownHighlightChunks.find(
+			(c) => (c as any).class === "cm-mark",
+		);
+		expect(chunk).toBeDefined();
+		expect(Object.keys(chunk).sort()).toEqual(["class", "tag"]);
+	});
+
+	it("emits cm-mark on the highlighted text via the composed style", () => {
+		const state = EditorState.create({
+			doc: "==hi==",
+			extensions: [mdExt],
+		});
+		const classes: string[] = [];
+		highlightTree(syntaxTree(state), markdownHighlight, (_from, _to, cls) => {
+			classes.push(cls);
+		});
+		expect(classes.some((c) => c.split(" ").includes("cm-mark"))).toBe(
+			true,
+		);
+	});
+
+	it("backs cm-mark with a background rule in markdown.css", () => {
+		const css = readFileSync(
+			resolve(__dirname, "../styles/markdown.css"),
+			"utf-8",
+		);
+		expect(css).toContain(".cm-mark");
+		expect(css).toContain(
+			"color-mix(in srgb, var(--accent), transparent 58%)",
+		);
 	});
 
 	it("hides the == sigils when the cursor is outside the node", () => {

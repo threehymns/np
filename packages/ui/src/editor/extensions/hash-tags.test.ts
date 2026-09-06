@@ -3,7 +3,10 @@ import { EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { markdownHighlightChunks } from "./highlight";
+import { highlightTree } from "@lezer/highlight";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { markdownHighlight, markdownHighlightChunks } from "./highlight";
 import { HashTagExtension } from "./hash-tags";
 import { WikiLinkExtension } from "./wikilinks";
 
@@ -68,5 +71,38 @@ describe("#140 taxonomy tags", () => {
 				(c) => (c as any).class === "cm-tag",
 			),
 		).toBe(true);
+	});
+
+	it("keeps the cm-tag chunk class-only (TagStyle drops style props when class is set)", () => {
+		const chunk: any = markdownHighlightChunks.find(
+			(c) => (c as any).class === "cm-tag",
+		);
+		expect(chunk).toBeDefined();
+		expect(Object.keys(chunk).sort()).toEqual(["class", "tag"]);
+	});
+
+	it("emits cm-tag on tag text via the composed style", () => {
+		const state = EditorState.create({
+			doc: "#tag",
+			extensions: [mdExt],
+		});
+		const classes: string[] = [];
+		highlightTree(syntaxTree(state), markdownHighlight, (_from, _to, cls) => {
+			classes.push(cls);
+		});
+		expect(classes.some((c) => c.split(" ").includes("cm-tag"))).toBe(
+			true,
+		);
+	});
+
+	it("backs cm-tag with a background rule in markdown.css", () => {
+		const css = readFileSync(
+			resolve(__dirname, "../styles/markdown.css"),
+			"utf-8",
+		);
+		expect(css).toContain(".cm-tag");
+		expect(css).toContain(
+			"color-mix(in srgb, var(--accent), transparent 72%)",
+		);
 	});
 });

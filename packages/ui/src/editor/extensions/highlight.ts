@@ -45,18 +45,16 @@ const headingStyles: TagStyle[] = [
 	{ tag: t.strong, fontWeight: "bold", color: "var(--foreground)" },
 	{ tag: t.emphasis, fontStyle: "italic" },
 	{ tag: t.strikethrough, textDecoration: "line-through" },
+	// NOTE: a TagStyle with `class` emits ONLY that class — CodeMirror builds
+	// it as `style.class || generated`, so any sibling style props would be
+	// silently dropped. Class-hooked chunks therefore stay class-only and
+	// their visuals live in styles/markdown.css (same as .cm-footnote).
 	{
 		tag: markHighlightTag,
-		backgroundColor: "color-mix(in srgb, var(--accent), transparent 58%)",
-		borderRadius: "2px",
 		class: "cm-mark",
 	},
 	{
 		tag: taxTag,
-		color: "var(--accent-foreground)",
-		backgroundColor: "color-mix(in srgb, var(--accent), transparent 72%)",
-		borderRadius: "3px",
-		padding: "0 0.3em",
 		class: "cm-tag",
 	},
 	{

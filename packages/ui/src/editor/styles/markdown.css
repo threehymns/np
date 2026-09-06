@@ -373,6 +373,23 @@
   background-color: color-mix(in srgb, var(--accent), transparent 92%);
 }
 
+/* Obsidian ==highlight== (#139): HighlightStyle emits cm-mark (class-only —
+   TagStyle drops inline props when `class` is set), so the visuals live here,
+   mirroring .cm-html-mark so editor and preview marks match. */
+.cm-mark {
+  background-color: color-mix(in srgb, var(--accent), transparent 58%);
+  border-radius: 2px;
+  padding: 0 0.15em;
+}
+
+/* Obsidian taxonomy tags (#140): HighlightStyle emits cm-tag (class-only). */
+.cm-tag {
+  color: var(--accent-foreground);
+  background-color: color-mix(in srgb, var(--accent), transparent 72%);
+  border-radius: 3px;
+  padding: 0 0.3em;
+}
+
 /* Footnotes (#141): raised, link-colored */
 .cm-footnote {
   vertical-align: super;
