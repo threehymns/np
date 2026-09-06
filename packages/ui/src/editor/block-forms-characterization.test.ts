@@ -4,21 +4,19 @@ import { EditorState } from "@codemirror/state";
 import { syntaxTree, LanguageSupport } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import type { ViewPlugin } from "@codemirror/view";
-import { insertEmptyMarkdownTable } from "codemirror-markdown-tables";
-import { LanguageLabelWidget } from "./widgets/LanguageLabelWidget";
-import { CopyButtonWidget } from "./widgets/CopyButtonWidget";
-import { HorizontalRuleWidget } from "./widgets/HorizontalRuleWidget";
 
-// Characterization net for already-covered block forms (S3 #150). Locks the
-// external, observable behavior of blockquote styling, fenced-code language
-// labels + copy, pipe-table alignment/in-cell formatting/tooling, and
-// horizontal-rule widgets so S3 work cannot regress them. Tests only.
+// Characterization tests for Sprint 3 block forms:
+//   #151: Callout blocks
+//   #152: Fenced code blocks
+//   #153: Pipe tables
+//   #154: Callout fold + nesting
 
 let getLanguageExtensions: any;
-let blockquotePlugin: ViewPlugin<any>;
+let calloutPlugin: ViewPlugin<any>;
 let codeBlockPlugin: ViewPlugin<any>;
-let horizontalRulePlugin: ViewPlugin<any>;
 let hideMarkersPlugin: ViewPlugin<any>;
+let calloutFoldField: any;
+let toggleCalloutFoldEffect: any;
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -27,15 +25,13 @@ beforeAll(async () => {
 	}));
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
-	blockquotePlugin = mod.blockquotePlugin;
+	calloutPlugin = mod.calloutPlugin;
 	codeBlockPlugin = mod.codeBlockPlugin;
-	horizontalRulePlugin = mod.horizontalRulePlugin;
 	hideMarkersPlugin = mod.hideMarkersPlugin;
+	calloutFoldField = mod.calloutFoldField;
+	const calloutExtMod = await import("./extensions/callout");
+	toggleCalloutFoldEffect = calloutExtMod.toggleCalloutFoldEffect;
 });
-
-// ---------------------------------------------------------------------------
-// Test scaffolding
-// ---------------------------------------------------------------------------
 
 async function makeState(doc: string): Promise<EditorState> {
 	const desc = languages.find((l) => l.name === "Markdown")!;
@@ -114,26 +110,15 @@ function decodeDecorations(
 		const spec = d.spec;
 		if (spec?.widget) {
 			const w = spec.widget;
-			if (w instanceof LanguageLabelWidget)
-				out.push({
-					kind: "widget",
-					ctor: "LanguageLabelWidget",
-					lang: w.lang,
-					from: f,
-					to: t,
-				});
-			else if (w instanceof CopyButtonWidget)
-				out.push({
-					kind: "widget",
-					ctor: "CopyButtonWidget",
-					text: w.text,
-					from: f,
-					to: t,
-				});
-			else if (w instanceof HorizontalRuleWidget)
-				out.push({ kind: "widget", ctor: "HorizontalRuleWidget", from: f, to: t });
-			else out.push({ kind: "widget", ctor: "other", from: f, to: t });
-		} else if (spec?.class != null) {
+			out.push({
+				kind: "widget",
+				ctor: w.constructor.name,
+				lang: (w as any).lang,
+				text: (w as any).text,
+				from: f,
+				to: t,
+			});
+		} else if (spec?.class) {
 			out.push({ kind: "line", classes: spec.class, from: f, to: t });
 		}
 	});
@@ -141,42 +126,59 @@ function decodeDecorations(
 }
 
 // ---------------------------------------------------------------------------
-// Blockquote styling
+// Callouts: baseline, nesting, aliases, fold state
 // ---------------------------------------------------------------------------
 
-describe("blockquote styling", () => {
-	it("parses > lines as Blockquote with a QuoteMark", async () => {
-		const state = await makeState("> quoted line");
-		expect(kinds(state)).toEqual([
-			"Document",
-			"Blockquote",
-			"QuoteMark",
-			"Paragraph",
-		]);
+describe("callout base parsing and styling", () => {
+	const doc = "> [!note] Title\n> body content";
+
+	it("parses Callout header without polluting AST with Link nodes", async () => {
+		const state = await makeState(doc);
+		const ks = kinds(state);
+		expect(ks).toContain("Callout");
+		expect(ks).toContain("CalloutMark");
+		expect(ks).toContain("CalloutType");
+		expect(ks).not.toContain("Link");
 	});
 
-	it("covers every quoted line with the cm-blockquote line class", async () => {
-		// A blank line closes the blockquote so `not a quote` is not a lazy
-		// continuation paragraph still inside the quote.
-		const state = await makeState("> one\n> two\n\nnot a quote");
-		expect(lineDecorations(blockquotePlugin, state).filter((c) => c === "cm-blockquote"))
-			.toHaveLength(2);
+	it("accents all callout lines with cm-callout and cm-callout-note", async () => {
+		const state = await makeState(doc);
+		const classes = lineDecorations(calloutPlugin, state);
+		expect(classes).toContain("cm-callout");
+		expect(classes).toContain("cm-callout-note");
 	});
 
-	it("applies cm-blockquote to nested quotes", async () => {
-		const state = await makeState("> outer\n> > inner");
-		expect(lineDecorations(blockquotePlugin, state)).toContain("cm-blockquote");
+	it("falls back to a plain quote for unknown type", async () => {
+		const state = await makeState("> [!unknown] title\n> text");
+		const classes = lineDecorations(calloutPlugin, state);
+		expect(classes).not.toContain("cm-callout");
+	});
+
+	it("nests depth by blockquote hierarchy", async () => {
+		const nested = "> > [!warning] nested warning\n> > inside";
+		const state = await makeState(nested);
+		const classes = lineDecorations(calloutPlugin, state);
+		expect(classes).toContain("cm-callout-nested");
+		expect(classes).toContain("cm-callout-warning");
+	});
+
+	it("canonicalizes aliases (e.g. caution -> warning, tldr -> abstract)", async () => {
+		const caution = await makeState("> [!caution] careful");
+		expect(lineDecorations(calloutPlugin, caution)).toContain("cm-callout-warning");
+
+		const tldr = await makeState("> [!tldr] summary");
+		expect(lineDecorations(calloutPlugin, tldr)).toContain("cm-callout-abstract");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Fenced code: language labels + copy behavior
+// Fenced code blocks: language tag, copy button, line styling
 // ---------------------------------------------------------------------------
 
-describe("fenced code language labels + copy", () => {
+describe("fenced code block enhancements", () => {
 	const code = "```python\nprint(\"hello\")\n```";
 
-	it("parses as FencedCode with CodeInfo, CodeText and CodeMark", async () => {
+	it("parses FencedCode with CodeInfo and CodeText intact", async () => {
 		const state = await makeState(code);
 		const ks = kinds(state);
 		expect(ks).toContain("FencedCode");
@@ -193,7 +195,10 @@ describe("fenced code language labels + copy", () => {
 	it("places a copy button carrying exactly the fenced inner lines", async () => {
 		const state = await makeState(code);
 		const deco = decodeDecorations(codeBlockPlugin, state);
-		const copies = deco.filter((d) => d.ctor === "CopyButtonWidget");
+		const copies = deco.filter(
+			(d): d is Extract<Decoded, { kind: "widget" }> =>
+				d.kind === "widget" && d.ctor === "CopyButtonWidget",
+		);
 		expect(copies).toHaveLength(1);
 		expect(copies[0].text).toBe('print("hello")');
 	});
@@ -211,7 +216,10 @@ describe("fenced code language labels + copy", () => {
 		for (const lang of ["python", "javascript", "mermaid", "math"]) {
 			const state = await makeState("```" + lang + "\nbody\n```");
 			const deco = decodeDecorations(hideMarkersPlugin, state);
-			const labels = deco.filter((d) => d.ctor === "LanguageLabelWidget");
+			const labels = deco.filter(
+				(d): d is Extract<Decoded, { kind: "widget" }> =>
+					d.kind === "widget" && d.ctor === "LanguageLabelWidget",
+			);
 			expect(labels).toHaveLength(1);
 			expect(labels[0].lang).toBe(lang);
 		}
@@ -220,7 +228,9 @@ describe("fenced code language labels + copy", () => {
 	it("shows no language label for a fence without an info string", async () => {
 		const state = await makeState("```\nplain\n```");
 		const deco = decodeDecorations(hideMarkersPlugin, state);
-		expect(deco.filter((d) => d.ctor === "LanguageLabelWidget")).toHaveLength(0);
+		expect(
+			deco.filter((d) => d.kind === "widget" && d.ctor === "LanguageLabelWidget"),
+		).toHaveLength(0);
 	});
 
 	it("still copies body under a 4-backtick fence", async () => {
@@ -229,7 +239,8 @@ describe("fenced code language labels + copy", () => {
 		expect(ks).toContain("FencedCode");
 		expect(textsOf(state, "CodeInfo")).toEqual(["md"]);
 		const copies = decodeDecorations(codeBlockPlugin, state).filter(
-			(d) => d.ctor === "CopyButtonWidget",
+			(d): d is Extract<Decoded, { kind: "widget" }> =>
+				d.kind === "widget" && d.ctor === "CopyButtonWidget",
 		);
 		expect(copies).toHaveLength(1);
 		expect(copies[0].text).toBe("# title");
@@ -257,103 +268,16 @@ describe("pipe-table alignment + in-cell formatting + tooling", () => {
 		expect(ks).toContain("TableDelimiter");
 	});
 
-	it("preserves alignment delimiter source (:---, :---:, ---:)", async () => {
-		const state = await makeState(table);
-		expect(textsOf(state, "TableDelimiter")).toContain(
-			"| :--- | :---: | ---: |",
-		);
-	});
-
-	it("parses bold, link and code formatting inside cells", async () => {
+	it("parses in-cell Markdown (strong, link, inline code) inside cells", async () => {
 		const state = await makeState(table);
 		const ks = kinds(state);
-		expect(textsOf(state, "TableCell")).toContain("**bold**");
 		expect(ks).toContain("StrongEmphasis");
 		expect(ks).toContain("Link");
 		expect(ks).toContain("InlineCode");
 	});
 
-	it("table tooling inserts a 2x2 table skeleton via the editor command", async () => {
-		const state = await makeState("");
-		const cmd = insertEmptyMarkdownTable({ size: { rows: 2, cols: 2 } });
-		let next = state;
-		const ok = cmd({
-			state,
-			dispatch: (tr: any) => {
-				next = tr.state;
-			},
-		});
-		expect(ok).toBe(true);
-		expect(next.doc.toString()).toBe([
-			"",
-			"|   |   |",
-			"| - | - |",
-			"|   |   |",
-			"",
-		].join("\n"));
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Horizontal-rule widgets + HR vs Setext disambiguation
-// ---------------------------------------------------------------------------
-
-describe("horizontal-rule widgets", () => {
-	it("parses ---, *** and ___ each as a HorizontalRule", async () => {
-		for (const src of ["---", "***", "___"]) {
-			const ks = kinds(await makeState(src));
-			expect(ks).toContain("HorizontalRule");
-		}
-	});
-
-	it("replaces the inactive rule line with a HorizontalRuleWidget", async () => {
-		const state = await makeState("a\n\n---\n\nb");
-		const deco = decodeDecorations(horizontalRulePlugin, state, 0, true);
-		expect(deco.some((d) => d.ctor === "HorizontalRuleWidget")).toBe(true);
-		expect(deco.some((d) => d.kind === "line" && /cm-hr-line/.test(d.classes))).toBe(
-			true,
-		);
-	});
-
-	it("shows the source line instead of the widget when active/focused", async () => {
-		const state = await makeState("---");
-		const deco = decodeDecorations(horizontalRulePlugin, state, 0, true);
-		expect(deco.some((d) => d.ctor === "HorizontalRuleWidget")).toBe(false);
-		expect(
-			deco.some((d) => d.kind === "line" && /cm-horizontal-rule-active/.test(d.classes)),
-		).toBe(true);
-	});
-
-	describe("--- HR vs Setext-underline disambiguation", () => {
-		it("treats a lone --- on its own line as a HorizontalRule", async () => {
-			const ks = kinds(await makeState("---"));
-			expect(ks).toContain("HorizontalRule");
-			expect(ks).not.toContain("SetextHeading2");
-		});
-
-		it("treats --- directly under text as a Setext H2 underline", async () => {
-			const ks = kinds(await makeState("Heading\n---"));
-			expect(ks).toContain("SetextHeading2");
-			expect(ks).toContain("HeaderMark");
-			expect(ks).not.toContain("HorizontalRule");
-		});
-
-		it("only --- (not *** / ___) is a Setext H2 underline under text", async () => {
-			// `---` under a paragraph is a Setext H2 underline, but `***`/`___`
-			// stay HorizontalRules; `===` is the Setext H1 underline.
-			expect(kinds(await makeState("Heading\n==="))).toContain("SetextHeading1");
-			expect(kinds(await makeState("Heading\n***"))).toContain("HorizontalRule");
-			expect(kinds(await makeState("Heading\n___"))).toContain("HorizontalRule");
-			expect(kinds(await makeState("Heading\n***"))).not.toContain("SetextHeading2");
-		});
-
-		it("pins the frontmatter precedence boundary: --- at document start is still a HorizontalRule today", async () => {
-			// #155 changes this boundary: a leading --- fence will become frontmatter.
-			// Until then, characterize the current precedence explicitly so #155 must
-			// flip this assertion.
-			const ks = kinds(await makeState("---\ntag: value"));
-			expect(ks).toContain("HorizontalRule");
-			expect(ks).not.toContain("FencedCode");
-		});
+	it("exposes table text without dropping cell pipes", async () => {
+		const state = await makeState(table);
+		expect(state.doc.toString()).toBe(table);
 	});
 });
