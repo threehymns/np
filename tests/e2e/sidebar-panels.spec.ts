@@ -32,11 +32,12 @@ test.describe('Sidebar panel switching', () => {
 		const activeTab = () =>
 			page.evaluate(() => (window as any).appState.activeSidebarTab as string);
 
-		// Footer icon-button order is defined by AppShell.svelte's
-		// statusButton block: toggle sidebar, explorer, git, ...
-		const buttons = page.locator('footer button');
-		const explorerBtn = buttons.nth(1);
-		const gitBtn = buttons.nth(2);
+		// Located by accessible name (AppShell.svelte sets aria-label from the
+		// tooltip title), so footer reordering or new buttons can't silently
+		// retarget these clicks.
+		const footer = page.locator('footer');
+		const explorerBtn = footer.getByRole('button', { name: 'Project Explorer' });
+		const gitBtn = footer.getByRole('button', { name: 'Source Control' });
 
 		await page.evaluate(() => {
 			const a = (window as any).appState;

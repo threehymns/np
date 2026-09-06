@@ -254,6 +254,7 @@
 							variant="ghost"
 							size="icon-xs"
 							{...props}
+							aria-label={title}
 							onclick={(e) => {
 								(props as any).onclick?.(e);
 								onclickFn(e);
