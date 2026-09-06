@@ -38,4 +38,47 @@ test.describe('Wikilink autocomplete', () => {
 		expect(text).toContain('Note A');
 		expect(text).toContain('Research');
 	});
+
+	test('ctrl+space inside matched [[]] opens completions and accepts without duplicating ]]', async ({ page }) => {
+		// Seed two notes as open documents so the note-search source has options
+		await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const enc = new TextEncoder();
+			const noteA = new (window as any).MockFileHandle('Note A.md', enc.encode('# Note A\n'));
+			const research = new (window as any).MockFileHandle('Research.md', enc.encode('# Research\n'));
+			await (window as any).browserHandleRegistry.register('browser://Note A.md', noteA);
+			await (window as any).browserHandleRegistry.register('browser://Research.md', research);
+			await appState.workspace.openFile({ scheme: 'browser', path: 'Note A.md', name: 'Note A.md' });
+			await appState.workspace.openFile({ scheme: 'browser', path: 'Research.md', name: 'Research.md' });
+		});
+
+		const editor = page.locator('.cm-content').first();
+		await editor.click();
+
+		// Place an empty matched pair with the cursor inside, without a
+		// typing event (mirrors the Add-internal-link command path).
+		await page.evaluate(() => {
+			const view = (window as any).appState.activeEditorView;
+			view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: '[[]]' } });
+			view.dispatch({ selection: { anchor: 2 } });
+			view.focus();
+		});
+
+		// Explicit open must work inside the matched pair.
+		await page.keyboard.press('Control+Space');
+
+		const tooltip = page.locator('.cm-tooltip-autocomplete').first();
+		await expect(tooltip).toBeVisible({ timeout: 5000 });
+		await expect(tooltip).toContainText('Note A');
+
+		// Let the tooltip interaction delay elapse so Enter accepts.
+		await page.waitForTimeout(200);
+		await page.keyboard.press('Enter');
+
+		const docText = await page.evaluate(() =>
+			(window as any).appState.activeEditorView.state.doc.toString()
+		);
+		expect(docText).toMatch(/^\[\[.+\]\]$/);
+		expect(docText).not.toContain(']]]]');
+	});
 });
