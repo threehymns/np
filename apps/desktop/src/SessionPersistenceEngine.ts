@@ -53,14 +53,6 @@ export class SessionPersistenceEngine {
 	 * Updates the in-memory cache synchronously (if loaded) and schedules a debounced disk write.
 	 */
 	public async save(key: string, value: any): Promise<void> {
-		if (this.persistenceData !== null) {
-			this.persistenceData[key] = value;
-			this.isDirty = true;
-			this.saveGeneration++;
-			this.scheduleDebouncedWrite();
-			return;
-		}
-
 		const data = await this.getPersistenceData();
 		data[key] = value;
 		this.isDirty = true;

@@ -65,20 +65,18 @@ export class DocumentSession {
 
 	userLanguageOverride = $state<string | null>(null);
 
-	get language() {
+	language = $derived.by(() => {
 		if (this.userLanguageOverride && this.userLanguageOverride !== "auto") {
 			const found = allLanguages.find(l => l.name === this.userLanguageOverride);
 			if (found) return found;
 			if (this.userLanguageOverride === "Plain Text") return null;
 		}
 		return LanguageSupport.getLanguageForFile(this.fileName);
-	}
+	});
 
-	get charCount() {
-		return this._content.length;
-	}
+	charCount = $derived(this._content.length);
 
-	get wordCount() {
+	wordCount = $derived.by(() => {
 		const text = this._content;
 		let count = 0;
 		let inWord = false;
@@ -96,7 +94,7 @@ export class DocumentSession {
 		}
 		if (inWord) count++;
 		return count;
-	}
+	});
 
 	async loadContent() {
 		if (!this.origin) return;

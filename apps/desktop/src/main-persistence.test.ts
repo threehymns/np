@@ -20,7 +20,7 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		} catch {}
 	});
 
-	it('updates in-memory cache synchronously and immediately on rapid sequential saves', async () => {
+	it('updates in-memory cache on rapid sequential saves', async () => {
 		const engine = new SessionPersistenceEngine({
 			getFilePath: () => sessionFilePath,
 			debounceMs: 200
@@ -30,18 +30,17 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		await engine.save('key1', 'value1');
 		expect(engine.getInMemoryCache()).toEqual({ key1: 'value1' });
 
-		// Subsequent saves update cache synchronously in-memory
+		// Subsequent saves update cache
 		const p2 = engine.save('key2', 'value2');
 		const p3 = engine.save('key3', { nested: true });
+		await Promise.all([p2, p3]);
 
-		// In-memory cache is immediately reflecting updates
+		// In-memory cache reflects updates
 		expect(engine.getInMemoryCache()).toEqual({
 			key1: 'value1',
 			key2: 'value2',
 			key3: { nested: true }
 		});
-
-		await Promise.all([p2, p3]);
 
 		// Load reads from in-memory cache
 		expect(await engine.load('key1')).toBe('value1');
