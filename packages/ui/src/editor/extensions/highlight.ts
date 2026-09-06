@@ -1,6 +1,6 @@
 import { HighlightStyle } from "@codemirror/language";
 import { tags as t, Tag } from "@lezer/highlight";
-import type { StyleSpec } from "@lezer/highlight";
+import type { TagStyle } from "@codemirror/language";
 
 // Custom tag for Obsidian `==highlight==` so the composed style can target it.
 export const markHighlightTag = Tag.define("mark");
@@ -20,7 +20,7 @@ export const fadedTag = Tag.define("faded");
 // precedence and the composed style tree stays byte-identical. To add a
 // feature's live-source styling, append its chunk array to `markdownHighlightChunks`
 // (e.g. spread `...s1HighlightStyles`); this one registration line is the seam.
-const headingStyles: StyleSpec[] = [
+const headingStyles: TagStyle[] = [
 	{
 		tag: t.heading1,
 		fontSize: "2.25rem",
@@ -89,7 +89,7 @@ const headingStyles: StyleSpec[] = [
 ];
 
 // Inline-code highlighting — using basic tags only to stay CM-safe.
-const codeStyles: StyleSpec[] = [
+const codeStyles: TagStyle[] = [
 	{ tag: t.keyword, color: "var(--code-keyword)", fontWeight: "600" },
 	{
 		tag: [t.name, t.variableName, t.macroName, t.attributeName],
@@ -127,7 +127,7 @@ const codeStyles: StyleSpec[] = [
 	{ tag: t.invalid, color: "var(--destructive)" },
 ];
 
-export const markdownHighlightChunks: StyleSpec[] = [
+export const markdownHighlightChunks: TagStyle[] = [
 	...headingStyles,
 	...codeStyles,
 	// New feature style chunks register here, e.g. `...s1HighlightStyles`..
