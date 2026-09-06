@@ -22,6 +22,11 @@
 	let repo = $derived(appState.workspace.repository);
 	const initController = new GitInitController(() => appState);
 
+	$effect(() => {
+		const _root = appState?.workspace?.rootOrigin;
+		initController.reset();
+	});
+
 	let commitMessage = $state('');
 	let showBranchDropdown = $state(false);
 	let newBranchName = $state('');

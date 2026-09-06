@@ -154,13 +154,47 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			expect(controller.isInitializing).toBe(false);
 		});
 
-		it("allows resetting controller state explicitly", () => {
-			controller.isInitializing = true;
-			controller.error = "Some error";
+		it("allows resetting controller state explicitly and cancels in-flight completion", async () => {
+			let resolveInit!: () => void;
+			const initDeferred = new Promise<void>((r) => (resolveInit = r));
+
+			mockWorkspace.initializeRepository = mock(async () => {
+				await initDeferred;
+				throw new Error("Late error after reset");
+			});
+
+			const initPromise = controller.initialize();
+			expect(controller.isInitializing).toBe(true);
 
 			controller.reset();
-
 			expect(controller.isInitializing).toBe(false);
+			expect(controller.error).toBeNull();
+
+			resolveInit();
+			const result = await initPromise;
+			expect(result).toBe(false);
+			expect(controller.isInitializing).toBe(false);
+			expect(controller.error).toBeNull();
+		});
+
+		it("invalidates in-flight initialization and ignores late errors when rootOrigin changes", async () => {
+			let resolveInit!: () => void;
+			const initDeferred = new Promise<void>((r) => (resolveInit = r));
+
+			mockWorkspace.initializeRepository = mock(async () => {
+				await initDeferred;
+				throw new Error("Stale directory error");
+			});
+
+			const initPromise = controller.initialize();
+			expect(controller.isInitializing).toBe(true);
+
+			// Switch workspace root while initialization is pending
+			mockWorkspace.rootOrigin = { scheme: "file", path: "/workspace/other", name: "other" };
+
+			resolveInit();
+			const result = await initPromise;
+			expect(result).toBe(false);
 			expect(controller.error).toBeNull();
 		});
 	});

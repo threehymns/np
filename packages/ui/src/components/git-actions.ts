@@ -1,5 +1,5 @@
 import type { AppState } from '@np/core/state.svelte';
-import { resolveDiscardOptions } from '@np/core';
+import { resolveDiscardOptions, toURI } from '@np/core';
 
 export type GitFileAction = 'stage' | 'unstage' | 'discard' | 'diff' | 'open';
 
@@ -42,6 +42,7 @@ export async function runGitAction(
 export class GitInitController {
 	isInitializing = $state(false);
 	error = $state<string | null>(null);
+	private generation = 0;
 
 	constructor(private getAppState: () => AppState) {}
 
@@ -54,22 +55,40 @@ export class GitInitController {
 		if (this.isInitializing) return false;
 		if (!this.canInitialize) return false;
 
+		const currentGen = ++this.generation;
+		const appState = this.getAppState();
+		const targetUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+
 		this.isInitializing = true;
 		this.error = null;
 
 		try {
-			const appState = this.getAppState();
 			const success = await appState.workspace.initializeRepository();
+			if (currentGen !== this.generation) {
+				return false;
+			}
+			const currentUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+			if (currentUri !== targetUri) {
+				return false;
+			}
+
 			if (!success && !appState.workspace.repository) {
 				this.error = 'Failed to initialize repository';
 				return false;
 			}
 			return Boolean(success);
 		} catch (err) {
-			this.error = err instanceof Error ? err.message : String(err);
+			if (currentGen === this.generation) {
+				const currentUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+				if (currentUri === targetUri) {
+					this.error = err instanceof Error ? err.message : String(err);
+				}
+			}
 			return false;
 		} finally {
-			this.isInitializing = false;
+			if (currentGen === this.generation) {
+				this.isInitializing = false;
+			}
 		}
 	}
 
@@ -78,6 +97,7 @@ export class GitInitController {
 	}
 
 	reset(): void {
+		this.generation++;
 		this.isInitializing = false;
 		this.error = null;
 	}
