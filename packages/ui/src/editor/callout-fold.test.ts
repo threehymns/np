@@ -3,13 +3,71 @@ import { describe, it, expect, beforeAll, mock } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { LanguageSupport } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import type { ViewPlugin } from "@codemirror/view";
-import { calloutFoldField, toggleCalloutFoldEffect } from "./extensions/callout";
+import { EditorView, type ViewPlugin } from "@codemirror/view";
 
 let getLanguageExtensions: any;
 let calloutPlugin: ViewPlugin<any>;
+let calloutFoldField: any;
+let toggleCalloutFoldEffect: any;
 
 beforeAll(async () => {
+	if (typeof globalThis.document === "undefined") {
+		class MockElement {
+			tagName: string;
+			style: Record<string, any> = {};
+			childNodes: any[] = [];
+			attributes: any[] = [];
+			classList = { add: () => {}, remove: () => {}, contains: () => false };
+			ownerDocument: any;
+			parentNode: any = null;
+			constructor(tag = "DIV") {
+				this.tagName = tag.toUpperCase();
+				this.ownerDocument = globalThis.document;
+			}
+			setAttribute() {}
+			getAttribute() { return null; }
+			appendChild(child: any) { child.parentNode = this; this.childNodes.push(child); return child; }
+			insertBefore(child: any) { child.parentNode = this; this.childNodes.push(child); return child; }
+			removeChild() {}
+			remove() {
+				if (this.parentNode) {
+					this.parentNode = null;
+				}
+			}
+			addEventListener() {}
+			removeEventListener() {}
+			contains() { return false; }
+			getBoundingClientRect() { return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 }; }
+		}
+
+		(globalThis as any).MutationObserver = class {
+			observe() {}
+			disconnect() {}
+			takeRecords() { return []; }
+		};
+		(globalThis as any).Window = class Window {};
+		const head = new MockElement("HEAD");
+		(globalThis as any).requestAnimationFrame = () => 0;
+		(globalThis as any).cancelAnimationFrame = () => {};
+		(globalThis as any).document = {
+			head,
+			body: new MockElement("BODY"),
+			createElement: (tag: string) => new MockElement(tag),
+			createDocumentFragment: () => new MockElement("FRAGMENT"),
+			createTextNode: (text: string) => ({ nodeValue: text, ownerDocument: globalThis.document }),
+			hasFocus: () => false,
+			defaultView: globalThis,
+			addEventListener: () => {},
+			removeEventListener: () => {},
+			getSelection: () => null,
+			insertBefore: (child: any) => child,
+		};
+		(globalThis as any).window = {
+			...(globalThis as any).window,
+			matchMedia: () => ({ matches: false, addListener: () => {}, removeListener: () => {} }),
+		};
+	}
+
 	mock.module("svelte/reactivity", () => ({
 		SvelteMap: Map,
 		SvelteSet: Set,
@@ -17,6 +75,9 @@ beforeAll(async () => {
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	calloutPlugin = mod.calloutPlugin;
+	const calloutExtMod = await import("./extensions/callout");
+	calloutFoldField = calloutExtMod.calloutFoldField;
+	toggleCalloutFoldEffect = calloutExtMod.toggleCalloutFoldEffect;
 });
 
 async function makeState(doc: string, folded: number[] = []): Promise<EditorState> {
@@ -25,7 +86,7 @@ async function makeState(doc: string, folded: number[] = []): Promise<EditorStat
 	const support = exts.filter((e) => e instanceof LanguageSupport);
 	return EditorState.create({
 		doc,
-		extensions: [...support, calloutFoldField.init(() => folded)],
+		extensions: [...support, calloutPlugin, calloutFoldField.init(() => folded)],
 	});
 }
 
@@ -49,8 +110,8 @@ function replaceRanges(plugin: ViewPlugin<any>, state: EditorState): [number, nu
 	);
 	const out: [number, number][] = [];
 	inst.decorations.between(0, state.doc.length, (f: number, t: number, d: any) => {
-		// line decorations are point-ranges; a real replace has f < t
-		if (d.spec?.widget === undefined && f < t) out.push([f, t]);
+		// line decorations are point-ranges; a real replace has f < t and no class
+		if (d.spec?.widget === undefined && !d.spec?.class && f < t) out.push([f, t]);
 	});
 	return out;
 }
@@ -114,5 +175,46 @@ describe("#154 callout fold + nesting", () => {
 		const doc = "> [!note] Single line callout";
 		const state = await makeState(doc, [1]);
 		expect(() => replaceRanges(calloutPlugin, state)).not.toThrow();
+	});
+
+	it("mounts EditorView with collapsed multi-line callout without throwing replacement line break errors", async () => {
+		const doc = "> [!note] Multi line\n> body line 1\n> body line 2\n> body line 3";
+		const state = await makeState(doc, [1]);
+		expect(() => {
+			const view = new EditorView({
+				state,
+				parent: (globalThis as any).document.createElement("div"),
+			});
+			view.destroy();
+		}).not.toThrow();
+	});
+
+	it("rebuilds decorations when calloutFoldField changes via toggleCalloutFoldEffect on mounted view", async () => {
+		const doc = "> [!note] Multi line\n> body line 1\n> body line 2";
+		const state = await makeState(doc, []);
+		const view = new EditorView({
+			state,
+			parent: (globalThis as any).document.createElement("div"),
+		});
+		const plugin = view.plugin(calloutPlugin);
+		expect(plugin).toBeDefined();
+
+		// Initially uncollapsed -> no replace decorations
+		let replaceCount = 0;
+		plugin!.decorations.between(0, view.state.doc.length, (f: number, t: number, d: any) => {
+			if (d.spec?.widget === undefined && !d.spec?.class && f < t) replaceCount++;
+		});
+		expect(replaceCount).toBe(0);
+
+		// Toggle fold
+		view.dispatch({ effects: toggleCalloutFoldEffect.of(1) });
+
+		replaceCount = 0;
+		plugin!.decorations.between(0, view.state.doc.length, (f: number, t: number, d: any) => {
+			if (d.spec?.widget === undefined && !d.spec?.class && f < t) replaceCount++;
+		});
+		expect(replaceCount).toBe(2); // 2 body lines replaced individually
+
+		view.destroy();
 	});
 });

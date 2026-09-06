@@ -168,8 +168,14 @@ class CalloutPlugin {
 	}
 
 	update(update: ViewUpdate) {
-		if (update.docChanged || update.viewportChanged)
+		if (
+			update.docChanged ||
+			update.viewportChanged ||
+			update.state.field(calloutFoldField, false) !==
+				update.startState.field(calloutFoldField, false)
+		) {
 			this.decorations = this.getDecorations(update.view);
+		}
 	}
 
 	getDecorations(view: EditorView) {
@@ -255,11 +261,14 @@ class CalloutPlugin {
 
 					if (isCollapsed && startLine < endLine) {
 						// Fold: hide the body lines (source text untouched).
-						add(
-							doc.line(startLine + 1).from,
-							doc.line(endLine).to,
-							Decoration.replace({}),
-						);
+						for (let n = startLine + 1; n <= endLine; n++) {
+							const line = doc.line(n);
+							add(
+								line.from,
+								line.to,
+								Decoration.replace({}),
+							);
+						}
 					} else {
 						for (let n = startLine + 1; n <= endLine; n++) {
 							const line = doc.line(n);
