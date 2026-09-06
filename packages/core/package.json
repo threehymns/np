@@ -15,7 +15,8 @@
 		"./persistence": "./src/persistence.ts",
 		"./utils": "./src/utils.ts",
 		"./project/vcs": "./src/project/vcs.ts",
-		"./links": "./src/links.ts"
+		"./links": "./src/links.ts",
+		"./transformer": "./src/transformer/index.ts"
 	},
 	"dependencies": {
 		"@codemirror/commands": "^6.10.4",

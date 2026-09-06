@@ -37,7 +37,7 @@ function eventOnLinkContent(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	return (
 		!!el &&
-		(el.classList.contains("cm-link") || !!el.closest(".cm-link"))
+		(el.classList.contains("cm-link") || !(!el.closest(".cm-link")))
 	);
 }
 
@@ -46,7 +46,7 @@ function eventOnExpandedLink(target: EventTarget | null): boolean {
 	return (
 		!!el &&
 		(el.classList.contains("cm-link-expanded") ||
-			!!el.closest(".cm-link-expanded"))
+			!(!el.closest(".cm-link-expanded")))
 	);
 }
 
@@ -73,6 +73,20 @@ export function decideLinkClick(
 	const none: LinkClickVerdict = { kind: null, raw: "" };
 	const node = syntaxTree(state).resolveInner(pos, -1);
 	const { isLink, isMarkerOrURL } = classifyLinkNode(node);
+
+	// Bare URL (a URL node with no Link ancestor) opens externally. Resolve with
+	// forward bias so a press on the URL's leading edge still lands on the node.
+	const urlNode = syntaxTree(state).resolveInner(pos, 1);
+	if (
+		urlNode.name === "URL" &&
+		!isLink &&
+		pos >= urlNode.from &&
+		pos < urlNode.to
+	) {
+		let url = state.doc.sliceString(urlNode.from, urlNode.to);
+		if (/^www\./i.test(url)) url = "https://" + url;
+		return { kind: "link", raw: url };
+	}
 
 	let isLabel = isLink && !isMarkerOrURL && !altKey;
 	const onLinkContent = eventOnLinkContent(target);
@@ -133,6 +147,35 @@ export function decideLinkMousedown(
 		!eventOnExpandedLink(target) &&
 		eventOnLinkContent(target)
 	);
+}
+
+/**
+ * Pure click verdict for Markdown images (`![alt](dest)`): external URLs open
+ * externally; vault-relative paths navigate without ever creating a file.
+ */
+export function decideImageClick(
+	state: EditorState,
+	pos: number
+): { kind: "image"; dest: string; external: boolean } | { kind: null; raw: "" } {
+	let cur: any = syntaxTree(state).resolveInner(pos, 1);
+	while (cur && cur.name !== "Image" && cur.parent) cur = cur.parent;
+	if (!cur || cur.name !== "Image") return { kind: null, raw: "" };
+	let url = "";
+	const c = cur.node.cursor();
+	if (c.firstChild()) {
+		do {
+			if (c.name === "URL") {
+				url = state.doc.sliceString(c.from, c.to);
+				break;
+			}
+		} while (c.nextSibling());
+	}
+	if (!url) return { kind: null, raw: "" };
+	return {
+		kind: "image",
+		dest: url,
+		external: /^(https?:|mailto:)/i.test(url),
+	};
 }
 
 export const linkHandlers = EditorView.domEventHandlers({
@@ -212,6 +255,25 @@ export const linkHandlers = EditorView.domEventHandlers({
 			if (workspace) {
 				openInternalLink(workspace, currentDoc, url).catch((error) => {
 					console.error("Failed to open internal link:", error);
+				});
+				event.preventDefault();
+				event.stopPropagation();
+				return true;
+			}
+		}
+
+		const image = decideImageClick(view.state, pos);
+		if (image.kind === "image" && image.external) {
+			window.open(image.dest, "_blank", "noopener,noreferrer");
+			return true;
+		}
+		if (image.kind === "image") {
+			// vault-relative: navigate, never create
+			const workspace = view.state.facet(workspaceFacet);
+			const currentDoc = view.state.facet(currentDocFacet);
+			if (workspace) {
+				openInternalLink(workspace, currentDoc, image.dest, { allowCreate: false }).catch((error) => {
+					console.error("Failed to open image target:", error);
 				});
 				event.preventDefault();
 				event.stopPropagation();

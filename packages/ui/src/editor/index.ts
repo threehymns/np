@@ -21,7 +21,7 @@ import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { closeBrackets, closeBracketsKeymap, autocompletion } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { Table, GFM } from "@lezer/markdown";
+import { Table, GFM, type MarkdownExtension } from "@lezer/markdown";
 import { languages } from "@codemirror/language-data";
 import {
 	markdownTables,
@@ -65,10 +65,41 @@ import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
 import { blockquotePlugin } from "./extensions/blockquote";
 import { horizontalRulePlugin } from "./extensions/hr";
+import { calloutPlugin, calloutFoldField, CalloutExtension } from "./extensions/callout";
+import { taskCheckboxPlugin, toggleTaskKeymap } from "./extensions/tasks";
+import { sizeBadgePlugin } from "./extensions/image-size";
+import { embedPlugin } from "./extensions/embeds";
+import { FootnoteExtension } from "./extensions/footnote";
+import { FadedExtension } from "./extensions/faded";
+import { frontmatterPlugin } from "./extensions/frontmatter";
 import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
+import { StrikethroughExtension } from "./extensions/strikethrough";
+import { HighlightExtension } from "./extensions/inline-highlight";
+import { HashTagExtension } from "./extensions/hash-tags";
+import { MathExtension } from "./extensions/math";
+import { htmlPassthroughPlugin } from "./extensions/html";
+
+// Central Markdown language composition (WikiLinkExtension precedent). The
+// Editor's Markdown language must be a single markdown() superset — never a
+// second stacked `lang` (CodeMirror resolves the tree from the first language,
+// which would break [[Note]] parsing/hiding). To add a Markdown feature: define
+// its MarkdownConfig in its own module, then append it here. New feature
+// registrations collide only on these adjacent lines.
+const markdownFeatureConfigs: MarkdownExtension[] = [
+	Table,
+	GFM,
+	CalloutExtension,
+	WikiLinkExtension,
+	StrikethroughExtension,
+	HighlightExtension,
+	HashTagExtension,
+	MathExtension,
+	FootnoteExtension,
+	FadedExtension,
+];
 
 export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
 	if (!langDesc) return [];
@@ -86,7 +117,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 		return [
 			markdown({
 				codeLanguages: allLanguages as any,
-				extensions: [Table, GFM, WikiLinkExtension] as any,
+				extensions: markdownFeatureConfigs,
 			}),
 			markdownLanguage.data.of({
 				autocomplete: markdownTableAutocompleter(),
@@ -98,7 +129,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 				theme: markdownTableTheme,
 				style: TableStyle.default,
 				markdownConfig: {
-					extensions: [Table, GFM, WikiLinkExtension] as any,
+					extensions: markdownFeatureConfigs,
 				},
 				extensions: [
 					keymap.of(defaultKeymap),
@@ -112,6 +143,14 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			codeBlockPlugin,
 			blockquotePlugin,
 			horizontalRulePlugin,
+			calloutPlugin,
+			calloutFoldField,
+			taskCheckboxPlugin,
+			toggleTaskKeymap,
+			sizeBadgePlugin,
+			embedPlugin,
+			frontmatterPlugin,
+			htmlPassthroughPlugin,
 			EditorView.editorAttributes.of({ class: "is-markdown" }),
 		];
 	}
@@ -217,9 +256,21 @@ export * from "./extensions/highlight";
 export * from "./extensions/codeblocks";
 export * from "./extensions/blockquote";
 export * from "./extensions/hr";
+export * from "./extensions/callout";
+export * from "./extensions/tasks";
+export * from "./extensions/image-size";
+export * from "./extensions/embeds";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
+export * from "./extensions/strikethrough";
+export * from "./extensions/inline-highlight";
+export * from "./extensions/hash-tags";
+export * from "./extensions/math";
+export * from "./extensions/footnote";
+export * from "./extensions/faded";
+export * from "./extensions/frontmatter";
+export * from "./extensions/html";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
@@ -300,4 +351,3 @@ export async function syncVimRegistersFromClipboard() {
 		// Fail silently
 	}
 }
-

@@ -90,14 +90,31 @@ describe("standard link at end of line", () => {
 describe("bare external URL", () => {
 	const doc = "visit https://example.com";
 	const state = mdState(doc);
+	const urlStart = doc.indexOf("https:");
+	const urlEnd = doc.length;
 
-	it("never claims trailing clicks (URL nodes are inert)", () => {
-		expect(decideLinkMousedown(state, doc.length, lineTarget(), false)).toBe(
+	it("does not claim a snapped trailing-edge click (stays inert)", () => {
+		expect(decideLinkMousedown(state, urlEnd, lineTarget(), false)).toBe(
 			false
 		);
-		expect(decideLinkClick(state, doc.length, lineTarget(), false)).toEqual({
+		expect(decideLinkClick(state, urlEnd, lineTarget(), false)).toEqual({
 			kind: null,
 			raw: "",
 		});
+	});
+
+	it("opens a bare https:// URL when clicked on its body", () => {
+		expect(
+			decideLinkClick(state, urlStart, lineTarget(), false)
+		).toEqual({ kind: "link", raw: "https://example.com" });
+	});
+
+	it("normalizes a bare www. URL to https:// when clicked", () => {
+		const www = "visit www.example.com";
+		const wState = mdState(www);
+		const wStart = www.indexOf("www.");
+		expect(
+			decideLinkClick(wState, wStart, lineTarget(), false)
+		).toEqual({ kind: "link", raw: "https://www.example.com" });
 	});
 });

@@ -60,33 +60,42 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		}
 	}
 
-	// Check for block reference (#^block-id or bare ^block-id for same-note)
-	const blockMatch = str.match(/(?:^|#)\^([a-zA-Z0-9-]+)$/);
-	if (blockMatch) {
-		const blockId = blockMatch[1];
-		let pathPart = str.slice(0, blockMatch.index).trim();
-		// Strip a trailing '#' left over when the match started at the caret
-		// (e.g. "Note#^id" matches "^id", leaving "Note#").
-		if (pathPart.endsWith('#')) {
-			pathPart = pathPart.slice(0, -1).trim();
-		}
-		return {
-			raw: rawLink,
-			path: pathPart,
-			subpath: {
-				type: 'block',
-				value: blockId,
-			},
-			alias,
-			isEmbed,
-		};
-	}
+	// Heading or Block subpath syntax
+	const hashIndex = str.indexOf('#');
+	if (hashIndex !== -1) {
+		const pathPart = str.slice(0, hashIndex).trim();
+		const afterHash = str.slice(hashIndex + 1).trim();
 
-	// Check for heading link (#Heading or #Heading#Subheading)
-	const firstHashIndex = str.indexOf('#');
-	if (firstHashIndex !== -1) {
-		const pathPart = str.slice(0, firstHashIndex).trim();
-		const headingPart = str.slice(firstHashIndex + 1).trim();
+		// Block subpath: starts with ^ or contains #^
+		if (afterHash.startsWith('^')) {
+			return {
+				raw: rawLink,
+				path: pathPart,
+				subpath: {
+					type: 'block',
+					value: afterHash.slice(1).trim(),
+				},
+				alias,
+				isEmbed,
+			};
+		}
+
+		// Heading subpath (can be multi-level: Section 2#Sub-item A)
+		let headingPart = afterHash;
+		const blockMatch = afterHash.match(/#\^([a-zA-Z0-9-]+)$/);
+		if (blockMatch) {
+			return {
+				raw: rawLink,
+				path: pathPart,
+				subpath: {
+					type: 'block',
+					value: blockMatch[1],
+				},
+				alias,
+				isEmbed,
+			};
+		}
+
 		return {
 			raw: rawLink,
 			path: pathPart,
@@ -106,6 +115,60 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		alias,
 		isEmbed,
 	};
+}
+
+export interface EmbedSize {
+	width: number;
+	height: number | null;
+}
+
+export interface ResizeTokenResult {
+	base: string;
+	size: EmbedSize | null;
+}
+
+const SIZE_TOKEN_RE = /^(\d+)(?:x(\d+))?$/;
+
+/**
+ * Validates a bare resize token (`300`, `400`, `300x200`).
+ * Returns the parsed size, or null when the token is missing/invalid.
+ * Pure function over text — no I/O, no Editor, no Storage.
+ */
+export function parseSizeToken(token: string): EmbedSize | null {
+	const t = token.trim();
+	const m = t.match(SIZE_TOKEN_RE);
+	if (!m) return null;
+	const width = Number.parseInt(m[1], 10);
+	const height = m[2] !== undefined ? Number.parseInt(m[2], 10) : null;
+	if (!Number.isSafeInteger(width) || width <= 0) return null;
+	if (height !== null && (!Number.isSafeInteger(height) || height <= 0))
+		return null;
+	return { width, height };
+}
+
+/**
+ * Extracts an Obsidian resize token from embed target text.
+ *
+ * Shared by both embed syntaxes — pass the wikilink-embed inner text
+ * (`photo.png|300`) or the Markdown-image label (`alt|400`); the Markdown
+ * destination (`photo.png`) is separate and needs no parsing.
+ *
+ * Splits on the first `|` (same rule as `parseInternalLink`); a numeric
+ * suffix parses as a size, anything else (notably `[[Note|Custom Text]]`
+ * aliases) yields `size: null` with `base` left intact. Pure function over
+ * text — no I/O, no Editor, no Storage.
+ */
+export function parseResizeToken(target: string): ResizeTokenResult {
+	const raw = target.trim();
+	const pipeIndex = raw.indexOf('|');
+	if (pipeIndex === -1) {
+		return { base: raw, size: null };
+	}
+	const size = parseSizeToken(raw.slice(pipeIndex + 1).trim());
+	if (!size) {
+		return { base: raw, size: null };
+	}
+	return { base: raw.slice(0, pipeIndex).trim(), size };
 }
 
 export interface HeadingItem {
@@ -463,7 +526,8 @@ function isWithinPath(candidatePath: string, rootPath: string): boolean {
 export async function openInternalLink(
 	workspace: Workspace,
 	currentDoc: DocumentSession | null,
-	rawLink: string
+	rawLink: string,
+	options: { allowCreate?: boolean } = {}
 ): Promise<DocumentSession | null> {
 	const parsed = parseInternalLink(rawLink);
 
@@ -474,11 +538,12 @@ export async function openInternalLink(
 		targetDoc = currentDoc ?? workspace.activeDocument;
 	} else {
 		// Target is in a note
+		const allowCreate = options.allowCreate !== undefined ? options.allowCreate : !parsed.isEmbed;
 		const targetOrigin = await resolveTargetOrigin(
 			workspace,
 			currentDoc,
 			parsed.path,
-			{ allowCreate: !parsed.isEmbed }
+			{ allowCreate }
 		);
 
 		if (targetOrigin) {
@@ -495,7 +560,7 @@ export async function openInternalLink(
 			if (existing) {
 				workspace.activeDocumentId = existing.id;
 				targetDoc = existing;
-			} else {
+			} else if (allowCreate) {
 				// Create new untitled note with the target name
 				const newDoc = await workspace.newFile();
 				newDoc.untitledTitle = parsed.path.endsWith('.md')
@@ -545,7 +610,7 @@ export function getAllFilesFromTree(nodes: TreeNodeLike[] = []): TreeNodeLike[] 
 		for (const item of items) {
 			if (item.kind === 'file') {
 				files.push(item);
-			} else if (item.children) {
+			} else if (item.kind === 'directory' && item.children) {
 				walk(item.children);
 			}
 		}

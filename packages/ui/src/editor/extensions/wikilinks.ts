@@ -1,7 +1,13 @@
 import type { MarkdownConfig } from "@lezer/markdown";
 import { styleTags, tags as t } from "@lezer/highlight";
 import { Facet } from "@codemirror/state";
-import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import {
+	type Completion,
+	type CompletionContext,
+	type CompletionResult,
+	insertCompletionText,
+	pickedCompletion,
+} from "@codemirror/autocomplete";
 import {
 	type Workspace,
 	type DocumentSession,
@@ -101,6 +107,30 @@ export const WikiLinkExtension: MarkdownConfig = {
  * - [[# or [[Note# triggers heading list
  * - [[#^ or [[^ or [[Note#^ triggers block list
  */
+
+/**
+ * Builds the `apply` for a wikilink completion. The inserted text always
+ * includes the closing `]]`; an already-typed close (`]]` or a lone `]`)
+ * immediately ahead of the cursor is swallowed at accept time, so
+ * completing inside a matched pair like `[[]]` replaces the existing close
+ * instead of duplicating it.
+ *
+ * This must stay a function (not a longer `to` range): CodeMirror filters
+ * options against the text between `from` and `to`, so extending `to` over
+ * the brackets would make every label mismatch and the popover would never
+ * open.
+ */
+function wikilinkApply(insert: string): NonNullable<Completion["apply"]> {
+	return (view, completion, from, to) => {
+		let end = to;
+		if (view.state.doc.sliceString(to, to + 2) === "]]") end = to + 2;
+		else if (view.state.doc.sliceString(to, to + 1) === "]") end = to + 1;
+		view.dispatch({
+			...insertCompletionText(view.state, insert, from, end),
+			annotations: pickedCompletion.of(completion),
+		});
+	};
+}
 export function wikilinkAutocompletion(
 	context: CompletionContext
 ): CompletionResult | null {
@@ -149,7 +179,7 @@ export function wikilinkAutocompletion(
 				label: b.id,
 				detail: b.preview.slice(0, 40),
 				type: "variable",
-				apply: `${b.id}]]`,
+				apply: wikilinkApply(`${b.id}]]`),
 			})),
 		};
 	}
@@ -188,13 +218,13 @@ export function wikilinkAutocompletion(
 				label: h.text,
 				detail: `H${h.level}`,
 				type: "section",
-				apply: `${h.text}]]`,
+				apply: wikilinkApply(`${h.text}]]`),
 			})),
 		};
 	}
 
 	// Case 3: Note search ([[...)
-	const options: { label: string; detail?: string; type: string; apply: string }[] = [];
+	const options: { label: string; detail?: string; type: string; apply: NonNullable<Completion["apply"]> }[] = [];
 	const noteQuery = fullInside.trim().toLowerCase();
 
 	if (workspace) {
@@ -205,7 +235,7 @@ export function wikilinkAutocompletion(
 				label: nameWithoutExt,
 				detail: f.origin.path,
 				type: "file",
-				apply: `${nameWithoutExt}]]`,
+				apply: wikilinkApply(`${nameWithoutExt}]]`),
 			});
 		}
 
@@ -216,7 +246,7 @@ export function wikilinkAutocompletion(
 				options.push({
 					label: name,
 					type: "file",
-					apply: `${name}]]`,
+					apply: wikilinkApply(`${name}]]`),
 				});
 			}
 		}

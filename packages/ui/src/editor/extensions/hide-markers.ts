@@ -7,8 +7,10 @@ import {
 import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
-import { BulletWidget } from "../widgets/BulletWidget";
 import { LanguageLabelWidget } from "../widgets/LanguageLabelWidget";
+import { markerHideRules } from "./hide-rules";
+import { parseSizeToken } from "@np/core/links";
+import { getListItemTaskInfo } from "./tasks";
 
 class HideMarkersPlugin {
 	decorations: DecorationSet;
@@ -108,6 +110,42 @@ class HideMarkersPlugin {
 					}
 
 					if (type === "WikiLink") {
+						// Sized embeds (`![[photo.png|300]]`) are owned by the
+						// size-badge plugin when collapsed.
+						if (
+							view.state.doc.sliceString(node.from, node.from + 1) ===
+							"!"
+						) {
+							let cursor = node.node.cursor();
+							let alias = "";
+							if (cursor.firstChild()) {
+								do {
+									if (cursor.name === "WikiLinkAlias") {
+										alias = view.state.doc.sliceString(
+											cursor.from,
+											cursor.to,
+										);
+										break;
+									}
+								} while (cursor.nextSibling());
+							}
+							if (parseSizeToken(alias)) {
+								const isExpanded =
+									view.hasFocus &&
+									selection.from <= node.to &&
+									selection.to >= node.from;
+								if (isExpanded) {
+									builder.add(
+										node.from,
+										node.to,
+										Decoration.mark({
+											class: "cm-link cm-link-expanded",
+										}),
+									);
+								}
+								return false;
+							}
+						}
 						const isExpanded =
 							view.hasFocus &&
 							selection.from < node.to &&
@@ -148,13 +186,25 @@ class HideMarkersPlugin {
 						return false;
 					}
 
+					// TaskMarker is owned by the task-checkbox plugin (it replaces
+					// `[ ]`/`[x]` with a widget); don't also collapse it here.
+					if (type === "TaskMarker") {
+						return false;
+					}
+
+					// FadedMark/BlockAnchorMark are faded-but-visible (never replaced-hidden).
+					if (type === "FadedMark" || type === "BlockAnchorMark") {
+						return false;
+					}
+
 					const isMarker =
 						type.includes("Mark") ||
 						type.includes("Delimiter") ||
 						type === "HeaderMark" ||
 						type === "CodeMark" ||
 						type === "CodeInfo" ||
-						type === "URL";
+						type === "URL" ||
+						type === "LinkTitle";
 
 					if (isMarker) {
 						const line = view.state.doc.lineAt(
@@ -166,11 +216,56 @@ class HideMarkersPlugin {
 						const inlineTypes = [
 							"Emphasis",
 							"StrongEmphasis",
+							"Strikethrough",
+							"Highlight",
+							"Footnote",
 							"InlineCode",
 							"Link",
 							"Image",
 						];
 						let parent = node.node.parent;
+
+						// Special case for ListMark: only show syntax when cursor is in the syntax area
+						if (type === "ListMark") {
+							let listItemNode = parent;
+							while (
+								listItemNode &&
+								listItemNode.name !== "ListItem" &&
+								listItemNode.name !== "Document"
+							) {
+								listItemNode = listItemNode.parent;
+							}
+							const taskInfo =
+								listItemNode &&
+								listItemNode.name === "ListItem"
+									? getListItemTaskInfo(listItemNode)
+									: null;
+							if (taskInfo?.taskMarker) {
+								const syntaxFrom =
+									taskInfo.listMark?.from ?? node.from;
+								const syntaxTo = taskInfo.taskMarker.to;
+								shouldShow =
+									view.hasFocus &&
+									view.state.selection.ranges.some(
+										(r) =>
+											r.from <= syntaxTo &&
+											r.to >= syntaxFrom,
+									);
+							} else {
+								const lineDoc = view.state.doc.lineAt(node.from);
+								const afterText = lineDoc.text.slice(node.to - lineDoc.from);
+								const spaceLen = (afterText.match(/^\s*/)?.[0] || "").length;
+								const syntaxFrom = node.from;
+								const syntaxTo = node.to + spaceLen;
+								shouldShow =
+									view.hasFocus &&
+									view.state.selection.ranges.some(
+										(r) =>
+											r.from <= syntaxTo &&
+											r.to >= syntaxFrom,
+									);
+							}
+						}
 
 						// Special case for Link: Hide [ ] around label and (url) part
 						if (type === "LinkMark") {
@@ -222,82 +317,14 @@ class HideMarkersPlugin {
 								selection.to >= parent.from;
 						}
 
-						if (!shouldShow) {
-							if (type === "ListMark") {
-								const text = view.state.doc.sliceString(
-									node.from,
-									node.to,
+							if (!shouldShow) {
+								const rule = markerHideRules.find((r) =>
+									r.matches(type),
 								);
-								const isOrdered = /\d/.test(text);
-								if (isOrdered) {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.mark({
-											class: "md-list-number",
-										}),
-									);
-								} else {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.replace({
-											widget: new BulletWidget(),
-										}),
-									);
+								if (rule) {
+									rule.decorate(node, view, builder);
 								}
-							} else if (type === "HeaderMark") {
-								let parentName = node.node.parent?.name;
-								if (
-									parentName === "SetextHeading1" ||
-									parentName === "SetextHeading2"
-								) {
-									builder.add(
-										node.from,
-										node.to,
-										Decoration.mark({
-											class: "md-faded",
-										}),
-									);
-								} else {
-									let to = node.to;
-									if (
-										view.state.doc.sliceString(
-											to,
-											to + 1,
-										) === " "
-									) {
-										to++;
-									}
-									builder.add(
-										node.from,
-										to,
-										Decoration.replace({}),
-									);
-								}
-							} else if (type === "QuoteMark") {
-								let to = node.to;
-								if (
-									view.state.doc.sliceString(
-										to,
-										to + 1,
-									) === " "
-								) {
-									to++;
-								}
-								builder.add(
-									node.from,
-									to,
-									Decoration.replace({}),
-								);
-							} else {
-								builder.add(
-									node.from,
-									node.to,
-									Decoration.replace({}),
-								);
 							}
-						}
 					}
 				},
 			});

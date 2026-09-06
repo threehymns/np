@@ -293,4 +293,88 @@ describe("wikilinkAutocompletion", () => {
 		expect(result).not.toBeNull();
 		expect(result!.options.map((o) => o.label)).toContain("dive-block");
 	});
+
+	describe("accepting inside an already-closed pair", () => {
+		function query(doc: string, pos: number) {
+			const state = EditorState.create({
+				doc,
+				selection: { anchor: pos },
+				extensions: [
+					workspaceFacet.of(mockWorkspace),
+					currentDocFacet.of(mockCurrentDoc),
+				],
+			});
+			const result = wikilinkAutocompletion(
+				new CompletionContext(state, pos, false)
+			);
+			expect(result).not.toBeNull();
+			return { state, result: result! };
+		}
+
+		/** Applies the completion exactly like CodeMirror does at accept time. */
+		function appliedDoc(doc: string, pos: number, label: string): string {
+			const { state, result } = query(doc, pos);
+			const opt =
+				result.options.find((o) => o.label === label) ?? result.options[0];
+			expect(opt).toBeDefined();
+			expect(typeof opt.apply).toBe("function");
+			let spec: any;
+			const fakeView = {
+				state,
+				dispatch: (tr: any) => {
+					spec = tr;
+				},
+			};
+			(opt.apply as Function)(fakeView, opt, result.from, result.to ?? pos);
+			return state.update(spec).state.doc.toString();
+		}
+
+		it("keeps the match range at the cursor so the popover can open", () => {
+			// CodeMirror filters options against the text between `from` and
+			// `to`. If `to` covered the trailing `]]`, the pattern would be
+			// "]]", no label would match, and the popover would never open.
+			for (const [doc, pos] of [
+				["[[]]", 2],
+				["See [[Not]]", 9],
+				["Jump [[#]]", 8],
+				["Jump [[#^]]", 9],
+			] as [string, number][]) {
+				const { result } = query(doc, pos);
+				expect(result.options.length).toBeGreaterThan(0);
+				expect(result.to ?? pos).toBe(pos);
+			}
+		});
+
+		it("replaces trailing ]] when completing inside [[]]", () => {
+			expect(appliedDoc("[[]]", 2, "Note A")).toBe("[[Note A]]");
+		});
+
+		it("replaces trailing ]] after a partial query", () => {
+			expect(appliedDoc("See [[Not]]", 9, "Note A")).toBe("See [[Note A]]");
+		});
+
+		it("replaces trailing ]] for embeds", () => {
+			expect(appliedDoc("![[]]", 3, "Note A")).toBe("![[Note A]]");
+		});
+
+		it("still appends ]] when nothing is closed", () => {
+			expect(appliedDoc("See [[", 6, "Note A")).toBe("See [[Note A]]");
+		});
+
+		it("absorbs a lone trailing ]", () => {
+			expect(appliedDoc("[[Not]", 5, "Note A")).toBe("[[Note A]]");
+		});
+
+		it("replaces trailing ]] for heading completions", () => {
+			expect(appliedDoc("Jump [[#]]", 8, "Deep Dive")).toBe(
+				"Jump [[#Deep Dive]]"
+			);
+		});
+
+		it("replaces trailing ]] for block completions", () => {
+			expect(appliedDoc("Jump [[#^]]", 9, "dive-block")).toBe(
+				"Jump [[#^dive-block]]"
+			);
+		});
+	});
 });

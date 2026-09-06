@@ -43,7 +43,7 @@ async function readClipboard(appState: AppState): Promise<string> {
  * URI strings ('scheme://...') are classified separately before this runs.
  */
 function isAbsoluteFilesystemPath(target: string): boolean {
-	return target.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(target) || target.startsWith('\\\\');
+	return target.startsWith('/') || /^[a-zA-Z]:[/\\\\]/.test(target) || target.startsWith('\\\\');
 }
 
 export interface Command {
@@ -82,6 +82,347 @@ export class CommandRegistry {
 	}
 }
 
+function getDocText(doc: any): string {
+	if (typeof doc.toString === 'function') {
+		return doc.toString();
+	}
+	const len = typeof doc.length === 'number' ? doc.length : 0;
+	if (typeof doc.sliceString === 'function') {
+		return doc.sliceString(0, len);
+	}
+	return '';
+}
+
+function getSelectionRange(view: any): { from: number; to: number; empty: boolean } {
+	const sel = view.state?.selection?.main || { from: 0, to: 0, empty: true };
+	const from = sel.from ?? 0;
+	const to = sel.to ?? from;
+	const empty = sel.empty !== undefined ? sel.empty : (from === to);
+	return { from, to, empty };
+}
+
+function toggleInlineFormat(
+	appState: AppState,
+	open: string,
+	close: string = open
+) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+	const docLength = typeof doc.length === 'number' ? doc.length : (doc.toString ? doc.toString().length : 0);
+
+	if (empty) {
+		const before = doc.sliceString(Math.max(0, from - open.length), from);
+		const after = doc.sliceString(from, Math.min(docLength, from + close.length));
+		if (before === open && after === close) {
+			view.dispatch({
+				changes: { from: from - open.length, to: from + close.length, insert: '' },
+				selection: { anchor: from - open.length }
+			});
+		} else {
+			view.dispatch({
+				changes: { from, insert: `${open}${close}` },
+				selection: { anchor: from + open.length }
+			});
+		}
+	} else {
+		const text = doc.sliceString(from, to);
+		if (text.startsWith(open) && text.endsWith(close) && text.length >= open.length + close.length) {
+			const inner = text.slice(open.length, text.length - close.length);
+			view.dispatch({
+				changes: { from, to, insert: inner },
+				selection: { anchor: from, head: from + inner.length }
+			});
+		} else {
+			const before = doc.sliceString(Math.max(0, from - open.length), from);
+			const after = doc.sliceString(to, Math.min(docLength, to + close.length));
+			if (before === open && after === close) {
+				view.dispatch({
+					changes: { from: from - open.length, to: to + close.length, insert: text },
+					selection: { anchor: from - open.length, head: to - open.length }
+				});
+			} else {
+				view.dispatch({
+					changes: { from, to, insert: `${open}${text}${close}` },
+					selection: { anchor: from + open.length, head: to + open.length }
+				});
+			}
+		}
+	}
+	view.focus();
+}
+
+function toggleHeading(appState: AppState, level: number) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+	const docText = getDocText(doc);
+
+	const lineStart = docText.lastIndexOf('\n', Math.max(0, from - 1)) === -1 ? 0 : docText.lastIndexOf('\n', Math.max(0, from - 1)) + 1;
+	const nextNewline = docText.indexOf('\n', to);
+	const lineEnd = nextNewline === -1 ? docText.length : nextNewline;
+
+	const block = docText.slice(lineStart, lineEnd);
+	const lines = block.split('\n');
+	const prefix = '#'.repeat(level) + ' ';
+
+	const allHaveHeading = lines.every(l => l.startsWith(prefix));
+
+	const transformedLines = lines.map(line => {
+		if (allHaveHeading) {
+			return line.slice(prefix.length);
+		}
+		const headingMatch = line.match(/^#{1,6}\s+/);
+		if (headingMatch) {
+			return prefix + line.slice(headingMatch[0].length);
+		}
+		return prefix + line;
+	});
+
+	const newBlock = transformedLines.join('\n');
+	view.dispatch({
+		changes: { from: lineStart, to: lineEnd, insert: newBlock },
+		selection: empty
+			? { anchor: lineStart + newBlock.length }
+			: { anchor: lineStart, head: lineStart + newBlock.length }
+	});
+	view.focus();
+}
+
+function toggleList(appState: AppState, type: 'bullet' | 'numbered' | 'task') {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+	const docText = getDocText(doc);
+
+	const lineStart = docText.lastIndexOf('\n', Math.max(0, from - 1)) === -1 ? 0 : docText.lastIndexOf('\n', Math.max(0, from - 1)) + 1;
+	const nextNewline = docText.indexOf('\n', to);
+	const lineEnd = nextNewline === -1 ? docText.length : nextNewline;
+
+	const block = docText.slice(lineStart, lineEnd);
+	const lines = block.split('\n');
+
+	let transformedLines: string[];
+
+	if (type === 'bullet') {
+		const allBullet = lines.every(l => /^[-*+]\s+/.test(l));
+		transformedLines = lines.map(line => {
+			if (allBullet) {
+				return line.replace(/^[-*+]\s+/, '');
+			}
+			return '- ' + line.replace(/^(\d+\.|[-*+](\s+\[[ xX]\])?)\s+/, '');
+		});
+	} else if (type === 'numbered') {
+		const allNumbered = lines.every(l => /^\d+\.\s+/.test(l));
+		transformedLines = lines.map((line, i) => {
+			if (allNumbered) {
+				return line.replace(/^\d+\.\s+/, '');
+			}
+			const cleaned = line.replace(/^(\d+\.|[-*+](\s+\[[ xX]\])?)\s+/, '');
+			return `${i + 1}. ${cleaned}`;
+		});
+	} else if (type === 'task') {
+		const allTask = lines.every(l => /^[-*+]\s+\[[ xX]\]\s+/.test(l));
+		transformedLines = lines.map(line => {
+			if (allTask) {
+				return line.replace(/^[-*+]\s+\[[ xX]\]\s+/, '');
+			}
+			const cleaned = line.replace(/^(\d+\.|[-*+](\s+\[[ xX]\])?)\s+/, '');
+			return `- [ ] ${cleaned}`;
+		});
+	} else {
+		transformedLines = lines;
+	}
+
+	const newBlock = transformedLines.join('\n');
+	view.dispatch({
+		changes: { from: lineStart, to: lineEnd, insert: newBlock },
+		selection: empty
+			? { anchor: lineStart + newBlock.length }
+			: { anchor: lineStart, head: lineStart + newBlock.length }
+	});
+	view.focus();
+}
+
+function toggleBlockquote(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+	const docText = getDocText(doc);
+
+	const lineStart = docText.lastIndexOf('\n', Math.max(0, from - 1)) === -1 ? 0 : docText.lastIndexOf('\n', Math.max(0, from - 1)) + 1;
+	const nextNewline = docText.indexOf('\n', to);
+	const lineEnd = nextNewline === -1 ? docText.length : nextNewline;
+
+	const block = docText.slice(lineStart, lineEnd);
+	const lines = block.split('\n');
+
+	const allQuote = lines.every(l => /^>\s?/.test(l));
+	const transformedLines = lines.map(line => {
+		if (allQuote) {
+			return line.replace(/^>\s?/, '');
+		}
+		return `> ${line}`;
+	});
+
+	const newBlock = transformedLines.join('\n');
+	view.dispatch({
+		changes: { from: lineStart, to: lineEnd, insert: newBlock },
+		selection: empty
+			? { anchor: lineStart + newBlock.length }
+			: { anchor: lineStart, head: lineStart + newBlock.length }
+	});
+	view.focus();
+}
+
+function insertCodeBlock(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+
+	if (empty) {
+		view.dispatch({
+			changes: { from, insert: '```\n\n```' },
+			selection: { anchor: from + 4 }
+		});
+	} else {
+		const text = doc.sliceString(from, to);
+		view.dispatch({
+			changes: { from, to, insert: `\`\`\`\n${text}\n\`\`\`` },
+			selection: { anchor: from + 4, head: from + 4 + text.length }
+		});
+	}
+	view.focus();
+}
+
+function insertBlockMath(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+
+	if (empty) {
+		view.dispatch({
+			changes: { from, insert: '$$\n\n$$' },
+			selection: { anchor: from + 3 }
+		});
+	} else {
+		const text = doc.sliceString(from, to);
+		view.dispatch({
+			changes: { from, to, insert: `$$\n${text}\n$$` },
+			selection: { anchor: from + 3, head: from + 3 + text.length }
+		});
+	}
+	view.focus();
+}
+
+function insertCallout(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+
+	if (empty) {
+		view.dispatch({
+			changes: { from, insert: '> [!note]\n> ' },
+			selection: { anchor: from + 12 }
+		});
+	} else {
+		const text = doc.sliceString(from, to);
+		const quotedText = text.split('\n').map(l => `> ${l}`).join('\n');
+		view.dispatch({
+			changes: { from, to, insert: `> [!note]\n${quotedText}` },
+			selection: { anchor: from + 10, head: from + 10 + quotedText.length }
+		});
+	}
+	view.focus();
+}
+
+function insertHorizontalRule(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to } = getSelectionRange(view);
+	const doc = view.state.doc;
+	const docText = getDocText(doc);
+
+	const needsLeadingNewline = from > 0 && docText[from - 1] !== '\n';
+	const needsTrailingNewline = to < docText.length && docText[to] !== '\n';
+	const insertText = (needsLeadingNewline ? '\n' : '') + '---' + (needsTrailingNewline ? '\n' : '\n');
+
+	view.dispatch({
+		changes: { from, to, insert: insertText },
+		selection: { anchor: from + insertText.length }
+	});
+	view.focus();
+}
+
+function insertTable(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to } = getSelectionRange(view);
+	const tableText = '| Column 1 | Column 2 |\n| -------- | -------- |\n|          |          |\n';
+
+	view.dispatch({
+		changes: { from, to, insert: tableText },
+		selection: { anchor: from + 2 }
+	});
+	view.focus();
+}
+
+function toggleLinkFormat(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+
+	if (empty) {
+		view.dispatch({
+			changes: { from, insert: '[](url)' },
+			selection: { anchor: from + 1 }
+		});
+	} else {
+		const text = doc.sliceString(from, to);
+		if (/^https?:\/\//i.test(text.trim())) {
+			view.dispatch({
+				changes: { from, to, insert: `[](${text.trim()})` },
+				selection: { anchor: from + 1 }
+			});
+		} else {
+			view.dispatch({
+				changes: { from, to, insert: `[${text}](url)` },
+				selection: { anchor: from + text.length + 3, head: from + text.length + 6 }
+			});
+		}
+	}
+	view.focus();
+}
+
+function toggleFootnoteFormat(appState: AppState) {
+	if (!appState.activeEditorView) return;
+	const view = appState.activeEditorView;
+	const { from, to, empty } = getSelectionRange(view);
+	const doc = view.state.doc;
+
+	if (empty) {
+		view.dispatch({
+			changes: { from, insert: '[^1]' },
+			selection: { anchor: from + 3, head: from + 4 }
+		});
+	} else {
+		const text = doc.sliceString(from, to);
+		view.dispatch({
+			changes: { from, to, insert: `[^${text}]` },
+			selection: { anchor: from + 2, head: to + 2 }
+		});
+	}
+	view.focus();
+}
+
 // Initial registration of core commands
 export function registerCoreCommands(appState: AppState) {
 	appState.commands.register({
@@ -103,7 +444,7 @@ export function registerCoreCommands(appState: AppState) {
 		if (target.includes('://')) {
 			await appState.workspace.openFile(parseURI(target));
 		} else if (isAbsoluteFilesystemPath(target)) {
-			const name = target.split(/[/\\]/).filter(Boolean).pop() || target;
+			const name = target.split(/[/\\\\]/).filter(Boolean).pop() || target;
 			await appState.workspace.openFile({
 				scheme: 'file',
 				path: target,
@@ -313,11 +654,15 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Export',
 		action: async () => {
 			if (!appState.activeDocument) return;
+			if (!appState.exportService?.exportFile) {
+				await showAlert(appState, 'Export service is unavailable');
+				return;
+			}
 			const html = await transformer.transform(appState.activeDocument.content, 'html');
 			const suggestedName = appState.activeDocument.fileName.replace(/\.md$/, '') + '.html';
 
 			try {
-				await appState.exportService?.exportFile({
+				await appState.exportService.exportFile({
 					content: html,
 					suggestedName,
 					mimeType: 'text/html',
@@ -330,7 +675,6 @@ export function registerCoreCommands(appState: AppState) {
 			}
 		}
 	});
-
 
   appState.commands.register({
     id: 'commandPalette.toggle',
@@ -461,6 +805,207 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	// Markdown formatting commands
+	appState.commands.register({
+		id: 'format.bold',
+		label: 'Bold',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '**'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.italic',
+		label: 'Italic',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '*'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.strikethrough',
+		label: 'Strikethrough',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '~~'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.highlight',
+		label: 'Highlight',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '=='),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.code',
+		label: 'Inline Code',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '`'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.codeBlock',
+		label: 'Code Block',
+		category: 'Format',
+		action: () => insertCodeBlock(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading1',
+		label: 'Heading 1',
+		category: 'Format',
+		action: () => toggleHeading(appState, 1),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading2',
+		label: 'Heading 2',
+		category: 'Format',
+		action: () => toggleHeading(appState, 2),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading3',
+		label: 'Heading 3',
+		category: 'Format',
+		action: () => toggleHeading(appState, 3),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading4',
+		label: 'Heading 4',
+		category: 'Format',
+		action: () => toggleHeading(appState, 4),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading5',
+		label: 'Heading 5',
+		category: 'Format',
+		action: () => toggleHeading(appState, 5),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.heading6',
+		label: 'Heading 6',
+		category: 'Format',
+		action: () => toggleHeading(appState, 6),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.bulletList',
+		label: 'Bullet List',
+		category: 'Format',
+		action: () => toggleList(appState, 'bullet'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.numberedList',
+		label: 'Numbered List',
+		category: 'Format',
+		action: () => toggleList(appState, 'numbered'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.taskList',
+		label: 'Task List',
+		category: 'Format',
+		action: () => toggleList(appState, 'task'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.blockquote',
+		label: 'Blockquote',
+		category: 'Format',
+		action: () => toggleBlockquote(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.callout',
+		label: 'Callout',
+		category: 'Format',
+		action: () => insertCallout(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.horizontalRule',
+		label: 'Horizontal Rule',
+		category: 'Format',
+		action: () => insertHorizontalRule(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.table',
+		label: 'Table',
+		category: 'Format',
+		action: () => insertTable(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.insertTable',
+		label: 'Insert Table',
+		category: 'Format',
+		action: () => insertTable(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.inlineMath',
+		label: 'Inline Math',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '$'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.blockMath',
+		label: 'Block Math',
+		category: 'Format',
+		action: () => insertBlockMath(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.footnote',
+		label: 'Footnote',
+		category: 'Format',
+		action: () => toggleFootnoteFormat(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.comment',
+		label: 'Comment',
+		category: 'Format',
+		action: () => toggleInlineFormat(appState, '%%'),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	appState.commands.register({
+		id: 'format.link',
+		label: 'Add Link',
+		category: 'Format',
+		action: () => toggleLinkFormat(appState),
+		isEnabled: () => !!appState.activeEditorView
+	});
+
 	appState.commands.register({
 		id: 'window.toggleDevTools',
 		label: 'Toggle Developer Tools',
@@ -491,7 +1036,7 @@ export function registerCoreCommands(appState: AppState) {
 				try {
 					const configPath = await (window as any).electronAPI.getConfigPath();
 					if (configPath) {
-						const name = configPath.split(/[/\\]/).filter(Boolean).pop() || 'config.json';
+						const name = configPath.split(/[/\\\\]/).filter(Boolean).pop() || 'config.json';
 						await appState.workspace.openFile({
 							scheme: 'file',
 							path: configPath,

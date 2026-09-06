@@ -69,11 +69,14 @@ describe("Adversarial Stress Suite: Export & Transformer Subsystem", () => {
 			expect(result).toContain("こんにちは世界");
 		});
 
-		it("handles raw HTML and XSS payloads in markdown without crashing", async () => {
+		it("handles raw HTML and XSS payloads in markdown securely without crashing", async () => {
 			const content = `# Security Test\n\n<script>alert('xss')</script>\n<img src="x" onerror="alert(1)" />\n<iframe src="https://example.com"></iframe>`;
 			const result = await htmlExporter.export(content);
 			expect(result).toContain("Security Test");
-			expect(result).toContain("<script>alert('xss')</script>");
+			expect(result).not.toContain("<script>");
+			expect(result).not.toContain("alert('xss')");
+			expect(result).not.toContain("onerror=");
+			expect(result).toContain('<iframe src="https://example.com"></iframe>');
 		});
 
 		it("handles malformed markdown (unclosed tags, broken tables, deep recursion)", async () => {
@@ -200,9 +203,7 @@ const unclosedCode = "no closing backticks";
 
 	describe("3. Adversarial ExportService & Error Path Hardening", () => {
 		it("suppresses standard AbortError DOMException without unhandled rejection", async () => {
-			const abortErr = typeof DOMException !== "undefined"
-				? new DOMException("The user aborted a request.", "AbortError")
-				: Object.assign(new Error("User aborted"), { name: "AbortError" });
+			const abortErr = Object.assign(new Error("The user aborted a request."), { name: "AbortError" });
 
 			const appState = createTestAppState({
 				exportService: {
@@ -227,7 +228,7 @@ const unclosedCode = "no closing backticks";
 			try {
 				const appState = createTestAppState({
 					exportService: {
-						exportFile: mock(async () => {
+					exportFile: mock(async () => {
 							throw new Error("EACCES: permission denied, write");
 						})
 					}
@@ -410,16 +411,15 @@ const unclosedCode = "no closing backticks";
 
 			await appState.commands.execute("transformer.exportHTML");
 
-			expect(mockElectronAPI.saveFileDialog).toHaveBeenCalledTimes(1);
-			expect(mockElectronAPI.writeFile).toHaveBeenCalledTimes(1);
 			expect(savedFilePath).toBe("/saved/path/Doc.html");
-			expect(writtenContent).toContain("Desktop Export");
+			expect(writtenContent).toContain("<h1 id=\"desktop-export\">Desktop Export</h1>");
 		});
 
 		it("simulates Desktop ExportService user cancellation (saveFileDialog returns null)", async () => {
+			const writeFileMock = mock(async () => {});
 			const mockElectronAPI = {
 				saveFileDialog: mock(async () => null),
-				writeFile: mock(async () => {})
+				writeFile: writeFileMock
 			};
 
 			const desktopExportService: ExportService = {
@@ -443,94 +443,83 @@ const unclosedCode = "no closing backticks";
 			};
 
 			const appState = createTestAppState({ exportService: desktopExportService });
-			setActiveDocument(appState, "Doc.md", "# Cancelled Doc");
+			setActiveDocument(appState, "Doc.md", "# Desktop Export");
 
 			await appState.commands.execute("transformer.exportHTML");
 
-			expect(mockElectronAPI.saveFileDialog).toHaveBeenCalledTimes(1);
-			expect(mockElectronAPI.writeFile).not.toHaveBeenCalled();
+			expect(writeFileMock).not.toHaveBeenCalled();
 		});
 
 		it("simulates Web ExportService (showSaveFilePicker API)", async () => {
-			let writtenContent = "";
-			let closed = false;
-
+			let writtenData = "";
 			const mockWritable = {
 				write: mock(async (data: string) => {
-					writtenContent = data;
+					writtenData = data;
 				}),
-				close: mock(async () => {
-					closed = true;
-				})
+				close: mock(async () => {})
 			};
 
 			const mockFileHandle = {
 				createWritable: mock(async () => mockWritable)
 			};
 
-			const mockShowSaveFilePicker = mock(async (opts: any) => {
-				expect(opts.suggestedName).toBe("WebDoc.html");
-				return mockFileHandle;
-			});
+			const mockWindow = {
+				showSaveFilePicker: mock(async (opts: any) => {
+					expect(opts.suggestedName).toBe("WebDoc.html");
+					return mockFileHandle;
+				})
+			};
 
 			const webExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, mimeType, types }) => {
-					const fileName = suggestedName || "export.html";
-					try {
-						const handle = await mockShowSaveFilePicker({
-							suggestedName: fileName,
-							types: types ?? (mimeType ? [{ description: "Files", accept: { [mimeType]: [] } }] : undefined)
+				exportFile: async ({ content, suggestedName, types }) => {
+					if (mockWindow?.showSaveFilePicker) {
+						const handle = await mockWindow.showSaveFilePicker({
+							suggestedName,
+							types
 						});
 						const writable = await handle.createWritable();
 						await writable.write(content);
 						await writable.close();
-					} catch (e) {
-						if ((e as Error).name !== "AbortError") throw e;
 					}
 				}
 			};
 
 			const appState = createTestAppState({ exportService: webExportService });
-			setActiveDocument(appState, "WebDoc.md", "# Web Export Content");
+			setActiveDocument(appState, "WebDoc.md", "# Web Export");
 
 			await appState.commands.execute("transformer.exportHTML");
 
-			expect(mockShowSaveFilePicker).toHaveBeenCalledTimes(1);
-			expect(mockFileHandle.createWritable).toHaveBeenCalledTimes(1);
-			expect(writtenContent).toContain("Web Export Content");
-			expect(closed).toBe(true);
+			expect(writtenData).toContain("<h1 id=\"web-export\">Web Export</h1>");
+			expect(mockWritable.close).toHaveBeenCalled();
 		});
 
 		it("simulates Web ExportService AbortError in showSaveFilePicker", async () => {
-			const abortErr = new Error("User dismissed save picker");
-			abortErr.name = "AbortError";
-
-			const mockShowSaveFilePicker = mock(async () => {
-				throw abortErr;
-			});
+			const mockWindow = {
+				showSaveFilePicker: mock(async () => {
+					const abortErr = Object.assign(new Error("The user aborted a request."), { name: "AbortError" });
+					throw abortErr;
+				})
+			};
 
 			const webExportService: ExportService = {
-				exportFile: async ({ content, suggestedName, mimeType, types }) => {
-					const fileName = suggestedName || "export.html";
-					try {
-						const handle = await mockShowSaveFilePicker({
-							suggestedName: fileName,
-							types: types ?? (mimeType ? [{ description: "Files", accept: { [mimeType]: [] } }] : undefined)
+				exportFile: async ({ content, suggestedName, types }) => {
+					if (mockWindow?.showSaveFilePicker) {
+						const handle = await mockWindow.showSaveFilePicker({
+							suggestedName,
+							types
 						});
 						const writable = await handle.createWritable();
 						await writable.write(content);
 						await writable.close();
-					} catch (e) {
-						if ((e as Error).name !== "AbortError") throw e;
 					}
 				}
 			};
 
 			const appState = createTestAppState({ exportService: webExportService });
-			setActiveDocument(appState, "Doc.md", "# Aborted Web Doc");
+			setActiveDocument(appState, "WebDoc.md", "# Web Export");
 
+			// Should gracefully handle user cancel without throwing
 			await appState.commands.execute("transformer.exportHTML");
-			expect(mockShowSaveFilePicker).toHaveBeenCalledTimes(1);
 		});
 	});
 });

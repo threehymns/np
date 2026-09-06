@@ -1,6 +1,7 @@
 import { Marked } from 'marked';
 import type { Exporter } from '../types';
 import { parseInternalLink } from '../../links';
+import { sanitizeHtml } from '../sanitize';
 
 /**
  * Slug for heading fragment links. Rendered Markdown headings receive the
@@ -126,7 +127,8 @@ export class HTMLExporter implements Exporter {
 	}
 
 	async export(content: string): Promise<string> {
-		const body = await this.markedInstance.parse(content);
+		const rawBody = await this.markedInstance.parse(content);
+		const body = sanitizeHtml(rawBody);
 
 		return `<!DOCTYPE html>
 <html lang="en">

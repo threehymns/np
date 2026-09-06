@@ -1,6 +1,9 @@
 import type { Exporter } from './types';
 import { HTMLExporter } from './exporters/html';
 import { PlainTextExporter } from './exporters/text';
+import { sanitizeHtml, isSafeStyle, isSafeUrl } from './sanitize';
+
+export { sanitizeHtml, isSafeStyle, isSafeUrl };
 
 export class DocumentTransformer {
 	private exporters = new Map<string, Exporter>();

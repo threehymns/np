@@ -8,6 +8,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { HorizontalRuleWidget } from "../widgets/HorizontalRuleWidget";
+import { closedFrontmatterEnd } from "./frontmatter";
 
 class HorizontalRulePlugin {
 	decorations: DecorationSet;
@@ -27,6 +28,7 @@ class HorizontalRulePlugin {
 		const builder = new RangeSetBuilder<Decoration>();
 		const selection = view.state.selection.main;
 		const curLine = view.state.doc.lineAt(selection.from).number;
+		const fmEnd = closedFrontmatterEnd(view.state.doc);
 
 		for (let { from, to } of view.visibleRanges) {
 			syntaxTree(view.state).iterate({
@@ -35,6 +37,9 @@ class HorizontalRulePlugin {
 				enter: (node) => {
 					if (node.name === "HorizontalRule") {
 						const line = view.state.doc.lineAt(node.from);
+						// A `---` fence inside a leading frontmatter block is not a
+						// real HR; let the frontmatter plugin dim it instead.
+						if (fmEnd != null && line.number <= fmEnd) return;
 						const isLineActive =
 							view.hasFocus && line.number === curLine;
 
