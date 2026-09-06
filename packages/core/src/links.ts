@@ -1,5 +1,8 @@
-import type { Workspace, DocumentSession } from './workspace.svelte';
+import type { Workspace } from './workspace.svelte';
+import type { DocumentSession } from './document.svelte';
 import type { FileOrigin, Storage } from './storage';
+
+export type { Workspace, DocumentSession };
 
 export interface InternalLinkTarget {
 	raw: string;
@@ -535,7 +538,7 @@ export async function openInternalLink(
 
 	if (!parsed.path) {
 		// Same-note anchor link (e.g. [[#Heading]] or [[#^block-id]])
-		targetDoc = currentDoc ?? workspace.activeDocument;
+		targetDoc = currentDoc ?? workspace.activeDocument ?? null;
 	} else {
 		// Target is in a note
 		const allowCreate = options.allowCreate !== undefined ? options.allowCreate : !parsed.isEmbed;
