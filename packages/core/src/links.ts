@@ -549,7 +549,7 @@ export async function openInternalLink(
 		if (targetOrigin) {
 			const opened = await workspace.openFile(targetOrigin);
 			targetDoc = opened ?? null;
-		} else if (!workspace.rootOrigin && allowCreate) {
+		} else if (!workspace.rootOrigin) {
 			// No folder open, check open documents
 			const existing = workspace.documents.find(
 				(d) =>
@@ -560,7 +560,7 @@ export async function openInternalLink(
 			if (existing) {
 				workspace.activeDocumentId = existing.id;
 				targetDoc = existing;
-			} else {
+			} else if (allowCreate) {
 				// Create new untitled note with the target name
 				const newDoc = await workspace.newFile();
 				newDoc.untitledTitle = parsed.path.endsWith('.md')
