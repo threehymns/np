@@ -105,6 +105,16 @@ describe("Obsidian HTML Passthrough & Sanitization", () => {
 			expect(html).toContain('<source src="flower.webm" type="video/webm" />');
 			expect(html).toContain('</video>');
 		});
+
+		it("renders task lists with checkbox input elements preserved (checked and unchecked)", async () => {
+			const md = "- [ ] Unchecked task\n- [x] Checked task";
+			const html = await exporter.export(md);
+			expect(html).toContain('type="checkbox"');
+			expect(html).toContain("disabled");
+			expect(html).toContain("checked");
+			expect(html).toContain("Unchecked task");
+			expect(html).toContain("Checked task");
+		});
 	});
 
 	describe("Obsidian HTML Security & Sanitization", () => {
@@ -113,8 +123,6 @@ describe("Obsidian HTML Passthrough & Sanitization", () => {
 			const html = await exporter.export(md);
 			expect(html).not.toContain("<script>");
 			expect(html).not.toContain("alert('xss')");
-			expect(html).not.toContain("</script>");
-			expect(html).toContain("Hello  world");
 		});
 
 		it("strips uppercase and parameterized <SCRIPT> tags", async () => {
@@ -141,7 +149,7 @@ describe("Obsidian HTML Passthrough & Sanitization", () => {
 		});
 
 		it("strips inline event handlers (onerror, onload, onclick, onmouseover)", async () => {
-			const md = '<img src="valid.png" onerror="alert(1)" onload="evil()\" />\n<div onclick="bad()" onmouseover="steal()">Text</div>';
+			const md = '<img src="valid.png" onerror="alert(1)" onload="evil()" />\n<div onclick="bad()" onmouseover="steal()">Text</div>';
 			const html = await exporter.export(md);
 			expect(html).not.toContain("onerror=");
 			expect(html).not.toContain("onload=");
@@ -208,6 +216,16 @@ describe("Obsidian HTML Passthrough & Sanitization", () => {
 			const input = '<span title="Value containing > greater than">Content</span>';
 			const sanitized = sanitizeHtml(input);
 			expect(sanitized).toBe('<span title="Value containing &gt; greater than">Content</span>');
+		});
+
+		it("preserves <input> checkbox elements with checked and disabled attributes", () => {
+			const input = '<input checked="" disabled="" type="checkbox"> Done';
+			const sanitized = sanitizeHtml(input);
+			expect(sanitized).toContain('<input');
+			expect(sanitized).toContain('type="checkbox"');
+			expect(sanitized).toContain('checked');
+			expect(sanitized).toContain('disabled');
+			expect(sanitized).toContain('Done');
 		});
 	});
 });

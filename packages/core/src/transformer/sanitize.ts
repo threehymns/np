@@ -16,7 +16,7 @@ const ALLOWED_TAGS = new Set([
 	'blockquote', 'br', 'button', 'caption', 'cite', 'code', 'col', 'colgroup',
 	'data', 'dd', 'del', 'details', 'dfn', 'div', 'dl', 'dt', 'em', 'figcaption',
 	'figure', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup',
-	'hr', 'i', 'iframe', 'img', 'ins', 'kbd', 'label', 'legend', 'li', 'main',
+	'hr', 'i', 'iframe', 'img', 'input', 'ins', 'kbd', 'label', 'legend', 'li', 'main',
 	'map', 'mark', 'meter', 'nav', 'ol', 'p', 'picture', 'pre', 'progress', 'q',
 	'rp', 'rt', 'ruby', 's', 'samp', 'section', 'select', 'small', 'source',
 	'span', 'strong', 'sub', 'summary', 'sup', 'svg', 'path', 'circle', 'rect',
@@ -33,6 +33,7 @@ const SAFE_ATTRS = new Set([
 	'type', 'start', 'reversed', 'name', 'value', 'placeholder', 'role', 'dir',
 	'lang', 'frameborder', 'allow', 'allowfullscreen', 'aria-label', 'aria-hidden',
 	'aria-describedby', 'aria-expanded', 'aria-checked', 'aria-controls',
+	'checked', 'disabled',
 	'viewbox', 'xmlns', 'fill', 'stroke', 'stroke-width', 'd', 'cx', 'cy', 'r',
 	'x', 'y', 'x1', 'y1', 'x2', 'y2', 'points',
 ]);
@@ -48,43 +49,8 @@ function decodeEntities(val: string): string {
 		.replace(/&amp;/g, '&');
 }
 
-export function isSafeUrl(url: string, tagName?: string): boolean {
-	if (!url) return true;
-	const trimmed = decodeEntities(url).trim().toLowerCase().replace(/[\x00-\x20]/g, '');
-	if (/^(javascript|vbscript):/.test(trimmed)) {
-		return false;
-	}
-	if (/^data:/.test(trimmed)) {
-		// Disallow data: URLs in iframes or navigation links to prevent script execution
-		if (tagName && ['iframe', 'a', 'area', 'frame'].includes(tagName.toLowerCase())) {
-			return false;
-		}
-		// Allow safe raster data URIs for images (strictly exclude svg+xml which executes scripts)
-		if (/^data:image\/(png|jpeg|jpg|gif|webp);base64,/i.test(trimmed)) {
-			return true;
-		}
-		return false;
-	}
-	return true;
-}
-
-export function isSafeStyle(style: string): boolean {
-	if (!style) return true;
-	const decoded = decodeEntities(style).toLowerCase().replace(/[\x00-\x20]/g, '');
-	if (
-		decoded.includes('javascript:') ||
-		decoded.includes('expression(') ||
-		decoded.includes('-moz-binding') ||
-		decoded.includes('@import') ||
-		decoded.includes('behavior:')
-	) {
-		return false;
-	}
-	return true;
-}
-
-function escapeHtmlAttr(value: string): string {
-	return value
+function escapeHtmlAttr(val: string): string {
+	return val
 		.replace(/&/g, '&amp;')
 		.replace(/"/g, '&quot;')
 		.replace(/</g, '&lt;')
@@ -92,9 +58,47 @@ function escapeHtmlAttr(value: string): string {
 }
 
 /**
- * Sanitizes HTML string by stripping unsafe tags (script, object, etc.),
- * removing on* event handlers, filtering unsafe URLs and malicious styles,
- * while preserving valid Obsidian HTML passthrough tags and attributes.
+ * Validates that URLs don't use dangerous schemes like javascript:, vbscript:, data:
+ * (data: is allowed for img/audio/video/source, but rejected for a/iframe to prevent stored XSS).
+ */
+export function isSafeUrl(url: string, tagName: string): boolean {
+	if (!url) return true;
+	const trimmed = decodeEntities(url).trim().replace(/[\x00-\x1f\x7f-\x9f\s]/g, '');
+
+	// Reject javascript: or vbscript: in any URL attribute
+	if (/^(javascript|vbscript):/i.test(trimmed)) {
+		return false;
+	}
+
+	// For data: URLs, only allow safe image/audio/video types, never svg/html/script or in iframes
+	if (/^data:/i.test(trimmed)) {
+		if (tagName === 'iframe' || tagName === 'a') {
+			return false;
+		}
+		// Only allow safe raster image and media mime types
+		return /^data:(image\/(png|jpeg|jpg|gif|webp)|audio\/(mp3|wav|ogg|webm)|video\/(mp4|webm|ogg));/i.test(trimmed);
+	}
+
+	return true;
+}
+
+/**
+ * Validates style attribute to strip dangerous url(javascript:...), expression(...), etc.
+ */
+export function isSafeStyle(style: string): boolean {
+	if (!style) return true;
+	const decoded = decodeEntities(style).toLowerCase();
+	if (decoded.includes('expression(') || decoded.includes('javascript:') || decoded.includes('vbscript:')) {
+		return false;
+	}
+	if (decoded.includes('-moz-binding') || decoded.includes('behavior:')) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Sanitizes HTML string using whitelist approach without DOM dependencies.
  */
 export function sanitizeHtml(html: string): string {
 	if (!html) return '';
@@ -108,7 +112,7 @@ export function sanitizeHtml(html: string): string {
 	}
 
 	// 2. Tokenize and sanitize all HTML tags and comments
-	const TAG_OR_COMMENT_REGEX = /<!--[\s\S]*?-->|<\/?[a-zA-Z0-9:-]+(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)?\/?>/g;
+	const TAG_OR_COMMENT_REGEX = /<!--[\s\S]*?-->|<\/?[a-zA-Z0-9:-]+(?:\s+(?:"[^"]*"|'[^']*'|[^'">])*)*\/?>/g;
 
 	return sanitized.replace(TAG_OR_COMMENT_REGEX, (token) => {
 		// Preserve HTML comments
