@@ -429,7 +429,13 @@ export class Workspace {
 			}
 
 			this.repository = repo;
-			await repo.refresh();
+			const refreshed = await repo.refresh();
+			if (!refreshed) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
 			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
 				if (this.repository === repo) {
 					this.repository = null;
@@ -437,6 +443,12 @@ export class Workspace {
 				return false;
 			}
 			await this.projectTree.scan(targetOrigin);
+			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
+				if (this.repository === repo) {
+					this.repository = null;
+				}
+				return false;
+			}
 			return true;
 		} catch (e) {
 			if (!repo || this.repository === repo) {

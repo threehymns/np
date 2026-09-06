@@ -332,7 +332,69 @@ describe("Workspace.initializeRepository action (ticket #118)", () => {
 		expect(ws.repository).toBeNull();
 	});
 
-	it("throws and leaves repository null when repo.refresh or scan rejects", async () => {
+	it("returns false, leaves repository null, and skips scan when repo.refresh fails", async () => {
+		const storage = createMockStorage({});
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			init: mock(async () => {}),
+			getCurrentBranch: async () => {
+				throw new Error("Corrupted repository state");
+			},
+			getBranches: async () => {
+				throw new Error("Cannot read branches");
+			},
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		ws.rootOrigin = rootOrigin;
+		ws.hasRootPermission = true;
+		const scanMock = mock(async () => {});
+		ws.projectTree.scan = scanMock;
+
+		const result = await ws.initializeRepository();
+		expect(result).toBe(false);
+		expect(ws.repository).toBeNull();
+		expect(scanMock).not.toHaveBeenCalled();
+	});
+
+	it("discards initialization results if root changes during projectTree.scan", async () => {
+		let resolveScan!: () => void;
+		const scanPromise = new Promise<void>((resolve) => {
+			resolveScan = resolve;
+		});
+
+		const storage = createMockStorage({});
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			init: mock(async () => {}),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		ws.rootOrigin = rootOrigin;
+		ws.hasRootPermission = true;
+		ws.projectTree.scan = mock(async () => {
+			await scanPromise;
+		});
+
+		const initOp = ws.initializeRepository();
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Switch root mid-flight during scan
+		ws.rootOrigin = { scheme: "file", path: "/projects/other", name: "other" };
+		resolveScan();
+
+		const result = await initOp;
+		expect(result).toBe(false);
+		expect(ws.repository).toBeNull();
+	});
+
+	it("throws and leaves repository null when project tree scan rejects", async () => {
 		const storage = createMockStorage({});
 		const vcsFactory = (): VCSAdapter => ({
 			detect: mock(async () => true),
