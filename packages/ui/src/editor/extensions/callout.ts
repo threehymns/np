@@ -273,12 +273,27 @@ class CalloutPlugin {
 			add(line.from, line.to, Decoration.replace({}));
 		}
 
-		// Deepest callout owns each line's accent so a nested type keeps its
-		// local color instead of inheriting the outer callout's variable.
-		const ownerOf = (lineNum: number): CalloutInfo | null => {
+		// The outermost callout paints the row shell (background + left line)
+		// so it reads as one continuous box; the innermost nested callout
+		// paints the inset box. Splitting the roles keeps both colors alive.
+		const containersOf = (lineNum: number): CalloutInfo[] =>
+			callouts.filter((c) => lineNum >= c.startLine && lineNum <= c.endLine);
+		const outermostOf = (lineNum: number): CalloutInfo | null => {
 			let owner: CalloutInfo | null = null;
-			for (const c of callouts) {
-				if (lineNum < c.startLine || lineNum > c.endLine) continue;
+			for (const c of containersOf(lineNum)) {
+				if (
+					!owner ||
+					c.depth < owner.depth ||
+					(c.depth === owner.depth && c.startLine < owner.startLine)
+				) {
+					owner = c;
+				}
+			}
+			return owner;
+		};
+		const innermostOf = (lineNum: number): CalloutInfo | null => {
+			let owner: CalloutInfo | null = null;
+			for (const c of containersOf(lineNum)) {
 				if (
 					!owner ||
 					c.depth > owner.depth ||
@@ -289,16 +304,22 @@ class CalloutPlugin {
 			}
 			return owner;
 		};
+		/** Top-level callouts emit every row in their range exactly once. */
+		const isTopLevel = (c: CalloutInfo): boolean =>
+			!callouts.some(
+				(o) =>
+					o !== c &&
+					o.startLine <= c.startLine &&
+					c.endLine <= o.endLine &&
+					(o.startLine < c.startLine ||
+						c.endLine < o.endLine ||
+						o.depth < c.depth),
+			);
 
+		// Header extras (icon + type/title marks). Row shells come from the
+		// top-level emitter below, so this loop adds no line decorations.
 		for (const c of callouts) {
 			if (hidden.has(c.startLine)) continue;
-			const owner = ownerOf(c.startLine);
-			if (owner !== c) continue; // header owned by a deeper callout
-			add(
-				c.firstLineFrom,
-				c.firstLineFrom,
-				Decoration.line({ class: c.baseClass }),
-			);
 
 			const title =
 				(c.calloutMatch[4] || "").trim() || CALLOUT_TYPES[c.type].label;
@@ -332,16 +353,32 @@ class CalloutPlugin {
 			}
 		}
 
+		const emittedRows = new Set<number>();
 		for (const c of callouts) {
-			for (let n = c.startLine + 1; n <= c.endLine; n++) {
-				if (hidden.has(n)) continue;
-				if (ownerOf(n) !== c) continue;
+			if (!isTopLevel(c)) continue;
+			for (let n = c.startLine; n <= c.endLine; n++) {
+				if (hidden.has(n) || emittedRows.has(n)) continue;
+				const outer = outermostOf(n);
+				const inner = innermostOf(n);
+				if (!outer || !inner) continue;
+				emittedRows.add(n);
 				const line = doc.line(n);
-				add(
-					line.from,
-					line.from,
-					Decoration.line({ class: c.baseClass }),
-				);
+				if (inner.depth > outer.depth) {
+					// Genuinely nested: outer shell wraps, inner box sits inside.
+					add(
+						line.from,
+						line.from,
+						Decoration.line({
+							class: `cm-callout cm-callout-nested cm-callout-outer-${outer.type} cm-callout-inner-${inner.type}`,
+						}),
+					);
+				} else {
+					add(
+						line.from,
+						line.from,
+						Decoration.line({ class: inner.baseClass }),
+					);
+				}
 			}
 		}
 		// Nested blockquotes iterate outer-then-inner, so collect + sort by

@@ -382,9 +382,44 @@
 
 /* Callout nesting + fold (#154) */
 .cm-callout-nested {
-  border-left-width: 1px;
-  margin-left: 0.6em;
+	--nest-indent: 0.9em;
+	border-left-color: var(--callout-outer, var(--callout-color));
+	background-color: color-mix(in srgb, var(--callout-outer, var(--callout-color)), transparent 92%);
+	background-image:
+		linear-gradient(var(--callout-inner, var(--callout-color)), var(--callout-inner, var(--callout-color))),
+		linear-gradient(color-mix(in srgb, var(--callout-inner, var(--callout-color)), transparent 88%), color-mix(in srgb, var(--callout-inner, var(--callout-color)), transparent 88%));
+	background-repeat: no-repeat;
+	background-size: 3px 100%, calc(100% - var(--nest-indent)) 100%;
+	background-position: var(--nest-indent) 0, var(--nest-indent) 0;
+	padding-left: calc(var(--nest-indent) + 0.9em);
 }
+/* Nested roles: the outer shell and the inset box each keep their own color. */
+.cm-callout-outer-note { --callout-outer: var(--code-function); }
+.cm-callout-outer-abstract { --callout-outer: var(--code-operator); }
+.cm-callout-outer-info { --callout-outer: var(--code-function); }
+.cm-callout-outer-todo { --callout-outer: var(--code-operator); }
+.cm-callout-outer-tip { --callout-outer: var(--code-string); }
+.cm-callout-outer-success { --callout-outer: var(--code-string); }
+.cm-callout-outer-question { --callout-outer: var(--code-type); }
+.cm-callout-outer-warning { --callout-outer: var(--code-number); }
+.cm-callout-outer-danger { --callout-outer: var(--destructive); }
+.cm-callout-outer-bug { --callout-outer: var(--destructive); }
+.cm-callout-outer-example { --callout-outer: var(--code-keyword); }
+.cm-callout-outer-quote { --callout-outer: var(--muted-foreground); }
+.cm-callout-outer-failure { --callout-outer: var(--destructive); }
+.cm-callout-inner-note { --callout-inner: var(--code-function); --callout-color: var(--code-function); }
+.cm-callout-inner-abstract { --callout-inner: var(--code-operator); --callout-color: var(--code-operator); }
+.cm-callout-inner-info { --callout-inner: var(--code-function); --callout-color: var(--code-function); }
+.cm-callout-inner-todo { --callout-inner: var(--code-operator); --callout-color: var(--code-operator); }
+.cm-callout-inner-tip { --callout-inner: var(--code-string); --callout-color: var(--code-string); }
+.cm-callout-inner-success { --callout-inner: var(--code-string); --callout-color: var(--code-string); }
+.cm-callout-inner-question { --callout-inner: var(--code-type); --callout-color: var(--code-type); }
+.cm-callout-inner-warning { --callout-inner: var(--code-number); --callout-color: var(--code-number); }
+.cm-callout-inner-danger { --callout-inner: var(--destructive); --callout-color: var(--destructive); }
+.cm-callout-inner-bug { --callout-inner: var(--destructive); --callout-color: var(--destructive); }
+.cm-callout-inner-example { --callout-inner: var(--code-keyword); --callout-color: var(--code-keyword); }
+.cm-callout-inner-quote { --callout-inner: var(--muted-foreground); --callout-color: var(--muted-foreground); }
+.cm-callout-inner-failure { --callout-inner: var(--destructive); --callout-color: var(--destructive); }
 .cm-callout-folded {
   font-style: italic;
 }

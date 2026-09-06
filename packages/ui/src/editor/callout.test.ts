@@ -191,13 +191,19 @@ describe("#151 callout base", () => {
 				lineClasses.set(line, [...(lineClasses.get(line) ?? []), cls]);
 			}
 		});
-		// Outer lines keep the outer accent.
+		// Outer lines keep the outer accent as a plain shell.
 		for (const n of [1, 2, 3]) {
 			expect(lineClasses.get(n)).toEqual(["cm-callout cm-callout-example"]);
 		}
-		// Nested lines get only the inner accent (local color), indented as nested.
+		// Nested lines carry both roles: outer shell wraps, inner box sits inside.
 		for (const n of [4, 5]) {
-			expect(lineClasses.get(n)).toEqual(["cm-callout cm-callout-tip cm-callout-nested"]);
+			expect(lineClasses.get(n)).toEqual([
+				"cm-callout cm-callout-nested cm-callout-outer-example cm-callout-inner-tip",
+			]);
+		}
+		// Exactly one line accent per row — no conflicting duplicates.
+		for (const n of [1, 2, 3, 4, 5]) {
+			expect(lineClasses.get(n)?.length).toBe(1);
 		}
 	});
 });
