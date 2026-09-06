@@ -71,8 +71,11 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		await engine.save('step', 3);
 		expect(fsSync.existsSync(sessionFilePath)).toBe(false);
 
-		// Wait for the final debounce window to elapse
-		await new Promise((r) => setTimeout(r, 80));
+		// Wait for the final debounce window and async disk write to complete
+		const deadline = Date.now() + 1000;
+		while ((engine.hasPendingWrite() || engine.isDirtyState()) && Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 10));
+		}
 
 		// Now the file should be written to disk with the final state
 		expect(fsSync.existsSync(sessionFilePath)).toBe(true);
@@ -263,12 +266,18 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 			resolveDelayedWrite = resolve;
 		});
 
+		let notifyWriteStarted!: () => void;
+		const writeStartedPromise = new Promise<void>((resolve) => {
+			notifyWriteStarted = resolve;
+		});
+
 		const originalWriteFile = fs.writeFile;
 		let intercepted = false;
 		// @ts-ignore
 		fs.writeFile = async (...args: any[]) => {
 			if (!intercepted) {
 				intercepted = true;
+				notifyWriteStarted();
 				await delayedPromise;
 			}
 			// @ts-ignore
@@ -279,8 +288,8 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 			// Start async write for gen 1 (it will wait on delayedPromise)
 			const writeGen1Promise = engine.writeToDisk();
 
-			// Wait a moment so writeGen1 enters fs.writeFile and pauses
-			await new Promise((r) => setTimeout(r, 20));
+			// Wait until writeGen1 is inside fs.writeFile and waiting
+			await writeStartedPromise;
 
 			// Save generation 2 and commit synchronously
 			await engine.save('gen', 2);
