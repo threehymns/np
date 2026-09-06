@@ -15,6 +15,8 @@ export class SessionPersistenceEngine {
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	private isDirty = false;
 	private saveGeneration = 0;
+	private committedGeneration = 0;
+	private writeCoordinator: Promise<void> = Promise.resolve();
 
 	constructor(options: SessionPersistenceOptions) {
 		this.getFilePath = options.getFilePath;
@@ -105,21 +107,41 @@ export class SessionPersistenceEngine {
 			return;
 		}
 
-		const currentGen = this.saveGeneration;
+		const targetGen = this.saveGeneration;
 		const filePath = this.getFilePath();
 		const serialized = JSON.stringify(this.persistenceData, null, 2);
+		const dir = path.dirname(filePath);
 
-		try {
-			await fs.mkdir(path.dirname(filePath), { recursive: true });
-			await fs.writeFile(filePath, serialized, 'utf-8');
-			if (this.saveGeneration === currentGen) {
-				this.isDirty = false;
+		const task = async () => {
+			if (targetGen <= this.committedGeneration) {
+				return;
 			}
-		} catch (err) {
-			this.isDirty = true;
-			console.error('Failed to write persistence file:', err);
-			throw err;
-		}
+
+			await fs.mkdir(dir, { recursive: true });
+			const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
+			try {
+				await fs.writeFile(tempPath, serialized, 'utf-8');
+				if (targetGen > this.committedGeneration) {
+					await fs.rename(tempPath, filePath);
+					this.committedGeneration = targetGen;
+					if (this.saveGeneration === targetGen) {
+						this.isDirty = false;
+					}
+				} else {
+					await fs.unlink(tempPath).catch(() => {});
+				}
+			} catch (err) {
+				await fs.unlink(tempPath).catch(() => {});
+				this.isDirty = true;
+				console.error('Failed to write persistence file:', err);
+				throw err;
+			}
+		};
+
+		const nextPromise = this.writeCoordinator.catch(() => {}).then(task);
+		this.writeCoordinator = nextPromise.catch(() => {});
+		return nextPromise;
 	}
 
 	/**
@@ -152,12 +174,34 @@ export class SessionPersistenceEngine {
 			return;
 		}
 
+		const currentGen = this.saveGeneration;
+		if (currentGen <= this.committedGeneration) {
+			return;
+		}
+
 		const filePath = this.getFilePath();
+		const dir = path.dirname(filePath);
+		const serialized = JSON.stringify(this.persistenceData, null, 2);
+		const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
 		try {
-			fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
-			fsSync.writeFileSync(filePath, JSON.stringify(this.persistenceData, null, 2), 'utf-8');
-			this.isDirty = false;
+			fsSync.mkdirSync(dir, { recursive: true });
+			fsSync.writeFileSync(tempPath, serialized, 'utf-8');
+			if (currentGen > this.committedGeneration) {
+				fsSync.renameSync(tempPath, filePath);
+				this.committedGeneration = currentGen;
+				if (this.saveGeneration === currentGen) {
+					this.isDirty = false;
+				}
+			} else {
+				try {
+					fsSync.unlinkSync(tempPath);
+				} catch {}
+			}
 		} catch (err) {
+			try {
+				fsSync.unlinkSync(tempPath);
+			} catch {}
 			console.error('Failed to flush persistence file synchronously on quit:', err);
 		}
 	}

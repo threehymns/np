@@ -248,4 +248,57 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		const content = JSON.parse(await fs.readFile(sessionFilePath, 'utf-8'));
 		expect(content).toEqual({ urgent: 'must-save-now' });
 	});
+
+	it('retains generation N+1 when deferred generation N async write completes later', async () => {
+		const engine = new SessionPersistenceEngine({
+			getFilePath: () => sessionFilePath,
+			debounceMs: 500
+		});
+
+		// Save generation 1
+		await engine.save('gen', 1);
+
+		let resolveDelayedWrite!: () => void;
+		const delayedPromise = new Promise<void>((resolve) => {
+			resolveDelayedWrite = resolve;
+		});
+
+		const originalWriteFile = fs.writeFile;
+		let intercepted = false;
+		// @ts-ignore
+		fs.writeFile = async (...args: any[]) => {
+			if (!intercepted) {
+				intercepted = true;
+				await delayedPromise;
+			}
+			// @ts-ignore
+			return originalWriteFile.apply(fs, args);
+		};
+
+		try {
+			// Start async write for gen 1 (it will wait on delayedPromise)
+			const writeGen1Promise = engine.writeToDisk();
+
+			// Wait a moment so writeGen1 enters fs.writeFile and pauses
+			await new Promise((r) => setTimeout(r, 20));
+
+			// Save generation 2 and commit synchronously
+			await engine.save('gen', 2);
+			engine.flushSync();
+
+			expect(fsSync.existsSync(sessionFilePath)).toBe(true);
+			const gen2Disk = JSON.parse(fsSync.readFileSync(sessionFilePath, 'utf-8'));
+			expect(gen2Disk).toEqual({ gen: 2 });
+
+			// Release delayed generation 1 write
+			resolveDelayedWrite();
+			await writeGen1Promise;
+
+			// File must retain generation 2 data, not be clobbered by generation 1
+			const finalDisk = JSON.parse(fsSync.readFileSync(sessionFilePath, 'utf-8'));
+			expect(finalDisk).toEqual({ gen: 2 });
+		} finally {
+			fs.writeFile = originalWriteFile;
+		}
+	});
 });
