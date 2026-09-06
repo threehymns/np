@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
@@ -162,7 +163,7 @@ export class Workspace {
 				if (this.isRestoring) return;
 				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
-				this.flushSaveOpenFiles();
+				untrack(() => this.flushSaveOpenFiles());
 			});
 
 			$effect(() => {
