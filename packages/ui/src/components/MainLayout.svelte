@@ -5,7 +5,7 @@
   import * as Tabs from "../components/ui/tabs/index";
   import Icon from "./Icon.svelte";
   
-  import { X, GitDiffIcon } from 'phosphor-svelte';
+  import { XIcon, GitDiffIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from '@codemirror/view';
 
@@ -13,6 +13,8 @@
   import type EditorComponent from './Editor.svelte';
   import type FileExplorerComponent from './FileExplorer.svelte';
   import type GitPanelComponent from './GitPanel.svelte';
+  import * as Tooltip from './ui/tooltip';
+  import { cn } from '@np/core';
 
   const appState = useAppState();
 
@@ -152,58 +154,74 @@
     ></button>
   </aside>
 
-  <Tabs.Root bind:value={appState.activeTabId} class="flex h-full flex-1 flex-col min-w-0">
+  <Tabs.Root bind:value={appState.activeTabId} class="flex flex-1 flex-col min-w-0">
     {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.type === 'diff')}
-      <Tabs.List class="bg-muted/50 justify-start rounded-none border-b px-2 h-10 items-end gap-1 w-full overflow-visible no-scrollbar">
-        {#each appState.workspace.tabs as tab (tab.id)}
-          {@const doc = tab.type === 'document' ? appState.documents.find(d => d.id === tab.id) : null}
-          {@const title = tab.type === 'diff' ? 'Uncommitted Changes' : (doc?.fileName ?? 'Untitled')}
-          {@const isModified = tab.type === 'document' && doc?.isModified}
-          {@const deletedOnDisk = tab.type === 'document' && doc?.deletedOnDisk}
-          <div 
-            animate:flip={{ duration: 150 }}
-            class="group relative flex items-center h-full shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
-            draggable="true"
-            role="presentation"
-            ondragstart={(e) => handleDragStart(e, tab.id)}
-            ondragover={(e) => e.preventDefault()}
-            ondragenter={() => handleDragEnter(tab.id)}
-            ondrop={handleDrop}
-            ondragend={handleDragEnd}
-          >
-            <Tabs.Trigger
-              value={tab.id}
-              class="data-[state=active]:bg-background px-3 py-1.5 text-xs font-medium pr-8 h-8 rounded-t-sm border-x border-t border-transparent data-[state=active]:border-border transition-colors hover:bg-background/50 focus-visible:ring-inset flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
-              title={deletedOnDisk ? `${title} (deleted on disk)` : title}
+      <Tabs.List class="bg-accent/50 justify-start rounded-none items-end gap-0 pb-0 w-full overflow-x-auto overflow-y-hidden no-scrollbar">
+        <Tooltip.Provider delayDuration={400}>
+          {#each appState.workspace.tabs as tab (tab.id)}
+            {@const doc = tab.type === 'document' ? appState.documents.find(d => d.id === tab.id) : null}
+            {@const title = tab.type === 'diff' ? 'Uncommitted Changes' : (doc?.fileName ?? 'Untitled')}
+            {@const isModified = tab.type === 'document' && doc?.isModified}
+            {@const deletedOnDisk = tab.type === 'document' && doc?.deletedOnDisk}
+            <div 
+              animate:flip={{ duration: 150 }}
+              class="group relative flex h-full -bottom-[1px] shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
+              draggable="true"
+              role="presentation"
+              ondragstart={(e) => handleDragStart(e, tab.id)}
+              ondragover={(e) => e.preventDefault()}
+              ondragenter={() => handleDragEnter(tab.id)}
+              ondrop={handleDrop}
+              ondragend={handleDragEnd}
             >
-              {#if tab.type === 'diff'}
-                <GitDiffIcon class="size-3.5 opacity-90 text-primary shrink-0" />
-              {:else}
-                <Icon 
-                  resource={title}
-                  type="file"
-                  class="size-3.5 opacity-90" 
-                />
-              {/if}
-              {title}
-            </Tabs.Trigger>
-            <button
-              onclick={(e) => {
-                e.stopPropagation();
-                appState.closeTab(tab.id);
-              }}
-              class="group/close absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted transition-opacity focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none {isModified ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
-              title="Close tab"
-            >
-              {#if isModified}
-                <div class="w-1.5 h-1.5 rounded-full bg-foreground/40 group-hover:hidden group-focus-visible/close:hidden m-0.5"></div>
-                <X size={10} class="hidden group-hover:block group-focus-visible/close:block" />
-              {:else}
-                <X size={10} />
-              {/if}
-            </button>
-          </div>
-        {/each}
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  <Tabs.Trigger
+                    value={tab.id}
+                    class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
+                  >
+                    {#if tab.type === 'diff'}
+                      <GitDiffIcon class="size-3.5 opacity-90 text-primary shrink-0" />
+                    {:else}
+                      <Icon 
+                        resource={title}
+                        type="file"
+                        class="size-3.5 opacity-90" 
+                      />
+                    {/if}
+                    {title}
+                  </Tabs.Trigger>
+                </Tooltip.Trigger>
+                <Tooltip.Content side="bottom">
+                  {deletedOnDisk ? `${title} (deleted on disk)` : doc?.origin?.path}
+                </Tooltip.Content>
+              </Tooltip.Root>
+  
+              <Tooltip.Provider delayDuration={400}>
+                <Tooltip.Root>
+                  <Tooltip.Trigger>              
+                    <button
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        appState.closeTab(tab.id);
+                      }}
+                      class="group/close absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-sm hover:bg-muted transition-opacity focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none {isModified ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
+                    >
+                      {#if isModified} group-tab-active:hidden
+                        <div class="w-1.5 h-1.5 rounded-full bg-foreground/40 group-hover:hidden group-focus-visible/close:hidden m-0.5"></div>
+                        <XIcon size={10} class="hidden group-hover:block group-focus-visible/close:block" />
+                      {:else}
+                        <XIcon size={10} />
+                      {/if}
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content side="bottom" align="start" arrowPadding={7} class="-translate-x-3">Close tab</Tooltip.Content>
+                </Tooltip.Root>
+              </Tooltip.Provider>
+              <span class={cn("absolute group-hover:hidden bg-border h-2/3 w-[1px] top-1/2 -translate-y-1/2 -translate-x-[1px]", appState.activeTabId === tab.id && "hidden")}></span>
+            </div>
+          {/each}
+        </Tooltip.Provider>
         <div class="flex-1 h-full min-w-4"></div>
       </Tabs.List>
     {/if}
