@@ -78,6 +78,7 @@ export class ProjectTree {
 	isScanning = $state(false);
 	isSearching = $state(false);
 	searchQuery = $state("");
+	private scanGeneration = 0;
 	private gitignore: GitIgnoreMatcher | null = null;
 	private searchResults = $state<TreeNode[]>([]);
 	private searchAbortController: AbortController | null = null;
@@ -311,6 +312,7 @@ export class ProjectTree {
 		
 		await this.init();
 
+		const generation = ++this.scanGeneration;
 		this.isScanning = true;
 		try {
 			// Load .gitignore if it exists
@@ -330,11 +332,20 @@ export class ProjectTree {
 				}
 			}
 
-			this.nodes = await this.buildLevel(rootOrigin);
+			const builtNodes = await this.buildLevel(rootOrigin);
+			if (
+				generation === this.scanGeneration &&
+				this.workspace.rootOrigin &&
+				toURI(this.workspace.rootOrigin) === toURI(rootOrigin)
+			) {
+				this.nodes = builtNodes;
+			}
 		} catch (e) {
 			console.error('[Tree] Scan failed', e);
 		} finally {
-			this.isScanning = false;
+			if (generation === this.scanGeneration) {
+				this.isScanning = false;
+			}
 		}
 	}
 
