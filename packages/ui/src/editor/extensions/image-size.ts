@@ -130,9 +130,18 @@ class ImageSizePlugin {
 						const label = doc.sliceString(labelStart, labelEnd);
 						const res = parseResizeToken(label);
 						if (!res.size) return;
-						const pipeIdx = label.indexOf("|");
-						if (pipeIdx === -1) return;
-						builder.add(
+					const pipeIdx = label.indexOf("|");
+					if (pipeIdx === -1) return;
+					const selection = view.state.selection.main;
+					const tokenFrom = labelStart + pipeIdx;
+					const tokenTo = labelEnd;
+					if (
+						view.hasFocus &&
+						selection.from <= tokenTo &&
+						selection.to >= tokenFrom
+					)
+						return;
+					builder.add(
 							labelStart + pipeIdx,
 							labelEnd,
 							Decoration.replace({

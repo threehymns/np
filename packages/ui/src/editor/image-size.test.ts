@@ -130,6 +130,27 @@ describe("#149 embed size badges + image click", () => {
 		expect(found.length).toBe(0);
 	});
 
+	it("does not render size badge when cursor is inside the image size token", async () => {
+		const doc = "![alt|400](photo.png)";
+		const desc = languages.find((l) => l.name === "Markdown")!;
+		const exts = await getLanguageExtensions(desc);
+		const support = exts.filter((e) => (e as any) instanceof LanguageSupport);
+		const state = EditorState.create({
+			doc,
+			selection: { anchor: 6 }, // inside `|400` token (5..9)
+			extensions: support,
+		});
+		const inst: any = sizeBadgePlugin.create(
+			{ state, hasFocus: true, visibleRanges: [{ from: 0, to: doc.length }] },
+			undefined,
+		);
+		const found: any[] = [];
+		inst.decorations.between(0, doc.length, (_f: number, _t: number, d: any) => {
+			if (d.spec?.widget instanceof SizeBadgeWidget) found.push(d.spec.widget);
+		});
+		expect(found.length).toBe(0);
+	});
+
 	it("updates decorations when selectionSet or focusChanged triggers update", async () => {
 		const doc = "see ![[photo.png|300]] ok";
 		const desc = languages.find((l) => l.name === "Markdown")!;
