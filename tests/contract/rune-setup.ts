@@ -24,7 +24,9 @@ mock.module("svelte", () => ({
 	hasContext: () => false,
 	getAllContexts: () => new Map(),
 	untrack: (fn: any) => fn(),
-	tick: async () => {}
+	tick: async () => {},
+	mount: (component: any, options: any) => ({}),
+	unmount: (instance: any) => {},
 }));
 
 mock.module("svelte/reactivity", () => ({

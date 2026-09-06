@@ -155,6 +155,18 @@
 								</Menubar.SubContent>
 							</Menubar.Sub>
 						{:else if category === 'Format'}
+							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap') as command (command.id)}
+								<Menubar.Item
+									onclick={() => command.action()}
+									disabled={command.isEnabled && !command.isEnabled()}
+								>
+									{command.label}
+									{#if appState.keymaps.getShortcutForCommand(command.id)}
+										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
+									{/if}
+								</Menubar.Item>
+							{/each}
+							<Menubar.Separator />
 							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>
 								Word Wrap
 								{#if appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}

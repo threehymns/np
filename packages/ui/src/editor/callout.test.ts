@@ -7,6 +7,7 @@ import type { ViewPlugin } from "@codemirror/view";
 
 let getLanguageExtensions: any;
 let calloutPlugin: ViewPlugin<any>;
+let iconRegistry: any;
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -16,6 +17,8 @@ beforeAll(async () => {
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	calloutPlugin = mod.calloutPlugin;
+	const iconMod = await import("./icons.svelte");
+	iconRegistry = iconMod.iconRegistry;
 });
 
 async function makeState(doc: string): Promise<EditorState> {
@@ -42,6 +45,9 @@ function decode(plugin: ViewPlugin<any>, state: EditorState): (string | null)[] 
 			if (s?.class?.startsWith("cm-callout-")) out.push(s.class);
 			else if (s?.class) out.push(`line:${s.class}`);
 			else if (s?.className) out.push(s.className);
+			if (s?.widget) {
+				out.push(`widget:${s.widget.constructor.name}:${s.widget.type}`);
+			}
 		},
 	);
 	return out;
@@ -54,12 +60,51 @@ function nodeNames(state: EditorState): string[] {
 }
 
 describe("#151 callout base", () => {
-	it("recognizes a known type and styles lines + type label with tooltip title", async () => {
+	it("parses callout header as Callout AST node, never as Link", async () => {
+		const state = await makeState("> [!note] Title here");
+		const names = nodeNames(state);
+		expect(names).toContain("Callout");
+		expect(names).toContain("CalloutType");
+		expect(names).toContain("CalloutMark");
+		// Must not contain Link or LinkMark for [!note]
+		expect(names).not.toContain("Link");
+		expect(names).not.toContain("LinkMark");
+	});
+
+	it("preserves links inside callout title and body while keeping callout header unlinked", async () => {
+		const state = await makeState("> [!note] Title with [link](https://example.com)\n> Body with [link2](https://test.com)");
+		const names = nodeNames(state);
+		expect(names).toContain("Callout");
+		expect(names).toContain("CalloutType");
+		expect(names).toContain("Link");
+		expect(names).toContain("URL");
+	});
+
+	it("recognizes a known type and styles lines + type label with tooltip title and icon widget", async () => {
 		const state = await makeState("> [!note] Title here");
 		const deco = decode(calloutPlugin, state);
 		expect(deco).toContain("line:cm-callout cm-callout-note");
 		expect(deco).toContain("cm-callout-type");
 		expect(deco).toContain("title:Title here");
+		expect(deco).toContain("widget:CalloutIconWidget:note");
+	});
+
+	it("resolves dynamic icons from iconRegistry for callout types", () => {
+		const noteChain = iconRegistry.resolveProductIconChain("note");
+		expect(noteChain.length).toBeGreaterThan(0);
+		expect(noteChain[0].type).toBe("component");
+
+		const warningChain = iconRegistry.resolveProductIconChain("warning");
+		expect(warningChain.length).toBeGreaterThan(0);
+		expect(warningChain[0].type).toBe("component");
+
+		const tipChain = iconRegistry.resolveProductIconChain("tip");
+		expect(tipChain.length).toBeGreaterThan(0);
+		expect(tipChain[0].type).toBe("component");
+
+		const dangerChain = iconRegistry.resolveProductIconChain("danger");
+		expect(dangerChain.length).toBeGreaterThan(0);
+		expect(dangerChain[0].type).toBe("component");
 	});
 
 	it("recognizes case-insensitive and aliased types", async () => {

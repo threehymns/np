@@ -3,10 +3,14 @@ import {
 	ViewPlugin,
 	ViewUpdate,
 	EditorView,
+	WidgetType,
 } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { RangeSetBuilder, StateField, StateEffect } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import type { MarkdownConfig } from "@lezer/markdown";
+import { mount } from "svelte";
+import { iconRegistry } from "../icons.svelte";
 
 export const setCalloutFoldEffect = StateEffect.define<number[]>();
 export const toggleCalloutFoldEffect = StateEffect.define<number>();
@@ -38,7 +42,7 @@ export const calloutFoldField = StateField.define<number[]>({
 export const calloutFoldState = calloutFoldField;
 
 /** Obsidian callout type map: type -> { label, aliases }. */
-const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
+export const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
 	note: { label: "note" },
 	abstract: { label: "abstract", aliases: ["summary", "tldr"] },
 	info: { label: "info" },
@@ -54,7 +58,7 @@ const CALLOUT_TYPES: Record<string, { label: string; aliases?: string[] }> = {
 	failure: { label: "failure", aliases: ["fail", "missing"] },
 };
 
-function canonicalType(type: string): string | null {
+export function canonicalType(type: string): string | null {
 	const t = type.trim().toLowerCase();
 	if (CALLOUT_TYPES[t]) return t;
 	for (const [key, val] of Object.entries(CALLOUT_TYPES)) {
@@ -64,10 +68,97 @@ function canonicalType(type: string): string | null {
 }
 
 /**
+ * Lezer Markdown inline extension that intercepts `[!type]` / `[!type]+` / `[!type]-`
+ * before the standard Markdown Link parser so callouts do not parse as Links.
+ */
+export const CalloutExtension: MarkdownConfig = {
+	defineNodes: [
+		{ name: "Callout" },
+		{ name: "CalloutMark" },
+		{ name: "CalloutType" },
+	],
+	parseInline: [
+		{
+			name: "Callout",
+			before: "Link",
+			parse(cx, next, pos) {
+				if (next !== 91 /* [ */) return -1;
+				if (cx.char(pos + 1) !== 33 /* ! */) return -1;
+				let i = pos + 2;
+				while (i < cx.end) {
+					const ch = cx.char(i);
+					if (ch === 93 /* ] */) break;
+					if (ch === 32 || ch === 10) return -1;
+					i++;
+				}
+				if (i >= cx.end || cx.char(i) !== 93) return -1;
+				if (i === pos + 2) return -1;
+
+				let end = i + 1;
+				if (cx.char(end) === 43 /* + */ || cx.char(end) === 45 /* - */) {
+					end++;
+				}
+
+				const start = pos;
+				cx.addElement(
+					cx.elt("Callout", start, end, [
+						cx.elt("CalloutMark", start, start + 2),
+						cx.elt("CalloutType", pos + 2, i),
+						cx.elt("CalloutMark", i, end),
+					]),
+				);
+				return end;
+			},
+		},
+	],
+};
+
+/**
+ * Widget for rendering callout icons dynamically from the active icon theme.
+ */
+export class CalloutIconWidget extends WidgetType {
+	constructor(readonly type: string) {
+		super();
+	}
+
+	eq(other: CalloutIconWidget) {
+		return other.type === this.type;
+	}
+
+	toDOM() {
+		const span = document.createElement("span");
+		span.className = `cm-callout-icon cm-callout-icon-${this.type}`;
+		span.setAttribute("aria-hidden", "true");
+
+		if (typeof document === "undefined") return span;
+
+		try {
+			const chain = iconRegistry.resolveProductIconChain(`callout-${this.type}`);
+			const first = chain[0] ?? iconRegistry.resolveProductIconChain(this.type)[0];
+			if (first) {
+				if (first.type === "component" && typeof mount === "function") {
+					mount(first.value, { target: span, props: { size: 16 } });
+				} else if (first.type === "url") {
+					const img = document.createElement("img");
+					img.src = first.value;
+					img.alt = this.type;
+					img.style.width = "16px";
+					img.style.height = "16px";
+					span.appendChild(img);
+				}
+			}
+		} catch {
+			// Ignore DOM mount error in mock / test environment
+		}
+		return span;
+	}
+}
+
+/**
  * Base callout rendering: a blockquote whose first line opens with `[!type]`
- * gets a callout accent (per-type class) and a colored type/title label on that
- * line; inner content (bold, lists, links) still parses normally. An unknown
- * type falls back to a plain quote with content intact (no decoration).
+ * gets a callout accent (per-type class), a dynamic theme icon widget, and a colored
+ * type/title label on that line; inner content (bold, lists, links) still parses normally.
+ * An unknown type falls back to a plain quote with content intact (no decoration).
  */
 class CalloutPlugin {
 	decorations: DecorationSet;
@@ -134,6 +225,17 @@ class CalloutPlugin {
 
 					const title =
 						(calloutMatch[4] || "").trim() || CALLOUT_TYPES[type].label;
+
+					// Add icon widget before the type marker
+					add(
+						markerStart,
+						markerStart,
+						Decoration.widget({
+							widget: new CalloutIconWidget(type),
+							side: -1,
+						}),
+					);
+
 					add(
 						markerStart,
 						markerEnd,

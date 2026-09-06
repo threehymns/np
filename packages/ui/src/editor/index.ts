@@ -65,7 +65,7 @@ import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
 import { blockquotePlugin } from "./extensions/blockquote";
 import { horizontalRulePlugin } from "./extensions/hr";
-import { calloutPlugin, calloutFoldField } from "./extensions/callout";
+import { calloutPlugin, calloutFoldField, CalloutExtension } from "./extensions/callout";
 import { taskCheckboxPlugin, toggleTaskKeymap } from "./extensions/tasks";
 import { sizeBadgePlugin } from "./extensions/image-size";
 import { embedPlugin } from "./extensions/embeds";
@@ -91,6 +91,7 @@ import { htmlPassthroughPlugin } from "./extensions/html";
 const markdownFeatureConfigs: MarkdownExtension[] = [
 	Table,
 	GFM,
+	CalloutExtension,
 	WikiLinkExtension,
 	StrikethroughExtension,
 	HighlightExtension,

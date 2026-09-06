@@ -1,4 +1,27 @@
-import { File, FileCode, FileText, Code, Globe, Database, Gear, Folder, FolderOpen } from "phosphor-svelte";
+import {
+	File,
+	FileCode,
+	FileText,
+	Code,
+	Globe,
+	Database,
+	Gear,
+	Folder,
+	FolderOpen,
+	PencilSimple,
+	Article,
+	Info,
+	CheckSquare,
+	Lightbulb,
+	CheckCircle,
+	Question,
+	Warning,
+	WarningOctagon,
+	Bug,
+	Flask,
+	Quotes,
+	XCircle,
+} from "phosphor-svelte";
 import type {
 	ZedIconTheme,
 	ResolvedIcon,
@@ -35,8 +58,58 @@ export class PhosphorIconProvider implements FileIconProvider, ProductIconProvid
 	}
 
 	resolveProductIcon(iconName: string): ResolvedIcon | null {
+		const productComp = this.getComponentByProduct(iconName);
+		if (productComp) return { type: 'component', value: productComp };
 		const comp = this.getComponentByLanguage(iconName);
 		return comp ? { type: 'component', value: comp } : null;
+	}
+
+	private getComponentByProduct(name: string): any | null {
+		const lower = name.toLowerCase().replace(/^callout-/, "");
+		switch (lower) {
+			case "note":
+				return PencilSimple;
+			case "abstract":
+			case "summary":
+			case "tldr":
+				return Article;
+			case "info":
+				return Info;
+			case "todo":
+				return CheckSquare;
+			case "tip":
+			case "hint":
+			case "important":
+				return Lightbulb;
+			case "success":
+			case "check":
+			case "done":
+				return CheckCircle;
+			case "question":
+			case "help":
+			case "faq":
+				return Question;
+			case "warning":
+			case "caution":
+			case "attention":
+				return Warning;
+			case "danger":
+			case "error":
+				return WarningOctagon;
+			case "bug":
+				return Bug;
+			case "example":
+				return Flask;
+			case "quote":
+			case "cite":
+				return Quotes;
+			case "failure":
+			case "fail":
+			case "missing":
+				return XCircle;
+			default:
+				return null;
+		}
 	}
 
 	private getComponentByExtension(ext: string): any | null {
@@ -287,123 +360,29 @@ export class IconRegistry implements IconRegistryInterface {
 	getFolderIcon(name: string): any {
 		const chain = this.resolveFolderIconChain(name, { expanded: false });
 		const first = chain[0];
-		if (!first || first.type === 'empty') return Folder;
+		if (!first || first.type === 'empty') return null;
 		return first.value;
 	}
 
 	getThemeDefaultFileIcon(): any {
-		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const activeProvider = this.fileThemes[this.activeFileThemeId];
 		const first = activeProvider?.getDefaultFileIcon();
-		if (!first || first.type === 'empty') return File;
+		if (!first || first.type === 'empty') return null;
 		return first.value;
 	}
 
 	getThemeDefaultFolderIcon(): any {
-		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const activeProvider = this.fileThemes[this.activeFileThemeId];
 		const first = activeProvider?.getDefaultFolderIcon({ expanded: false });
-		if (!first || first.type === 'empty') return Folder;
+		if (!first || first.type === 'empty') return null;
 		return first.value;
 	}
 
 	getThemeDefaultFolderExpandedIcon(): any {
-		const activeProvider = this.fileThemes[this.activeFileThemeId] || this.fileThemes['phosphor'];
+		const activeProvider = this.fileThemes[this.activeFileThemeId];
 		const first = activeProvider?.getDefaultFolderIcon({ expanded: true });
-		if (!first || first.type === 'empty') return FolderOpen;
+		if (!first || first.type === 'empty') return null;
 		return first.value;
-	}
-
-	async installThemeFromGitHub(repoUrl: string): Promise<{ id: string; name: string } | null> {
-		const normalizedUrl = this.normalizeGitHubUrl(repoUrl);
-		if (!normalizedUrl) return null;
-
-		const { owner, repo, ref } = normalizedUrl;
-		const themeUrl = await this.resolveThemeDocumentUrl(owner, repo, ref);
-		if (!themeUrl) return null;
-
-		const theme = await fetchZedTheme(themeUrl);
-		if (!theme) return null;
-
-		const baseUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/`;
-		const id = `installed-${normalizedUrl.owner}-${normalizedUrl.repo}`;
-		const name = theme.name || id;
-
-		let provider: ManifestIconProvider;
-		try {
-			provider = new ManifestIconProvider(id, name, theme, baseUrl);
-		} catch (e) {
-			console.warn('Rejected invalid icon theme manifest:', e);
-			return null;
-		}
-		this.registerFileTheme(id, provider);
-
-		this.cacheTheme(id, name, baseUrl, theme);
-
-		return { id, name };
-	}
-
-	// The CDN serves a directory listing instead of JSON for folder URLs, so the
-	// exact theme document path must be looked up before fetching.
-	private async resolveThemeDocumentUrl(owner: string, repo: string, ref: string): Promise<string | null> {
-		try {
-			const response = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${ref}?structure=flat`);
-			if (!response.ok) return null;
-			const data = await response.json() as { files?: Array<{ name?: string }> };
-			const themeFile = (data.files ?? []).find(
-				(f) => typeof f.name === 'string' && f.name.startsWith('/icon_themes/') && f.name.endsWith('.json')
-			);
-			return themeFile?.name
-				? `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}${themeFile.name}`
-				: null;
-		} catch {
-			return null;
-		}
-	}
-
-	private normalizeGitHubUrl(url: string): { owner: string; repo: string; ref: string } | null {
-		const cleaned = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
-		const match = cleaned.match(/github\.com\/([^/]+)\/([^/@]+)(?:@(.+))?/);
-		if (!match) return null;
-
-		return {
-			owner: match[1],
-			repo: match[2],
-			ref: match[3] || 'main',
-		};
-	}
-
-	private cacheTheme(id: string, name: string, baseUrl: string, theme: ZedIconTheme) {
-		if (typeof window === 'undefined') return;
-
-		try {
-			const installed = this.loadInstalledThemes();
-			if (!installed.find(t => t.id === id)) {
-				installed.push({ id, name, baseUrl });
-				localStorage.setItem('np-installed-icon-themes', JSON.stringify(installed));
-			}
-
-			localStorage.setItem(`np-icon-theme-cache-${id}`, JSON.stringify(theme));
-		} catch (e) {
-			console.warn('Failed to cache theme:', e);
-		}
-	}
-
-	async uninstallTheme(id: string) {
-		if (BUILTIN_FILE_THEME_IDS.has(id)) return;
-
-		delete this.fileThemes[id];
-
-		if (this.activeFileThemeId === id) {
-			this.activeFileThemeId = 'phosphor';
-		}
-
-		if (typeof window !== 'undefined') {
-			try {
-				const installed = this.loadInstalledThemes().filter(t => t.id !== id);
-				localStorage.setItem('np-installed-icon-themes', JSON.stringify(installed));
-				localStorage.removeItem(`np-icon-theme-cache-${id}`);
-			} catch {
-			}
-		}
 	}
 }
 

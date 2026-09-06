@@ -211,18 +211,87 @@
   display: none !important;
 }
 
-/* Obsidian callouts (#151): accent'd blockquote + type/title label */
+/* Obsidian callouts (#151): accent'd blockquote + dynamic theme color + icon */
 .cm-callout {
-	background-color: color-mix(in srgb, var(--accent), transparent 92%);
-	border-left: 3px solid var(--accent);
+	--callout-color: var(--code-function);
+	background-color: color-mix(in srgb, var(--callout-color), transparent 92%);
+	border-left: 3px solid var(--callout-color);
 }
 .cm-callout-type {
-	color: var(--accent-foreground);
+	color: var(--callout-color);
 	font-weight: 600;
 }
 .cm-callout-title {
 	color: var(--foreground);
 	font-weight: 600;
+}
+.cm-callout-icon {
+	display: inline-flex;
+	align-items: center;
+	vertical-align: -0.125em;
+	margin-right: 0.35rem;
+	color: var(--callout-color);
+}
+.cm-callout-icon svg,
+.cm-callout-icon img {
+	width: 1em;
+	height: 1em;
+	display: inline-block;
+}
+
+/* Dynamic color theme mappings per callout type */
+.cm-callout-note {
+	--callout-color: var(--code-function);
+}
+.cm-callout-abstract,
+.cm-callout-summary,
+.cm-callout-tldr {
+	--callout-color: var(--code-operator);
+}
+.cm-callout-info {
+	--callout-color: var(--code-function);
+}
+.cm-callout-todo {
+	--callout-color: var(--code-operator);
+}
+.cm-callout-tip,
+.cm-callout-hint,
+.cm-callout-important {
+	--callout-color: var(--code-string);
+}
+.cm-callout-success,
+.cm-callout-check,
+.cm-callout-done {
+	--callout-color: var(--code-string);
+}
+.cm-callout-question,
+.cm-callout-help,
+.cm-callout-faq {
+	--callout-color: var(--code-type);
+}
+.cm-callout-warning,
+.cm-callout-caution,
+.cm-callout-attention {
+	--callout-color: var(--code-number);
+}
+.cm-callout-danger,
+.cm-callout-error {
+	--callout-color: var(--destructive);
+}
+.cm-callout-bug {
+	--callout-color: var(--destructive);
+}
+.cm-callout-example {
+	--callout-color: var(--code-keyword);
+}
+.cm-callout-quote,
+.cm-callout-cite {
+	--callout-color: var(--muted-foreground);
+}
+.cm-callout-failure,
+.cm-callout-fail,
+.cm-callout-missing {
+	--callout-color: var(--destructive);
 }
 
 /* Task checkboxes (#152): custom checkbox styled to match UI theme */
@@ -397,24 +466,4 @@
 	border: 1px solid var(--border, #ccc);
 	padding: 0.35rem 0.6rem;
 	text-align: left;
-}
-
-.cm-html-block-widget th {
-	background: var(--muted, rgba(128, 128, 128, 0.1));
-	font-weight: 600;
-}
-
-.cm-html-block-widget details {
-	margin: 0.5rem 0;
-	padding: 0.25rem 0;
-}
-
-.cm-html-block-widget summary {
-	cursor: pointer;
-	font-weight: 600;
-}
-
-.cm-html-block-widget iframe {
-	border: none;
-	max-width: 100%;
 }
