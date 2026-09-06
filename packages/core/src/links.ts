@@ -538,7 +538,7 @@ export async function openInternalLink(
 
 	if (!parsed.path) {
 		// Same-note anchor link (e.g. [[#Heading]] or [[#^block-id]])
-		targetDoc = currentDoc ?? workspace.activeDocument ?? null;
+		targetDoc = currentDoc;
 	} else {
 		// Target is in a note
 		const allowCreate = options.allowCreate !== undefined ? options.allowCreate : !parsed.isEmbed;
