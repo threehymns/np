@@ -163,7 +163,7 @@ export class AppState {
 			};
 
 			(window as any).electronAPI.onWindowShown(safeInit);
-			setTimeout(safeInit, 2000); // 2s safeguard
+			setTimeout(safeInit, 2000); // 2s safeguard # TODO: this seems like a bad practice. Look into the Svelte docs about better alternatives.
 		} else if (typeof requestIdleCallback !== 'undefined') {
 			requestIdleCallback(() => { void deferredInit(); });
 		} else {
