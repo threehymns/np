@@ -87,12 +87,60 @@ app.whenReady().then(() => {
 	});
 });
 
-app.on('before-quit', () => {
-	sessionPersistence.flushSync();
-	if (configWatcher) {
-		configWatcher.close();
-		configWatcher = null;
-	}
+/**
+ * Asks the renderer to flush its session state via awaited IPC saves and
+ * waits for the preload's `session:flush-complete` reply (or a timeout).
+ * Ensures Workspace.flushSaveOpenFiles()'s IPC work lands in the engine's
+ * in-memory cache before flushSync() writes it to disk. Resolves
+ * immediately when there is no live window to ask.
+ */
+function requestRendererFlush(timeoutMs = 2000): Promise<void> {
+	return new Promise((resolve) => {
+		if (!mainWindow || mainWindow.isDestroyed()) {
+			resolve();
+			return;
+		}
+		const timer = setTimeout(() => {
+			ipcMain.removeListener('session:flush-complete', onComplete);
+			resolve();
+		}, timeoutMs);
+		const onComplete = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		ipcMain.once('session:flush-complete', onComplete);
+		try {
+			mainWindow.webContents.send('session:flush-request');
+		} catch {
+			clearTimeout(timer);
+			ipcMain.removeListener('session:flush-complete', onComplete);
+			resolve();
+		}
+	});
+}
+
+let isQuitting = false;
+app.on('before-quit', (e) => {
+	if (isQuitting) return;
+	e.preventDefault();
+	isQuitting = true;
+	(async () => {
+		try {
+			await requestRendererFlush(2000);
+			try {
+				await sessionPersistence.flush();
+			} catch (err) {
+				console.error('Failed to flush persistence during quit:', err);
+			}
+		} finally {
+			sessionPersistence.flushSync();
+			if (configWatcher) {
+				configWatcher.close();
+				configWatcher = null;
+			}
+			app.quit();
+		}
+	})();
 });
 
 app.on('window-all-closed', () => {
@@ -235,6 +283,14 @@ function registerIpcHandlers() {
 		} catch (e) {
 			console.error('Failed to load all persistence:', e);
 			return {};
+		}
+	});
+
+	ipcMain.handle('persistence:flush', async () => {
+		try {
+			await sessionPersistence.flush();
+		} catch (e) {
+			console.error('Failed to flush persistence:', e);
 		}
 	});
 

@@ -76,7 +76,7 @@ export class Workspace {
 			clearTimeout(this.saveOpenFilesTimeout);
 		}
 		this.saveOpenFilesTimeout = setTimeout(() => {
-			this.flushSaveOpenFiles();
+			this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
 		}, 500);
 	}
 
@@ -118,13 +118,13 @@ export class Workspace {
 		}).filter(Boolean) as SerializedDocument[];
 	}
 
-	flushSaveOpenFiles() {
+	async flushSaveOpenFiles(): Promise<void> {
 		if (this.isRestoring) return;
 
 		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 		const serializedDocs = this.serializeTabs();
 
-		this.persistence.saveOpenFiles(serializedDocs, folderUri);
+		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
@@ -166,7 +166,9 @@ export class Workspace {
 				if (this.isRestoring) return;
 				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
-				untrack(() => this.flushSaveOpenFiles());
+				untrack(() => {
+					void this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
+				});
 			});
 
 			$effect(() => {
@@ -306,7 +308,7 @@ export class Workspace {
 		if (!granted) return;
 
 		// Save old state
-		this.flushSaveOpenFiles();
+		await this.flushSaveOpenFiles();
 		const oldFolderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 		await this.saveFolderState(oldFolderUri);
 

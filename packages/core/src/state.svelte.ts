@@ -187,7 +187,7 @@ export class AppState {
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string) { this.workspace.closeTab(id); }
 	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
-	flushSaveOpenFiles() { this.workspace.flushSaveOpenFiles(); }
+	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
 }
 
 export function useAppState(): AppState {

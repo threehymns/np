@@ -16,6 +16,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	persistenceSave: (key: string, value: any) => ipcRenderer.invoke('persistence:save', key, value),
 	persistenceLoad: (key: string) => ipcRenderer.invoke('persistence:load', key),
 	persistenceLoadAll: () => ipcRenderer.invoke('persistence:loadAll'),
+	persistenceFlush: () => ipcRenderer.invoke('persistence:flush'),
+	onSessionFlushRequest: (handler: () => Promise<void> | void) => {
+		const listener = async () => {
+			try {
+				await handler();
+			} finally {
+				ipcRenderer.send('session:flush-complete');
+			}
+		};
+		ipcRenderer.on('session:flush-request', listener);
+		return () => {
+			ipcRenderer.removeListener('session:flush-request', listener);
+		};
+	},
 	showWindow: () => ipcRenderer.invoke('window:show'),
 	onWindowShown: (callback: () => void) => ipcRenderer.once('window-shown', () => callback()),
 	readFileUserKeymap: () => ipcRenderer.invoke('keymap:read'),

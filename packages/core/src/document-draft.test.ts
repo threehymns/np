@@ -57,7 +57,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc).toBeDefined();
 
 		// Disk content is unchanged, so initial draftContent is undefined
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		let saved = await persistence.loadOpenFiles("");
 		expect(saved[saved.length - 1].draftContent).toBeUndefined();
 
@@ -66,7 +66,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc!.isModified).toBe(true);
 
 		// Flush persistence and verify draftContent is persisted
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		saved = await persistence.loadOpenFiles("");
 		const savedDoc = saved.find(d => d.id === doc!.id);
 		expect(savedDoc?.draftContent).toBe("Modified draft text");
@@ -122,7 +122,7 @@ describe("Document draft and keystroke decoupling", () => {
 
 		doc1.content = "Keystroke edit in doc 1";
 		ws.activeTabId = doc2.id;
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 
 		const saved = await persistence.loadOpenFiles("");
 		const savedDoc1 = saved.find(d => d.id === doc1.id);
@@ -148,7 +148,7 @@ describe("Document draft and keystroke decoupling", () => {
 
 		const doc = await ws.openFile({ scheme: "file", path: "/test.txt", name: "test.txt" });
 		doc!.content = "Brand new unsaved edits";
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 
 		let saved = await persistence.loadOpenFiles("");
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBe("Brand new unsaved edits");
@@ -158,7 +158,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(saveSuccess).toBe(true);
 		expect(doc!.isModified).toBe(false);
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		saved = await persistence.loadOpenFiles("");
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBeUndefined();
 	});
@@ -245,7 +245,7 @@ describe("Document draft and keystroke decoupling", () => {
 		// flush does not omit the deletion draft.
 		expect(doc.isModified).toBe(true);
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		let saved = await persistence.loadOpenFiles("");
 		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
 
@@ -255,7 +255,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.content).toBe("");
 		expect(doc.isModified).toBe(true);
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		saved = await persistence.loadOpenFiles("");
 		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
 	});
