@@ -57,7 +57,7 @@ export class SessionPersistenceEngine {
 	}
 
 	/**
-	 * Updates the in-memory cache synchronously (if loaded) and schedules a debounced disk write.
+	 * Updates the in-memory cache and schedules a debounced disk write.
 	 */
 	public async save(key: string, value: any): Promise<void> {
 		const data = await this.getPersistenceData();
@@ -69,18 +69,23 @@ export class SessionPersistenceEngine {
 
 	/**
 	 * Loads a value from the in-memory session cache (falling back to disk on cold start).
+	 * Returns a deep clone so callers cannot mutate the live cache without going
+	 * through save().
 	 */
 	public async load(key: string): Promise<any> {
 		const data = await this.getPersistenceData();
-		return data[key] ?? null;
+		const value = data[key];
+		return value === undefined ? null : structuredClone(value);
 	}
 
 	/**
 	 * Loads the full dictionary from the in-memory session cache.
+	 * Returns a deep clone so callers cannot mutate the live cache without going
+	 * through save().
 	 */
 	public async loadAll(): Promise<Record<string, any>> {
 		const data = await this.getPersistenceData();
-		return { ...data };
+		return structuredClone(data);
 	}
 
 	/**

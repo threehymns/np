@@ -373,6 +373,27 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		}
 	});
 
+	it('returns deep clones so callers cannot corrupt the in-memory cache', async () => {
+		const engine = new SessionPersistenceEngine({
+			getFilePath: () => sessionFilePath,
+			debounceMs: 500
+		});
+
+		await engine.save('nested', { list: [1, 2, 3] });
+
+		const loaded = await engine.load('nested');
+		loaded.list.push(999);
+		expect(await engine.load('nested')).toEqual({ list: [1, 2, 3] });
+
+		const all = await engine.loadAll();
+		all.nested.list.push(999);
+		(all as any).injected = true;
+		expect(await engine.loadAll()).toEqual({ nested: { list: [1, 2, 3] } });
+		expect(engine.getInMemoryCache()).toEqual({ nested: { list: [1, 2, 3] } });
+
+		engine.flushSync();
+	});
+
 	it('commits latest data when save happens between queue and execution', async () => {
 		const filePath = path.join(testDir, 'queued.json');
 		const engine = new SessionPersistenceEngine({
