@@ -186,6 +186,40 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.isLoaded).toBe(true);
 	});
 
+	it("save captures content at write start so keystrokes during save stay dirty", async () => {
+		const storage = createMockStorage({
+			verifyPermission: async () => true,
+			queryPermission: async () => "granted"
+		});
+		let resolveSave!: (v: FileOrigin) => void;
+		const gate = new Promise<FileOrigin>((r) => {
+			resolveSave = r;
+		});
+		let writtenContent: string | null = null;
+		storage.saveFile = mock(async (content) => {
+			writtenContent = content;
+			return gate;
+		}) as any;
+
+		// Untitled (origin null) skips the async permission check, so the
+		// content snapshot is taken synchronously and the edit below lands
+		// strictly during the in-flight saveFile — the reported race window.
+		const doc = makeDocSession(storage, "original", null);
+		expect(doc.isModified).toBe(false);
+
+		const saving = doc.save();
+		// User types while the async save is in flight.
+		doc.content = "original + newer edit";
+
+		resolveSave({ scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin);
+		const ok = await saving;
+		expect(ok).toBe(true);
+		// Disk received the older snapshot; the newer edit must stay dirty.
+		expect(writtenContent).toBe("original");
+		expect(doc.isModified).toBe(true);
+		expect(doc.content).toBe("original + newer edit");
+	});
+
 	it("keystroke editing directly invokes debouncedSaveOpenFiles without modifying structural tabs/docs identity", async () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createMockStorage();

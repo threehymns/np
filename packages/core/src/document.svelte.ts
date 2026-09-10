@@ -177,10 +177,11 @@ export class DocumentSession {
 		}
 
 		const targetOrigin = options.forceNewOrigin ? undefined : (this.origin ?? undefined);
-		const newOrigin = await this.storage.saveFile(this._content, targetOrigin);
+		const contentToSave = this._content;
+		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
-			this.savedContent = this._content;
+			this.savedContent = contentToSave;
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
 			if (this.workspace?.repository) {
