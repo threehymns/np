@@ -82,25 +82,35 @@ describe('ConfigWatcher', () => {
 			}
 		});
 
-		watcher.start();
+		// Emit defined unrelated filenames through a mocked watcher callback.
+		// Real fs.watch() may report null filenames for directory activity,
+		// which ConfigWatcher conservatively treats as a possible config
+		// change — asserting on live FS events would be flaky.
+		const fsSync = await import('fs');
+		const realWatch = fsSync.default.watch;
+		let watchCallback: ((eventType: string, filename: string | null) => void) | null = null;
+		(fsSync.default as any).watch = mock((_dir: unknown, cb: typeof watchCallback) => {
+			watchCallback = cb;
+			return { close: () => {} } as any;
+		});
 
-		// Create and modify unrelated files and subdirectories
-		const stateDir = path.join(testDir, 'state');
-		await fs.mkdir(stateDir, { recursive: true });
-		await fs.writeFile(path.join(stateDir, 'workspace-session.json'), '{"tabs":[]}', 'utf-8');
+		try {
+			watcher.start();
+			expect(watchCallback).not.toBeNull();
 
-		const gpuCacheDir = path.join(testDir, 'GPUCache');
-		await fs.mkdir(gpuCacheDir, { recursive: true });
-		await fs.writeFile(path.join(gpuCacheDir, 'data_0'), 'binary-cache-data', 'utf-8');
+			watchCallback!('change', 'workspace-session.json');
+			watchCallback!('change', 'GPUCache');
+			watchCallback!('change', 'unrelated.txt');
+			watchCallback!('rename', 'state');
 
-		await fs.writeFile(path.join(testDir, 'unrelated.txt'), 'hello world', 'utf-8');
+			// Wait past the debounce window; no broadcast should occur.
+			await new Promise((r) => setTimeout(r, 100));
 
-		// Wait for potential watcher events to settle
-		await new Promise((r) => setTimeout(r, 100));
-
-		watcher.close();
-
-		expect(called).toBe(false);
+			expect(called).toBe(false);
+		} finally {
+			(fsSync.default as any).watch = realWatch;
+			watcher.close();
+		}
 	});
 
 	it('handles null/empty filenames conservatively but discards mismatched names', async () => {
