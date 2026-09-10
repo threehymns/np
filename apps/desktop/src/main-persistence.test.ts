@@ -50,6 +50,10 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 
 		// Disk file should NOT exist yet because debounce is 200ms
 		expect(fsSync.existsSync(sessionFilePath)).toBe(false);
+
+		// Complete the scheduled debounced write before teardown so the timer
+		// cannot recreate testDir after afterEach removes it.
+		engine.flushSync();
 	});
 
 	it('debounces background disk writes to the configured interval', async () => {
@@ -233,6 +237,10 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 			await engine.save('key1', 'value1');
 			expect(await engine.load('key1')).toBe('value1');
 			expect(engine.getInMemoryCache()).toEqual({ key1: 'value1' });
+
+			// Complete the scheduled debounced write before the next iteration
+			// / teardown so the timer cannot recreate testDir after cleanup.
+			engine.flushSync();
 		}
 	});
 
