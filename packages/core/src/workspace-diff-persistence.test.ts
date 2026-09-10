@@ -66,7 +66,7 @@ describe("diff tab session persistence", () => {
 		ws.repository.activeDiffFile = ws.repository.changes[1];
 		ws.tabs.push({ id: "__project_diff__", type: "diff" });
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 
 		const saved = await persistence.loadOpenFiles("");
 		const diffEntry = saved.find(d => d.virtualTabType === "diff");
@@ -221,7 +221,7 @@ describe("diff tab session persistence", () => {
 		await ws.restoreSession();
 		expect(ws.repository?.activeDiffFile).toBeNull();
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		const saved = await persistence.loadOpenFiles(folderUri);
 		const diffEntry = saved.find(d => d.virtualTabType === "diff");
 		expect(diffEntry?.diffFilepath).toBe("docs/b.md");

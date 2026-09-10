@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
@@ -70,12 +71,12 @@ export class Workspace {
 		}
 	}
 
-	private debouncedSaveOpenFiles() {
+	debouncedSaveOpenFiles() {
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
 		}
 		this.saveOpenFilesTimeout = setTimeout(() => {
-			this.flushSaveOpenFiles();
+			this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
 		}, 500);
 	}
 
@@ -117,18 +118,18 @@ export class Workspace {
 		}).filter(Boolean) as SerializedDocument[];
 	}
 
-	flushSaveOpenFiles() {
+  async flushSaveOpenFiles(): Promise<void> {
 		if (this.isRestoring) return;
-
-		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-		const serializedDocs = this.serializeTabs();
-
-		this.persistence.saveOpenFiles(serializedDocs, folderUri);
 
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
 			this.saveOpenFilesTimeout = null;
 		}
+
+		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const serializedDocs = this.serializeTabs();
+
+		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 	}
 
 	constructor(
@@ -143,7 +144,10 @@ export class Workspace {
 		$effect.root(() => {
 			$effect(() => {
 				const activeDoc = this.activeDocument;
-				if (activeDoc && activeDoc.origin && activeDoc.content === '' && activeDoc.isLoaded === false) {
+				// Skip when already modified so a restore + fast-typing window
+				// doesn't schedule a load that would clobber keystrokes;
+				// loadContent itself also rebases instead of overwriting.
+				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded && !activeDoc.isModified) {
 					activeDoc.loadContent();
 				}
 			});
@@ -153,12 +157,7 @@ export class Workspace {
 				
 				const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				const _tabs = this.tabs.map(t => t.id).join(',');
-				this.documents.forEach(doc => {
-					const _c = doc.content;
-					const _m = doc.isModified;
-					const _o = doc.origin;
-					const _t = doc.untitledTitle;
-				});
+				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
 				
 				this.debouncedSaveOpenFiles();
 			});
@@ -167,6 +166,9 @@ export class Workspace {
 				if (this.isRestoring) return;
 				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+				untrack(() => {
+					void this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
+				});
 			});
 
 			$effect(() => {
@@ -306,7 +308,7 @@ export class Workspace {
 		if (!granted) return;
 
 		// Save old state
-		this.flushSaveOpenFiles();
+		await this.flushSaveOpenFiles();
 		const oldFolderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
 		await this.saveFolderState(oldFolderUri);
 

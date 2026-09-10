@@ -1,6 +1,7 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
   import { AppState, KeymapStorageProvider, ManifestIconProvider, type ExportService } from "@np/core";
+  import { toURI } from "@np/core/storage";
   import { iconRegistry } from "@np/ui";
   import { MultiSchemeStorage } from "@np/core/storage";
   import { ElectronStorage } from "./ElectronStorage";
@@ -65,8 +66,23 @@
       appState.prefs.reload();
     });
 
+    // Main-process before-quit handshake: persist the latest workspace state
+    // via awaited IPC saves, then ask main to flush the debounced engine to
+    // disk. The preload notifies main on completion (even on error) so quit
+    // proceeds; flushSync in main remains the final safety net.
+    const unsubscribeFlush = window.electronAPI?.onSessionFlushRequest?.(async () => {
+      try {
+        const folderUri = appState.workspace.rootOrigin ? toURI(appState.workspace.rootOrigin) : '';
+        await appState.workspace.saveFolderState(folderUri);
+        await window.electronAPI.persistenceFlush();
+      } catch (e) {
+        console.error('[App] Session flush before quit failed', e);
+      }
+    });
+
     return () => {
       unsubscribeConfig?.();
+      unsubscribeFlush?.();
     };
   });
 </script>

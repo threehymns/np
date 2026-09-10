@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
+import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -20,28 +21,13 @@ let configWatcher: ConfigWatcher | null = null;
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
 	const userPath = app.getPath('userData');
-	return path.join(userPath, 'np-workspace-persistence.json');
+	return path.join(userPath, 'state', 'workspace-session.json');
 };
 
-async function readPersistenceFile(): Promise<Record<string, any>> {
-	const filePath = getAppDataPath();
-	try {
-		const content = await fs.readFile(filePath, 'utf-8');
-		return JSON.parse(content);
-	} catch {
-		return {};
-	}
-}
-
-async function writePersistenceFile(data: Record<string, any>): Promise<void> {
-	const filePath = getAppDataPath();
-	try {
-		await fs.mkdir(path.dirname(filePath), { recursive: true });
-		await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-	} catch (e) {
-		console.error('Failed to write persistence file', e);
-	}
-}
+const sessionPersistence = new SessionPersistenceEngine({
+	getFilePath: getAppDataPath,
+	debounceMs: 500
+});
 
 function createWindow() {
 	mainWindow = new BrowserWindow({
@@ -101,11 +87,60 @@ app.whenReady().then(() => {
 	});
 });
 
-app.on('before-quit', () => {
-	if (configWatcher) {
-		configWatcher.close();
-		configWatcher = null;
-	}
+/**
+ * Asks the renderer to flush its session state via awaited IPC saves and
+ * waits for the preload's `session:flush-complete` reply (or a timeout).
+ * Ensures Workspace.flushSaveOpenFiles()'s IPC work lands in the engine's
+ * in-memory cache before flushSync() writes it to disk. Resolves
+ * immediately when there is no live window to ask.
+ */
+function requestRendererFlush(timeoutMs = 2000): Promise<void> {
+	return new Promise((resolve) => {
+		if (!mainWindow || mainWindow.isDestroyed()) {
+			resolve();
+			return;
+		}
+		const timer = setTimeout(() => {
+			ipcMain.removeListener('session:flush-complete', onComplete);
+			resolve();
+		}, timeoutMs);
+		const onComplete = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		ipcMain.once('session:flush-complete', onComplete);
+		try {
+			mainWindow.webContents.send('session:flush-request');
+		} catch {
+			clearTimeout(timer);
+			ipcMain.removeListener('session:flush-complete', onComplete);
+			resolve();
+		}
+	});
+}
+
+let isQuitting = false;
+app.on('before-quit', (e) => {
+	if (isQuitting) return;
+	e.preventDefault();
+	isQuitting = true;
+	(async () => {
+		try {
+			await requestRendererFlush(2000);
+			try {
+				await sessionPersistence.flush();
+			} catch (err) {
+				console.error('Failed to flush persistence during quit:', err);
+			}
+		} finally {
+			sessionPersistence.flushSync();
+			if (configWatcher) {
+				configWatcher.close();
+				configWatcher = null;
+			}
+			app.quit();
+		}
+	})();
 });
 
 app.on('window-all-closed', () => {
@@ -225,42 +260,38 @@ function registerIpcHandlers() {
 	});
 
 	// Persistence handlers
-	let persistenceLock: Promise<void> = Promise.resolve();
-
 	ipcMain.handle('persistence:save', async (_, key: string, value: any) => {
-		persistenceLock = persistenceLock.then(async () => {
-			try {
-				const data = await readPersistenceFile();
-				data[key] = value;
-				await writePersistenceFile(data);
-			} catch (e) {
-				console.error(`Failed to save persistence key "${key}":`, e);
-			}
-		});
-		return persistenceLock;
+		try {
+			await sessionPersistence.save(key, value);
+		} catch (e) {
+			console.error(`Failed to save persistence key "${key}":`, e);
+		}
 	});
 
 	ipcMain.handle('persistence:load', async (_, key: string) => {
-		return persistenceLock.then(async () => {
-			try {
-				const data = await readPersistenceFile();
-				return data[key] ?? null;
-			} catch (e) {
-				console.error(`Failed to load persistence key "${key}":`, e);
-				return null;
-			}
-		});
+		try {
+			return await sessionPersistence.load(key);
+		} catch (e) {
+			console.error(`Failed to load persistence key "${key}":`, e);
+			return null;
+		}
 	});
 
 	ipcMain.handle('persistence:loadAll', async () => {
-		return persistenceLock.then(async () => {
-			try {
-				return await readPersistenceFile();
-			} catch (e) {
-				console.error('Failed to load all persistence:', e);
-				return {};
-			}
-		});
+		try {
+			return await sessionPersistence.loadAll();
+		} catch (e) {
+			console.error('Failed to load all persistence:', e);
+			return {};
+		}
+	});
+
+	ipcMain.handle('persistence:flush', async () => {
+		try {
+			await sessionPersistence.flush();
+		} catch (e) {
+			console.error('Failed to flush persistence:', e);
+		}
 	});
 
 	ipcMain.handle('window:show', () => {

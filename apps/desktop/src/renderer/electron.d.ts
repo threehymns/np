@@ -13,6 +13,8 @@ export interface ElectronAPI {
 	persistenceSave(key: string, value: any): Promise<void>;
 	persistenceLoad(key: string): Promise<any>;
 	persistenceLoadAll(): Promise<Record<string, any>>;
+	persistenceFlush(): Promise<void>;
+	onSessionFlushRequest(handler: () => Promise<void> | void): () => void;
 	showWindow(): Promise<void>;
 	onWindowShown(callback: () => void): void;
 	readFileUserKeymap(): Promise<string | null>;

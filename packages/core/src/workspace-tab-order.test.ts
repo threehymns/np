@@ -42,7 +42,7 @@ describe("tab ordering stays in lockstep", () => {
 
 		expect(docTabs(ws.tabs)).toEqual([third!.id, first.id, second!.id]);
 
-		ws.flushSaveOpenFiles();
+		await ws.flushSaveOpenFiles();
 		const saved = await persistence.loadOpenFiles('');
 		expect(saved.map(s => s.id)).toEqual(ws.tabs.map(t => t.id));
 	});

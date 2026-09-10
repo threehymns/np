@@ -59,7 +59,11 @@ export class ConfigWatcher {
 
 		try {
 			// Watch the directory rather than the file directly, so atomic renames/editor replacements don't stop the watcher
-			this.watcher = fsSync.watch(dir, (eventType, filename) => {
+			this.watcher = fsSync.watch(dir, (_eventType, filename) => {
+				// `filename` is null when the OS cannot provide one (e.g.
+				// rename/replace on Linux/macOS). Treat unknown as maybe-ours
+				// and re-read; filter only defined non-matching names to skip
+				// `state/` / `GPUCache` / unrelated-file churn.
 				if (!filename || filename === targetFile) {
 					this.handleFileChange();
 				}

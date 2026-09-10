@@ -43,8 +43,11 @@
 		// started in `beforeunload` may not finish before teardown. `pagehide`
 		// and `visibilitychange` → hidden fire earlier and more reliably,
 		// giving the save a head start; `beforeunload` stays as the last try.
+		// On desktop the main-process before-quit handshake (see
+		// apps/desktop) awaits the IPC save before flushing to disk, so this
+		// remains a best-effort head start rather than the final guarantee.
 		const flushSession = () => {
-			appState.flushSaveOpenFiles();
+			appState.flushSaveOpenFiles().catch((e) => console.error('[AppShell] flushSaveOpenFiles failed', e));
 		};
 		const handleVisibilityChange = () => {
 			if (typeof document === 'undefined') return;
