@@ -163,6 +163,29 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBeUndefined();
 	});
 
+	it("loadContent preserves keystrokes typed while the async read is in flight", async () => {
+		const storage = createMockStorage();
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const doc = makeDocSession(storage, "", origin);
+		expect(doc.isLoaded).toBe(false);
+
+		const load = doc.loadContent();
+		// User types before readFile resolves (restore + fast typing window).
+		doc.content = "typed while loading";
+
+		resolveRead("disk content");
+		await load;
+
+		expect(doc.content).toBe("typed while loading");
+		expect(doc.isLoaded).toBe(true);
+	});
+
 	it("keystroke editing directly invokes debouncedSaveOpenFiles without modifying structural tabs/docs identity", async () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createMockStorage();

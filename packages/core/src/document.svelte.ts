@@ -100,8 +100,14 @@ export class DocumentSession {
 		if (!this.origin) return;
 		try {
 			const fileContent = await this.storage.readFile(this.origin);
-			this._content = fileContent;
-			this.savedContent = fileContent;
+			// Don't clobber keystrokes typed while the async read was in
+			// flight: rebase the saved baseline and keep in-memory edits.
+			if (this.isModified) {
+				this.savedContent = fileContent;
+			} else {
+				this._content = fileContent;
+				this.savedContent = fileContent;
+			}
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {

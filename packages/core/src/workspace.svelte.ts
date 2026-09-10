@@ -144,7 +144,10 @@ export class Workspace {
 		$effect.root(() => {
 			$effect(() => {
 				const activeDoc = this.activeDocument;
-				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded) {
+				// Skip when already modified so a restore + fast-typing window
+				// doesn't schedule a load that would clobber keystrokes;
+				// loadContent itself also rebases instead of overwriting.
+				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded && !activeDoc.isModified) {
 					activeDoc.loadContent();
 				}
 			});
