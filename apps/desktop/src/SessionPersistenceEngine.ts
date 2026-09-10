@@ -125,28 +125,72 @@ export class SessionPersistenceEngine {
 			await fs.mkdir(dir, { recursive: true });
 			const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
-			try {
-				await fs.writeFile(tempPath, serialized, 'utf-8');
-				if (targetGen > this.committedGeneration) {
-					await fs.rename(tempPath, filePath);
+		try {
+			await fs.writeFile(tempPath, serialized, 'utf-8');
+			if (targetGen > this.committedGeneration) {
+				await fs.rename(tempPath, filePath);
+				if (targetGen >= this.committedGeneration) {
 					this.committedGeneration = targetGen;
 					if (this.saveGeneration === targetGen) {
 						this.isDirty = false;
 					}
 				} else {
-					await fs.unlink(tempPath).catch(() => {});
+					// A synchronous flush committed a newer generation while our
+					// rename was in flight, so this stale rename just clobbered
+					// newer data. Rewrite the current in-memory state to repair
+					// the file (see repairClobberedWrite).
+					await this.repairClobberedWrite();
 				}
-			} catch (err) {
+			} else {
 				await fs.unlink(tempPath).catch(() => {});
-				this.isDirty = true;
-				console.error('Failed to write persistence file:', err);
-				throw err;
 			}
-		};
+		} catch (err) {
+			await fs.unlink(tempPath).catch(() => {});
+			this.isDirty = true;
+			console.error('Failed to write persistence file:', err);
+			throw err;
+		}
+	};
 
 		const nextPromise = this.writeCoordinator.catch(() => {}).then(task);
 		this.writeCoordinator = nextPromise.catch(() => {});
 		return nextPromise;
+	}
+
+	/**
+	 * Rewrites the current in-memory state after post-rename validation detected
+	 * that a synchronous flush committed a newer generation while our rename was
+	 * in flight (our rename then landed last and clobbered that newer data).
+	 * Loops until a rename lands without concurrent interference; every pass
+	 * writes the current state, so the file converges to the latest data.
+	 * Runs inside the write-coordinator chain, so no other async write can
+	 * interleave — only a synchronous flush can, and that restarts the loop.
+	 */
+	private async repairClobberedWrite(): Promise<void> {
+		while (true) {
+			const repairGen = this.saveGeneration;
+			const current = this.persistenceData;
+			if (current === null) return;
+			const filePath = this.getFilePath();
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
+			const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+			try {
+				await fs.writeFile(tempPath, JSON.stringify(current, null, 2), 'utf-8');
+				await fs.rename(tempPath, filePath);
+			} catch (err) {
+				await fs.unlink(tempPath).catch(() => {});
+				throw err;
+			}
+			if (repairGen >= this.committedGeneration) {
+				this.committedGeneration = repairGen;
+				if (this.saveGeneration === repairGen) {
+					this.isDirty = false;
+				}
+				return;
+			}
+			// A newer generation committed while our repair rename was in
+			// flight; loop around and rewrite the (possibly newer) current state.
+		}
 	}
 
 	/**

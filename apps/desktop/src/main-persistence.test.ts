@@ -311,6 +311,68 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 		}
 	});
 
+	it('repairs the file when a sync flush commits newer data mid-rename', async () => {
+		const engine = new SessionPersistenceEngine({
+			getFilePath: () => sessionFilePath,
+			debounceMs: 500
+		});
+
+		// Save generation 1
+		await engine.save('gen', 1);
+
+		let releaseRename!: () => void;
+		const renameGate = new Promise<void>((resolve) => {
+			releaseRename = resolve;
+		});
+
+		let notifyRenameStarted!: () => void;
+		const renameStartedPromise = new Promise<void>((resolve) => {
+			notifyRenameStarted = resolve;
+		});
+
+		const originalRename = fs.rename;
+		let intercepted = false;
+		// @ts-ignore
+		fs.rename = async (...args: any[]) => {
+			if (!intercepted) {
+				intercepted = true;
+				notifyRenameStarted();
+				await renameGate;
+			}
+			// @ts-ignore
+			return originalRename.apply(fs, args);
+		};
+
+		try {
+			// Start async write for gen 1 (it will block inside fs.rename)
+			const writeGen1Promise = engine.writeToDisk();
+
+			// Wait until writeGen1 is inside fs.rename
+			await renameStartedPromise;
+
+			// Save generation 2 and commit synchronously while the gen 1
+			// rename is still in flight
+			await engine.save('gen', 2);
+			engine.flushSync();
+
+			expect(fsSync.existsSync(sessionFilePath)).toBe(true);
+			const gen2Disk = JSON.parse(fsSync.readFileSync(sessionFilePath, 'utf-8'));
+			expect(gen2Disk).toEqual({ gen: 2 });
+
+			// Release the stale generation 1 rename; it lands last and
+			// clobbers the file, which the engine must detect and repair
+			releaseRename();
+			await writeGen1Promise;
+
+			// File must hold generation 2 data, not the stale generation 1 rename
+			const finalDisk = JSON.parse(fsSync.readFileSync(sessionFilePath, 'utf-8'));
+			expect(finalDisk).toEqual({ gen: 2 });
+			expect(engine.isDirtyState()).toBe(false);
+		} finally {
+			fs.rename = originalRename;
+		}
+	});
+
 	it('commits latest data when save happens between queue and execution', async () => {
 		const filePath = path.join(testDir, 'queued.json');
 		const engine = new SessionPersistenceEngine({
