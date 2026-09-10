@@ -112,11 +112,16 @@ export class SessionPersistenceEngine {
 			return;
 		}
 
-		const targetGen = this.saveGeneration;
 		const filePath = this.getFilePath();
 		const dir = path.dirname(filePath);
 
 		const task = async () => {
+			// Capture the generation at execution time, not queue time, so a
+			// save() between queueing and execution commits its own generation
+			// with matching data instead of committing N while serializing
+			// N+1 data (which would leave isDirty set and force an extra
+			// debounced write of the same file).
+			const targetGen = this.saveGeneration;
 			if (targetGen <= this.committedGeneration) {
 				return;
 			}
