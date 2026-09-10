@@ -109,13 +109,18 @@ export class SessionPersistenceEngine {
 
 		const targetGen = this.saveGeneration;
 		const filePath = this.getFilePath();
-		const serialized = JSON.stringify(this.persistenceData, null, 2);
 		const dir = path.dirname(filePath);
 
 		const task = async () => {
 			if (targetGen <= this.committedGeneration) {
 				return;
 			}
+
+			// Serialize at execution time, not queue time, so a save()
+			// between queueing and execution doesn't commit stale data.
+			const current = this.persistenceData;
+			if (current === null) return;
+			const serialized = JSON.stringify(current, null, 2);
 
 			await fs.mkdir(dir, { recursive: true });
 			const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;

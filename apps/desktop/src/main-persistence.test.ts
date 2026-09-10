@@ -310,4 +310,38 @@ describe('SessionPersistenceEngine (Main Process Persistence)', () => {
 			fs.writeFile = originalWriteFile;
 		}
 	});
+
+	it('commits latest data when save happens between queue and execution', async () => {
+		const filePath = path.join(testDir, 'queued.json');
+		const engine = new SessionPersistenceEngine({
+			getFilePath: () => filePath,
+			debounceMs: 5000
+		});
+
+		await engine.save('k', 'v1');
+
+		// Block the coordinator so the next writeToDisk queues behind it.
+		let releaseGate!: () => void;
+		const gate = new Promise<void>((r) => {
+			releaseGate = r;
+		});
+		(engine as any).writeCoordinator = gate.then(() => {});
+
+		const queued = engine.writeToDisk();
+
+		// Mutate after snapshot-but-before-execution window.
+		await engine.save('k', 'v2');
+
+		releaseGate();
+		await queued;
+
+		// Cancel the long debounce timer scheduled by the second save.
+		if ((engine as any).debounceTimer) {
+			clearTimeout((engine as any).debounceTimer);
+			(engine as any).debounceTimer = null;
+		}
+
+		expect(fsSync.existsSync(filePath)).toBe(true);
+		expect(JSON.parse(fsSync.readFileSync(filePath, 'utf-8'))).toEqual({ k: 'v2' });
+	});
 });
