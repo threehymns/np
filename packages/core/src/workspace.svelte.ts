@@ -118,18 +118,18 @@ export class Workspace {
 		}).filter(Boolean) as SerializedDocument[];
 	}
 
-	async flushSaveOpenFiles(): Promise<void> {
+  async flushSaveOpenFiles(): Promise<void> {
 		if (this.isRestoring) return;
-
-		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-		const serializedDocs = this.serializeTabs();
-
-		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 
 		if (this.saveOpenFilesTimeout) {
 			clearTimeout(this.saveOpenFilesTimeout);
 			this.saveOpenFilesTimeout = null;
 		}
+
+		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const serializedDocs = this.serializeTabs();
+
+		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
 	}
 
 	constructor(
