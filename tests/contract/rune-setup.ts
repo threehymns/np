@@ -3,6 +3,11 @@ import { plugin } from "bun";
 import { readFileSync } from "node:fs";
 
 function transformRunes(source: string): string {
+	// Test-only transform: rewrites class-field `$derived(...)` /
+	// `$derived.by(...)` into getters so `.svelte.ts` modules load under bun
+	// without the Svelte compiler. Only class-field initializers are supported:
+	// a function-scope `const x = $derived(...)` would be rewritten into an
+	// invalid `get` accessor, so keep `$derived` usage to class fields.
 	const regex = /([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*\$derived(\.by)?\s*\(/g;
 	let result = "";
 	let lastIndex = 0;
