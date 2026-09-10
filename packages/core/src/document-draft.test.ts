@@ -220,6 +220,71 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.content).toBe("original + newer edit");
 	});
 
+	it("empty restored draft stays dirty until disk baseline loads", async () => {
+		const persistence = new MemorySessionPersistence();
+		const storage = createMockStorage();
+		let resolveRead!: (v: string) => void;
+		let rejectRead!: (e: unknown) => void;
+		const gate = new Promise<string>((res, rej) => {
+			resolveRead = res;
+			rejectRead = rej;
+		});
+		storage.readFile = mock(async () => gate) as any;
+
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const ws = makeWorkspace(storage, persistence);
+		await ws.restoreSession();
+
+		const doc = makeDocSession(storage, "", origin, "Untitled", ws);
+		ws.documents.push(doc);
+		ws.tabs.push({ id: doc.id, type: "document" });
+		ws.activeTabId = doc.id;
+
+		doc.restoreDraft("");
+		// Baseline read pending: empty draft must read dirty so the immediate
+		// flush does not omit the deletion draft.
+		expect(doc.isModified).toBe(true);
+
+		ws.flushSaveOpenFiles();
+		let saved = await persistence.loadOpenFiles("");
+		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
+
+		// Disk still holds the old content; draft stays dirty after baseline.
+		resolveRead("old disk content");
+		await new Promise((r) => setTimeout(r, 10));
+		expect(doc.content).toBe("");
+		expect(doc.isModified).toBe(true);
+
+		ws.flushSaveOpenFiles();
+		saved = await persistence.loadOpenFiles("");
+		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
+	});
+
+	it("empty restored draft stays dirty when baseline read fails", async () => {
+		const storage = createMockStorage();
+		let rejectRead!: (e: unknown) => void;
+		const gate = new Promise<string>((_, rej) => {
+			rejectRead = rej;
+		});
+		// Suppress expected error logging.
+		const origError = console.error;
+		console.error = () => {};
+		storage.readFile = mock(async () => gate) as any;
+
+		try {
+			const origin = { scheme: "file", path: "/missing.txt", name: "missing.txt" } as FileOrigin;
+			const doc = makeDocSession(storage, "", origin);
+			doc.restoreDraft("");
+			expect(doc.isModified).toBe(true);
+
+			rejectRead(new Error("ENOENT"));
+			await new Promise((r) => setTimeout(r, 10));
+			expect(doc.isModified).toBe(true);
+		} finally {
+			console.error = origError;
+		}
+	});
+
 	it("keystroke editing directly invokes debouncedSaveOpenFiles without modifying structural tabs/docs identity", async () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createMockStorage();

@@ -17,6 +17,7 @@ export class DocumentSession {
 	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
 	
 	private savedContent = $state('');
+	private baselinePending = $state(false);
 	private storage: Storage;
 	workspace?: Workspace;
 
@@ -60,7 +61,7 @@ export class DocumentSession {
 	}
 
 	get isModified() {
-		return this._content !== this.savedContent;
+		return this.baselinePending || this._content !== this.savedContent;
 	}
 
 	userLanguageOverride = $state<string | null>(null);
@@ -199,9 +200,15 @@ export class DocumentSession {
 		this._content = draftContent;
 		this.isLoaded = true;
 		if (this.origin) {
+			// An empty draft matches the fresh savedContent baseline while the
+			// disk read is pending, which would read as unmodified and let an
+			// immediate workspace flush omit the deletion draft. Stay dirty
+			// until the baseline loads; keep dirty if the read fails.
+			this.baselinePending = true;
 			this.storage.readFile(this.origin).then(
 				(saved) => {
 					this.savedContent = saved;
+					this.baselinePending = false;
 				},
 				(err) => {
 					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
