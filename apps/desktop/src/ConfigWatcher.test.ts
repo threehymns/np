@@ -103,7 +103,7 @@ describe('ConfigWatcher', () => {
 		expect(called).toBe(false);
 	});
 
-	it('discards watch events when filename is null, empty, or mismatched', async () => {
+	it('handles null/empty filenames conservatively but discards mismatched names', async () => {
 		let watchCallback: ((eventType: string, filename: string | null) => void) | null = null;
 		const originalWatch = (await import('fs')).default.watch;
 
@@ -134,15 +134,16 @@ describe('ConfigWatcher', () => {
 			watcher.start();
 			expect(watchCallback).not.toBeNull();
 
-			// Null filename
+			// Null filename (e.g. rename/replace where OS gives no name):
+			// treat as maybe-ours and re-read rather than silently dropping.
 			handleFileChangeCalled = false;
 			watchCallback!('change', null);
-			expect(handleFileChangeCalled).toBe(false);
+			expect(handleFileChangeCalled).toBe(true);
 
-			// Empty string filename
+			// Empty string filename: same conservative handling.
 			handleFileChangeCalled = false;
 			watchCallback!('change', '');
-			expect(handleFileChangeCalled).toBe(false);
+			expect(handleFileChangeCalled).toBe(true);
 
 			// Unrelated filename
 			handleFileChangeCalled = false;
