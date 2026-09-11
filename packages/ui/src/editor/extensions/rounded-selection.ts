@@ -4,7 +4,8 @@ import {
 	type LayerMarker,
 	Direction,
 } from "@codemirror/view";
-import { type SelectionRange } from "@codemirror/state";
+import { type EditorState, type SelectionRange } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 
 export interface SelectionRect {
 	left: number;
@@ -328,6 +329,43 @@ function getLineHeight(view: EditorView, pos: number): number {
 }
 
 /**
+ * True when `pos` sits inside a Markdown Table node (header, delimiter row,
+ * body cell, …). The `codemirror-markdown-tables` package replaces those
+ * source ranges with a block widget and owns column/row/cell selection UI
+ * itself, so the outer rounded-selection layer must stay out.
+ */
+export function isPosInTable(state: EditorState, pos: number): boolean {
+	try {
+		let node = syntaxTree(state).resolveInner(
+			Math.max(0, Math.min(pos, state.doc.length)),
+			1
+		);
+		while (node) {
+			if (node.name === "Table") return true;
+			node = node.parent!;
+		}
+	} catch {
+		// No language tree (plain text, headless mock without language, …):
+		// not a table, draw normally.
+	}
+	return false;
+}
+
+function isCellEditorView(view: EditorView): boolean {
+	try {
+		const dom = view.dom as unknown as {
+			closest?: (sel: string) => unknown;
+		};
+		if (typeof dom?.closest === "function" && dom.closest(".tbl-cell-editor")) {
+			return true;
+		}
+	} catch {
+		// Headless mock without DOM — treat as outer view.
+	}
+	return false;
+}
+
+/**
  * Measures tight selection rectangles for a given selection range,
  * extending trailing newlines by only ~0.75 character width instead of the full buffer width.
  * Uses lineBlockAt to ensure selections accurately reflect rendered line heights (including
@@ -351,9 +389,18 @@ export function tightRectanglesForRange(
 	const doc = view.state.doc;
 	const startLine = doc.lineAt(from);
 	const endLine = doc.lineAt(to);
+	const inCellEditor = isCellEditorView(view);
 
 	for (let l = startLine.number; l <= endLine.number; l++) {
 		const line = doc.line(l);
+		// Tables own their selection UI (column/row/cell outlines + inner
+		// cell-editor selection). The outer view maps intra-cell selections
+		// into the replaced table range, where coordsAtPos returns the full
+		// cell rect — drawing that would paint the whole column. Skip table
+		// lines in the outer view; inner cell editors still draw tightly.
+		if (!inCellEditor && isPosInTable(view.state, line.from)) {
+			continue;
+		}
 		const lineFrom = Math.max(from, line.from);
 		const lineTo = Math.min(to, line.to);
 		const includesNewline = to > line.to;

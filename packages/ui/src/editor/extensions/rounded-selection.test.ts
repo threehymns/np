@@ -1,10 +1,13 @@
 import { describe, it, expect } from "bun:test";
-import { Text, EditorSelection } from "@codemirror/state";
+import { Text, EditorSelection, EditorState } from "@codemirror/state";
+import { markdown } from "@codemirror/lang-markdown";
+import { Table, GFM } from "@lezer/markdown";
 import { Direction, type EditorView } from "@codemirror/view";
 import {
 	buildRoundedSelectionPath,
 	RoundedSelectionMarker,
 	tightRectanglesForRange,
+	isPosInTable,
 	type SelectionRect,
 } from "./rounded-selection";
 
@@ -319,5 +322,134 @@ describe("tightRectanglesForRange line-height independence", () => {
 		expect(rects.length).toBe(1);
 		expect(rects[0].top).toBe(-64);
 		expect(rects[0].bottom).toBe(-32);
+	});
+});
+
+describe("tightRectanglesForRange markdown table suppression", () => {
+	const tableDoc =
+		"| Left aligned | Center |\n| :--- | :---: |\n| apples | bananas |\n| cats | dogs |\n";
+
+	function makeTableView(options: { cellEditor?: boolean } = {}) {
+		const state = EditorState.create({
+			doc: tableDoc,
+			extensions: [markdown({ extensions: [Table, GFM] as any })],
+		});
+		const doc = state.doc;
+		const charWidth = 8;
+		const lineHeight = 30;
+		const scrollDOM = {
+			getBoundingClientRect: () => ({
+				left: 0,
+				top: 0,
+				right: 800,
+				bottom: 600,
+				width: 800,
+				height: 600,
+			}),
+			scrollLeft: 0,
+			scrollTop: 0,
+			clientWidth: 800,
+		};
+		const dom: any = {
+			getBoundingClientRect: () => ({
+				left: 0,
+				top: 0,
+				right: 800,
+				bottom: 600,
+				width: 800,
+				height: 600,
+			}),
+			closest: options.cellEditor
+				? (sel: string) => (sel === ".tbl-cell-editor" ? {} : null)
+				: () => null,
+		};
+		return {
+			state,
+			viewport: { from: 0, to: doc.length },
+			scrollDOM,
+			dom,
+			textDirection: Direction.LTR,
+			scaleX: 1,
+			scaleY: 1,
+			defaultCharacterWidth: charWidth,
+			defaultLineHeight: 24,
+			documentTop: 0,
+			lineBlockAt(pos: number) {
+				const line = doc.lineAt(pos);
+				const top = (line.number - 1) * lineHeight;
+				return {
+					from: line.from,
+					to: line.to,
+					top,
+					bottom: top + lineHeight,
+					height: lineHeight,
+				};
+			},
+			// Simulate codemirror-markdown-tables block-widget coordsAt, which
+			// returns the full cell rect instead of tight text bounds.
+			coordsAtPos(pos: number, _side: number = 1) {
+				const line = doc.lineAt(pos);
+				const top = (line.number - 1) * lineHeight;
+				if (options.cellEditor) {
+					const col = pos - line.from;
+					const x = col * charWidth;
+					return { left: x, right: x, top, bottom: top + lineHeight };
+				}
+				return {
+					left: 0,
+					right: 200,
+					top,
+					bottom: top + lineHeight,
+				};
+			},
+			domAtPos() {
+				return { node: { nodeType: 1, closest: () => null } };
+			},
+			posAtCoords() {
+				return null;
+			},
+		} as unknown as EditorView;
+	}
+
+	it("detects positions inside markdown tables", () => {
+		const view = makeTableView();
+		// Inside "apples" cell
+		expect(isPosInTable(view.state, 45)).toBe(true);
+		expect(isPosInTable(view.state, 47)).toBe(true);
+		const plain = EditorState.create({
+			doc: "hello",
+			extensions: [markdown({ extensions: [Table, GFM] as any })],
+		});
+		expect(isPosInTable(plain, 2)).toBe(false);
+	});
+
+	it("suppresses outer rounded selection for small intra-cell selections", () => {
+		const view = makeTableView();
+		const line3 = view.state.doc.line(3);
+		// "appl" inside "apples" — small text, but widget coords are cell-wide.
+		const range = EditorSelection.range(line3.from + 2, line3.from + 6);
+		expect(tightRectanglesForRange(view, range)).toEqual([]);
+	});
+
+	it("keeps inner cell-editor selection tight", () => {
+		const view = makeTableView({ cellEditor: true });
+		const line3 = view.state.doc.line(3);
+		const range = EditorSelection.range(line3.from + 2, line3.from + 6);
+		const rects = tightRectanglesForRange(view, range);
+		expect(rects.length).toBe(1);
+	});
+
+	it("keeps non-table lines of a crossing selection", () => {
+		const state = EditorState.create({
+			doc: `hello\n${tableDoc}`,
+			extensions: [markdown({ extensions: [Table, GFM] as any })],
+		});
+		const outer = makeTableView();
+		// Reuse table-view geometry but swap in the crossing doc state.
+		(outer as any).state = state;
+		(outer as any).viewport = { from: 0, to: state.doc.length };
+		const range = EditorSelection.range(0, 2);
+		const rects = tightRectanglesForRange(outer, range);
+		expect(rects.length).toBe(1);
 	});
 });
