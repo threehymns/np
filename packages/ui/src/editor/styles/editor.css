@@ -50,10 +50,13 @@
 	background-color: transparent !important;
 }
 
+.cm-editor .cm-rounded-selectionLayer {
+	z-index: 100 !important;
+}
 
-
-
-
+.cm-editor .cm-cursorLayer {
+	z-index: 150 !important;
+}
 .cm-cursor {
 	border-left: 2px solid var(--primary) !important;
 	margin-left: -1px;

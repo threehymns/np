@@ -376,7 +376,6 @@
 }
 
 /* Table Cell Selection */
-.tbl-cell-editor .cm-content ::selection,
 .tbl-cell[data-selected="true"],
 .tbl-cell[data-selected="true"]::after {
 	background-color: color-mix(
@@ -384,6 +383,10 @@
 		var(--primary),
 		transparent 80%
 	) !important;
+}
+
+.tbl-cell-editor .cm-content ::selection {
+	background-color: transparent !important;
 }
 
 

@@ -506,7 +506,7 @@ export function tightRectanglesForRange(
 }
 
 export const roundedSelectionLayer = layer({
-	above: false,
+	above: true,
 	markers(view: EditorView) {
 		const markers: LayerMarker[] = [];
 		const { ranges } = view.state.selection;
