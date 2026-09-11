@@ -443,9 +443,19 @@
 		fireReadyResolvers(filepath);
 	}
 
-	function syncActiveFile(filepath: string) {
+	// Silent sync for scroll-past / cursor-focus / header-focus paths.
+	// These must update the Git panel highlight WITHOUT triggering the
+	// activeDiffFile reveal effect (expand + snap-to-top). Only explicit
+	// reveals (git.openDiff from the Git panel) should expand/scroll.
+	// Plain (non-reactive) so the $effect below reads it as an untracked
+	// snapshot alongside the tracked activeDiffFile value.
+	let silentSyncFor: string | null = null;
+
+	function syncActiveFileSilent(filepath: string) {
 		const repository = appState.workspace.repository;
 		if (!repository) return;
+		if (repository.activeDiffFile?.filepath === filepath) return;
+		silentSyncFor = filepath;
 		repository.setActiveDiffFileByPath(filepath);
 	}
 
@@ -456,7 +466,7 @@
 	// fight the user's panel selection.
 	function syncActiveFileFromCursor(filepath: string, view: EditorView) {
 		if (!view.hasFocus) return;
-		syncActiveFile(filepath);
+		syncActiveFileSilent(filepath);
 	}
 
 	function cursorSyncExtension(getFilepath: () => string) {
@@ -865,23 +875,36 @@
 		};
 	});
 
-	// Scroll target into view effect
+	// Scroll target into view effect — explicit reveals only.
+	// Silent syncs (container scroll-past, cursor focus, header focus) update
+	// repo.activeDiffFile for the Git panel highlight but must NOT expand or
+	// snap-scroll; otherwise manual wheel-scroll with focus in an editor
+	// yanks to the top of each entering file and uncollapses it.
 	let lastScrolledFilepath = '';
 	$effect(() => {
 		const targetFile = repo?.activeDiffFile?.filepath;
-		if (targetFile && targetFile !== lastScrolledFilepath) {
-			lastScrolledFilepath = targetFile;
-			// Make sure it is expanded first if it was collapsed
-			collapsedFiles[targetFile] = false;
-
-			// Wait a tick for rendering
-			setTimeout(() => {
-				const element = document.getElementById(`diff-file-${targetFile}`);
-				if (element) {
-					element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-				}
-			}, 50);
+		if (!targetFile || targetFile === lastScrolledFilepath) {
+			if (silentSyncFor === targetFile) silentSyncFor = null;
+			return;
 		}
+		if (silentSyncFor === targetFile) {
+			lastScrolledFilepath = targetFile;
+			silentSyncFor = null;
+			return;
+		}
+		// An explicit reveal overtook a pending silent sync; drop the stale flag.
+		silentSyncFor = null;
+		lastScrolledFilepath = targetFile;
+		// Make sure it is expanded first if it was collapsed
+		collapsedFiles[targetFile] = false;
+
+		// Wait a tick for rendering
+		setTimeout(() => {
+			const element = document.getElementById(`diff-file-${targetFile}`);
+			if (element) {
+				element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			}
+		}, 50);
 	});
 
 	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {
@@ -1028,6 +1051,26 @@
 	// Compute cumulative stats across all active changes
 	let totalAdditions = $derived(activeChanges.reduce((sum, c) => sum + c.additions, 0));
 	let totalDeletions = $derived(activeChanges.reduce((sum, c) => sum + c.deletions, 0));
+
+	// Materialize collapse defaults once per filepath so later (silent) active
+	// changes don't flip untouched files via the activeFile fallback in
+	// isFileCollapsed. Without this, scrolling past files would
+	// expand/collapse them just by changing repo.activeDiffFile, even with
+	// the reveal effect suppressed.
+	let collapseInitialized = new Set<string>();
+	$effect(() => {
+		const files = activeChanges;
+		const activeFile = repo?.activeDiffFile?.filepath;
+		if (activeFile === undefined) return;
+		for (const f of files) {
+			if (!collapseInitialized.has(f.filepath)) {
+				collapseInitialized.add(f.filepath);
+				if (!(f.filepath in collapsedFiles)) {
+					collapsedFiles[f.filepath] = f.filepath !== activeFile;
+				}
+			}
+		}
+	});
 	interface HunkTarget {
 		fileIndex: number;
 		filepath: string;
@@ -1210,7 +1253,7 @@
 			if (el) {
 				const rect = el.getBoundingClientRect();
 				if (rect.bottom > containerRect.top + 40 && rect.top <= containerRect.top + 80) {
-					syncActiveFile(fileChange.filepath);
+					syncActiveFileSilent(fileChange.filepath);
 					break;
 				}
 			}
@@ -1345,9 +1388,9 @@
 							tabindex="0"
 							id="diff-header-{fileChange.filepath}"
 							class="flex items-center rounded-lg justify-between px-3 py-1 bg-muted/40 hover:bg-muted/70 border border-border/80 hover:border-border select-none shrink-0 font-mono text-[10.5px] h-9 transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:bg-muted/80 focus-visible:border-primary/60 cursor-pointer"
-							onfocusin={() => syncActiveFile(fileChange.filepath)}
+							onfocusin={() => syncActiveFileSilent(fileChange.filepath)}
 							onclick={(e) => {
-								syncActiveFile(fileChange.filepath);
+								syncActiveFileSilent(fileChange.filepath);
 								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
 								toggleCollapse(fileChange.filepath);
 							}}
