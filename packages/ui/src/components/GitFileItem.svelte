@@ -67,15 +67,15 @@
 				{/if}
 			</div>
 			
-			<div class="relative flex items-center gap-1.5 shrink-0">
+			<div class="relative shrink-0 w-max">
 				{#if change.additions > 0 || change.deletions > 0}
-					<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
+					<div class="flex items-center gap-1 justify-end text-[9px] font-mono opacity-80 group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity pointer-events-none">
 						{#if change.additions > 0}<span class="text-primary">+{change.additions}</span>{/if}
 						{#if change.deletions > 0}<span class="text-destructive">-{change.deletions}</span>{/if}
 					</div>
 				{/if}
-				
-				<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+
+				<div class="absolute inset-y-0 right-0 z-10 flex w-full items-center justify-end gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none">
 					{#if isStaged}
 						<Tooltip.Root>
 							<Tooltip.Trigger>
@@ -85,7 +85,7 @@
 										type="button"
 										aria-label="Unstage change"
 										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', change.filepath); }}
-										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
+										class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
 									>
 										<MinusIcon size={10} />
 									</button>
@@ -104,7 +104,7 @@
 										type="button"
 										aria-label="Discard changes"
 										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', change.filepath, { staged: false }); }}
-										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-destructive transition-opacity"
+										class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-destructive transition-opacity"
 									>
 										<ArrowUDownLeftIcon size={10} />
 									</button>
@@ -122,7 +122,7 @@
 										type="button"
 										aria-label="Stage change"
 										onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', change.filepath); }}
-										class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
+										class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
 									>
 										<PlusIcon size={10} />
 									</button>

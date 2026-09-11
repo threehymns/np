@@ -712,7 +712,7 @@
 				<span class="truncate">{node.name}</span>
 			</div>
 
-			<div class="flex items-center gap-1.5 shrink-0">
+			<div class="relative flex items-center justify-end gap-1.5 shrink-0">
 				{#if isDir}
 					{@const stagingState = getFolderStagingState(node)}
 					<div class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
@@ -725,17 +725,17 @@
 					</div>
 				{:else if node.change}
 					{#if node.change.additions > 0 || node.change.deletions > 0}
-						<div class="flex items-center gap-1 text-[9px] font-mono mr-1 opacity-80 pointer-events-none group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
+						<div class="flex items-center gap-1 text-[9px] font-mono opacity-80 pointer-events-none group-hover:opacity-0 group-focus-within:opacity-0 transition-opacity">
 							{#if node.change.additions > 0}<span class="text-green-500">+{node.change.additions}</span>{/if}
 							{#if node.change.deletions > 0}<span class="text-red-500">-{node.change.deletions}</span>{/if}
 						</div>
 					{/if}
-					<div class="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+					<div class="absolute inset-y-0 right-0 z-10 flex w-full items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none">
 						{#if isStagedSection}
 							<button
 								type="button"
 								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.unstage', node.change!.filepath); }}
-								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
+								class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
 								title="Unstage"
 							>
 								<MinusIcon size={9} />
@@ -744,7 +744,7 @@
 							<button
 								type="button"
 								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.discard', node.change!.filepath, { staged: false }); }}
-								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-destructive"
+								class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-destructive"
 								title="Discard"
 							>
 								<ArrowCounterClockwiseIcon size={9} />
@@ -752,7 +752,7 @@
 							<button
 								type="button"
 								onclick={(e) => { e.stopPropagation(); appState.commands.execute('git.stage', node.change!.filepath); }}
-								class="p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
+								class="pointer-events-auto p-0.5 rounded bg-muted/40 hover:bg-muted text-muted-foreground"
 								title="Stage"
 							>
 								<PlusIcon size={9} />
