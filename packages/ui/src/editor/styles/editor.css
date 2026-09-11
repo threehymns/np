@@ -31,11 +31,32 @@
   line-height: 1.618 !important;
 }
 
-.cm-content ::selection {
-	background-color: var(--primary);
-	color: var(--primary-foreground);
+/* Hide CodeMirror default rectangular selection layer so roundedSelectionLayer is used */
+.cm-editor .cm-selectionLayer {
+	display: none !important;
 }
 
+/* Style the SVG rounded selection path */
+.cm-editor path.cm-selectionBackground {
+	fill: color-mix(in oklch, var(--primary) 25%, transparent) !important;
+	background: transparent !important;
+}
+
+.cm-editor:not(.cm-focused) path.cm-selectionBackground {
+	fill: color-mix(in oklch, var(--primary) 15%, transparent) !important;
+}
+
+.cm-editor .cm-content ::selection {
+	background-color: transparent !important;
+}
+
+.cm-editor .cm-rounded-selectionLayer {
+	z-index: 100 !important;
+}
+
+.cm-editor .cm-cursorLayer {
+	z-index: 150 !important;
+}
 .cm-cursor {
 	border-left: 2px solid var(--primary) !important;
 	margin-left: -1px;

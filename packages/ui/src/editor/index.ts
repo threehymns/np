@@ -81,6 +81,7 @@ import { HighlightExtension } from "./extensions/inline-highlight";
 import { HashTagExtension } from "./extensions/hash-tags";
 import { MathExtension } from "./extensions/math";
 import { htmlPassthroughPlugin } from "./extensions/html";
+import { roundedSelectionLayer } from "./extensions/rounded-selection";
 
 // Central Markdown language composition (WikiLinkExtension precedent). The
 // Editor's Markdown language must be a single markdown() superset — never a
@@ -136,6 +137,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 					highlightActiveLine(),
 					hideMarkersPlugin,
 					syntaxHighlighting(markdownHighlight),
+					roundedSelectionLayer,
 				],
 				globalKeyBindings: [...historyKeymap, ...searchKeymap],
 			}),
@@ -220,6 +222,7 @@ export function createEditorExtensions(options: {
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),
+		roundedSelectionLayer,
 		foldGutter(),
 		dropCursor(),
 		EditorState.allowMultipleSelections.of(true),
