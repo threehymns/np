@@ -386,10 +386,6 @@
 	) !important;
 }
 
-.tbl-cell-editor .cm-content ::selection {
-	background-color: var(--primary) !important;
-	color: var(--primary-foreground) !important;
-}
 
 /* Force outline/focus colors */
 .tbl-cell[data-outline*="top"]::after,
