@@ -6,9 +6,9 @@ import {
 	crosshairCursor,
 	highlightActiveLine,
 	keymap,
-	lineNumbers,
 	drawSelection,
 } from "@codemirror/view";
+import { lineNumbers } from "./extensions/line-numbers";
 import { EditorState, Compartment } from "@codemirror/state";
 import {
 	indentOnInput,
@@ -270,6 +270,7 @@ export * from "./extensions/math";
 export * from "./extensions/footnote";
 export * from "./extensions/faded";
 export * from "./extensions/frontmatter";
+export * from "./extensions/line-numbers";
 export * from "./extensions/html";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";

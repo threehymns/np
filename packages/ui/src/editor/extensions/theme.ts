@@ -36,6 +36,10 @@ export const editorTheme = EditorView.theme({
 		fontFamily: "var(--font-mono)",
 		fontSize: "0.85rem",
 	},
+	".cm-lineNumbers .cm-gutterElement": {
+		userSelect: "none",
+		cursor: "default",
+	},
 	"&.cm-focused": {
 		outline: "none",
 	},
