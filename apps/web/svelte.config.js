@@ -1,5 +1,9 @@
 import adapter from '@sveltejs/adapter-static';
 
+const basePath = process.argv.includes('dev') || !process.env.BASE_PATH || process.env.BASE_PATH === '/'
+	? ''
+	: `/${process.env.BASE_PATH.replace(/^\/+|\/+$/g, '')}`;
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	compilerOptions: {
@@ -9,7 +13,10 @@ const config = {
 	kit: {
 		adapter: adapter({
 			fallback: 'index.html'
-		})
+		}),
+		paths: {
+			base: basePath
+		}
 	}
 };
 
