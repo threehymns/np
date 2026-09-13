@@ -13,7 +13,7 @@
 		"check": "svelte-check --tsconfig ./tsconfig.json"
 	},
 	"build": {
-		"appId": "com.np.app",
+		"appId": "com.github.threehymns.np",
 		"productName": "np",
 		"directories": {
 			"output": "dist-electron"
