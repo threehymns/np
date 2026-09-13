@@ -178,6 +178,8 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.isLoaded).toBe(false);
 
 		const load = doc.loadContent();
+		// Isolated Document test: direct assignment simulates keystrokes
+		// (no Workspace, so no persistence scheduling expected).
 		// User types before readFile resolves (restore + fast typing window).
 		doc.content = "typed while loading";
 
@@ -206,10 +208,14 @@ describe("Document draft and keystroke decoupling", () => {
 		// Untitled (origin null) skips the async permission check, so the
 		// content snapshot is taken synchronously and the edit below lands
 		// strictly during the in-flight saveFile — the reported race window.
+		// Intentional direct doc.save: this tests storage-level snapshot
+		// semantics; production callers must use Workspace.saveDocument.
 		const doc = makeDocSession(storage, "original", null);
 		expect(doc.isModified).toBe(false);
 
 		const saving = doc.save({ coveredByRoot: false });
+		// Isolated Document test: direct assignment simulates keystrokes
+		// (no Workspace, so no persistence scheduling expected).
 		// User types while the async save is in flight.
 		doc.content = "original + newer edit";
 

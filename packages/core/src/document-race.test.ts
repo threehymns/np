@@ -40,6 +40,8 @@ describe("Document load/save revision race", () => {
 		}) as any;
 
 		const doc = makeDocSession(storage, "base", origin);
+		// Isolated Document test: direct assignment simulates keystrokes
+		// without a Workspace (no persistence scheduling expected).
 		doc.content = "edited";
 
 		const loading = doc.loadContent();
@@ -80,6 +82,89 @@ describe("Document load/save revision race", () => {
 		expect(doc.origin?.path).toBe("/new.txt");
 		expect(doc.content).toBe("base");
 		expect(doc.isModified).toBe(false);
+	});
+
+	it("in-flight rebase does not clobber a concurrent save baseline", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage({
+			verifyPermission: async () => true,
+			queryPermission: async () => "granted",
+		});
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+		storage.saveFile = mock(async (content: string) => origin) as any;
+
+		const doc = makeDocSession(storage, "base", origin);
+		// Isolated Document test: direct assignment simulates keystrokes
+		// without a Workspace (no persistence scheduling expected).
+		doc.content = "edited";
+
+		const rebasing = doc.rebaseSavedBaseline();
+		// Concurrent save completes while the rebase read is in flight.
+		const saved = await doc.save({ coveredByRoot: false });
+		expect(saved).toBe(true);
+
+		resolveRead("stale-disk");
+		await rebasing;
+
+		expect(doc.content).toBe("edited");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("restoreDraft baseline read does not clobber a concurrent save", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage({
+			verifyPermission: async () => true,
+			queryPermission: async () => "granted",
+		});
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+		storage.saveFile = mock(async (content: string) => origin) as any;
+
+		const doc = makeDocSession(storage, "", origin);
+		doc.restoreDraft("");
+		// Isolated Document test: direct assignment simulates keystrokes
+		// typed while the baseline read is in flight.
+		doc.content = "typed after restore";
+
+		// Save establishes the baseline before the stale read resolves.
+		const saved = await doc.save({ coveredByRoot: false });
+		expect(saved).toBe(true);
+
+		resolveRead("old disk content");
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(doc.content).toBe("typed after restore");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("in-flight load still applies when the origin is re-created with equal values", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage();
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+
+		const doc = makeDocSession(storage, "base", origin);
+		const loading = doc.loadContent();
+		// Same file, new object identity: origins are plain data, so the
+		// in-flight read for that URI is still valid.
+		doc.origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+
+		resolveRead("fresh-disk");
+		await loading;
+
+		expect(doc.content).toBe("fresh-disk");
+		expect(doc.isModified).toBe(false);
+		expect(doc.isLoaded).toBe(true);
 	});
 });
 
