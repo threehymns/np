@@ -1,6 +1,5 @@
-import { type Storage, type FileOrigin } from './storage';
+import { type Storage, type FileOrigin, toURI } from './storage';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
-import type { Workspace } from './workspace.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
@@ -15,32 +14,26 @@ export class DocumentSession {
 	pendingLineToScroll = $state<number | null>(null);
 	editorState = $state.raw<any>(null);
 	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
-	
-	private savedContent = $state('');
+
+	private savedBaseline = $state('');
 	private baselinePending = $state(false);
 	private storage: Storage;
-	workspace?: Workspace;
+	private saveEpoch = 0;
+	private permissionSeq = 0;
+	private baselineSeq = 0;
 
-	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', workspace?: Workspace) {
+	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
 		this._content = initialContent;
-		this.savedContent = initialContent;
+		this.savedBaseline = initialContent;
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
-		this.workspace = workspace;
 		this.isLoaded = initialContent !== '' || origin === null;
-
+		// Safe default: a file-backed Document starts untrusted until the
+		// Workspace upgrades it via refreshPermissionState(). Untitled docs
+		// have no origin to guard, so they stay granted.
 		if (origin) {
-			// Check initial permission state
-			this.hasRootPermissionForFile().then(async hasRoot => {
-				if (hasRoot) {
-					this.permissionState = 'granted';
-				} else {
-					this.storage.queryPermission(origin, true).then(state => {
-						this.permissionState = state;
-					});
-				}
-			});
+			this.permissionState = 'prompt';
 		}
 	}
 
@@ -48,12 +41,16 @@ export class DocumentSession {
 		return this._content;
 	}
 
+	/**
+	 * Passive content write: updates in-memory state only and never schedules
+	 * persistence. The keystroke path must go via
+	 * `Workspace.updateDocumentContent`, which sets this and schedules a
+	 * session flush in one place. Direct assignment is for state restores and
+	 * isolated Document tests only.
+	 */
 	set content(value: string) {
 		if (this._content === value) return;
 		this._content = value;
-		if (this.workspace) {
-			this.workspace.debouncedSaveOpenFiles();
-		}
 	}
 
 	get fileName() {
@@ -61,7 +58,7 @@ export class DocumentSession {
 	}
 
 	get isModified() {
-		return this.baselinePending || this._content !== this.savedContent;
+		return this.baselinePending || this._content !== this.savedBaseline;
 	}
 
 	userLanguageOverride = $state<string | null>(null);
@@ -99,20 +96,31 @@ export class DocumentSession {
 
 	async loadContent() {
 		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
+		const readSaveEpoch = this.saveEpoch;
 		try {
-			const fileContent = await this.storage.readFile(this.origin);
+			const fileContent = await this.storage.readFile(readOrigin);
+			// Drop stale reads: a concurrent save (or save-as origin change)
+			// makes the in-flight content obsolete. Origins are plain data
+			// and may be re-created with equal values, so compare by value
+			// (URI), not reference. Edits alone still use the keepEdits path
+			// below, so concurrent keystrokes are preserved while a
+			// concurrent save never gets clobbered.
+			if (!this.origin || toURI(this.origin) !== readURI) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
-			if (this.isModified) {
-				this.savedContent = fileContent;
-			} else {
-				this._content = fileContent;
-				this.savedContent = fileContent;
-			}
+			const keepEdits = this.isModified;
+			const current = this._content;
+			this.savedBaseline = fileContent;
+			this._content = keepEdits ? current : fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
-			console.error(`Failed to load content for ${this.origin.name}`, e);
+			if (!this.origin || toURI(this.origin) !== readURI) throw e;
+			if (this.saveEpoch !== readSaveEpoch) throw e;
+			console.error(`Failed to load content for ${readOrigin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				this.deletedOnDisk = true;
 			}
@@ -123,57 +131,113 @@ export class DocumentSession {
 	/**
 	 * Rebase the saved baseline onto the current on-disk content without
 	 * discarding in-memory edits. `content` (and therefore `isModified`) is left
-	 * untouched; only `savedContent`, `deletedOnDisk`, and `isLoaded` reflect the
+	 * untouched; only the saved baseline, `deletedOnDisk`, and `isLoaded` reflect the
 	 * new baseline. Used after an operation that changes files on disk (e.g. a
 	 * branch switch) so unsaved in-memory edits survive and are re-diffed against
 	 * the checked-out content instead of being silently overwritten.
 	 */
 	async rebaseSavedBaseline(): Promise<void> {
 		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
+		const readSaveEpoch = this.saveEpoch;
+		const seq = ++this.baselineSeq;
 		try {
-			this.savedContent = await this.storage.readFile(this.origin);
+			const diskContent = await this.storage.readFile(readOrigin);
+			// Same stale-read guard as loadContent: a concurrent save
+			// established a fresher baseline while this read was in flight,
+			// so applying it would resurrect a phantom modification.
+			// The baselineSeq check also drops an older restoreDraft read
+			// that resolves after this rebase started.
+			if (!this.origin || toURI(this.origin) !== readURI) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
+			if (this.baselineSeq !== seq) return;
+			this.savedBaseline = diskContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
+			this.baselinePending = false;
 		} catch (e: any) {
+			if (!this.origin || toURI(this.origin) !== readURI) throw e;
+			if (this.saveEpoch !== readSaveEpoch) throw e;
+			if (this.baselineSeq !== seq) throw e;
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				// Expected when the file was removed on the checked-out branch;
 				// not an error worth logging.
 				this.deletedOnDisk = true;
 			} else {
-				console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
+				console.error(`Failed to rebase saved baseline for ${readOrigin.name}`, e);
 			}
 			throw e;
 		}
 	}
 
-	async hasRootPermissionForFile(): Promise<boolean> {
-		if (!this.workspace || !this.workspace.rootOrigin || !this.workspace.hasRootPermission || !this.origin) {
-			return false;
-		}
-		const rootOrigin = this.workspace.rootOrigin;
-		if (this.origin.scheme !== rootOrigin.scheme) {
-			return false;
-		}
-		return this.origin.path === rootOrigin.path || this.origin.path.startsWith(rootOrigin.path + '/');
+	/**
+	 * Passive permission probe: adopt root coverage when given, otherwise ask
+	 * storage. The Workspace computes coverage (it owns the root) and passes
+	 * it as plain data, so this module never reaches for its owner.
+	 */
+	markPermissionGranted(): void {
+		this.permissionSeq++;
+		this.permissionState = 'granted';
 	}
 
-	async requestPermission() {
+	refreshPermissionState(coveredByRoot: boolean): void {
+		if (!this.origin) return;
+		if (coveredByRoot) {
+			this.markPermissionGranted();
+			return;
+		}
+		const seq = ++this.permissionSeq;
+		this.storage.queryPermission(this.origin, true).then(
+			(state) => {
+				if (this.permissionSeq !== seq) return;
+				this.permissionState = state;
+			},
+			(err) => {
+				console.error(`Failed to query permission for ${this.origin?.name}`, err);
+			}
+		);
+	}
+
+	/**
+	 * `coveredByRoot` has no default on purpose: callers must pass fresh
+	 * Workspace coverage explicitly. Prefer `Workspace.requestFilePermission`
+	 * over calling this directly.
+	 */
+	async requestPermission(coveredByRoot: boolean) {
 		if (!this.origin) return true;
-		if (await this.hasRootPermissionForFile()) {
-			this.permissionState = 'granted';
+		if (coveredByRoot) {
+			this.markPermissionGranted();
 			return true;
 		}
+		const seq = this.permissionSeq;
 		const granted = await this.storage.verifyPermission(this.origin, true);
-		this.permissionState = granted ? 'granted' : 'denied';
-		if (granted && !this._content && this.savedContent === '') {
+		if (this.permissionSeq !== seq) {
+			return this.permissionState === 'granted';
+		}
+		if (granted) {
+			this.markPermissionGranted();
+		} else {
+			// Fresh verify result wins over older in-flight queries.
+			this.permissionSeq++;
+			this.permissionState = 'denied';
+		}
+		if (granted && !this._content && this.savedBaseline === '') {
 			await this.loadContent();
 		}
 		return granted;
 	}
 
-	async save(options: { forceNewOrigin?: boolean } = {}) {
+	/**
+	 * Storage-level save: writes content and moves the saved baseline, but
+	 * performs no repo refresh and schedules no session flush. Prefer
+	 * `Workspace.saveDocument`, which runs this with fresh root coverage and
+	 * then refreshes the repo and flushes persistence — calling this directly
+	 * can leave a stale `draftContent` behind in persistence.
+	 */
+	async save(options: { forceNewOrigin?: boolean; coveredByRoot: boolean }) {
 		if (this.origin && !options.forceNewOrigin) {
-			const hasPermission = await this.requestPermission();
+			const hasPermission = await this.requestPermission(options.coveredByRoot);
 			if (!hasPermission) return false;
 		}
 
@@ -182,15 +246,14 @@ export class DocumentSession {
 		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
-			this.savedContent = contentToSave;
-			this.permissionState = 'granted';
+			this.savedBaseline = contentToSave;
+			this.markPermissionGranted();
 			this.deletedOnDisk = false;
-			if (this.workspace?.repository) {
-				this.workspace.repository.refresh().catch(e => console.error('Auto-refresh after save failed', e));
-			}
-			if (this.workspace) {
-				this.workspace.debouncedSaveOpenFiles();
-			}
+			this.saveEpoch++;
+			// A successful save establishes the baseline, invalidating any
+			// restoreDraft baseline read still in flight (see restoreDraft).
+			this.baselineSeq++;
+			this.baselinePending = false;
 			return true;
 		}
 		return false;
@@ -200,17 +263,25 @@ export class DocumentSession {
 		this._content = draftContent;
 		this.isLoaded = true;
 		if (this.origin) {
-			// An empty draft matches the fresh savedContent baseline while the
+			// An empty draft matches the fresh saved baseline while the
 			// disk read is pending, which would read as unmodified and let an
 			// immediate workspace flush omit the deletion draft. Stay dirty
 			// until the baseline loads; keep dirty if the read fails.
 			this.baselinePending = true;
-			this.storage.readFile(this.origin).then(
+			const readOrigin = this.origin;
+			// Newest restore/save wins: a concurrent save establishes a
+			// fresh baseline (bumping baselineSeq), and a newer restoreDraft
+			// re-arms the flag — so a stale read must neither overwrite the
+			// baseline nor clear a newer restore's pending flag.
+			const seq = ++this.baselineSeq;
+			this.storage.readFile(readOrigin).then(
 				(saved) => {
-					this.savedContent = saved;
+					if (this.baselineSeq !== seq) return;
+					this.savedBaseline = saved;
 					this.baselinePending = false;
 				},
 				(err) => {
+					if (this.baselineSeq !== seq) return;
 					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
 				}
 			);

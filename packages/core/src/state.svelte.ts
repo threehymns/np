@@ -181,8 +181,12 @@ export class AppState {
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
-	async saveFile() { await this.activeDocument?.save(); }
-	async saveFileAs() { await this.activeDocument?.save({ forceNewOrigin: true }); }
+	async saveFile() {
+		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument);
+	}
+	async saveFileAs() {
+		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string) { this.workspace.closeTab(id); }

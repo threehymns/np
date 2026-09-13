@@ -40,8 +40,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 			appState.storage,
 			"# Sample Heading\n\nParagraph text.",
 			{ scheme: "file", path: "/test/Notes.md", name: "Notes.md" },
-			"Notes.md",
-			appState.workspace
+			"Notes.md"
 		);
 		appState.workspace.documents = [doc];
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
@@ -72,8 +71,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 			appState.storage,
 			"Content",
 			{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
-			"Test.md",
-			appState.workspace
+			"Test.md"
 		);
 		appState.workspace.documents = [doc];
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
@@ -96,8 +94,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 				appState.storage,
 				"Content",
 				{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
-				"Test.md",
-				appState.workspace
+				"Test.md"
 			);
 			appState.workspace.documents = [doc];
 			appState.workspace.tabs = [{ id: doc.id, type: "document" }];
@@ -114,8 +111,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 			appState.storage,
 			"Content",
 			{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
-			"Test.md",
-			appState.workspace
+			"Test.md"
 		);
 		appState.workspace.documents = [doc];
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
@@ -132,8 +128,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 			appState.storage,
 			"Content",
 			{ scheme: "file", path: "/test/Test.md", name: "Test.md" },
-			"Test.md",
-			appState.workspace
+			"Test.md"
 		);
 		appState.workspace.documents = [doc];
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];
@@ -168,8 +163,7 @@ describe("Headless Export Commands ('transformer.exportHTML' & 'transformer.copy
 			appState.storage,
 			"# Copy Me\n\nSome body text.",
 			{ scheme: "file", path: "/test/Copy.md", name: "Copy.md" },
-			"Copy.md",
-			appState.workspace
+			"Copy.md"
 		);
 		appState.workspace.documents = [doc];
 		appState.workspace.tabs = [{ id: doc.id, type: "document" }];

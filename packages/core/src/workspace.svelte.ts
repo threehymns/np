@@ -33,6 +33,72 @@ export class Workspace {
 	private saveOpenFilesTimeout: any = null;
 
 	/**
+	 * Is this origin covered by the granted workspace root? Synchronous and
+	 * side-effect free: the Workspace owns the root, so Documents never check
+	 * this themselves — coverage travels to them as plain call-time data.
+	 */
+	coversOrigin(origin: FileOrigin): boolean {
+		return this.relativePath(origin) !== null;
+	}
+
+	/**
+	 * Path of `origin` relative to the granted workspace root, or null when
+	 * not covered. Returns '' for the root itself. Single owner of the
+	 * scheme + path-prefix rule so callers never re-implement it.
+	 */
+	relativePath(origin: FileOrigin): string | null {
+		const rootOrigin = this.rootOrigin;
+		if (!rootOrigin || !this.hasRootPermission) {
+			return null;
+		}
+		if (origin.scheme !== rootOrigin.scheme) {
+			return null;
+		}
+		if (origin.path === rootOrigin.path) {
+			return '';
+		}
+		const normalizedRoot = rootOrigin.path.replace(/\/+$/, '');
+		if (origin.path.startsWith(normalizedRoot + '/')) {
+			return origin.path.slice(normalizedRoot.length + 1);
+		}
+		return null;
+	}
+
+	/**
+	 * The keystroke path: set in-memory content and schedule a session flush.
+	 * This is the only typing path — `Editor`, commands, and tests simulating
+	 * keystrokes go through here. Direct `doc.content =` is passive (no flush)
+	 * and reserved for state restores and isolated Document tests.
+	 */
+	updateDocumentContent(doc: DocumentSession, content: string): void {
+		if (doc.content === content) return;
+		doc.content = content;
+		this.debouncedSaveOpenFiles();
+	}
+
+	/** Root fast-path first, storage verify second. Used by the permission overlay. */
+	requestFilePermission(doc: DocumentSession): Promise<boolean> {
+		if (!doc.origin) return Promise.resolve(true);
+		return doc.requestPermission(this.coversOrigin(doc.origin));
+	}
+
+	/**
+	 * The save path: run the Document's storage save with fresh root coverage,
+	 * then refresh the repo and schedule a session flush on success. Prefer
+	 * this over `doc.save` — a direct save leaves persistence holding a stale
+	 * `draftContent` until some unrelated flush happens to clear it.
+	 */
+	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
+		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
+		const ok = await doc.save({ ...options, coveredByRoot: covered });
+		if (ok) {
+			this.repository?.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+			this.debouncedSaveOpenFiles();
+		}
+		return ok;
+	}
+
+	/**
 	 * Diff-tab selections read back from persisted session state, keyed by tab
 	 * id, awaiting a repository that has refreshed its change list to be
 	 * applied to. Keyed per tab so multiple persisted diff tabs resolve
@@ -258,7 +324,7 @@ export class Workspace {
 
 	async newFile() {
 		this.untitledCounter++;
-		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
+		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -285,7 +351,8 @@ export class Workspace {
 		}
 
 		const content = await this.storage.readFile(origin);
-		const newDoc = new DocumentSession(this.storage, content, origin, undefined, this);
+		const newDoc = new DocumentSession(this.storage, content, origin);
+		newDoc.refreshPermissionState(this.coversOrigin(origin));
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -350,12 +417,8 @@ export class Workspace {
 
 		// Refresh permissions for already open files
 		for (const doc of this.documents) {
-			if (doc.origin) {
-				doc.hasRootPermissionForFile().then(hasRoot => {
-					if (hasRoot) {
-						doc.permissionState = 'granted';
-					}
-				});
+			if (doc.origin && this.coversOrigin(doc.origin)) {
+				doc.markPermissionGranted();
 			}
 		}
 	}
@@ -390,12 +453,8 @@ export class Workspace {
 
 			// Refresh permissions for already open files
 			for (const doc of this.documents) {
-				if (doc.origin) {
-					doc.hasRootPermissionForFile().then(hasRoot => {
-						if (hasRoot) {
-							doc.permissionState = 'granted';
-						}
-					});
+				if (doc.origin && this.coversOrigin(doc.origin)) {
+					doc.markPermissionGranted();
 				}
 			}
 		}
@@ -491,7 +550,7 @@ export class Workspace {
 			if (index !== -1) {
 				const doc = this.documents[index];
 				if (saveFirst) {
-					doc.save().then(
+					this.saveDocument(doc).then(
 						(saved) => {
 							if (saved) {
 								this.performClose(id);
@@ -545,14 +604,9 @@ export class Workspace {
 			this.documents
 				.filter(doc => doc.isModified)
 				.map(async doc => {
-					if (doc.origin && this.rootOrigin) {
-						if (doc.origin.scheme === this.rootOrigin.scheme) {
-							if (doc.origin.path.startsWith(this.rootOrigin.path + '/')) {
-								return doc.origin.path.slice(this.rootOrigin.path.length + 1);
-							} else if (doc.origin.path === this.rootOrigin.path) {
-								return '';
-							}
-						}
+					if (doc.origin) {
+						const rel = this.relativePath(doc.origin);
+						if (rel !== null) return rel;
 					}
 					return doc.fileName;
 				})
@@ -637,17 +691,20 @@ export class Workspace {
 							this.storage,
 							'',
 							serialized.origin,
-							serialized.untitledTitle || 'Untitled',
-							this
+							serialized.untitledTitle || 'Untitled'
 						);
 						doc.id = serialized.id as any;
+						if (serialized.origin) {
+							doc.refreshPermissionState(this.coversOrigin(serialized.origin));
+						}
 						if (serialized.draftContent !== undefined) {
 							doc.restoreDraft(serialized.draftContent);
 						}
 					} else {
 						// Old schema compatibility
 						const origin = serialized as unknown as FileOrigin;
-						doc = new DocumentSession(this.storage, '', origin, undefined, this);
+						doc = new DocumentSession(this.storage, '', origin);
+						doc.refreshPermissionState(this.coversOrigin(origin));
 					}
 					restoredDocs.push(doc);
 					restoredTabs.push({

@@ -19,14 +19,14 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			
 			// 1. Modify the initial Untitled file content
 			const doc1 = appState.workspace.documents[0];
-			doc1.content = 'Draft content for Untitled file';
-			
+			appState.workspace.updateDocumentContent(doc1, 'Draft content for Untitled file');
+
 			// 2. Open/Mock a file, modify it so it has unsaved changes (draft)
 			const mockFile = new (window as any).MockFileHandle('notes.md', new TextEncoder().encode('Original content'));
 			await (window as any).browserHandleRegistry.register('browser://notes.md', mockFile);
-			
+
 			const doc2 = await appState.workspace.openFile({ scheme: 'browser', path: 'notes.md', name: 'notes.md' });
-			doc2.content = 'Unsaved modified draft content';
+			appState.workspace.updateDocumentContent(doc2, 'Unsaved modified draft content');
 
 			// 3. Flush the saves immediately to mock persistence save
 			await appState.workspace.flushSaveOpenFiles();
@@ -86,7 +86,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			await appState.workspace.openDirectory(originA);
 			
 			const docA1 = await appState.workspace.newFile();
-			docA1.content = 'Folder A Draft';
+			appState.workspace.updateDocumentContent(docA1, 'Folder A Draft');
 			
 			const activeIdA = appState.workspace.activeDocumentId;
 			await appState.workspace.flushSaveOpenFiles();
@@ -95,7 +95,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			await appState.workspace.openDirectory(originB);
 			
 			const docB1 = await appState.workspace.newFile();
-			docB1.content = 'Folder B Draft';
+			appState.workspace.updateDocumentContent(docB1, 'Folder B Draft');
 			
 			const activeIdB = appState.workspace.activeDocumentId;
 			await appState.workspace.flushSaveOpenFiles();
@@ -133,7 +133,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 
 			// 1. Create a draft in an Untitled file
 			const doc = appState.workspace.documents[0];
-			doc.content = 'Auto-persisted via visibilitychange hidden';
+			appState.workspace.updateDocumentContent(doc, 'Auto-persisted via visibilitychange hidden');
 
 			// 2. Mock document.visibilityState to 'hidden' and dispatch visibilitychange
 			Object.defineProperty(document, 'visibilityState', {
