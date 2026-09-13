@@ -1,23 +1,34 @@
 name: ci
 
-# Quoted "on": bare `on:` parses as boolean True under YAML 1.1.
 "on":
   pull_request:
     branches: [master]
   push:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: git --version
-      # e2e intentionally excluded: bunfig.toml already ignores tests/e2e/**
-      # for `bun test`, and the Playwright suite needs browsers (see #37).
-      - run: bun test
-      - run: bun run check
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify Git version
+        run: git --version
+
+      - name: Run test suite
+        run: bun test
+
+      - name: Run type and lint checks
+        run: bun run check
