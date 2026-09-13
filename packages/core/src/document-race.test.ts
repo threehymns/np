@@ -166,6 +166,38 @@ describe("Document load/save revision race", () => {
 		expect(doc.isModified).toBe(false);
 		expect(doc.isLoaded).toBe(true);
 	});
+
+	it("older restoreDraft read does not overwrite a newer rebase baseline", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage();
+		let resolveRestore!: (v: string) => void;
+		let resolveRebase!: (v: string) => void;
+		const restoreGate = new Promise<string>((r) => {
+			resolveRestore = r;
+		});
+		const rebaseGate = new Promise<string>((r) => {
+			resolveRebase = r;
+		});
+		let readCalls = 0;
+		storage.readFile = mock(async () => {
+			readCalls++;
+			if (readCalls === 1) return restoreGate;
+			return rebaseGate;
+		}) as any;
+
+		const doc = makeDocSession(storage, "", origin);
+		doc.restoreDraft("new-branch-content");
+		const rebasing = doc.rebaseSavedBaseline();
+
+		resolveRebase("new-branch-content");
+		await rebasing;
+
+		resolveRestore("old-branch-content");
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(doc.content).toBe("new-branch-content");
+		expect(doc.isModified).toBe(false);
+	});
 });
 
 describe("Document permission query freshness", () => {

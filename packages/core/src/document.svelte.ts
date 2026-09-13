@@ -141,19 +141,25 @@ export class DocumentSession {
 		const readOrigin = this.origin;
 		const readURI = toURI(readOrigin);
 		const readSaveEpoch = this.saveEpoch;
+		const seq = ++this.baselineSeq;
 		try {
 			const diskContent = await this.storage.readFile(readOrigin);
 			// Same stale-read guard as loadContent: a concurrent save
 			// established a fresher baseline while this read was in flight,
 			// so applying it would resurrect a phantom modification.
+			// The baselineSeq check also drops an older restoreDraft read
+			// that resolves after this rebase started.
 			if (!this.origin || toURI(this.origin) !== readURI) return;
 			if (this.saveEpoch !== readSaveEpoch) return;
+			if (this.baselineSeq !== seq) return;
 			this.savedBaseline = diskContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
+			this.baselinePending = false;
 		} catch (e: any) {
 			if (!this.origin || toURI(this.origin) !== readURI) throw e;
 			if (this.saveEpoch !== readSaveEpoch) throw e;
+			if (this.baselineSeq !== seq) throw e;
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				// Expected when the file was removed on the checked-out branch;
 				// not an error worth logging.
