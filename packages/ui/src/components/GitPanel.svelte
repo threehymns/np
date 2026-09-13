@@ -1,22 +1,26 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
-	import { Button } from './ui/button';
+	import { Button, buttonVariants } from './ui/button';
 	import { Checkbox } from './ui/checkbox';
 	import { ButtonGroup } from './ui/button-group';
 	import {
 		GitBranchIcon, PlusIcon, MinusIcon, ArrowCounterClockwiseIcon, CheckIcon,
-		CaretDownIcon, PlusMinusIcon, TrashIcon, GitDiffIcon
+		CaretDownIcon, PlusMinusIcon, TrashIcon, GitDiffIcon, CornersOutIcon
 	} from 'phosphor-svelte';
 	import Icon from './Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
 	import * as Tooltip from './ui/tooltip/index';
 	import * as ContextMenu from './ui/context-menu';
+	import * as DropdownMenu from './ui/dropdown-menu';
+	import * as Dialog from './ui/dialog';
 	import { runGitAction, GitInitController } from './git-actions.svelte';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { type GitChange, type GroupedChange } from '@np/core';
+    import { Textarea } from './ui/textarea';
+  import BranchSelectButton from './BranchSelectButton.svelte';
 
 	const appState = useAppState();
 	let repo = $derived(appState.workspace.repository);
@@ -28,12 +32,33 @@
 	});
 
 	let commitMessage = $state('');
-	let showBranchDropdown = $state(false);
-	let newBranchName = $state('');
+	let commitTextareaEl = $state<HTMLTextAreaElement | null>(null);
+	let commitIsOverflowing = $state(false);
+
+	function checkCommitOverflow() {
+		const el = commitTextareaEl;
+		if (!el) return;
+		const overflowing = el.scrollHeight > el.clientHeight + 1;
+		if (overflowing !== commitIsOverflowing) commitIsOverflowing = overflowing;
+	}
+
+	$effect(() => {
+		commitMessage;
+		commitTextareaEl;
+		checkCommitOverflow();
+	});
+
+	$effect(() => {
+		const el = commitTextareaEl;
+		if (!el) return;
+		const ro = new ResizeObserver(() => checkCommitOverflow());
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+	const commitPlaceholder = Math.random() < 0.1 ? "chore(metahumor): write commit message" : "Enter commit message";
 	let stagedExpanded = $state(true);
 	let changesExpanded = $state(true);
 	let untrackedExpanded = $state(true);
-	let dropdownRef = $state<HTMLDivElement | null>(null);
 
 	// View mode: list or tree
 	let viewMode = $state<'list' | 'tree'>('list');
@@ -44,7 +69,6 @@
 	let lastSelectedPath = $state<string | null>(null);
 
 	// Split commit button dropdown flags
-	let showCommitDropdown = $state(false);
 	let isAmend = $state(false);
 	let isSignoff = $state(false);
 	let userConfig = $state<{ name: string; email: string } | null>(null);
@@ -245,7 +269,6 @@
 		const success = await appState.commands.execute('git.commit', message, { amend: isAmend });
 		if (success) {
 			commitMessage = '';
-			showCommitDropdown = false;
 			isAmend = false;
 		}
 	}
@@ -254,17 +277,6 @@
 		if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
 			e.preventDefault();
 			handleCommit();
-		}
-	}
-
-	function handleDocumentClick(e: MouseEvent) {
-		const target = e.target as HTMLElement;
-
-		if (showBranchDropdown && dropdownRef && !dropdownRef.contains(target)) {
-			showBranchDropdown = false;
-		}
-		if (showCommitDropdown && !target.closest('.button-group-container')) {
-			showCommitDropdown = false;
 		}
 	}
 
@@ -299,16 +311,12 @@
 	}
 
 	onMount(() => {
-		window.addEventListener('click', handleDocumentClick);
 		if (repo) {
 			Promise.resolve(repo.refresh()).catch(err => {
 				console.error("[GitPanel] Failed to refresh repository:", err);
 			});
 			repo.adapter.getUserConfig?.().then(cfg => { userConfig = cfg || null; }).catch(() => {});
 		}
-		return () => {
-			window.removeEventListener('click', handleDocumentClick);
-		};
 	});
 </script>
 
@@ -582,77 +590,103 @@
 		</div>
 		</Tooltip.Provider>
 
-		<!-- Footer/Commit Area -->
-		<div class="p-3 border-t border-border shrink-0 bg-sidebar/95 backdrop-blur-sm">
-			<div class="rounded-md border border-border bg-muted/30 focus-within:ring-1 focus-within:ring-primary focus-within:border-transparent transition-all flex flex-col relative">
-				<textarea
-					placeholder="Commit message (Ctrl+Enter to commit)..."
-					bind:value={commitMessage}
-					onkeydown={handleTextareaKeydown}
-					class="w-full min-h-[64px] max-h-28 bg-transparent p-2 text-xs text-foreground placeholder-muted-foreground/60 focus:outline-none resize-y font-sans border-b border-border/40 rounded-t-md"
-				></textarea>
-
-				<div class="p-1.5 bg-muted/20 flex items-center justify-between gap-1.5 relative button-group-container rounded-b-md">
-					<div class="text-[10px] text-muted-foreground font-mono px-1 select-none">
-						{#if isAmend}<span class="text-amber-500 font-bold mr-1">Amend</span>{/if}
-						{#if isSignoff}<span class="text-emerald-500 font-bold mr-1">Signed-off</span>{/if}
-					</div>
-
-					<ButtonGroup class="flex-1 max-w-[140px]">
-						<Button
-							onclick={handleCommit}
-							disabled={(repo.changes.filter(c => c.staged).length === 0 && !isAmend) || repo.isBusy || !commitMessage.trim()}
-							size="xs"
-							class="flex-1 shadow-sm font-semibold tracking-wide"
-						>
-							{#if repo.isBusy}
-								<div class="size-3 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
-							{:else}
-								{commitBtnLabel}
-							{/if}
-						</Button>
-
-						<Button
-							onclick={() => showCommitDropdown = !showCommitDropdown}
-							disabled={repo.isBusy}
-							size="xs"
-							variant="default"
-							class="px-1.5 border-l border-primary-foreground/20"
-						>
-							<CaretDownIcon size={11} />
-						</Button>
-					</ButtonGroup>
-
-					{#if showCommitDropdown}
-						<div class="absolute bottom-full right-1.5 mb-1.5 w-48 rounded bg-popover border border-border shadow-lg z-50 py-1 animate-in fade-in slide-in-from-bottom-1 duration-100">
-							<button
-								type="button"
-								onclick={() => { isAmend = !isAmend; showCommitDropdown = false; }}
-								class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between {isAmend ? 'text-primary' : ''}"
-							>
-								<span>Amend commit</span>
-								{#if isAmend}
-									<CheckIcon size={11} />
-								{/if}
-							</button>
-							<button
-								type="button"
-								onclick={() => { if (userConfig) { isSignoff = !isSignoff; } showCommitDropdown = false; }}
-								disabled={!userConfig}
-								class="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between {isSignoff ? 'text-primary' : ''} {!userConfig ? 'opacity-50 cursor-not-allowed' : ''}"
-								title={!userConfig ? "Git identity (user.name & user.email) not configured" : "Add Signed-off-by trailer"}
-							>
-								<span>Add sign-off</span>
-								{#if isSignoff}
-									<CheckIcon size={11} />
-								{/if}
-							</button>
-						</div>
-					{/if}
-				</div>
-			</div>
+		<!-- Footer -->
+		<div class="p-2">
+  		<BranchSelectButton />
 		</div>
+		<!-- Commit Input -->
+		<div class="border-t border-border shrink-0 bg-background flex flex-col relative">
+ 			{#snippet commitButton()}
+  				<ButtonGroup>
+ 					<Button
+  						onclick={handleCommit}
+  						disabled={(repo.changes.filter(c => c.staged).length === 0 && !isAmend) || repo.isBusy || !commitMessage.trim()}
+  						size="xs"
+  						class="font-semibold tracking-wide"
+ 					>
+  						{#if repo.isBusy}
+ 							<div class="size-3 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin"></div>
+  						{:else}
+ 							{commitBtnLabel}
+  						{/if}
+ 					</Button>
 
+ 					<DropdownMenu.Root>
+  						<DropdownMenu.Trigger>
+ 							{#snippet child({ props })}
+  								<Button
+ 									{...props}
+ 									disabled={repo.isBusy}
+ 									size="icon-xs"
+ 									variant="default"
+  								>
+ 									<CaretDownIcon />
+  								</Button>
+ 							{/snippet}
+  						</DropdownMenu.Trigger>
+  						<DropdownMenu.Content align="end">
+ 							<DropdownMenu.Group>
+  								<DropdownMenu.CheckboxItem bind:checked={isAmend}>
+ 									Amend
+  								</DropdownMenu.CheckboxItem>
+  								<DropdownMenu.CheckboxItem
+ 									bind:checked={isSignoff}
+ 									disabled={!userConfig}
+ 									title={!userConfig ? "Git identity (user.name & user.email) not configured" : "Add Signed-off-by trailer"}
+  								>
+ 									Signoff
+  								</DropdownMenu.CheckboxItem>
+ 							</DropdownMenu.Group>
+  						</DropdownMenu.Content>
+ 					</DropdownMenu.Root>
+  				</ButtonGroup>
+ 			{/snippet}
+
+  			<textarea
+				bind:this={commitTextareaEl}
+				placeholder={commitPlaceholder}
+				bind:value={commitMessage}
+				onkeydown={handleTextareaKeydown}
+				class="w-full min-h-[64px] max-h-28 bg-transparent p-2 text-xs text-foreground placeholder-muted-foreground/60 focus:outline-none resize-y overflow-y-auto font-sans border-b rounded-t-md"
+				class:border-transparent={!commitIsOverflowing}
+				class:border-border={commitIsOverflowing}
+  			></textarea>
+
+ 			<div class="absolute right-1 top-1">
+  				<Tooltip.Provider>
+ 					<Dialog.Root>
+  						<Tooltip.Root>
+ 							<Tooltip.Trigger>
+  								{#snippet child({ props })}
+ 									<Dialog.Trigger {...props} class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
+  										<CornersOutIcon />
+ 									</Dialog.Trigger>
+  								{/snippet}
+ 							</Tooltip.Trigger>
+ 							<Tooltip.Content>
+  								Open Commit Modal
+ 							</Tooltip.Content>
+  						</Tooltip.Root>
+  						<Dialog.Content showCloseButton={false} class="sm:max-w-xl p-2 top-65">
+ 							<Textarea bind:value={commitMessage} onkeydown={handleTextareaKeydown} class="h-80 focus-visible:ring-0 focus-visible:border-border border-input" />
+ 							<div class="absolute bottom-4 inset-x-4 flex gap-3 items-center">
+  								<BranchSelectButton class="hover:bg-muted" />
+  								<div class="flex-1"></div>
+  								<span>
+ 									<kbd class="border shadow-sm rounded p-0.5 bg-primary/10 text-[10px]">Escape</kbd>
+ 									<span class="font-mono italic text-muted-foreground">Cancel</span>
+  								</span>
+  								{@render commitButton()}
+ 							</div>
+  						</Dialog.Content>
+ 					</Dialog.Root>
+  				</Tooltip.Provider>
+ 			</div>
+
+ 			<div class="p-1 flex items-center justify-end gap-1.5">
+				{@render commitButton()}
+ 			</div>
+		</div>
 	</div>
 {/if}
 
