@@ -21,10 +21,11 @@ export const allLanguages = [...languages, ...extraLanguages];
 
 export class LanguageSupport {
 	static getLanguageForFile(filename: string): LanguageDescription | null {
-		const extension = filename.split(".").pop()?.toLowerCase();
+		const dot = filename.lastIndexOf(".");
 
 		// Special cases or manual mapping if language-data doesn't cover it
-		if (extension === "svelte") return extraLanguages[0];
+		if (dot >= 0 && dot < filename.length - 1 && filename.slice(dot + 1).toLowerCase() === "svelte")
+			return extraLanguages[0];
 
 		const exact = LanguageDescription.matchFilename(allLanguages, filename);
 		if (exact) return exact;
@@ -35,7 +36,6 @@ export class LanguageSupport {
 		// and extensionless files (Untitled scratchpads, LICENSE, ...)
 		// resolve to null (plain text), so only files recognised as
 		// Markdown use the markdown preview stack in getLanguageExtensions.
-		const dot = filename.lastIndexOf(".");
 		if (dot >= 0 && dot < filename.length - 1) {
 			const lowered = filename.slice(0, dot + 1) + filename.slice(dot + 1).toLowerCase();
 			if (lowered !== filename) {
