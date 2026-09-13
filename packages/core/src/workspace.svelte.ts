@@ -57,8 +57,9 @@ export class Workspace {
 		if (origin.path === rootOrigin.path) {
 			return '';
 		}
-		if (origin.path.startsWith(rootOrigin.path + '/')) {
-			return origin.path.slice(rootOrigin.path.length + 1);
+		const normalizedRoot = rootOrigin.path.replace(/\/+$/, '');
+		if (origin.path.startsWith(normalizedRoot + '/')) {
+			return origin.path.slice(normalizedRoot.length + 1);
 		}
 		return null;
 	}

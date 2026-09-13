@@ -118,6 +118,8 @@ export class DocumentSession {
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
+			if (!this.origin || toURI(this.origin) !== readURI) throw e;
+			if (this.saveEpoch !== readSaveEpoch) throw e;
 			console.error(`Failed to load content for ${readOrigin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				this.deletedOnDisk = true;
@@ -150,6 +152,8 @@ export class DocumentSession {
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
+			if (!this.origin || toURI(this.origin) !== readURI) throw e;
+			if (this.saveEpoch !== readSaveEpoch) throw e;
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				// Expected when the file was removed on the checked-out branch;
 				// not an error worth logging.
@@ -200,7 +204,11 @@ export class DocumentSession {
 			this.markPermissionGranted();
 			return true;
 		}
+		const seq = this.permissionSeq;
 		const granted = await this.storage.verifyPermission(this.origin, true);
+		if (this.permissionSeq !== seq) {
+			return this.permissionState === 'granted';
+		}
 		if (granted) {
 			this.markPermissionGranted();
 		} else {
