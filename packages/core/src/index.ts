@@ -4,6 +4,7 @@ export * from './storage';
 export * from './persistence';
 export * from './preferences.svelte';
 export * from './document.svelte';
+export * from './draft.svelte';
 export * from './workspace.svelte';
 export * from './commands.svelte';
 export * from './state.svelte';

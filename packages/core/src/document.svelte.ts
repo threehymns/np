@@ -1,4 +1,5 @@
 import { type Storage, type FileOrigin } from './storage';
+import { DocumentDraft } from './draft.svelte';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 import type { Workspace } from './workspace.svelte';
 
@@ -16,18 +17,17 @@ export class DocumentSession {
 	editorState = $state.raw<any>(null);
 	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
 	
-	private savedContent = $state('');
-	private baselinePending = $state(false);
+	private draft: DocumentDraft;
 	private storage: Storage;
 	workspace?: Workspace;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', workspace?: Workspace) {
 		this.storage = storage;
 		this._content = initialContent;
-		this.savedContent = initialContent;
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
 		this.workspace = workspace;
+		this.draft = new DocumentDraft(initialContent, () => this.workspace?.debouncedSaveOpenFiles());
 		this.isLoaded = initialContent !== '' || origin === null;
 
 		if (origin) {
@@ -51,9 +51,7 @@ export class DocumentSession {
 	set content(value: string) {
 		if (this._content === value) return;
 		this._content = value;
-		if (this.workspace) {
-			this.workspace.debouncedSaveOpenFiles();
-		}
+		this.draft.notifyEdited();
 	}
 
 	get fileName() {
@@ -61,7 +59,7 @@ export class DocumentSession {
 	}
 
 	get isModified() {
-		return this.baselinePending || this._content !== this.savedContent;
+		return this.draft.isModified(this._content);
 	}
 
 	userLanguageOverride = $state<string | null>(null);
@@ -103,12 +101,7 @@ export class DocumentSession {
 			const fileContent = await this.storage.readFile(this.origin);
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
-			if (this.isModified) {
-				this.savedContent = fileContent;
-			} else {
-				this._content = fileContent;
-				this.savedContent = fileContent;
-			}
+			this._content = this.draft.applyLoaded(fileContent, this._content);
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -123,7 +116,7 @@ export class DocumentSession {
 	/**
 	 * Rebase the saved baseline onto the current on-disk content without
 	 * discarding in-memory edits. `content` (and therefore `isModified`) is left
-	 * untouched; only `savedContent`, `deletedOnDisk`, and `isLoaded` reflect the
+	 * untouched; only the saved baseline, `deletedOnDisk`, and `isLoaded` reflect the
 	 * new baseline. Used after an operation that changes files on disk (e.g. a
 	 * branch switch) so unsaved in-memory edits survive and are re-diffed against
 	 * the checked-out content instead of being silently overwritten.
@@ -131,7 +124,7 @@ export class DocumentSession {
 	async rebaseSavedBaseline(): Promise<void> {
 		if (!this.origin) return;
 		try {
-			this.savedContent = await this.storage.readFile(this.origin);
+			this.draft.applyRebased(await this.storage.readFile(this.origin));
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -165,7 +158,7 @@ export class DocumentSession {
 		}
 		const granted = await this.storage.verifyPermission(this.origin, true);
 		this.permissionState = granted ? 'granted' : 'denied';
-		if (granted && !this._content && this.savedContent === '') {
+		if (granted && !this._content && this.draft.baselineIsEmpty) {
 			await this.loadContent();
 		}
 		return granted;
@@ -182,7 +175,7 @@ export class DocumentSession {
 		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
-			this.savedContent = contentToSave;
+			this.draft.markSaved(contentToSave);
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
 			if (this.workspace?.repository) {
@@ -200,15 +193,14 @@ export class DocumentSession {
 		this._content = draftContent;
 		this.isLoaded = true;
 		if (this.origin) {
-			// An empty draft matches the fresh savedContent baseline while the
+			// An empty draft matches the fresh saved baseline while the
 			// disk read is pending, which would read as unmodified and let an
 			// immediate workspace flush omit the deletion draft. Stay dirty
 			// until the baseline loads; keep dirty if the read fails.
-			this.baselinePending = true;
+			this.draft.beginBaselineWait();
 			this.storage.readFile(this.origin).then(
 				(saved) => {
-					this.savedContent = saved;
-					this.baselinePending = false;
+					this.draft.resolveBaseline(saved);
 				},
 				(err) => {
 					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
