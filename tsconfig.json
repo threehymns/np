@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"paths": {
+			"@np/core": ["./packages/core/src/index.ts"],
+			"@np/core/*": ["./packages/core/src/*"],
+			"@np/adapters-browser": ["./packages/adapters-browser/src/index.ts"],
+			"@np/adapters-browser/*": ["./packages/adapters-browser/src/*"],
+			"@np/ui": ["./packages/ui/src/index.ts"],
+			"@np/ui/*": ["./packages/ui/src/*"]
+		}
+	}
+}

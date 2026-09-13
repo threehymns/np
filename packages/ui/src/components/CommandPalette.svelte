@@ -52,7 +52,7 @@
 				placeholder={appState.commandPalette.placeholder} 
 				bind:value={inputValue}
 				onkeydown={handleInputKeydown}
-				icon={null}
+				icon={undefined}
 			/>
 		</div>
 	</div>

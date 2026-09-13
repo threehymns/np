@@ -7,7 +7,6 @@
 
 import {
 	lineNumbers as cmLineNumbers,
-	type LineNumberConfig,
 	type BlockInfo,
 	EditorView,
 } from "@codemirror/view";
@@ -17,6 +16,8 @@ import {
 	type Text,
 	type Line,
 } from "@codemirror/state";
+
+export type LineNumberConfig = Parameters<typeof cmLineNumbers>[0];
 
 /**
  * Returns the line end offset including the trailing newline unless at EOF.
@@ -96,8 +97,9 @@ export function lineNumbers(config: LineNumberConfig = {}) {
 			...config,
 			domEventHandlers: {
 				...config.domEventHandlers,
-				mousedown(view: EditorView, lineBlock: BlockInfo, event: MouseEvent) {
-					if (event.button !== 0) {
+				mousedown(view: EditorView, lineBlock: BlockInfo, event: Event) {
+					const mouseEvent = event as MouseEvent;
+					if (mouseEvent.button !== 0) {
 						return (
 							config.domEventHandlers?.mousedown?.(
 								view,
@@ -109,8 +111,8 @@ export function lineNumbers(config: LineNumberConfig = {}) {
 
 					view.focus();
 
-					const isMulti = event.ctrlKey || event.metaKey;
-					const isShift = event.shiftKey && !isMulti;
+					const isMulti = mouseEvent.ctrlKey || mouseEvent.metaKey;
+					const isShift = mouseEvent.shiftKey && !isMulti;
 					const startDoc = view.state.doc;
 					const startLine = startDoc.lineAt(lineBlock.from);
 

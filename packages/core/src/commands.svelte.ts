@@ -334,7 +334,7 @@ function insertCallout(appState: AppState) {
 		});
 	} else {
 		const text = doc.sliceString(from, to);
-		const quotedText = text.split('\n').map(l => `> ${l}`).join('\n');
+		const quotedText = text.split('\n').map((l: string) => `> ${l}`).join('\n');
 		view.dispatch({
 			changes: { from, to, insert: `> [!note]\n${quotedText}` },
 			selection: { anchor: from + 10, head: from + 10 + quotedText.length }
