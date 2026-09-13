@@ -1,9 +1,22 @@
 import { type Storage, type FileOrigin } from './storage';
 import { DocumentDraft } from './draft.svelte';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
-import type { Workspace } from './workspace.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
+
+/**
+ * Dependencies a Document accepts instead of reaching for its owner.
+ * Each is a live probe or notification — never a snapshot — so Documents
+ * constructed before a folder switch keep seeing current Workspace state.
+ */
+export interface DocumentDeps {
+	/** Called when in-memory content changes (persistence scheduling). */
+	onDirty?: () => void;
+	/** Live probe: is this origin covered by the granted workspace root? */
+	isUnderRoot?: (origin: FileOrigin) => boolean;
+	/** Called after a successful save (post-save refresh lives here). */
+	onSaved?: () => void;
+}
 
 export class DocumentSession {
 	id = crypto.randomUUID();
@@ -19,15 +32,15 @@ export class DocumentSession {
 	
 	private draft: DocumentDraft;
 	private storage: Storage;
-	workspace?: Workspace;
+	private deps: DocumentDeps;
 
-	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', workspace?: Workspace) {
+	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', deps: DocumentDeps = {}) {
 		this.storage = storage;
 		this._content = initialContent;
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
-		this.workspace = workspace;
-		this.draft = new DocumentDraft(initialContent, () => this.workspace?.debouncedSaveOpenFiles());
+		this.deps = deps;
+		this.draft = new DocumentDraft(initialContent, deps.onDirty ?? null);
 		this.isLoaded = initialContent !== '' || origin === null;
 
 		if (origin) {
@@ -140,14 +153,10 @@ export class DocumentSession {
 	}
 
 	async hasRootPermissionForFile(): Promise<boolean> {
-		if (!this.workspace || !this.workspace.rootOrigin || !this.workspace.hasRootPermission || !this.origin) {
+		if (!this.origin) {
 			return false;
 		}
-		const rootOrigin = this.workspace.rootOrigin;
-		if (this.origin.scheme !== rootOrigin.scheme) {
-			return false;
-		}
-		return this.origin.path === rootOrigin.path || this.origin.path.startsWith(rootOrigin.path + '/');
+		return this.deps.isUnderRoot?.(this.origin) ?? false;
 	}
 
 	async requestPermission() {
@@ -178,12 +187,7 @@ export class DocumentSession {
 			this.draft.markSaved(contentToSave);
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
-			if (this.workspace?.repository) {
-				this.workspace.repository.refresh().catch(e => console.error('Auto-refresh after save failed', e));
-			}
-			if (this.workspace) {
-				this.workspace.debouncedSaveOpenFiles();
-			}
+			this.deps.onSaved?.();
 			return true;
 		}
 		return false;

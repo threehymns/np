@@ -5,7 +5,7 @@ import { createMockStorage } from "../../../tests/mock-storage";
 import { MemorySessionPersistence } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
-import type { DocumentSession } from "./document.svelte";
+import type { DocumentSession, DocumentDeps } from "./document.svelte";
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -15,7 +15,7 @@ beforeAll(async () => {
 });
 
 let makeWorkspace: (storage: ReturnType<typeof createMockStorage>, persistence: MemorySessionPersistence) => Workspace;
-let makeDocSession: (storage: ReturnType<typeof createMockStorage>, initialContent?: string, origin?: FileOrigin | null, untitledTitle?: string, workspace?: Workspace) => DocumentSession;
+let makeDocSession: (storage: ReturnType<typeof createMockStorage>, initialContent?: string, origin?: FileOrigin | null, untitledTitle?: string, deps?: DocumentDeps) => DocumentSession;
 
 beforeAll(async () => {
 	const wsMod = await import("./workspace.svelte");
@@ -26,8 +26,8 @@ beforeAll(async () => {
 			() => ({ detect: async () => false } as unknown as VCSAdapter),
 			persistence
 		);
-	makeDocSession = (storage, initialContent = "", origin = null, untitledTitle = "Untitled", workspace) =>
-		new docMod.DocumentSession(storage, initialContent, origin, untitledTitle, workspace);
+	makeDocSession = (storage, initialContent = "", origin = null, untitledTitle = "Untitled", deps) =>
+		new docMod.DocumentSession(storage, initialContent, origin, untitledTitle, deps);
 });
 
 describe("Document draft and keystroke decoupling", () => {
@@ -235,7 +235,7 @@ describe("Document draft and keystroke decoupling", () => {
 		const ws = makeWorkspace(storage, persistence);
 		await ws.restoreSession();
 
-		const doc = makeDocSession(storage, "", origin, "Untitled", ws);
+		const doc = makeDocSession(storage, "", origin, "Untitled");
 		ws.documents.push(doc);
 		ws.tabs.push({ id: doc.id, type: "document" });
 		ws.activeTabId = doc.id;

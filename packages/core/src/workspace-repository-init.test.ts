@@ -507,7 +507,7 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 		);
 
 		// A modified document: saved baseline is the old content, in-memory content holds an edit.
-		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
+		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts");
 		doc.content = unsavedEdit;
 		ws.documents.push(doc);
 		expect(doc.isModified).toBe(true);
@@ -529,7 +529,7 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 		);
 
 		// Unmodified document: content matches its saved baseline.
-		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts", ws);
+		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts");
 		ws.documents.push(doc);
 		expect(doc.isModified).toBe(false);
 
@@ -552,7 +552,7 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 			return "";
 		});
 
-		const doc = new DocumentSession(storage, "old committed content\n", fileOrigin, "a.ts", ws);
+		const doc = new DocumentSession(storage, "old committed content\n", fileOrigin, "a.ts");
 		doc.content = unsavedEdit; // in-memory-only edit
 		ws.documents.push(doc);
 		expect(doc.isModified).toBe(true);

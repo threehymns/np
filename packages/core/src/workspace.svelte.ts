@@ -1,5 +1,5 @@
 import { untrack } from 'svelte';
-import { DocumentSession } from './document.svelte';
+import { DocumentSession, type DocumentDeps } from './document.svelte';
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
@@ -31,6 +31,31 @@ export class Workspace {
 	private latestRestoreId = 0;
 
 	private saveOpenFilesTimeout: any = null;
+
+	/**
+	 * The single place where Document-to-Workspace wiring lives. Each entry
+	 * is a live closure over current Workspace state — never a snapshot — so
+	 * Documents constructed before a folder switch keep seeing fresh state.
+	 */
+	private documentDeps(): DocumentDeps {
+		return {
+			onDirty: () => this.debouncedSaveOpenFiles(),
+			isUnderRoot: (origin) => {
+				const rootOrigin = this.rootOrigin;
+				if (!rootOrigin || !this.hasRootPermission) {
+					return false;
+				}
+				if (origin.scheme !== rootOrigin.scheme) {
+					return false;
+				}
+				return origin.path === rootOrigin.path || origin.path.startsWith(rootOrigin.path + '/');
+			},
+			onSaved: () => {
+				this.repository?.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+				this.debouncedSaveOpenFiles();
+			}
+		};
+	}
 
 	/**
 	 * Diff-tab selections read back from persisted session state, keyed by tab
@@ -258,7 +283,7 @@ export class Workspace {
 
 	async newFile() {
 		this.untitledCounter++;
-		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this);
+		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`, this.documentDeps());
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -285,7 +310,7 @@ export class Workspace {
 		}
 
 		const content = await this.storage.readFile(origin);
-		const newDoc = new DocumentSession(this.storage, content, origin, undefined, this);
+		const newDoc = new DocumentSession(this.storage, content, origin, undefined, this.documentDeps());
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -638,7 +663,7 @@ export class Workspace {
 							'',
 							serialized.origin,
 							serialized.untitledTitle || 'Untitled',
-							this
+							this.documentDeps()
 						);
 						doc.id = serialized.id as any;
 						if (serialized.draftContent !== undefined) {
@@ -647,7 +672,7 @@ export class Workspace {
 					} else {
 						// Old schema compatibility
 						const origin = serialized as unknown as FileOrigin;
-						doc = new DocumentSession(this.storage, '', origin, undefined, this);
+						doc = new DocumentSession(this.storage, '', origin, undefined, this.documentDeps());
 					}
 					restoredDocs.push(doc);
 					restoredTabs.push({
