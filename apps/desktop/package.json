@@ -8,11 +8,42 @@
 	"scripts": {
 		"dev": "bun run scripts/dev.ts",
 		"build": "vite build && tsc -p tsconfig.main.json",
+		"dist": "electron-builder --publish never",
 		"start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
 		"check": "svelte-check --tsconfig ./tsconfig.json"
 	},
+	"build": {
+		"appId": "com.np.app",
+		"productName": "np",
+		"directories": {
+			"output": "dist-electron"
+		},
+		"files": [
+			"dist/**",
+			"dist-main/**",
+			"package.json"
+		],
+		"mac": {
+			"target": [
+				"dmg",
+				"zip"
+			]
+		},
+		"linux": {
+			"target": [
+				"AppImage",
+				"deb"
+			]
+		},
+		"win": {
+			"target": [
+				"nsis"
+			]
+		}
+	},
 	"devDependencies": {
 		"electron": "^34.0.0",
+		"electron-builder": "^26.0.0",
 		"svelte": "^5.55.2",
 		"svelte-check": "^4.4.6",
 		"typescript": "^6.0.2",
