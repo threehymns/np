@@ -1,0 +1,138 @@
+import "../../../tests/contract/rune-setup";
+import { describe, it, expect, mock, beforeAll } from "bun:test";
+import type { FileOrigin } from "./storage";
+import { createMockStorage } from "../../../tests/mock-storage";
+import { MemorySessionPersistence } from "./persistence";
+import type { VCSAdapter } from "./project/vcs";
+import type { Workspace } from "./workspace.svelte";
+import type { DocumentSession } from "./document.svelte";
+
+let makeWorkspace: (storage: ReturnType<typeof createMockStorage>, persistence: MemorySessionPersistence) => Workspace;
+let makeDocSession: (storage: ReturnType<typeof createMockStorage>, initialContent?: string, origin?: FileOrigin | null, untitledTitle?: string) => DocumentSession;
+
+beforeAll(async () => {
+	const wsMod = await import("./workspace.svelte");
+	const docMod = await import("./document.svelte");
+	makeWorkspace = (storage, persistence) =>
+		new wsMod.Workspace(
+			storage,
+			() => ({ detect: async () => false }) as unknown as VCSAdapter,
+			persistence
+		);
+	makeDocSession = (storage, initialContent = "", origin = null, untitledTitle = "Untitled") =>
+		new docMod.DocumentSession(storage, initialContent, origin, untitledTitle);
+});
+
+describe("Document load/save revision race", () => {
+	it("in-flight load does not clobber a concurrent save", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage({
+			verifyPermission: async () => true,
+			queryPermission: async () => "granted",
+		});
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+		storage.saveFile = mock(async (content: string, existing?: FileOrigin) => {
+			return { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		}) as any;
+
+		const doc = makeDocSession(storage, "base", origin);
+		doc.content = "edited";
+
+		const loading = doc.loadContent();
+		// Concurrent save completes while the load's readFile is in flight.
+		const saved = await doc.save({ coveredByRoot: false });
+		expect(saved).toBe(true);
+
+		resolveRead("stale-disk");
+		await loading;
+
+		expect(doc.content).toBe("edited");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("in-flight load does not apply old-origin content after a save-as origin change", async () => {
+		const oldOrigin = { scheme: "file", path: "/old.txt", name: "old.txt" } as FileOrigin;
+		const newOrigin = { scheme: "file", path: "/new.txt", name: "new.txt" } as FileOrigin;
+		const storage = createMockStorage({
+			verifyPermission: async () => true,
+			queryPermission: async () => "granted",
+		});
+		let resolveRead!: (v: string) => void;
+		const gate = new Promise<string>((r) => {
+			resolveRead = r;
+		});
+		storage.readFile = mock(async () => gate) as any;
+		storage.saveFile = mock(async () => newOrigin) as any;
+
+		const doc = makeDocSession(storage, "base", oldOrigin);
+		const loading = doc.loadContent();
+		const saved = await doc.save({ forceNewOrigin: true, coveredByRoot: false });
+		expect(saved).toBe(true);
+		expect(doc.origin?.path).toBe("/new.txt");
+
+		resolveRead("old-disk-content");
+		await loading;
+
+		expect(doc.origin?.path).toBe("/new.txt");
+		expect(doc.content).toBe("base");
+		expect(doc.isModified).toBe(false);
+	});
+});
+
+describe("Document permission query freshness", () => {
+	it("stale queryPermission result does not overwrite a newer granted permission", async () => {
+		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
+		const storage = createMockStorage();
+		let resolveQuery!: (v: "granted" | "prompt" | "denied") => void;
+		const gate = new Promise<"granted" | "prompt" | "denied">((r) => {
+			resolveQuery = r;
+		});
+		storage.queryPermission = mock(async () => gate) as any;
+		storage.verifyPermission = mock(async () => true) as any;
+
+		const doc = makeDocSession(storage, "", origin);
+		doc.refreshPermissionState(false);
+		// Newer grant lands while the query is in flight.
+		const granted = await doc.requestPermission(true);
+		expect(granted).toBe(true);
+		expect(doc.permissionState).toBe("granted");
+
+		resolveQuery("denied");
+		await new Promise((r) => setTimeout(r, 10));
+		expect(doc.permissionState).toBe("granted");
+	});
+
+	it("Workspace.requestRootPermission grant invalidates pending permission queries", async () => {
+		const persistence = new MemorySessionPersistence();
+		const storage = createMockStorage();
+		let resolveQuery!: (v: "granted" | "prompt" | "denied") => void;
+		const gate = new Promise<"granted" | "prompt" | "denied">((r) => {
+			resolveQuery = r;
+		});
+		storage.queryPermission = mock(async () => gate) as any;
+		storage.verifyPermission = mock(async () => true) as any;
+		storage.readDirectory = mock(async () => []) as any;
+
+		const ws = makeWorkspace(storage, persistence);
+		ws.rootOrigin = { scheme: "file", path: "/root", name: "root" } as FileOrigin;
+		ws.hasRootPermission = false;
+
+		const docOrigin = { scheme: "file", path: "/root/test.txt", name: "test.txt" } as FileOrigin;
+		const doc = makeDocSession(storage, "", docOrigin);
+		ws.documents.push(doc);
+
+		// Not covered yet (no root permission), so this issues an async query.
+		doc.refreshPermissionState(ws.coversOrigin(docOrigin));
+		const granted = await ws.requestRootPermission();
+		expect(granted).toBe(true);
+		expect(doc.permissionState).toBe("granted");
+
+		resolveQuery("denied");
+		await new Promise((r) => setTimeout(r, 10));
+		expect(doc.permissionState).toBe("granted");
+	});
+});

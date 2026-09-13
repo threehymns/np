@@ -18,6 +18,8 @@ export class DocumentSession {
 	private savedBaseline = $state('');
 	private baselinePending = $state(false);
 	private storage: Storage;
+	private saveEpoch = 0;
+	private permissionSeq = 0;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
@@ -93,8 +95,16 @@ export class DocumentSession {
 
 	async loadContent() {
 		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readSaveEpoch = this.saveEpoch;
 		try {
-			const fileContent = await this.storage.readFile(this.origin);
+			const fileContent = await this.storage.readFile(readOrigin);
+			// Drop stale reads: a concurrent save (or save-as origin change)
+			// makes the in-flight content obsolete. Edits alone still use the
+			// keepEdits path below, so concurrent keystrokes are preserved
+			// while a concurrent save never gets clobbered.
+			if (this.origin !== readOrigin) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
 			const keepEdits = this.isModified;
@@ -143,14 +153,21 @@ export class DocumentSession {
 	 * storage. The Workspace computes coverage (it owns the root) and passes
 	 * it as plain data, so this module never reaches for its owner.
 	 */
+	markPermissionGranted(): void {
+		this.permissionSeq++;
+		this.permissionState = 'granted';
+	}
+
 	refreshPermissionState(coveredByRoot: boolean): void {
 		if (!this.origin) return;
 		if (coveredByRoot) {
-			this.permissionState = 'granted';
+			this.markPermissionGranted();
 			return;
 		}
+		const seq = ++this.permissionSeq;
 		this.storage.queryPermission(this.origin, true).then(
 			(state) => {
+				if (this.permissionSeq !== seq) return;
 				this.permissionState = state;
 			},
 			(err) => {
@@ -167,11 +184,17 @@ export class DocumentSession {
 	async requestPermission(coveredByRoot: boolean) {
 		if (!this.origin) return true;
 		if (coveredByRoot) {
-			this.permissionState = 'granted';
+			this.markPermissionGranted();
 			return true;
 		}
 		const granted = await this.storage.verifyPermission(this.origin, true);
-		this.permissionState = granted ? 'granted' : 'denied';
+		if (granted) {
+			this.markPermissionGranted();
+		} else {
+			// Fresh verify result wins over older in-flight queries.
+			this.permissionSeq++;
+			this.permissionState = 'denied';
+		}
 		if (granted && !this._content && this.savedBaseline === '') {
 			await this.loadContent();
 		}
@@ -197,8 +220,9 @@ export class DocumentSession {
 		if (newOrigin) {
 			this.origin = newOrigin;
 			this.savedBaseline = contentToSave;
-			this.permissionState = 'granted';
+			this.markPermissionGranted();
 			this.deletedOnDisk = false;
+			this.saveEpoch++;
 			return true;
 		}
 		return false;

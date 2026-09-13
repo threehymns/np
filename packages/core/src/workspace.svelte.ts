@@ -417,7 +417,7 @@ export class Workspace {
 		// Refresh permissions for already open files
 		for (const doc of this.documents) {
 			if (doc.origin && this.coversOrigin(doc.origin)) {
-				doc.permissionState = 'granted';
+				doc.markPermissionGranted();
 			}
 		}
 	}
@@ -453,7 +453,7 @@ export class Workspace {
 			// Refresh permissions for already open files
 			for (const doc of this.documents) {
 				if (doc.origin && this.coversOrigin(doc.origin)) {
-					doc.permissionState = 'granted';
+					doc.markPermissionGranted();
 				}
 			}
 		}
