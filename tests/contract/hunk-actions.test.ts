@@ -2,8 +2,8 @@ import './rune-setup';
 
 import { expect } from 'bun:test';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { Text } from '@codemirror/state';
-import { Chunk } from '@codemirror/merge';
+import { Text } from '../../packages/core/node_modules/@codemirror/state';
+import { Chunk } from '../../packages/core/node_modules/@codemirror/merge';
 import { applyHunkAction, type HunkRange } from '../../packages/core/src/commands.svelte';
 import { Repository } from '../../packages/core/src/project/repository.svelte';
 import type { AppState } from '../../packages/core/src/state.svelte';

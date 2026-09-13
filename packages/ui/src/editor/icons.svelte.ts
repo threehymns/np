@@ -384,6 +384,100 @@ export class IconRegistry implements IconRegistryInterface {
 		if (!first || first.type === 'empty') return null;
 		return first.value;
 	}
+
+	async installThemeFromGitHub(repoUrl: string): Promise<{ id: string; name: string } | null> {
+		const normalizedUrl = this.normalizeGitHubUrl(repoUrl);
+		if (!normalizedUrl) return null;
+
+		const { owner, repo, ref } = normalizedUrl;
+		const themeUrl = await this.resolveThemeDocumentUrl(owner, repo, ref);
+		if (!themeUrl) return null;
+
+		const theme = await fetchZedTheme(themeUrl);
+		if (!theme) return null;
+
+		const baseUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/`;
+		const id = `installed-${normalizedUrl.owner}-${normalizedUrl.repo}`;
+		const name = theme.name || id;
+
+		let provider: ManifestIconProvider;
+		try {
+			provider = new ManifestIconProvider(id, name, theme, baseUrl);
+		} catch (e) {
+			console.warn('Rejected invalid icon theme manifest:', e);
+			return null;
+		}
+		this.registerFileTheme(id, provider);
+
+		this.cacheTheme(id, name, baseUrl, theme);
+
+		return { id, name };
+	}
+
+	// The CDN serves a directory listing instead of JSON for folder URLs, so the
+	// exact theme document path must be looked up before fetching.
+	private async resolveThemeDocumentUrl(owner: string, repo: string, ref: string): Promise<string | null> {
+		try {
+			const response = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${ref}?structure=flat`);
+			if (!response.ok) return null;
+			const data = await response.json() as { files?: Array<{ name?: string }> };
+			const themeFile = (data.files ?? []).find(
+				(f) => typeof f.name === 'string' && f.name.startsWith('/icon_themes/') && f.name.endsWith('.json')
+			);
+			return themeFile?.name
+				? `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}${themeFile.name}`
+				: null;
+		} catch {
+			return null;
+		}
+	}
+
+	private normalizeGitHubUrl(url: string): { owner: string; repo: string; ref: string } | null {
+		const cleaned = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+		const match = cleaned.match(/github\.com\/([^/]+)\/([^/@]+)(?:@(.+))?/);
+		if (!match) return null;
+
+		return {
+			owner: match[1],
+			repo: match[2],
+			ref: match[3] || 'main',
+		};
+	}
+
+	private cacheTheme(id: string, name: string, baseUrl: string, theme: ZedIconTheme) {
+		if (typeof window === 'undefined') return;
+
+		try {
+			const installed = this.loadInstalledThemes();
+			if (!installed.find(t => t.id === id)) {
+				installed.push({ id, name, baseUrl });
+				localStorage.setItem('np-installed-icon-themes', JSON.stringify(installed));
+			}
+
+			localStorage.setItem(`np-icon-theme-cache-${id}`, JSON.stringify(theme));
+		} catch (e) {
+			console.warn('Failed to cache theme:', e);
+		}
+	}
+
+	async uninstallTheme(id: string) {
+		if (BUILTIN_FILE_THEME_IDS.has(id)) return;
+
+		delete this.fileThemes[id];
+
+		if (this.activeFileThemeId === id) {
+			this.activeFileThemeId = 'phosphor';
+		}
+
+		if (typeof window !== 'undefined') {
+			try {
+				const installed = this.loadInstalledThemes().filter(t => t.id !== id);
+				localStorage.setItem('np-installed-icon-themes', JSON.stringify(installed));
+				localStorage.removeItem(`np-icon-theme-cache-${id}`);
+			} catch {
+			}
+		}
+	}
 }
 
 export const iconRegistry = new IconRegistry();

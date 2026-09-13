@@ -133,7 +133,7 @@
 			const idx = Math.min(menuTargetIndex ?? chain.length - 1, chain.length - 1);
 			const target = chain[idx];
 			if (idx < chain.length - 1) {
-				const subpath = chain.slice(idx).map((n) => n.name).join('/');
+				const subpath = chain.slice(idx).map((n: { name: string }) => n.name).join('/');
 				if (confirm(`Are you sure you want to delete ${subpath} and everything inside it?`)) {
 					await appState.workspace.projectTree.deleteEntry(target);
 				}

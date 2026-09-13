@@ -32,7 +32,7 @@ export const FootnoteExtension: MarkdownConfig = {
 				let to = cx.lineStart + line.text.length;
 				while (cx.nextLine()) {
 					if (
-						line.depth >= 0 &&
+						line.indent >= 0 &&
 						(line.text.startsWith("    ") || line.text.startsWith("\t"))
 					) {
 						to = cx.lineStart + line.text.length;

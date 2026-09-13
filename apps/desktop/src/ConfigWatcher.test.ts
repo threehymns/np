@@ -299,10 +299,7 @@ describe('ConfigWatcher', () => {
 			// (and afterEach cleanup) from hanging on the controllable mock.
 			mock.module('fs/promises', () => ({
 				default: {
-					writeFile: fs.writeFile,
-					readFile: fs.readFile,
-					mkdtemp: fs.mkdtemp,
-					rm: fs.rm
+					...fs
 				}
 			}));
 			mock.restore();
