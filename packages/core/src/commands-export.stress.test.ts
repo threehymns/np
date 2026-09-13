@@ -32,8 +32,7 @@ function setActiveDocument(appState: any, fileName: string, content: string) {
 		appState.storage,
 		content,
 		{ scheme: "file", path: `/test/${fileName}`, name: fileName },
-		fileName,
-		appState.workspace
+		fileName
 	);
 	appState.workspace.documents = [doc];
 	appState.workspace.tabs = [{ id: doc.id, type: "document" }];

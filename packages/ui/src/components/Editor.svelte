@@ -90,7 +90,7 @@
 					) {
 						const newContent = update.state.doc.toString();
 						if (newContent !== doc.content) {
-							doc.content = newContent;
+							appState.workspace.updateDocumentContent(doc, newContent);
 						}
 					}
 
@@ -358,7 +358,7 @@
 				<p class="text-sm font-medium mb-4">Restore access to this file to start editing.</p>
 				<button 
 					class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
-					onclick={() => doc.requestPermission()}
+					onclick={() => appState.workspace.requestFilePermission(doc)}
 				>
 					Grant Access
 				</button>

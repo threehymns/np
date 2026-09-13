@@ -1,22 +1,7 @@
 import { type Storage, type FileOrigin } from './storage';
-import { DocumentDraft } from './draft.svelte';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
-
-/**
- * Dependencies a Document accepts instead of reaching for its owner.
- * Each is a live probe or notification — never a snapshot — so Documents
- * constructed before a folder switch keep seeing current Workspace state.
- */
-export interface DocumentDeps {
-	/** Called when in-memory content changes (persistence scheduling). */
-	onDirty?: () => void;
-	/** Live probe: is this origin covered by the granted workspace root? */
-	isUnderRoot?: (origin: FileOrigin) => boolean;
-	/** Called after a successful save (post-save refresh lives here). */
-	onSaved?: () => void;
-}
 
 export class DocumentSession {
 	id = crypto.randomUUID();
@@ -29,31 +14,23 @@ export class DocumentSession {
 	pendingLineToScroll = $state<number | null>(null);
 	editorState = $state.raw<any>(null);
 	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
-	
-	private draft: DocumentDraft;
-	private storage: Storage;
-	private deps: DocumentDeps;
 
-	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled', deps: DocumentDeps = {}) {
+	private savedBaseline = $state('');
+	private baselinePending = $state(false);
+	private storage: Storage;
+
+	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
 		this._content = initialContent;
+		this.savedBaseline = initialContent;
 		this.origin = origin;
 		this.untitledTitle = untitledTitle;
-		this.deps = deps;
-		this.draft = new DocumentDraft(initialContent, deps.onDirty ?? null);
 		this.isLoaded = initialContent !== '' || origin === null;
-
+		// Safe default: a file-backed Document starts untrusted until the
+		// Workspace upgrades it via refreshPermissionState(). Untitled docs
+		// have no origin to guard, so they stay granted.
 		if (origin) {
-			// Check initial permission state
-			this.hasRootPermissionForFile().then(async hasRoot => {
-				if (hasRoot) {
-					this.permissionState = 'granted';
-				} else {
-					this.storage.queryPermission(origin, true).then(state => {
-						this.permissionState = state;
-					});
-				}
-			});
+			this.permissionState = 'prompt';
 		}
 	}
 
@@ -61,10 +38,16 @@ export class DocumentSession {
 		return this._content;
 	}
 
+	/**
+	 * Passive content write: updates in-memory state only and never schedules
+	 * persistence. The keystroke path must go via
+	 * `Workspace.updateDocumentContent`, which sets this and schedules a
+	 * session flush in one place. Direct assignment is for state restores and
+	 * isolated Document tests only.
+	 */
 	set content(value: string) {
 		if (this._content === value) return;
 		this._content = value;
-		this.draft.notifyEdited();
 	}
 
 	get fileName() {
@@ -72,7 +55,7 @@ export class DocumentSession {
 	}
 
 	get isModified() {
-		return this.draft.isModified(this._content);
+		return this.baselinePending || this._content !== this.savedBaseline;
 	}
 
 	userLanguageOverride = $state<string | null>(null);
@@ -114,7 +97,10 @@ export class DocumentSession {
 			const fileContent = await this.storage.readFile(this.origin);
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
-			this._content = this.draft.applyLoaded(fileContent, this._content);
+			const keepEdits = this.isModified;
+			const current = this._content;
+			this.savedBaseline = fileContent;
+			this._content = keepEdits ? current : fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -137,7 +123,7 @@ export class DocumentSession {
 	async rebaseSavedBaseline(): Promise<void> {
 		if (!this.origin) return;
 		try {
-			this.draft.applyRebased(await this.storage.readFile(this.origin));
+			this.savedBaseline = await this.storage.readFile(this.origin);
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -152,30 +138,56 @@ export class DocumentSession {
 		}
 	}
 
-	async hasRootPermissionForFile(): Promise<boolean> {
-		if (!this.origin) {
-			return false;
+	/**
+	 * Passive permission probe: adopt root coverage when given, otherwise ask
+	 * storage. The Workspace computes coverage (it owns the root) and passes
+	 * it as plain data, so this module never reaches for its owner.
+	 */
+	refreshPermissionState(coveredByRoot: boolean): void {
+		if (!this.origin) return;
+		if (coveredByRoot) {
+			this.permissionState = 'granted';
+			return;
 		}
-		return this.deps.isUnderRoot?.(this.origin) ?? false;
+		this.storage.queryPermission(this.origin, true).then(
+			(state) => {
+				this.permissionState = state;
+			},
+			(err) => {
+				console.error(`Failed to query permission for ${this.origin?.name}`, err);
+			}
+		);
 	}
 
-	async requestPermission() {
+	/**
+	 * `coveredByRoot` has no default on purpose: callers must pass fresh
+	 * Workspace coverage explicitly. Prefer `Workspace.requestFilePermission`
+	 * over calling this directly.
+	 */
+	async requestPermission(coveredByRoot: boolean) {
 		if (!this.origin) return true;
-		if (await this.hasRootPermissionForFile()) {
+		if (coveredByRoot) {
 			this.permissionState = 'granted';
 			return true;
 		}
 		const granted = await this.storage.verifyPermission(this.origin, true);
 		this.permissionState = granted ? 'granted' : 'denied';
-		if (granted && !this._content && this.draft.baselineIsEmpty) {
+		if (granted && !this._content && this.savedBaseline === '') {
 			await this.loadContent();
 		}
 		return granted;
 	}
 
-	async save(options: { forceNewOrigin?: boolean } = {}) {
+	/**
+	 * Storage-level save: writes content and moves the saved baseline, but
+	 * performs no repo refresh and schedules no session flush. Prefer
+	 * `Workspace.saveDocument`, which runs this with fresh root coverage and
+	 * then refreshes the repo and flushes persistence — calling this directly
+	 * can leave a stale `draftContent` behind in persistence.
+	 */
+	async save(options: { forceNewOrigin?: boolean; coveredByRoot: boolean }) {
 		if (this.origin && !options.forceNewOrigin) {
-			const hasPermission = await this.requestPermission();
+			const hasPermission = await this.requestPermission(options.coveredByRoot);
 			if (!hasPermission) return false;
 		}
 
@@ -184,10 +196,9 @@ export class DocumentSession {
 		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin);
 		if (newOrigin) {
 			this.origin = newOrigin;
-			this.draft.markSaved(contentToSave);
+			this.savedBaseline = contentToSave;
 			this.permissionState = 'granted';
 			this.deletedOnDisk = false;
-			this.deps.onSaved?.();
 			return true;
 		}
 		return false;
@@ -201,10 +212,11 @@ export class DocumentSession {
 			// disk read is pending, which would read as unmodified and let an
 			// immediate workspace flush omit the deletion draft. Stay dirty
 			// until the baseline loads; keep dirty if the read fails.
-			this.draft.beginBaselineWait();
+			this.baselinePending = true;
 			this.storage.readFile(this.origin).then(
 				(saved) => {
-					this.draft.resolveBaseline(saved);
+					this.savedBaseline = saved;
+					this.baselinePending = false;
 				},
 				(err) => {
 					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);

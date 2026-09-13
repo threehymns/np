@@ -5,7 +5,7 @@ import { createMockStorage } from "../../../tests/mock-storage";
 import { MemorySessionPersistence } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
-import type { DocumentSession, DocumentDeps } from "./document.svelte";
+import type { DocumentSession } from "./document.svelte";
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -15,7 +15,7 @@ beforeAll(async () => {
 });
 
 let makeWorkspace: (storage: ReturnType<typeof createMockStorage>, persistence: MemorySessionPersistence) => Workspace;
-let makeDocSession: (storage: ReturnType<typeof createMockStorage>, initialContent?: string, origin?: FileOrigin | null, untitledTitle?: string, deps?: DocumentDeps) => DocumentSession;
+let makeDocSession: (storage: ReturnType<typeof createMockStorage>, initialContent?: string, origin?: FileOrigin | null, untitledTitle?: string) => DocumentSession;
 
 beforeAll(async () => {
 	const wsMod = await import("./workspace.svelte");
@@ -26,8 +26,8 @@ beforeAll(async () => {
 			() => ({ detect: async () => false } as unknown as VCSAdapter),
 			persistence
 		);
-	makeDocSession = (storage, initialContent = "", origin = null, untitledTitle = "Untitled", deps) =>
-		new docMod.DocumentSession(storage, initialContent, origin, untitledTitle, deps);
+	makeDocSession = (storage, initialContent = "", origin = null, untitledTitle = "Untitled") =>
+		new docMod.DocumentSession(storage, initialContent, origin, untitledTitle);
 });
 
 describe("Document draft and keystroke decoupling", () => {
@@ -39,6 +39,8 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.charCount).toBe(11);
 		expect(doc.wordCount).toBe(2);
 
+		// Isolated Document test: direct assignment is intentional here (no
+		// Workspace, so no persistence scheduling expected).
 		doc.content = "Hello world modified!";
 		expect(doc.isModified).toBe(true);
 		expect(doc.charCount).toBe(21);
@@ -61,8 +63,8 @@ describe("Document draft and keystroke decoupling", () => {
 		let saved = await persistence.loadOpenFiles("");
 		expect(saved[saved.length - 1].draftContent).toBeUndefined();
 
-		// Keystroke edit: modify doc.content
-		doc!.content = "Modified draft text";
+		// Keystroke edit: modify doc.content via the Workspace path
+		ws.updateDocumentContent(doc!, "Modified draft text");
 		expect(doc!.isModified).toBe(true);
 
 		// Flush persistence and verify draftContent is persisted
@@ -120,7 +122,7 @@ describe("Document draft and keystroke decoupling", () => {
 		const doc1 = ws.documents[0];
 		const doc2 = await ws.newFile();
 
-		doc1.content = "Keystroke edit in doc 1";
+		ws.updateDocumentContent(doc1, "Keystroke edit in doc 1");
 		ws.activeTabId = doc2.id;
 		await ws.flushSaveOpenFiles();
 
@@ -147,14 +149,14 @@ describe("Document draft and keystroke decoupling", () => {
 		await ws.restoreSession();
 
 		const doc = await ws.openFile({ scheme: "file", path: "/test.txt", name: "test.txt" });
-		doc!.content = "Brand new unsaved edits";
+		ws.updateDocumentContent(doc!, "Brand new unsaved edits");
 		await ws.flushSaveOpenFiles();
 
 		let saved = await persistence.loadOpenFiles("");
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBe("Brand new unsaved edits");
 
-		// Save the document
-		const saveSuccess = await doc!.save();
+		// Save the document via the Workspace path (covers post-save flush)
+		const saveSuccess = await ws.saveDocument(doc!);
 		expect(saveSuccess).toBe(true);
 		expect(doc!.isModified).toBe(false);
 
@@ -207,7 +209,7 @@ describe("Document draft and keystroke decoupling", () => {
 		const doc = makeDocSession(storage, "original", null);
 		expect(doc.isModified).toBe(false);
 
-		const saving = doc.save();
+		const saving = doc.save({ coveredByRoot: false });
 		// User types while the async save is in flight.
 		doc.content = "original + newer edit";
 
@@ -303,8 +305,8 @@ describe("Document draft and keystroke decoupling", () => {
 			originalDebouncedSave.call(ws);
 		};
 
-		// Keystroke edit:
-		doc.content = "New keystroke edit";
+		// Keystroke edit via the Workspace path:
+		ws.updateDocumentContent(doc, "New keystroke edit");
 
 		expect(debouncedCalls).toBe(1);
 		// Structural identity of tabs and documents is unaffected by keystroke content

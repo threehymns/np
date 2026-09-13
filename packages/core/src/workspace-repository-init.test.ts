@@ -508,8 +508,8 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 
 		// A modified document: saved baseline is the old content, in-memory content holds an edit.
 		const doc = new DocumentSession(storage, oldSavedContent, fileOrigin, "a.ts");
-		doc.content = unsavedEdit;
 		ws.documents.push(doc);
+		ws.updateDocumentContent(doc, unsavedEdit);
 		expect(doc.isModified).toBe(true);
 
 		await ws.switchBranch("feature");
@@ -553,8 +553,8 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 		});
 
 		const doc = new DocumentSession(storage, "old committed content\n", fileOrigin, "a.ts");
-		doc.content = unsavedEdit; // in-memory-only edit
 		ws.documents.push(doc);
+		ws.updateDocumentContent(doc, unsavedEdit); // in-memory-only edit
 		expect(doc.isModified).toBe(true);
 
 		await ws.switchBranch("feature");

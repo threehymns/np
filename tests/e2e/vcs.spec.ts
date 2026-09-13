@@ -81,7 +81,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 			
 			// Modify the active document's content (unsaved change)
 			const doc = appState.workspace.documents[0];
-			doc.content = 'unsaved editor changes';
+			appState.workspace.updateDocumentContent(doc, 'unsaved editor changes');
 			
 			const report = await appState.workspace.getBranchSafetyReport('feature-branch');
 			return {
