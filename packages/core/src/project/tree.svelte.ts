@@ -136,11 +136,7 @@ export class ProjectTree {
 			try {
 				await this.loadExpansionState();
 			} finally {
-				// Use a small timeout to ensure the UI has time to react 
-				// before we start allowing persistence saves again
-				setTimeout(() => {
-					this.isRestoring = false;
-				}, 100);
+				this.isRestoring = false;
 			}
 		})();
 

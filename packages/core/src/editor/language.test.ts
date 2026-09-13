@@ -34,8 +34,7 @@ describe("LanguageSupport", () => {
 		expect(LanguageSupport.getLanguageForFile("APP.TS")?.name).toBe("TypeScript");
 	});
 
-	it("preloads common languages without errors", async () => {
-		LanguageSupport.preloadCommonLanguages();
+	it("loads languages on-demand without preloading", async () => {
 		const tsx = LanguageSupport.getLanguageForFile("page.tsx");
 		expect(tsx).not.toBeNull();
 		const support = await LanguageSupport.loadLanguage(tsx!);

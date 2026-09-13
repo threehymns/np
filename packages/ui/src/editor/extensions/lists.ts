@@ -132,7 +132,7 @@ export const smartIndent = (direction: "more" | "less") => (view: EditorView) =>
 						: -indentUnit.length),
 			},
 		});
-		setTimeout(() => renumberLists(view), 10);
+		renumberLists(view);
 		return true;
 	}
 

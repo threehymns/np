@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from "svelte";
+	import { untrack, tick } from "svelte";
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
@@ -310,7 +310,7 @@
 				doc.pendingLineToScroll = null;
 			});
 			// Wait a tick for editor rendering to ensure DOM and dimensions are correct
-			const timer = setTimeout(() => {
+			void tick().then(() => {
 				if (!view) return;
 				try {
 					const lineCount = view.state.doc.lines;
@@ -324,10 +324,7 @@
 				} catch (e) {
 					console.error("Failed to scroll/select line", e);
 				}
-			}, 50);
-			return () => {
-				clearTimeout(timer);
-			};
+			});
 		}
 	});
 </script>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail } from '@np/core';
 	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
@@ -363,16 +364,17 @@
 		]);
 	}
 
-	function focusHeader(filepath: string) {
+	async function focusHeader(filepath: string) {
 		const header = document.getElementById(`diff-header-${filepath}`);
 		if (header) {
 			header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-			setTimeout(() => header.focus(), 0);
+			await tick();
+			header.focus();
 		}
 	}
 
-	function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
+	async function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
 		const clampedLine = Math.min(Math.max(1, targetLineNum), editor.state.doc.lines);
 		const line = editor.state.doc.line(clampedLine);
 		editor.dispatch({
@@ -380,7 +382,8 @@
 			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
 		});
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-		setTimeout(() => editor.focus(), 0);
+		await tick();
+		editor.focus();
 	}
 
 	function focusEditorFirstLine(editor: EditorView) {
@@ -899,12 +902,12 @@
 		collapsedFiles[targetFile] = false;
 
 		// Wait a tick for rendering
-		setTimeout(() => {
+		void tick().then(() => {
 			const element = document.getElementById(`diff-file-${targetFile}`);
 			if (element) {
 				element.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			}
-		}, 50);
+		});
 	});
 
 	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {

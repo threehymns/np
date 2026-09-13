@@ -9,7 +9,6 @@ import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
 import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
-import { LanguageSupport } from './editor/language.svelte';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 
@@ -140,34 +139,10 @@ export class AppState {
 			console.error('[AppState] Failed to restore session:', e);
 		}
 
-		// Defer heavy icon initialization and language grammar preloading until after the first paint
-		const deferredInit = async () => {
-			try {
-				await this.icons.initialize?.();
-			} catch (e) {
+		if (this.icons.initialize) {
+			this.icons.initialize().catch((e) => {
 				console.error('[AppState] Failed to initialize icons:', e);
-			}
-			// preloadCommonLanguages is synchronous and swallows its own async load errors
-			LanguageSupport.preloadCommonLanguages();
-		};
-
-
-		if (typeof window !== 'undefined' && (window as any).electronAPI?.onWindowShown) {
-			// On desktop, the window might already be shown
-			// We use a timeout as a safeguard
-			let initialized = false;
-			const safeInit = () => {
-				if (initialized) return;
-				initialized = true;
-				deferredInit();
-			};
-
-			(window as any).electronAPI.onWindowShown(safeInit);
-			setTimeout(safeInit, 2000); // 2s safeguard # TODO: this seems like a bad practice. Look into the Svelte docs about better alternatives.
-		} else if (typeof requestIdleCallback !== 'undefined') {
-			requestIdleCallback(() => { void deferredInit(); });
-		} else {
-			setTimeout(() => { void deferredInit(); }, 100);
+			});
 		}
 	}
 
