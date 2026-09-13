@@ -26,9 +26,13 @@ export class ElectronStorage implements StorageProvider {
 	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
 		let origin = existingOrigin;
 		if (!origin) {
-			const picked = await window.electronAPI.saveFileDialog();
-			if (!picked) return null;
-			origin = picked;
+			const filePath = await window.electronAPI.saveFileDialog();
+			if (!filePath) return null;
+			origin = {
+				scheme: this.scheme,
+				path: filePath,
+				name: filePath.split(/[/\\]/).pop() ?? filePath
+			};
 		}
 		await window.electronAPI.writeFile(origin.path, content);
 		return origin;
