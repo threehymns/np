@@ -1,4 +1,4 @@
-import { type Storage, type FileOrigin } from './storage';
+import { type Storage, type FileOrigin, toURI } from './storage';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
@@ -20,6 +20,7 @@ export class DocumentSession {
 	private storage: Storage;
 	private saveEpoch = 0;
 	private permissionSeq = 0;
+	private baselineSeq = 0;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
@@ -96,14 +97,17 @@ export class DocumentSession {
 	async loadContent() {
 		if (!this.origin) return;
 		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
 		const readSaveEpoch = this.saveEpoch;
 		try {
 			const fileContent = await this.storage.readFile(readOrigin);
 			// Drop stale reads: a concurrent save (or save-as origin change)
-			// makes the in-flight content obsolete. Edits alone still use the
-			// keepEdits path below, so concurrent keystrokes are preserved
-			// while a concurrent save never gets clobbered.
-			if (this.origin !== readOrigin) return;
+			// makes the in-flight content obsolete. Origins are plain data
+			// and may be re-created with equal values, so compare by value
+			// (URI), not reference. Edits alone still use the keepEdits path
+			// below, so concurrent keystrokes are preserved while a
+			// concurrent save never gets clobbered.
+			if (!this.origin || toURI(this.origin) !== readURI) return;
 			if (this.saveEpoch !== readSaveEpoch) return;
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
@@ -114,7 +118,7 @@ export class DocumentSession {
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
-			console.error(`Failed to load content for ${this.origin.name}`, e);
+			console.error(`Failed to load content for ${readOrigin.name}`, e);
 			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
 				this.deletedOnDisk = true;
 			}
@@ -132,8 +136,17 @@ export class DocumentSession {
 	 */
 	async rebaseSavedBaseline(): Promise<void> {
 		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
+		const readSaveEpoch = this.saveEpoch;
 		try {
-			this.savedBaseline = await this.storage.readFile(this.origin);
+			const diskContent = await this.storage.readFile(readOrigin);
+			// Same stale-read guard as loadContent: a concurrent save
+			// established a fresher baseline while this read was in flight,
+			// so applying it would resurrect a phantom modification.
+			if (!this.origin || toURI(this.origin) !== readURI) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
+			this.savedBaseline = diskContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
 		} catch (e: any) {
@@ -142,7 +155,7 @@ export class DocumentSession {
 				// not an error worth logging.
 				this.deletedOnDisk = true;
 			} else {
-				console.error(`Failed to rebase saved baseline for ${this.origin.name}`, e);
+				console.error(`Failed to rebase saved baseline for ${readOrigin.name}`, e);
 			}
 			throw e;
 		}
@@ -223,6 +236,10 @@ export class DocumentSession {
 			this.markPermissionGranted();
 			this.deletedOnDisk = false;
 			this.saveEpoch++;
+			// A successful save establishes the baseline, invalidating any
+			// restoreDraft baseline read still in flight (see restoreDraft).
+			this.baselineSeq++;
+			this.baselinePending = false;
 			return true;
 		}
 		return false;
@@ -237,12 +254,20 @@ export class DocumentSession {
 			// immediate workspace flush omit the deletion draft. Stay dirty
 			// until the baseline loads; keep dirty if the read fails.
 			this.baselinePending = true;
-			this.storage.readFile(this.origin).then(
+			const readOrigin = this.origin;
+			// Newest restore/save wins: a concurrent save establishes a
+			// fresh baseline (bumping baselineSeq), and a newer restoreDraft
+			// re-arms the flag — so a stale read must neither overwrite the
+			// baseline nor clear a newer restore's pending flag.
+			const seq = ++this.baselineSeq;
+			this.storage.readFile(readOrigin).then(
 				(saved) => {
+					if (this.baselineSeq !== seq) return;
 					this.savedBaseline = saved;
 					this.baselinePending = false;
 				},
 				(err) => {
+					if (this.baselineSeq !== seq) return;
 					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
 				}
 			);
