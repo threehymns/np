@@ -1,9 +1,38 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 
+function phosphorOptimizePlugin(): Plugin {
+	return {
+		name: 'np-phosphor-optimize',
+		enforce: 'pre',
+		transform(code, id) {
+			if (!code.includes('phosphor-svelte') || id.includes('node_modules/phosphor-svelte')) return;
+			const updated = code.replace(
+				/import\s*\{([^}]+)\}\s*from\s*['"]phosphor-svelte['"];?/g,
+				(_, imports) => {
+					return imports
+						.split(',')
+						.map((s: string) => s.trim())
+						.filter(Boolean)
+						.map((s: string) => {
+							const parts = s.split(/\s+as\s+/);
+							const imported = parts[0].trim();
+							const local = parts[1] ? parts[1].trim() : imported;
+							return `import ${local} from "phosphor-svelte/lib/${imported}";`;
+						})
+						.join('\n');
+				}
+			);
+			if (updated !== code) {
+				return { code: updated, map: null };
+			}
+		}
+	};
+}
+
 export default defineConfig({
-	plugins: [tailwindcss(), svelte()],
+	plugins: [phosphorOptimizePlugin(), tailwindcss(), svelte()],
 	base: './',
 	resolve: {
 		dedupe: [
@@ -39,5 +68,8 @@ export default defineConfig({
 				'!**/node_modules/@np/ui/**'
 			]
 		}
+	},
+	optimizeDeps: {
+		exclude: ['phosphor-svelte']
 	}
 });
