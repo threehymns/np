@@ -1,6 +1,7 @@
 name: ci
 
-on:
+# Quoted "on": bare `on:` parses as boolean True under YAML 1.1.
+"on":
   pull_request:
     branches: [master]
   push:
@@ -16,5 +17,7 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: git --version
+      # e2e intentionally excluded: bunfig.toml already ignores tests/e2e/**
+      # for `bun test`, and the Playwright suite needs browsers (see #37).
       - run: bun test
       - run: bun run check

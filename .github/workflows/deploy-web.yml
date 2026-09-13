@@ -1,12 +1,14 @@
 name: deploy-web
 
-on:
+# Quoted "on": bare `on:` parses as boolean True under YAML 1.1.
+"on":
   push:
     branches: [master]
     paths:
       - 'apps/web/**'
       - 'packages/**'
       - 'bun.lock'
+      - 'bunfig.toml'
       - 'package.json'
 
 permissions:

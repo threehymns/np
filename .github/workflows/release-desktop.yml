@@ -30,7 +30,7 @@ jobs:
         run: bun run build:desktop
 
       - name: Package desktop app
-        run: bun --filter desktop run dist
+        run: bun --filter desktop dist
 
       - name: Upload packaged output
         uses: actions/upload-artifact@v4
@@ -46,10 +46,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
-          merge-multiple: true
+          # No merge-multiple: each OS artifact stays in its own
+          # dist/<name>/ subdirectory so same-named files can't collide.
+          merge-multiple: false
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: dist/*
+          # Recursive: electron-builder also emits unpacked/ metadata dirs.
+          files: dist/**/*
