@@ -271,6 +271,7 @@ describe('ConfigWatcher', () => {
 			return new Promise<string>((resolve) => pendingReads.push(resolve));
 		});
 
+		const originalReadFile = fs.readFile;
 		// Replace readFile with a controllable promise, preserving the rest of fs/promises.
 		mock.module('fs/promises', () => ({ default: { ...fs, readFile: readFileMock } }));
 
@@ -299,7 +300,8 @@ describe('ConfigWatcher', () => {
 			// (and afterEach cleanup) from hanging on the controllable mock.
 			mock.module('fs/promises', () => ({
 				default: {
-					...fs
+					...fs,
+					readFile: originalReadFile
 				}
 			}));
 			mock.restore();
