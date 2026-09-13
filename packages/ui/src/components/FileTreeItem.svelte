@@ -195,29 +195,29 @@
 				oncontextmenu={handleRowContextMenu}
 			>
 				{#if visualNode.kind === 'directory'}
-					<CaretRight 
+					<CaretRight
 						class={cn(
-							"size-3 opacity-60 shrink-0 transition-transform duration-200", 
+							"size-3 opacity-60 shrink-0 transition-transform duration-200",
 							visualNode.isExpanded && "rotate-90"
-						)} 
+						)}
 					/>
-					<Icon 
+					<Icon
 						resource={visualNode.leafNode.name}
 						type="folder"
 						folderOpen={visualNode.isExpanded}
-						phosphorFallback={visualNode.isExpanded ? FolderOpen : Folder} 
-						class="size-3.5 opacity-90 shrink-0" 
+						phosphorFallback={visualNode.isExpanded ? FolderOpen : Folder}
+						class="size-3.5 opacity-90 shrink-0"
 					/>
 				{:else}
 					<div class="size-3 shrink-0"></div>
-					<Icon 
+					<Icon
 						resource={visualNode.name}
 						type="file"
-						phosphorFallback={File} 
-						class="size-3.5 opacity-90 shrink-0" 
+						phosphorFallback={File}
+						class="size-3.5 opacity-90 shrink-0"
 					/>
 				{/if}
-				
+
 				{#if isRenaming}
 					<input
 						bind:this={inputRef}
@@ -227,10 +227,9 @@
 						class="flex-1 bg-sidebar-accent border border-sidebar-primary/50 rounded px-1 -mx-1 h-[1.25rem] text-[11px] outline-none focus:ring-1 focus:ring-sidebar-ring/30"
 					/>
 				{:else if isFolded}
-					<span class="min-w-0 flex-1 truncate py-0.5">
+					<span class="min-w-0 flex-1 truncate">
 						{#each visualNode.chain as segNode, i (toURI(segNode.origin))}
-							{#if i > 0}<span class="opacity-40 select-none">/</span>{/if}
-							<span data-seg={i} class="rounded px-0.5 -mx-0.5 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors">{segNode.name}</span>
+							{#if i > 0}<span class="opacity-60 select-none">/</span>{/if}<span data-seg={i} class="rounded inline-block p-0.5 hover:bg-accent hover:text-accent-foreground transition-colors">{segNode.name}</span>
 						{/each}
 					</span>
 				{:else}
