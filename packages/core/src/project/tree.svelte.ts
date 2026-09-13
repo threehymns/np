@@ -20,7 +20,20 @@ export interface VisualNode {
 	isExpanded: boolean;
 	originalNode: TreeNode;
 	leafNode: TreeNode;
+	/** TreeNodes from the chain top (original) to the displayed leaf, inclusive. Length 1 when not folded. */
+	chain: TreeNode[];
 	depth: number;
+}
+
+/** Max levels a folded single-child chain may span (cycle guard). */
+const MAX_FOLD_DEPTH = 100;
+
+/** The single directory child a fold can extend through, if any. */
+function singleDirChild(node: TreeNode): TreeNode | undefined {
+	if (node.children?.length === 1 && node.children[0].kind === 'directory') {
+		return node.children[0];
+	}
+	return undefined;
 }
 
 class GitIgnoreMatcher {
@@ -167,20 +180,19 @@ export class ProjectTree {
 				if (node.kind === 'directory') {
 					let current = node;
 					const pathNames = [current.name];
-					
+					const chain = [current];
+
 					// Concatenate only if children are already loaded AND there is exactly one directory child
 					// If children are not loaded (length 0 but directory kind), we stop concatenation
-					let safety = 0;
-					while (
-						current.children && 
-						current.children.length === 1 && 
-						current.children[0].kind === 'directory' &&
-						safety++ < 100
-					) {
-						current = current.children[0];
+					let next = singleDirChild(current);
+					let depthGuard = 0;
+					while (next && depthGuard++ < MAX_FOLD_DEPTH) {
+						current = next;
 						pathNames.push(current.name);
+						chain.push(current);
+						next = singleDirChild(current);
 					}
-					
+
 					const visualNode: VisualNode = {
 						name: pathNames.join('/'),
 						kind: 'directory',
@@ -190,6 +202,7 @@ export class ProjectTree {
 						children: [],
 						originalNode: node,
 						leafNode: current,
+						chain,
 						depth
 					};
 
@@ -208,6 +221,7 @@ export class ProjectTree {
 						children: undefined,
 						originalNode: node,
 						leafNode: node,
+						chain: [node],
 						depth
 					};
 				}
@@ -396,15 +410,75 @@ export class ProjectTree {
 	async toggleExpand(node: TreeNode) {
 		node.isExpanded = !node.isExpanded;
 		const path = await this.getNodePath(node);
-		
+
 		if (node.isExpanded) {
 			this.expandedPaths.add(path);
 			if (node.kind === 'directory' && node.children?.length === 0) {
 				node.children = await this.buildLevel(node.origin, path);
 			}
+			// Eagerly resolve a single-child spine so one click opens a nested
+			// chain (a -> b -> c) instead of one click per level. Each step is
+			// a tiny 1-entry readDirectory; the final fork read is the same
+			// cost as a normal expand.
+			let current = node;
+			let currentPath = path;
+			let depthGuard = 0;
+			let child = singleDirChild(current);
+			while (child && depthGuard++ < MAX_FOLD_DEPTH) {
+				const childPath = currentPath ? `${currentPath}/${child.name}` : child.name;
+				child.isExpanded = true;
+				this.expandedPaths.add(childPath);
+				if (child.children?.length === 0) {
+					child.children = await this.buildLevel(child.origin, childPath);
+				}
+				current = child;
+				currentPath = childPath;
+				child = singleDirChild(current);
+			}
 		} else {
 			this.expandedPaths.delete(path);
 		}
+	}
+
+	/**
+	 * Toggle a collapsed visual row (e.g. "a/b"). The row's expanded state is
+	 * driven by the leaf of the single-child chain, so toggling the original
+	 * node flips the wrong flag and loads the wrong level's children. Always
+	 * toggle the live leaf, keeping the chain ancestors expanded so the
+	 * collapse survives re-derivation and rescans.
+	 */
+	async toggleVisualExpand(visual: VisualNode) {
+		if (visual.kind !== 'directory') return;
+
+		// Re-resolve the leaf live from the original to avoid toggling a stale
+		// object if the chain was rebuilt between render and click.
+		let current = visual.originalNode;
+		let next = singleDirChild(current);
+		let depthGuard = 0;
+		while (next && depthGuard++ < MAX_FOLD_DEPTH) {
+			current = next;
+			next = singleDirChild(current);
+		}
+		const leaf = current;
+
+		// Keep every ancestor in the chain expanded + persisted so the chain
+		// is still discoverable after rescan (original stays loaded even when
+		// the visual row shows collapsed).
+		let ancestor: TreeNode | undefined = visual.originalNode;
+		depthGuard = 0;
+		while (ancestor && ancestor !== leaf && depthGuard++ < MAX_FOLD_DEPTH) {
+			if (!ancestor.isExpanded) {
+				ancestor.isExpanded = true;
+				const ancestorPath = await this.getNodePath(ancestor);
+				if (ancestorPath) this.expandedPaths.add(ancestorPath);
+				if (ancestor.children?.length === 0) {
+					ancestor.children = await this.buildLevel(ancestor.origin, ancestorPath);
+				}
+			}
+			ancestor = singleDirChild(ancestor);
+		}
+
+		await this.toggleExpand(leaf);
 	}
 
 	private async getNodePath(node: TreeNode): Promise<string> {
@@ -420,7 +494,7 @@ export class ProjectTree {
 	async createFile(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
 		await this.workspace.storage.createFile(parentOrigin, name);
 		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentOrigin);
+			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
 		} else {
 			await this.scan(this.workspace.rootOrigin!);
@@ -430,7 +504,7 @@ export class ProjectTree {
 	async createDirectory(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
 		await this.workspace.storage.createDirectory(parentOrigin, name);
 		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentOrigin);
+			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
 		} else {
 			await this.scan(this.workspace.rootOrigin!);
