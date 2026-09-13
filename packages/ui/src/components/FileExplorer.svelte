@@ -205,7 +205,7 @@
 			{#if appState.workspace.rootOrigin}
 				<div class="space-y-0.5">
 					{#if appState.workspace.hasRootPermission}
-						{#each appState.workspace.projectTree.visualNodes as visualNode (toURI(visualNode.origin))}
+						{#each appState.workspace.projectTree.visualNodes as visualNode (toURI(visualNode.originalNode.origin))}
 							<FileTreeItem {visualNode} />
 						{/each}
 					{:else}
