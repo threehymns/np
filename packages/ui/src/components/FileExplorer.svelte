@@ -1,15 +1,14 @@
 <script lang="ts">
+  import BranchSelectButton from './BranchSelectButton.svelte';
+
 	import { useAppState } from '@np/core';
 	import FileTreeItem from "./FileTreeItem.svelte";
-	import { FolderOpen, ArrowsClockwise, MagnifyingGlass, X, Funnel, Check, CaretUpDown, FolderPlus, GitBranch } from "phosphor-svelte";
+	import { FolderOpen, ArrowsClockwise, X, Funnel, CaretUpDown, FolderPlus } from "phosphor-svelte";
 	import { Button } from './ui/button';
-	import { Input } from './ui/input';
 	import { ScrollArea } from "./ui/scroll-area/index.js";
 	import * as Tooltip from './ui/tooltip/index.js';
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
-	import BranchSafetyModal from "./BranchSafetyModal.svelte";
-	import type { RepositorySafetyReport } from '@np/core';
 	import { toURI, type FileOrigin } from '@np/core';
 	import { slide } from "svelte/transition";
 	import { cn } from '@np/core';
@@ -19,12 +18,8 @@
 
 	let showFilter = $state(false);
 	let comboOpen = $state(false);
-	let branchComboOpen = $state(false);
 	let triggerRef = $state<HTMLButtonElement>(null!);
 	let mounted = $state(false);
-
-	let safetyReport = $state<RepositorySafetyReport | null>(null);
-	let pendingBranch = $state<string | null>(null);
 
 	onMount(() => {
 		mounted = true;
@@ -61,42 +56,7 @@
 		await appState.workspace.openDirectory(origin);
 		closeAndFocusTrigger();
 	}
-
-	async function switchBranch(branch: string) {
-		const report = await appState.workspace.getBranchSafetyReport(branch);
-		if (report && !report.canSwitch) {
-			safetyReport = report;
-			pendingBranch = branch;
-			branchComboOpen = false;
-			return;
-		}
-
-		await appState.workspace.switchBranch(branch);
-		branchComboOpen = false;
-	}
-
-	async function recheckSafety() {
-		if (!pendingBranch) return;
-		const report = await appState.workspace.getBranchSafetyReport(pendingBranch);
-		if (report && report.canSwitch) {
-			const branch = pendingBranch;
-			safetyReport = null;
-			pendingBranch = null;
-			await appState.workspace.switchBranch(branch);
-		} else {
-			safetyReport = report;
-		}
-	}
 </script>
-
-{#if safetyReport && pendingBranch}
-	<BranchSafetyModal 
-		report={safetyReport} 
-		targetBranch={pendingBranch} 
-		onConfirm={recheckSafety}
-		onCancel={() => { safetyReport = null; pendingBranch = null; }}
-	/>
-{/if}
 
 <div class="flex flex-col h-full text-sidebar-foreground overflow-hidden select-none">
 	{#if mounted && appState.workspace.rootOrigin}
@@ -168,48 +128,7 @@
 						</Popover.Content>
 					</Popover.Root>
 
-					{#if appState.workspace.hasRootPermission && appState.workspace.currentBranch}
-						<Popover.Root bind:open={branchComboOpen}>
-							<Popover.Trigger>
-								{#snippet child({ props })}
-									<button
-										{...props}
-										class="flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate"
-									>
-										{#if appState.workspace.repository?.isBusy}
-											<div class="size-3 animate-spin border-2 border-sidebar-foreground/50 border-t-sidebar-foreground rounded-full"></div>
-										{:else}
-											<GitBranch class="size-3 shrink-0" />
-										{/if}
-										<span class="text-[10px] truncate max-w-[80px]">{appState.workspace.currentBranch}</span>
-									</button>
-								{/snippet}
-							</Popover.Trigger>
-							<Popover.Content class="p-0 flex flex-col" align="start">
-								<Command.Root class="flex-1 p-0">
-									<Command.Input placeholder="Switch Branch" class="h-8" />
-									<Command.List class="px-1 py-1">
-										<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
-										{#each appState.workspace.branches as branch}
-											<Command.Item
-												value={branch}
-												onSelect={() => switchBranch(branch)}
-												class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
-											>
-												<div class="flex items-center gap-2 truncate">
-													<GitBranch class="size-3 opacity-50" />
-													<span class="truncate">{branch}</span>
-												</div>
-												{#if appState.workspace.currentBranch === branch}
-													<Check class="size-3 opacity-50" />
-												{/if}
-											</Command.Item>
-										{/each}
-									</Command.List>
-								</Command.Root>
-							</Popover.Content>
-						</Popover.Root>
-					{/if}
+					<BranchSelectButton/>
 				</div>
 
 
