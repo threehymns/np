@@ -17,11 +17,13 @@
 	let menuTargetIndex = $state<number | null>(null);
 	let menuOpen = $state(false);
 	let menuArmed = $state(false);
+	let focusedSegIndex = $state<number | null>(null);
 	let newName = $state("");
 	let inputRef = $state<HTMLInputElement | null>(null);
 
-	// A folded row only earns its menu from a segment right-click. If the menu
-	// opens without one (gap, caret, icon, keyboard), force it shut and drop
+	// A folded row only earns its menu from a segment right-click or keyboard
+	// activation (which falls back to the focused/leaf segment). If the menu
+	// opens without one (gap, caret, icon, mouse), force it shut and drop
 	// any stale target so it can never act on the wrong level. Closing the
 	// menu always clears the target for the same reason.
 	$effect(() => {
@@ -59,6 +61,26 @@
 			const seg = (e.target as Element)?.closest?.('[data-seg]');
 			if (seg) {
 				menuTargetIndex = Number((seg as HTMLElement).dataset.seg);
+				menuArmed = true;
+				// Let the event bubble to the ContextMenu trigger.
+			} else if ((e as MouseEvent).clientX === 0 && (e as MouseEvent).clientY === 0) {
+				// Keyboard activation (Shift+F10 / Menu key) targets the row
+				// button itself, so there is no segment under the cursor.
+				// Fall back to the focused segment in this row, if any,
+				// otherwise the leaf, so keyboard users can still open the menu.
+				const chain = visualNode.chain;
+				let idx = chain.length - 1;
+				if (focusedSegIndex !== null && focusedSegIndex >= 0 && focusedSegIndex < chain.length) {
+					idx = focusedSegIndex;
+				} else {
+					const rowEl = e.currentTarget as Element | null;
+					const active = document.activeElement as HTMLElement | null;
+					if (active && rowEl?.contains(active) && active.hasAttribute('data-seg')) {
+						const n = Number(active.dataset.seg);
+						if (!Number.isNaN(n)) idx = Math.min(Math.max(n, 0), chain.length - 1);
+					}
+				}
+				menuTargetIndex = idx;
 				menuArmed = true;
 				// Let the event bubble to the ContextMenu trigger.
 			} else {
@@ -229,7 +251,7 @@
 				{:else if isFolded}
 					<span class="min-w-0 flex-1 truncate">
 						{#each visualNode.chain as segNode, i (toURI(segNode.origin))}
-							{#if i > 0}<span class="opacity-60 select-none">/</span>{/if}<span data-seg={i} class="rounded inline-block p-0.5 hover:bg-accent hover:text-accent-foreground transition-colors">{segNode.name}</span>
+							{#if i > 0}<span class="opacity-60 select-none">/</span>{/if}<span data-seg={i} role="button" tabindex="0" aria-label={segNode.name} onfocus={() => (focusedSegIndex = i)} onblur={() => { if (focusedSegIndex === i) focusedSegIndex = null; }} class="rounded inline-block p-0.5 hover:bg-accent hover:text-accent-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">{segNode.name}</span>
 						{/each}
 					</span>
 				{:else}
