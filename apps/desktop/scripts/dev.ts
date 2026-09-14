@@ -14,6 +14,8 @@ const distMainDir = path.resolve(desktopRoot, 'dist-main');
 
 let electronProcess: ChildProcess | null = null;
 let isRestarting = false;
+let isBuilding = false;
+let rebuildQueued: { filename: string } | null = null;
 
 async function buildMainProcess(): Promise<boolean> {
 	const startTime = performance.now();
@@ -57,13 +59,7 @@ function getElectronPath(): string {
 	}
 }
 
-function startElectron(electronPath: string, onExit: () => void) {
-	if (electronProcess) {
-		isRestarting = true;
-		electronProcess.kill('SIGTERM');
-		electronProcess = null;
-	}
-
+function startElectron(electronPath: string, onExit: (code: number | null) => void) {
 	console.log(`Spawning Electron from: ${electronPath}`);
 	const proc = spawn(
 		electronPath,
@@ -86,8 +82,67 @@ function startElectron(electronPath: string, onExit: () => void) {
 			return;
 		}
 		console.log(`Electron process exited with code ${code}`);
-		onExit();
+		onExit(code);
 	});
+}
+
+async function stopElectron(): Promise<void> {
+	const proc = electronProcess;
+	if (!proc) return;
+	electronProcess = null;
+	isRestarting = true;
+	await new Promise<void>((resolve) => {
+		const timeout = setTimeout(() => {
+			try {
+				proc.kill('SIGKILL');
+			} catch {
+				// Already exited
+			}
+			resolve();
+		}, 3000);
+		proc.once('exit', () => {
+			clearTimeout(timeout);
+			resolve();
+		});
+		try {
+			proc.kill('SIGTERM');
+		} catch {
+			clearTimeout(timeout);
+			resolve();
+		}
+	});
+}
+
+async function restartElectron(electronPath: string, onExit: (code: number | null) => void) {
+	await stopElectron();
+	startElectron(electronPath, onExit);
+}
+
+async function rebuildAndRestart(
+	filename: string,
+	electronPath: string,
+	onExit: (code: number | null) => void
+): Promise<void> {
+	if (isBuilding) {
+		rebuildQueued = { filename };
+		return;
+	}
+	isBuilding = true;
+	try {
+		console.log(`Main process file changed: ${filename}. Rebuilding...`);
+		const ok = await buildMainProcess();
+		if (ok) {
+			console.log('Restarting Electron...');
+			await restartElectron(electronPath, onExit);
+		}
+	} finally {
+		isBuilding = false;
+		if (rebuildQueued) {
+			const queued = rebuildQueued;
+			rebuildQueued = null;
+			await rebuildAndRestart(queued.filename, electronPath, onExit);
+		}
+	}
 }
 
 async function start() {
@@ -114,36 +169,36 @@ async function start() {
 
 	const electronPath = getElectronPath();
 
-	const cleanupAndExit = () => {
-		server.close();
+	const cleanupAndExit = (code: number | null = 0) => {
+		void server.close().catch(() => {});
 		if (electronProcess) {
-			electronProcess.kill('SIGTERM');
+			try {
+				electronProcess.kill('SIGTERM');
+			} catch {
+				// Already exited
+			}
 		}
-		process.exit(0);
+		process.exit(code ?? 0);
 	};
 
 	startElectron(electronPath, cleanupAndExit);
 
-	// Watch main process files (excluding renderer)
+	// Watch main process files (excluding renderer, which Vite HMR handles)
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-	fs.watch(srcDir, { recursive: true }, (_eventType, filename) => {
-		if (!filename) return;
+	fs.watch(srcDir, { recursive: true }, (_eventType, rawFilename) => {
+		if (!rawFilename) return;
+		const filename = rawFilename.toString();
 		if (filename.startsWith('renderer') || filename.includes('node_modules')) return;
 		if (!filename.endsWith('.ts') && !filename.endsWith('.cts') && !filename.endsWith('.js')) return;
 
 		if (debounceTimer) clearTimeout(debounceTimer);
-		debounceTimer = setTimeout(async () => {
-			console.log(`Main process file changed: ${filename}. Rebuilding...`);
-			const ok = await buildMainProcess();
-			if (ok) {
-				console.log('Restarting Electron...');
-				startElectron(electronPath, cleanupAndExit);
-			}
+		debounceTimer = setTimeout(() => {
+			void rebuildAndRestart(filename, electronPath, cleanupAndExit);
 		}, 150);
 	});
 
-	process.on('SIGINT', cleanupAndExit);
-	process.on('SIGTERM', cleanupAndExit);
+	process.on('SIGINT', () => cleanupAndExit(0));
+	process.on('SIGTERM', () => cleanupAndExit(0));
 }
 
 start().catch((err) => {
