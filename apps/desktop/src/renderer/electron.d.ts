@@ -16,7 +16,6 @@ export interface ElectronAPI {
 	persistenceFlush(): Promise<void>;
 	onSessionFlushRequest(handler: () => Promise<void> | void): () => void;
 	showWindow(): Promise<void>;
-	onWindowShown(callback: () => void): void;
 	readFileUserKeymap(): Promise<string | null>;
 	writeFileUserKeymap(content: string): Promise<void>;
 	readConfigFileSync(): string | null;

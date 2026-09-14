@@ -47,14 +47,6 @@ function createWindow() {
 		}
 	});
 
-	// Still send the event when ready for heavy tasks, 
-	// but the window is already visible to the user.
-	mainWindow.once('ready-to-show', () => {
-		if (mainWindow) {
-			mainWindow.webContents.send('window-shown');
-		}
-	});
-
 	const devUrl = process.env.ELECTRON_DEV_URL;
 	if (devUrl) {
 		mainWindow.loadURL(devUrl);
@@ -299,11 +291,8 @@ function registerIpcHandlers() {
 	});
 
 	ipcMain.handle('window:show', () => {
-		if (mainWindow) {
-			if (!mainWindow.isVisible()) {
-				mainWindow.show();
-			}
-			mainWindow.webContents.send('window-shown');
+		if (mainWindow && !mainWindow.isVisible()) {
+			mainWindow.show();
 		}
 	});
 
