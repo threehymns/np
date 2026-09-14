@@ -90,24 +90,25 @@ function watchMainProcessFiles(onChange: (relPosix: string) => void): () => void
 		const stack = [srcDir];
 		while (stack.length > 0) {
 			const dir = stack.pop()!;
-			if (watched.has(dir)) {
-				if (fs.existsSync(dir)) continue;
+			if (watched.has(dir) && !fs.existsSync(dir)) {
 				watched.delete(dir);
 			}
-			watched.add(dir);
-			try {
-				const watcher = fs.watch(dir, (eventType, rawFilename) => {
-					if (eventType === 'rename') queueMicrotask(scan);
-					if (!rawFilename) return;
-					const rel = toPosix(path.relative(srcDir, path.join(dir, rawFilename.toString())));
-					if (!isMainProcessFile(rel)) return;
-					onChange(rel);
-				});
-				watcher.on('error', (err) => console.warn(`Watcher error for ${dir}:`, err));
-				watchers.push(watcher);
-			} catch (err) {
-				console.warn(`Failed to watch ${dir}:`, err);
-				continue;
+			if (!watched.has(dir)) {
+				watched.add(dir);
+				try {
+					const watcher = fs.watch(dir, (eventType, rawFilename) => {
+						if (eventType === 'rename') queueMicrotask(scan);
+						if (!rawFilename) return;
+						const rel = toPosix(path.relative(srcDir, path.join(dir, rawFilename.toString())));
+						if (!isMainProcessFile(rel)) return;
+						onChange(rel);
+					});
+					watcher.on('error', (err) => console.warn(`Watcher error for ${dir}:`, err));
+					watchers.push(watcher);
+				} catch (err) {
+					console.warn(`Failed to watch ${dir}:`, err);
+					continue;
+				}
 			}
 			let entries: import('fs').Dirent[];
 			try {
