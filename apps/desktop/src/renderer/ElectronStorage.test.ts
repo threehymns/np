@@ -25,9 +25,28 @@ describe('ElectronStorage.saveFile', () => {
 		const storage = new ElectronStorage();
 		const origin = await storage.saveFile('hello', undefined);
 
-		expect(mockSaveFileDialog).toHaveBeenCalled();
+		expect(mockSaveFileDialog).toHaveBeenCalledWith({ defaultPath: 'untitled.md' });
 		expect(mockWriteFile).toHaveBeenCalledWith('/tmp/notes/new-file.md', 'hello');
 		expect(origin).toEqual({ scheme: 'file', path: '/tmp/notes/new-file.md', name: 'new-file.md' });
+	});
+
+	it('roots the save dialog at the workspace folder with the draft title', async () => {
+		const storage = new ElectronStorage();
+		const origin = await storage.saveFile('hello', undefined, {
+			suggestedName: 'My Draft.md',
+			startDirectory: { scheme: 'file', path: '/tmp/notes', name: 'notes' }
+		});
+
+		expect(mockSaveFileDialog).toHaveBeenCalledWith({ defaultPath: '/tmp/notes/My Draft.md' });
+		expect(mockWriteFile).toHaveBeenCalledWith('/tmp/notes/new-file.md', 'hello');
+		expect(origin).toEqual({ scheme: 'file', path: '/tmp/notes/new-file.md', name: 'new-file.md' });
+	});
+
+	it('falls back to the suggested name alone when no workspace folder is open', async () => {
+		const storage = new ElectronStorage();
+		await storage.saveFile('hello', undefined, { suggestedName: 'Untitled 1.md' });
+
+		expect(mockSaveFileDialog).toHaveBeenCalledWith({ defaultPath: 'Untitled 1.md' });
 	});
 
 	it('returns null and writes nothing when the save dialog is cancelled', async () => {

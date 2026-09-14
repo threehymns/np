@@ -1,4 +1,4 @@
-import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
+import type { StorageProvider, FileOrigin, StorageEntry, SaveFileOptions } from '@np/core';
 
 export class ElectronStorage implements StorageProvider {
 	scheme = 'file';
@@ -23,10 +23,16 @@ export class ElectronStorage implements StorageProvider {
 		};
 	}
 
-	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
+	async saveFile(content: string, existingOrigin?: FileOrigin, options?: SaveFileOptions): Promise<FileOrigin | null> {
 		let origin = existingOrigin;
 		if (!origin) {
-			const filePath = await window.electronAPI.saveFileDialog();
+			const suggestedName = options?.suggestedName || 'untitled.md';
+			const startDir = options?.startDirectory?.path;
+			const separator = startDir?.includes('\\') ? '\\' : '/';
+			const defaultPath = startDir
+				? `${startDir.replace(/[/\\]+$/, '')}${separator}${suggestedName}`
+				: suggestedName;
+			const filePath = await window.electronAPI.saveFileDialog({ defaultPath });
 			if (!filePath) return null;
 			origin = {
 				scheme: this.scheme,

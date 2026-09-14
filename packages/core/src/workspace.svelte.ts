@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
-import { type Storage, type FileOrigin, toURI } from './storage';
+import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
@@ -90,7 +90,16 @@ export class Workspace {
 	 */
 	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
 		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
-		const ok = await doc.save({ ...options, coveredByRoot: covered });
+		const needsPicker = !doc.origin || options.forceNewOrigin;
+		const ok = await doc.save({
+			...options,
+			coveredByRoot: covered,
+			// Untitled (or Save As) opens the picker: root it at the workspace
+			// folder and prefill the draft title. Falls back to a safe
+			// filename with no directory when no folder is open.
+			suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
+			startDirectory: needsPicker ? this.rootOrigin : undefined
+		});
 		if (ok) {
 			this.repository?.refresh().catch(e => console.error('Auto-refresh after save failed', e));
 			this.debouncedSaveOpenFiles();
