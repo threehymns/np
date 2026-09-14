@@ -32,11 +32,44 @@ export interface StorageEntry {
 	origin: FileOrigin;
 }
 
+export interface SaveFileOptions {
+	suggestedName?: string;
+	startDirectory?: FileOrigin | null;
+}
+
+/**
+ * Sanitize a draft title into a safe suggested filename for the save picker.
+ * Strips path separators and reserved characters, ensures a file extension
+ * (defaults to .md), and falls back to 'untitled.md' for empty input.
+ */
+export function toSuggestedSaveName(draftTitle: string): string {
+	const trimmed = (draftTitle ?? '').trim();
+	if (!trimmed) return 'untitled.md';
+	// Strip path separators and characters illegal on common filesystems.
+	let safe = trimmed.replace(/[/\\]+/g, '-').replace(/[<>:\"|?*\x00-\x1f]/g, '').trim();
+	// Collapse whitespace-only edge cases and leading dots (hidden files).
+	safe = safe.replace(/^\.+/, '').trim();
+	if (!safe) return 'untitled.md';
+	// Truncate long names while preserving any existing extension.
+	if (safe.length > 100) {
+		const dot = safe.lastIndexOf('.');
+		if (dot > 0 && safe.length - dot <= 11) {
+			safe = safe.slice(0, 100 - (safe.length - dot)) + safe.slice(dot);
+		} else {
+			safe = safe.slice(0, 100);
+		}
+	}
+	if (!/\.[A-Za-z0-9]{1,10}$/.test(safe)) {
+		safe += '.md';
+	}
+	return safe;
+}
+
 export interface StorageProvider {
 	scheme: string;
 	pickFile(): Promise<FileOrigin | null>;
 	pickDirectory(): Promise<FileOrigin | null>;
-	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
+	saveFile(content: string, existingOrigin?: FileOrigin, options?: SaveFileOptions): Promise<FileOrigin | null>;
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
 	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
@@ -50,7 +83,7 @@ export interface StorageProvider {
 export interface Storage {
 	pickFile(): Promise<FileOrigin | null>;
 	pickDirectory(): Promise<FileOrigin | null>;
-	saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null>;
+	saveFile(content: string, existingOrigin?: FileOrigin, options?: SaveFileOptions): Promise<FileOrigin | null>;
 	readFile(origin: FileOrigin): Promise<string>;
 	readDirectory(origin: FileOrigin): Promise<StorageEntry[]>;
 	verifyPermission(origin: FileOrigin, readWrite?: boolean): Promise<boolean>;
@@ -100,10 +133,10 @@ export class MultiSchemeStorage implements Storage {
 		return await this.getProvider(this.defaultScheme).pickDirectory();
 	}
 
-	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
+	async saveFile(content: string, existingOrigin?: FileOrigin, options?: SaveFileOptions): Promise<FileOrigin | null> {
 		const scheme = existingOrigin?.scheme ?? this.defaultScheme;
 		if (!scheme) throw new Error("No scheme available for saveFile");
-		return await this.getProvider(scheme).saveFile(content, existingOrigin);
+		return await this.getProvider(scheme).saveFile(content, existingOrigin, options);
 	}
 
 	async readFile(origin: FileOrigin): Promise<string> {

@@ -1,5 +1,5 @@
 import { toURI, parseURI } from '@np/core/storage';
-import type { StorageProvider, FileOrigin, StorageEntry } from '@np/core';
+import type { StorageProvider, FileOrigin, StorageEntry, SaveFileOptions } from '@np/core';
 import { openDB } from './persistence';
 
 export class BrowserHandleRegistry {
@@ -157,7 +157,7 @@ export class BrowserStorage implements StorageProvider {
 		}
 	}
 
-	async saveFile(content: string, existingOrigin?: FileOrigin): Promise<FileOrigin | null> {
+	async saveFile(content: string, existingOrigin?: FileOrigin, options?: SaveFileOptions): Promise<FileOrigin | null> {
 		try {
 			let handle: FileSystemFileHandle;
 			if (existingOrigin) {
@@ -168,10 +168,23 @@ export class BrowserStorage implements StorageProvider {
 				}
 				handle = resolved as FileSystemFileHandle;
 			} else {
-				handle = await window.showSaveFilePicker({
-					suggestedName: 'untitled.md',
+				const suggestedName = options?.suggestedName || 'untitled.md';
+				const pickerOptions: SaveFilePickerOptions = {
+					suggestedName,
 					types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'], 'text/plain': ['.txt'] } }]
-				});
+				};
+				if (options?.startDirectory) {
+					try {
+						const dirHandle = await browserHandleRegistry.resolve(toURI(options.startDirectory));
+						if (dirHandle && dirHandle.kind === 'directory') {
+							pickerOptions.startIn = dirHandle;
+						}
+					} catch {
+						// Fall back to the browser default location when the
+						// workspace folder handle can't be resolved.
+					}
+				}
+				handle = await window.showSaveFilePicker(pickerOptions);
 			}
 			
 			const writable = await handle.createWritable();

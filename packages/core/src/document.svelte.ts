@@ -235,7 +235,7 @@ export class DocumentSession {
 	 * then refreshes the repo and flushes persistence — calling this directly
 	 * can leave a stale `draftContent` behind in persistence.
 	 */
-	async save(options: { forceNewOrigin?: boolean; coveredByRoot: boolean }) {
+	async save(options: { forceNewOrigin?: boolean; coveredByRoot: boolean; suggestedName?: string; startDirectory?: FileOrigin | null }) {
 		if (this.origin && !options.forceNewOrigin) {
 			const hasPermission = await this.requestPermission(options.coveredByRoot);
 			if (!hasPermission) return false;
@@ -243,7 +243,10 @@ export class DocumentSession {
 
 		const targetOrigin = options.forceNewOrigin ? undefined : (this.origin ?? undefined);
 		const contentToSave = this._content;
-		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin);
+		const newOrigin = await this.storage.saveFile(contentToSave, targetOrigin, {
+			suggestedName: options.suggestedName,
+			startDirectory: options.startDirectory
+		});
 		if (newOrigin) {
 			this.origin = newOrigin;
 			this.savedBaseline = contentToSave;
