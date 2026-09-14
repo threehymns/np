@@ -10,7 +10,7 @@
 		"build": "vite build && tsc -p tsconfig.main.json",
 		"dist": "electron-builder --publish never",
 		"start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
-		"check": "svelte-check --tsconfig ./tsconfig.json"
+		"check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p tsconfig.main.json"
 	},
 	"build": {
 		"appId": "com.github.threehymns.np",
