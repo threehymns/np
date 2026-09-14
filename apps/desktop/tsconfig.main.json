@@ -11,5 +11,5 @@
 		"rootDir": "./src",
 		"types": ["node"]
 	},
-	"include": ["src/main.ts", "src/preload.ts", "src/preload.cts"]
+	"include": ["src/main.ts", "src/preload.cts"]
 }
