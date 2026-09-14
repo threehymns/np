@@ -388,12 +388,12 @@
 
 	function focusEditorFirstLine(editor: EditorView) {
 		const { firstLine } = getBufferBoundaries(editor.state);
-		focusEditorAtLine(editor, firstLine);
+		void focusEditorAtLine(editor, firstLine);
 	}
 
 	function focusEditorLastLine(editor: EditorView) {
 		const { lastLine } = getBufferBoundaries(editor.state);
-		focusEditorAtLine(editor, lastLine);
+		void focusEditorAtLine(editor, lastLine);
 	}
 
 	async function navigateFromFileEditor(filepath: string, direction: 'down' | 'up', side: 'a' | 'b' = 'b') {
@@ -406,7 +406,7 @@
 
 			const isNextCollapsed = isFileCollapsed(nextFile.filepath);
 			if (isNextCollapsed) {
-				focusHeader(nextFile.filepath);
+				void focusHeader(nextFile.filepath);
 			} else {
 				const editor = await getOrWaitEditor(nextFile.filepath, viewMode, side);
 				if (editor) focusEditorFirstLine(editor);
@@ -416,13 +416,13 @@
 			if (prevFile) {
 				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 				if (isPrevCollapsed) {
-					focusHeader(prevFile.filepath);
+					void focusHeader(prevFile.filepath);
 				} else {
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode, side);
 					if (editor) focusEditorLastLine(editor);
 				}
 			} else {
-				focusHeader(filepath);
+				void focusHeader(filepath);
 			}
 		}
 	}
@@ -1213,7 +1213,7 @@
 				if (editor) focusEditorFirstLine(editor);
 			} else {
 				const nextFile = activeChanges[idx + 1];
-				if (nextFile) focusHeader(nextFile.filepath);
+				if (nextFile) void focusHeader(nextFile.filepath);
 			}
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
@@ -1224,7 +1224,7 @@
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode);
 					if (editor) focusEditorLastLine(editor);
 				} else {
-					focusHeader(prevFile.filepath);
+					void focusHeader(prevFile.filepath);
 				}
 			}
 		} else if (event.key === 'ArrowRight') {
