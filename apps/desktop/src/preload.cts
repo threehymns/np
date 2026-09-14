@@ -31,7 +31,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 		};
 	},
 	showWindow: () => ipcRenderer.invoke('window:show'),
-	onWindowShown: (callback: () => void) => ipcRenderer.once('window-shown', () => callback()),
 	readFileUserKeymap: () => ipcRenderer.invoke('keymap:read'),
 	writeFileUserKeymap: (content: string) => ipcRenderer.invoke('keymap:write', content),
 	readConfigFileSync: () => ipcRenderer.sendSync('config:readSync'),

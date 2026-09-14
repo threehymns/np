@@ -30,6 +30,10 @@ const sessionPersistence = new SessionPersistenceEngine({
 });
 
 function createWindow() {
+	const preloadPath = fsSync.existsSync(path.join(__dirname, 'preload.cjs'))
+		? path.join(__dirname, 'preload.cjs')
+		: path.join(__dirname, 'preload.js');
+
 	mainWindow = new BrowserWindow({
 		width: 1200,
 		height: 800,
@@ -37,17 +41,9 @@ function createWindow() {
 		backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#ffffff',
 		autoHideMenuBar: true,
 		webPreferences: {
-			preload: path.join(__dirname, 'preload.cjs'),
+			preload: preloadPath,
 			contextIsolation: true,
 			nodeIntegration: false
-		}
-	});
-
-	// Still send the event when ready for heavy tasks, 
-	// but the window is already visible to the user.
-	mainWindow.once('ready-to-show', () => {
-		if (mainWindow) {
-			mainWindow.webContents.send('window-shown');
 		}
 	});
 
@@ -295,11 +291,8 @@ function registerIpcHandlers() {
 	});
 
 	ipcMain.handle('window:show', () => {
-		if (mainWindow) {
-			if (!mainWindow.isVisible()) {
-				mainWindow.show();
-			}
-			mainWindow.webContents.send('window-shown');
+		if (mainWindow && !mainWindow.isVisible()) {
+			mainWindow.show();
 		}
 	});
 

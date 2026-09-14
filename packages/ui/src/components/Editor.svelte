@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from "svelte";
+	import { untrack, tick } from "svelte";
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
@@ -30,6 +30,7 @@
 	const appState = useAppState();
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
+	let pendingScrollGen = 0;
 	const wrapCompartment = new Compartment();
 	const languageCompartment = new Compartment();
 	const vimCompartment = new Compartment();
@@ -306,28 +307,28 @@
 	$effect(() => {
 		const lineNum = doc.pendingLineToScroll;
 		if (view && active && lineNum !== null) {
+			const targetView = view;
 			untrack(() => {
 				doc.pendingLineToScroll = null;
 			});
+			const gen = ++pendingScrollGen;
 			// Wait a tick for editor rendering to ensure DOM and dimensions are correct
-			const timer = setTimeout(() => {
-				if (!view) return;
+			void tick().then(() => {
+				if (gen !== pendingScrollGen) return;
+				if (!targetView || targetView !== view) return;
 				try {
-					const lineCount = view.state.doc.lines;
+					const lineCount = targetView.state.doc.lines;
 					const targetLine = Math.max(1, Math.min(lineNum, lineCount));
-					const line = view.state.doc.line(targetLine);
-					view.dispatch({
+					const line = targetView.state.doc.line(targetLine);
+					targetView.dispatch({
 						selection: { anchor: line.from },
 						scrollIntoView: true,
 					});
-					view.focus();
+					targetView.focus();
 				} catch (e) {
 					console.error("Failed to scroll/select line", e);
 				}
-			}, 50);
-			return () => {
-				clearTimeout(timer);
-			};
+			});
 		}
 	});
 </script>

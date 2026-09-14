@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
 	import type { GitChange, FileDiffDetail } from '@np/core';
 	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
@@ -363,16 +364,17 @@
 		]);
 	}
 
-	function focusHeader(filepath: string) {
+	async function focusHeader(filepath: string) {
 		const header = document.getElementById(`diff-header-${filepath}`);
 		if (header) {
 			header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-			setTimeout(() => header.focus(), 0);
+			await tick();
+			header.focus();
 		}
 	}
 
-	function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
+	async function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
 		const clampedLine = Math.min(Math.max(1, targetLineNum), editor.state.doc.lines);
 		const line = editor.state.doc.line(clampedLine);
 		editor.dispatch({
@@ -380,17 +382,18 @@
 			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
 		});
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-		setTimeout(() => editor.focus(), 0);
+		await tick();
+		editor.focus();
 	}
 
 	function focusEditorFirstLine(editor: EditorView) {
 		const { firstLine } = getBufferBoundaries(editor.state);
-		focusEditorAtLine(editor, firstLine);
+		void focusEditorAtLine(editor, firstLine);
 	}
 
 	function focusEditorLastLine(editor: EditorView) {
 		const { lastLine } = getBufferBoundaries(editor.state);
-		focusEditorAtLine(editor, lastLine);
+		void focusEditorAtLine(editor, lastLine);
 	}
 
 	async function navigateFromFileEditor(filepath: string, direction: 'down' | 'up', side: 'a' | 'b' = 'b') {
@@ -403,7 +406,7 @@
 
 			const isNextCollapsed = isFileCollapsed(nextFile.filepath);
 			if (isNextCollapsed) {
-				focusHeader(nextFile.filepath);
+				void focusHeader(nextFile.filepath);
 			} else {
 				const editor = await getOrWaitEditor(nextFile.filepath, viewMode, side);
 				if (editor) focusEditorFirstLine(editor);
@@ -413,13 +416,13 @@
 			if (prevFile) {
 				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 				if (isPrevCollapsed) {
-					focusHeader(prevFile.filepath);
+					void focusHeader(prevFile.filepath);
 				} else {
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode, side);
 					if (editor) focusEditorLastLine(editor);
 				}
 			} else {
-				focusHeader(filepath);
+				void focusHeader(filepath);
 			}
 		}
 	}
@@ -899,12 +902,12 @@
 		collapsedFiles[targetFile] = false;
 
 		// Wait a tick for rendering
-		setTimeout(() => {
+		void tick().then(() => {
 			const element = document.getElementById(`diff-file-${targetFile}`);
 			if (element) {
 				element.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			}
-		}, 50);
+		});
 	});
 
 	function combineChangesByFilepath(changeList: GitChange[]): GitChange[] {
@@ -1210,7 +1213,7 @@
 				if (editor) focusEditorFirstLine(editor);
 			} else {
 				const nextFile = activeChanges[idx + 1];
-				if (nextFile) focusHeader(nextFile.filepath);
+				if (nextFile) void focusHeader(nextFile.filepath);
 			}
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
@@ -1221,7 +1224,7 @@
 					const editor = await getOrWaitEditor(prevFile.filepath, viewMode);
 					if (editor) focusEditorLastLine(editor);
 				} else {
-					focusHeader(prevFile.filepath);
+					void focusHeader(prevFile.filepath);
 				}
 			}
 		} else if (event.key === 'ArrowRight') {
