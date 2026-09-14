@@ -13,7 +13,6 @@ const srcDir = path.resolve(desktopRoot, 'src');
 const distMainDir = path.resolve(desktopRoot, 'dist-main');
 
 let electronProcess: ChildProcess | null = null;
-let isRestarting = false;
 let isBuilding = false;
 let rebuildQueued: { filename: string } | null = null;
 
@@ -157,8 +156,7 @@ function startElectron(electronPath: string, onExit: (code: number | null) => vo
 	electronProcess = proc;
 
 	proc.on('exit', (code) => {
-		if (isRestarting) {
-			isRestarting = false;
+		if (proc !== electronProcess) {
 			return;
 		}
 		console.log(`Electron process exited with code ${code}`);
@@ -170,7 +168,6 @@ async function stopElectron(): Promise<void> {
 	const proc = electronProcess;
 	if (!proc) return;
 	electronProcess = null;
-	isRestarting = true;
 	await new Promise<void>((resolve) => {
 		const timeout = setTimeout(() => {
 			try {
@@ -178,7 +175,8 @@ async function stopElectron(): Promise<void> {
 			} catch {
 				// Already exited
 			}
-			resolve();
+			// Wait for the old process exit event instead of resolving here,
+			// so restart starts only after the previous process fully exited.
 		}, 3000);
 		proc.once('exit', () => {
 			clearTimeout(timeout);
