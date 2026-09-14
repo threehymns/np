@@ -349,6 +349,14 @@ export class ProjectTree {
 				toURI(this.workspace.rootOrigin) === toURI(rootOrigin)
 			) {
 				this.nodes = builtNodes;
+				// Surface externally deleted open files (#175) on the next
+				// scan/refresh: same deleted-on-disk tab state as in-app
+				// deletes, edits preserved. Guarded for test doubles without
+				// a full Workspace.
+				const reconcile = (this.workspace as unknown as { reconcileExternalDeletions?: () => Promise<void> }).reconcileExternalDeletions;
+				if (typeof reconcile === 'function') {
+					await this.workspace.reconcileExternalDeletions();
+				}
 			}
 		} catch (e) {
 			console.error('[Tree] Scan failed', e);
@@ -509,19 +517,9 @@ export class ProjectTree {
 
 	async deleteEntry(node: TreeNode) {
 		await this.workspace.storage.deleteEntry(node.origin);
-		// Mark open tabs backed by the deleted entry as deleted-on-disk.
-		// Directory deletes cover descendants too (path-prefix match); content
-		// is untouched and tabs stay open, mirroring the branch-switch
-		// reconciliation that sets the same flag.
-		const deletedPath = node.origin.path;
-		const deletedScheme = node.origin.scheme;
-		for (const doc of this.workspace.documents) {
-			const origin = doc.origin;
-			if (!origin || origin.scheme !== deletedScheme) continue;
-			if (origin.path === deletedPath || origin.path.startsWith(deletedPath + '/')) {
-				doc.deletedOnDisk = true;
-			}
-		}
+		// Reuse the shared Workspace marking path (see #173): directory
+		// deletes cover descendants, content untouched, tabs stay open.
+		this.workspace.markDocumentsDeleted(node.origin);
 		await this.scan(this.workspace.rootOrigin!);
 	}
 
