@@ -349,6 +349,14 @@ export class ProjectTree {
 				toURI(this.workspace.rootOrigin) === toURI(rootOrigin)
 			) {
 				this.nodes = builtNodes;
+				// Surface externally deleted open files (#175) on the next
+				// scan/refresh: same deleted-on-disk tab state as in-app
+				// deletes, edits preserved. Guarded for test doubles without
+				// a full Workspace.
+				const reconcile = (this.workspace as unknown as { reconcileExternalDeletions?: () => Promise<void> }).reconcileExternalDeletions;
+				if (typeof reconcile === 'function') {
+					await this.workspace.reconcileExternalDeletions();
+				}
 			}
 		} catch (e) {
 			console.error('[Tree] Scan failed', e);
@@ -509,6 +517,9 @@ export class ProjectTree {
 
 	async deleteEntry(node: TreeNode) {
 		await this.workspace.storage.deleteEntry(node.origin);
+		// Reuse the shared Workspace marking path (see #173): directory
+		// deletes cover descendants, content untouched, tabs stay open.
+		this.workspace.markDocumentsDeleted(node.origin);
 		await this.scan(this.workspace.rootOrigin!);
 	}
 

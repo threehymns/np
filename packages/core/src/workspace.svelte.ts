@@ -660,6 +660,47 @@ export class Workspace {
 		}
 	}
 
+	/**
+	 * Shared marking path for deleted-on-disk tabs. Sets `deletedOnDisk`
+	 * without touching content, baselines, or tab membership, so in-memory
+	 * edits survive and nothing auto-closes. Directory deletes cover
+	 * descendants too (path-prefix match). Used by in-app deletes (#173)
+	 * and external-delete reconciliation (#175).
+	 */
+	markDocumentsDeleted(deletedOrigin: FileOrigin): void {
+		const deletedPath = deletedOrigin.path;
+		const deletedScheme = deletedOrigin.scheme;
+		for (const doc of this.documents) {
+			const origin = doc.origin;
+			if (!origin || origin.scheme !== deletedScheme) continue;
+			if (origin.path === deletedPath || origin.path.startsWith(deletedPath + '/')) {
+				doc.deletedOnDisk = true;
+			}
+		}
+	}
+
+	/**
+	 * Surface externally deleted open files as deleted-on-disk tabs, on the
+	 * next refresh/focus/scan. Probes each unmarked open document against
+	 * storage; a NotFound read reuses the in-app marking path. Content,
+	 * baselines, and tabs are untouched, so in-memory edits are preserved.
+	 * Other read errors (permissions, etc.) leave state alone. Never clears
+	 * the flag: a successful read means "still there", not "restored".
+	 */
+	async reconcileExternalDeletions(): Promise<void> {
+		for (const doc of this.documents) {
+			const origin = doc.origin;
+			if (!origin || doc.deletedOnDisk) continue;
+			try {
+				await this.storage.readFile(origin);
+			} catch (e: any) {
+				if (e?.name === 'NotFoundError' || e?.code === 'ENOENT') {
+					this.markDocumentsDeleted(origin);
+				}
+			}
+		}
+	}
+
 
 
 	async saveFolderState(folderUri: string) {
