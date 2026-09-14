@@ -509,6 +509,19 @@ export class ProjectTree {
 
 	async deleteEntry(node: TreeNode) {
 		await this.workspace.storage.deleteEntry(node.origin);
+		// Mark open tabs backed by the deleted entry as deleted-on-disk.
+		// Directory deletes cover descendants too (path-prefix match); content
+		// is untouched and tabs stay open, mirroring the branch-switch
+		// reconciliation that sets the same flag.
+		const deletedPath = node.origin.path;
+		const deletedScheme = node.origin.scheme;
+		for (const doc of this.workspace.documents) {
+			const origin = doc.origin;
+			if (!origin || origin.scheme !== deletedScheme) continue;
+			if (origin.path === deletedPath || origin.path.startsWith(deletedPath + '/')) {
+				doc.deletedOnDisk = true;
+			}
+		}
 		await this.scan(this.workspace.rootOrigin!);
 	}
 
