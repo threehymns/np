@@ -50,6 +50,85 @@ async function buildMainProcess(): Promise<boolean> {
 	return true;
 }
 
+function toPosix(p: string): string {
+	return p.replace(/\\/g, '/');
+}
+
+function isMainProcessFile(relPosix: string): boolean {
+	if (relPosix === 'renderer' || relPosix.startsWith('renderer/')) return false;
+	if (relPosix.includes('node_modules')) return false;
+	return relPosix.endsWith('.ts') || relPosix.endsWith('.cts') || relPosix.endsWith('.js');
+}
+
+/**
+ * Watch main-process files under src/ (renderer is excluded: Vite HMR owns it).
+ * Node's recursive fs.watch only works on macOS/Windows, so on Linux each
+ * subdirectory is watched individually and re-scanned on rename events —
+ * new nesting is picked up instead of silently going unwatched. No extra dep.
+ */
+function watchMainProcessFiles(onChange: (relPosix: string) => void): () => void {
+	const watchers: import('fs').FSWatcher[] = [];
+
+	if (process.platform === 'win32' || process.platform === 'darwin') {
+		console.log('Watching main process files (native recursive watch)...');
+		watchers.push(
+			fs.watch(srcDir, { recursive: true }, (_eventType, rawFilename) => {
+				if (!rawFilename) return;
+				const rel = toPosix(rawFilename.toString());
+				if (!isMainProcessFile(rel)) return;
+				onChange(rel);
+			})
+		);
+		return () => {
+			for (const w of watchers) w.close();
+		};
+	}
+
+	console.log('Watching main process files (per-directory fallback: recursive fs.watch is unsupported on Linux)...');
+	const watched = new Set<string>();
+	const scan = () => {
+		const stack = [srcDir];
+		while (stack.length > 0) {
+			const dir = stack.pop()!;
+			if (watched.has(dir)) {
+				if (fs.existsSync(dir)) continue;
+				watched.delete(dir);
+			}
+			watched.add(dir);
+			try {
+				const watcher = fs.watch(dir, (eventType, rawFilename) => {
+					if (eventType === 'rename') queueMicrotask(scan);
+					if (!rawFilename) return;
+					const rel = toPosix(path.relative(srcDir, path.join(dir, rawFilename.toString())));
+					if (!isMainProcessFile(rel)) return;
+					onChange(rel);
+				});
+				watcher.on('error', (err) => console.warn(`Watcher error for ${dir}:`, err));
+				watchers.push(watcher);
+			} catch (err) {
+				console.warn(`Failed to watch ${dir}:`, err);
+				continue;
+			}
+			let entries: import('fs').Dirent[];
+			try {
+				entries = fs.readdirSync(dir, { withFileTypes: true });
+			} catch {
+				continue;
+			}
+			for (const entry of entries) {
+				if (!entry.isDirectory()) continue;
+				if (entry.name === 'renderer' || entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+				stack.push(path.join(dir, entry.name));
+			}
+		}
+	};
+	scan();
+
+	return () => {
+		for (const w of watchers) w.close();
+	};
+}
+
 function getElectronPath(): string {
 	try {
 		return require('electron');
@@ -185,12 +264,7 @@ async function start() {
 
 	// Watch main process files (excluding renderer, which Vite HMR handles)
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-	fs.watch(srcDir, { recursive: true }, (_eventType, rawFilename) => {
-		if (!rawFilename) return;
-		const filename = rawFilename.toString();
-		if (filename.startsWith('renderer') || filename.includes('node_modules')) return;
-		if (!filename.endsWith('.ts') && !filename.endsWith('.cts') && !filename.endsWith('.js')) return;
-
+	watchMainProcessFiles((filename) => {
 		if (debounceTimer) clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(() => {
 			void rebuildAndRestart(filename, electronPath, cleanupAndExit);
