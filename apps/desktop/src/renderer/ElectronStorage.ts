@@ -1,7 +1,19 @@
-import type { StorageProvider, FileOrigin, StorageEntry, SaveFileOptions } from '@np/core';
+import { isNotFoundError, type StorageProvider, type FileOrigin, type StorageEntry, type SaveFileOptions } from '@np/core';
 
 export class ElectronStorage implements StorageProvider {
 	scheme = 'file';
+
+	/**
+	 * Converts an ENOENT-shaped IPC result (main resolves with a marker for
+	 * expected missing files) or a rejected IPC error into a normalized
+	 * NotFoundError the rest of the app recognizes.
+	 */
+	private toNotFoundError(err: any, originPath: string): Error {
+		const notFound = new Error(err?.message || `File not found: ${originPath}`, { cause: err });
+		notFound.name = 'NotFoundError';
+		(notFound as any).code = 'ENOENT';
+		return notFound;
+	}
 
 	async pickFile(): Promise<FileOrigin | null> {
 		const res = await window.electronAPI.openFile();
@@ -45,13 +57,29 @@ export class ElectronStorage implements StorageProvider {
 	}
 
 	async readFile(origin: FileOrigin): Promise<string> {
-		const buffer = await window.electronAPI.readFile(origin.path);
-		return new TextDecoder().decode(buffer);
+		const result = await window.electronAPI.readFile(origin.path).catch((e: any) => {
+			if (isNotFoundError(e)) {
+				throw this.toNotFoundError(e, origin.path);
+			}
+			throw e;
+		});
+		if (isNotFoundError(result)) {
+			throw this.toNotFoundError(result, origin.path);
+		}
+		return new TextDecoder().decode(result as Uint8Array);
 	}
 
 	async readDirectory(origin: FileOrigin): Promise<StorageEntry[]> {
-		const entries = await window.electronAPI.readDirectory(origin.path);
-		return entries.map(e => ({
+		const result = await window.electronAPI.readDirectory(origin.path).catch((e: any) => {
+			if (isNotFoundError(e)) {
+				throw this.toNotFoundError(e, origin.path);
+			}
+			throw e;
+		});
+		if (isNotFoundError(result)) {
+			throw this.toNotFoundError(result, origin.path);
+		}
+		return (result as Array<{ name: string; kind: 'file' | 'directory'; path: string }>).map(e => ({
 			name: e.name,
 			kind: e.kind,
 			origin: {
