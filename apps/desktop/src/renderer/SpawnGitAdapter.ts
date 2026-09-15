@@ -1,6 +1,6 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded } from '@np/core/utils';
+import { mapBounded, isNotFoundError } from '@np/core/utils';
 
 export interface GitRunResult {
 	code: number;
@@ -21,7 +21,36 @@ export interface GitFileAccess {
 const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
 
 const ipcFileAccess: GitFileAccess = {
-	readFile: (path) => window.electronAPI.readFile(path),
+	readFile: async (path) => {
+		const toNotFound = (cause: unknown): Error => {
+			const message =
+				cause instanceof Error && cause.message
+					? cause.message
+					: typeof (cause as any)?.message === 'string'
+						? (cause as any).message
+						: `ENOENT: no such file or directory, open '${path}'`;
+			const err = new Error(message);
+			err.name = 'NotFoundError';
+			(err as any).code = 'ENOENT';
+			return err;
+		};
+		let result: Uint8Array | string | unknown;
+		try {
+			result = await window.electronAPI.readFile(path);
+		} catch (e) {
+			// Rejected IPC error (old main, or non-marker path): normalize
+			// ENOENT the same way ElectronStorage does.
+			if (isNotFoundError(e)) throw toNotFound(e);
+			throw e;
+		}
+		// Main resolves with a not-found marker for missing files instead of
+		// rejecting. Callers here expect an ENOENT rejection (deleted files are
+		// treated as empty), so re-throw preserving that contract.
+		if (isNotFoundError(result)) {
+			throw toNotFound(result);
+		}
+		return result as Uint8Array;
+	},
 	writeFile: (path, content) => window.electronAPI.writeFile(path, content),
 	deleteEntry: (path) => window.electronAPI.deleteEntry(path)
 };
@@ -591,7 +620,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 		} catch (e) {
-			if (!(e instanceof Error) || !e.message.includes('ENOENT')) {
+			if (!isNotFoundError(e)) {
 				throw e;
 			}
 			return '';

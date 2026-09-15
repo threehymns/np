@@ -2,10 +2,10 @@ export interface ElectronAPI {
 	openFile(): Promise<{ path: string; name: string } | null>;
 	openDirectory(): Promise<{ path: string; name: string } | null>;
 	saveFileDialog(options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | null>;
-	readFile(filePath: string): Promise<Uint8Array>;
+	readFile(filePath: string): Promise<Uint8Array | IpcNotFoundError>;
 
 	writeFile(filePath: string, content: string): Promise<void>;
-	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string }>>;
+	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string }> | IpcNotFoundError>;
 	createDirectory(dirPath: string): Promise<void>;
 	deleteEntry(entryPath: string): Promise<void>;
 	renameEntry(oldPath: string, newName: string): Promise<string>;
@@ -29,4 +29,10 @@ declare global {
 	interface Window {
 		electronAPI: ElectronAPI;
 	}
+}
+
+export interface IpcNotFoundError {
+	name: 'NotFoundError';
+	code: 'ENOENT';
+	message: string;
 }

@@ -186,8 +186,43 @@ function registerIpcHandlers() {
 
 
 	// FS operations
+	// Intentional duplicate of @np/core's isNotFoundError (packages/core/src/utils.ts):
+	// Electron main can't import the package, but must classify the same IPC
+	// error and not-found-marker shapes. Keep the checks in lockstep.
+	const isNotFoundError = (err: unknown): boolean => {
+		if (!err || typeof err !== 'object') return false;
+		const e = err as { code?: unknown; name?: unknown; message?: unknown };
+		if (e.code === 'ENOENT' || e.name === 'NotFoundError' || e.name === 'ENOENT') return true;
+		// A structured code that isn't ENOENT means a different failure (e.g.
+		// EACCES); its message may still mention ENOENT via a chained cause,
+		// so don't fall back to message matching (keep in lockstep with
+		// @np/core's isNotFoundError).
+		if (typeof e.code === 'string' && e.code !== 'ENOENT') return false;
+		return (
+			typeof e.message === 'string' &&
+			(e.message.includes('ENOENT') ||
+				e.message.includes('NotFoundError') ||
+				e.message.includes('no such file or directory'))
+		);
+	};
+
+	// Missing files are an expected condition (e.g. a tab restored after the
+	// file was deleted on disk). Resolve with a structured marker instead of
+	// rejecting, so Electron doesn't log a spurious "Error occurred in handler"
+	// for an error the renderer normalizes silently.
+	const toNotFoundMarker = (err: unknown, filePath: string) => ({
+		name: 'NotFoundError' as const,
+		code: 'ENOENT' as const,
+		message: err instanceof Error && err.message ? err.message : `No such file or directory: ${filePath}`
+	});
+
 	ipcMain.handle('fs:readFile', async (_, filePath: string) => {
-		return await fs.readFile(filePath);
+		try {
+			return await fs.readFile(filePath);
+		} catch (err) {
+			if (isNotFoundError(err)) return toNotFoundMarker(err, filePath);
+			throw err;
+		}
 	});
 
 	ipcMain.handle('fs:writeFile', async (_, filePath: string, content: string) => {
@@ -200,14 +235,19 @@ function registerIpcHandlers() {
 	});
 
 	ipcMain.handle('fs:readDirectory', async (_, dirPath: string) => {
-		const entries = await fs.readdir(dirPath, { withFileTypes: true });
-		return entries
-			.filter(entry => entry.isFile() || entry.isDirectory())
-			.map(entry => ({
-				name: entry.name,
-				kind: entry.isDirectory() ? ('directory' as const) : ('file' as const),
-				path: path.join(dirPath, entry.name)
-			}));
+		try {
+			const entries = await fs.readdir(dirPath, { withFileTypes: true });
+			return entries
+				.filter(entry => entry.isFile() || entry.isDirectory())
+				.map(entry => ({
+					name: entry.name,
+					kind: entry.isDirectory() ? ('directory' as const) : ('file' as const),
+					path: path.join(dirPath, entry.name)
+				}));
+		} catch (err) {
+			if (isNotFoundError(err)) return toNotFoundMarker(err, dirPath);
+			throw err;
+		}
 	});
 
 	ipcMain.handle('fs:deleteEntry', async (_, entryPath: string) => {
