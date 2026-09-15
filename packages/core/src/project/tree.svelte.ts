@@ -1,6 +1,7 @@
 import type { Workspace } from '../workspace.svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { toURI, type FileOrigin } from '../storage';
+import { isNotFoundError } from '../utils';
 
 export interface TreeNode {
 	name: string;
@@ -337,7 +338,7 @@ export class ProjectTree {
 			} catch (e: any) {
 				// Handle missing gitignore silently
 				this.gitignore = null;
-				if (e.name !== 'NotFoundError' && e.code !== 'ENOENT') {
+				if (!isNotFoundError(e)) {
 					console.warn('[Tree] Error reading .gitignore:', e);
 				}
 			}

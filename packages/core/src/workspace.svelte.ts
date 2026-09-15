@@ -1,6 +1,7 @@
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
+import { isNotFoundError } from './utils';
 import { ProjectTree } from './project/tree.svelte';
 import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
@@ -184,9 +185,10 @@ export class Workspace {
 			const serialized: SerializedDocument = {
 				id: doc.id,
 				origin: doc.origin ? $state.snapshot(doc.origin) : null,
-				untitledTitle: doc.untitledTitle
+				untitledTitle: doc.untitledTitle,
+				deletedOnDisk: doc.deletedOnDisk ? true : undefined
 			};
-			if (doc.isModified || !doc.origin) {
+			if (doc.isModified || !doc.origin || doc.deletedOnDisk) {
 				serialized.draftContent = doc.content;
 			}
 			return serialized;
@@ -222,8 +224,8 @@ export class Workspace {
 				// Skip when already modified so a restore + fast-typing window
 				// doesn't schedule a load that would clobber keystrokes;
 				// loadContent itself also rebases instead of overwriting.
-				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded && !activeDoc.isModified) {
-					activeDoc.loadContent();
+				if (activeDoc && activeDoc.origin && !activeDoc.isLoaded && !activeDoc.isModified && !activeDoc.deletedOnDisk) {
+					activeDoc.loadContent().catch(() => {});
 				}
 			});
 
@@ -665,7 +667,9 @@ export class Workspace {
 	 * without touching content, baselines, or tab membership, so in-memory
 	 * edits survive and nothing auto-closes. Directory deletes cover
 	 * descendants too (path-prefix match). Used by in-app deletes (#173)
-	 * and external-delete reconciliation (#175).
+	 * and external-delete reconciliation (#175). Bumping the document's
+	 * baseline seq (via `markDeletedOnDisk`) also drops a stale restore read,
+	 * so a delete that lands mid-restore cannot have its flag cleared.
 	 */
 	markDocumentsDeleted(deletedOrigin: FileOrigin): void {
 		const deletedPath = deletedOrigin.path;
@@ -674,27 +678,33 @@ export class Workspace {
 			const origin = doc.origin;
 			if (!origin || origin.scheme !== deletedScheme) continue;
 			if (origin.path === deletedPath || origin.path.startsWith(deletedPath + '/')) {
-				doc.deletedOnDisk = true;
+				doc.markDeletedOnDisk();
 			}
 		}
 	}
 
 	/**
 	 * Surface externally deleted open files as deleted-on-disk tabs, on the
-	 * next refresh/focus/scan. Probes each unmarked open document against
-	 * storage; a NotFound read reuses the in-app marking path. Content,
-	 * baselines, and tabs are untouched, so in-memory edits are preserved.
-	 * Other read errors (permissions, etc.) leave state alone. Never clears
-	 * the flag: a successful read means "still there", not "restored".
+	 * next refresh/focus/scan. Probes each open document against storage: a
+	 * NotFound read reuses the in-app marking path; a successful read means
+	 * the file is back (recreated after the delete) and clears a stale flag.
+	 * Content, baselines, and tabs are untouched, so in-memory edits are
+	 * preserved. Other read errors (permissions, etc.) leave state alone.
 	 */
 	async reconcileExternalDeletions(): Promise<void> {
 		for (const doc of this.documents) {
 			const origin = doc.origin;
-			if (!origin || doc.deletedOnDisk) continue;
+			if (!origin) continue;
 			try {
 				await this.storage.readFile(origin);
+				if (doc.deletedOnDisk) {
+					// The probe read succeeding proves the file exists again.
+					// A delete landing between the read and this clear is a
+					// transient race the next reconcile re-marks.
+					doc.deletedOnDisk = false;
+				}
 			} catch (e: any) {
-				if (e?.name === 'NotFoundError' || e?.code === 'ENOENT') {
+				if (isNotFoundError(e)) {
 					this.markDocumentsDeleted(origin);
 				}
 			}
@@ -744,6 +754,13 @@ export class Workspace {
 							serialized.untitledTitle || 'Untitled'
 						);
 						doc.id = serialized.id as any;
+						if (serialized.deletedOnDisk) {
+							// Restores a previously persisted flag verbatim; this is
+							// not a fresh delete, so no baseline seq bump. A
+							// restoreDraft read that follows re-checks the disk and
+							// clears it if the file is back.
+							doc.deletedOnDisk = true;
+						}
 						if (serialized.origin) {
 							doc.refreshPermissionState(this.coversOrigin(serialized.origin));
 						}

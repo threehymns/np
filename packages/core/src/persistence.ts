@@ -24,6 +24,10 @@ export interface SerializedDocument {
 	 * For diff tabs: whether the selected change is the staged variant.
 	 */
 	diffStaged?: boolean;
+	/**
+	 * Whether the file was deleted on disk while the tab remained open.
+	 */
+	deletedOnDisk?: boolean;
 }
 
 /**
