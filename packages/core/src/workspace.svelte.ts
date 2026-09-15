@@ -670,39 +670,66 @@ export class Workspace {
 	 * and external-delete reconciliation (#175). Bumping the document's
 	 * baseline seq (via `markDeletedOnDisk`) also drops a stale restore read,
 	 * so a delete that lands mid-restore cannot have its flag cleared.
+	 * Schedules one debounced session flush when any flag transitions
+	 * false→true, so persistence captures the deletion draft; no-ops
+	 * schedule nothing.
 	 */
 	markDocumentsDeleted(deletedOrigin: FileOrigin): void {
 		const deletedPath = deletedOrigin.path;
 		const deletedScheme = deletedOrigin.scheme;
+		let changed = false;
 		for (const doc of this.documents) {
 			const origin = doc.origin;
 			if (!origin || origin.scheme !== deletedScheme) continue;
 			if (origin.path === deletedPath || origin.path.startsWith(deletedPath + '/')) {
+				if (!doc.deletedOnDisk) {
+					changed = true;
+				}
+				// Always bump the baseline seq (even when already deleted)
+				// so a delete landing mid-restore drops the stale read;
+				// flush scheduling below stays transition-only.
 				doc.markDeletedOnDisk();
 			}
+		}
+		if (changed) {
+			this.debouncedSaveOpenFiles();
 		}
 	}
 
 	/**
 	 * Surface externally deleted open files as deleted-on-disk tabs, on the
 	 * next refresh/focus/scan. Probes each open document against storage: a
-	 * NotFound read reuses the in-app marking path; a successful read means
-	 * the file is back (recreated after the delete) and clears a stale flag.
-	 * Content, baselines, and tabs are untouched, so in-memory edits are
-	 * preserved. Other read errors (permissions, etc.) leave state alone.
+	 * NotFound read reuses the in-app marking path; a successful read on a
+	 * stale flag restores via the guarded `loadContent` baseline operation,
+	 * which refreshes the saved baseline, replaces content only when clean,
+	 * and drops reads made stale by a concurrent delete or save. Dirty
+	 * in-memory edits are preserved. Other read errors (permissions, etc.)
+	 * leave state alone. Each flag transition schedules one debounced
+	 * session flush.
 	 */
 	async reconcileExternalDeletions(): Promise<void> {
 		for (const doc of this.documents) {
 			const origin = doc.origin;
 			if (!origin) continue;
+			if (doc.deletedOnDisk) {
+				try {
+					await doc.loadContent();
+				} catch (e: any) {
+					if (isNotFoundError(e)) {
+						// Still missing: flag stays set (loadContent re-marks
+						// on NotFound). No transition, so no flush.
+						continue;
+					}
+					// Other read errors leave state alone.
+					continue;
+				}
+				if (!doc.deletedOnDisk) {
+					this.debouncedSaveOpenFiles();
+				}
+				continue;
+			}
 			try {
 				await this.storage.readFile(origin);
-				if (doc.deletedOnDisk) {
-					// The probe read succeeding proves the file exists again.
-					// A delete landing between the read and this clear is a
-					// transient race the next reconcile re-marks.
-					doc.deletedOnDisk = false;
-				}
 			} catch (e: any) {
 				if (isNotFoundError(e)) {
 					this.markDocumentsDeleted(origin);

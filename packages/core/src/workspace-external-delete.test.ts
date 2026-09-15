@@ -187,8 +187,11 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 	});
 
 	it("clears a stale deleted-on-disk flag when the file is recreated and reconcile probes it", async () => {
-		const { ws, doc, storage } = await makeWsWithOpenFile();
-		const diskContent = "committed content\n";
+		const initialContent = "original content\n";
+		const recreatedContent = "recreated content v2\n";
+		const { ws, doc, storage } = await makeWsWithOpenFile(initialContent);
+		expect(doc.content).toBe(initialContent);
+		expect(doc.isModified).toBe(false);
 
 		// File disappears externally; reconcile marks it on the next scan.
 		storage.readFile = mock(async (o: FileOrigin) => {
@@ -198,12 +201,14 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 		await ws.projectTree.scan(rootOrigin);
 		expect(doc.deletedOnDisk).toBe(true);
 
-		// File recreated externally; the next reconcile probe sees it again.
-		storage.readFile = mock(async () => diskContent);
+		// File recreated externally with different content; the next
+		// reconcile probe restores via the guarded baseline operation.
+		storage.readFile = mock(async () => recreatedContent);
 		await (ws as any).reconcileExternalDeletions();
 
 		expect(doc.deletedOnDisk).toBe(false);
-		expect(doc.content).toBe(diskContent);
+		expect(doc.content).toBe(recreatedContent);
+		expect(doc.isModified).toBe(false);
 		expect(ws.tabs.some((t) => t.id === doc.id)).toBe(true);
 	});
 
