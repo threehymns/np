@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'bun:test';
-import { mapBounded } from './utils';
+import { isNotFoundError, mapBounded } from './utils';
+
+describe('isNotFoundError', () => {
+	it('does not treat a filename mentioning NotFoundError as a missing file', () => {
+		expect(isNotFoundError(new Error("Failed to read '/notes/NotFoundError.md'"))).toBe(false);
+	});
+
+	it('preserves a structured non-missing error despite a NotFoundError filename', () => {
+		const error = Object.assign(new Error("Permission denied: '/notes/NotFoundError.md'"), { code: 'EACCES' });
+		expect(isNotFoundError(error)).toBe(false);
+	});
+
+	it('recognizes the Electron IPC missing-file envelope', () => {
+		expect(isNotFoundError(new Error("Error invoking remote method 'fs:readFile': Error: ENOENT: no such file or directory, open '/notes/missing.md'"))).toBe(true);
+	});
+
+	it('recognizes structured missing-file signals and bare ENOENT', () => {
+		expect(isNotFoundError({ name: 'NotFoundError' })).toBe(true);
+		expect(isNotFoundError({ code: 'ENOENT' })).toBe(true);
+		expect(isNotFoundError({ name: 'ENOENT' })).toBe(true);
+		expect(isNotFoundError(new Error('ENOENT'))).toBe(true);
+	});
+});
 
 describe('mapBounded', () => {
 	it('throws RangeError when limit is 0', async () => {
