@@ -328,9 +328,8 @@
     				({appState.selection.wordCount} words, {appState.selection.charCount} characters)
   				{/if}
 				</span>
-				<div class="h-3 w-px bg-border/50"></div>
+				<div class="h-3 w-px bg-border"></div>
 				<div class="flex gap-4">
-					<span>{appState.prefs.zoom}%</span>
 					<button
 						type="button"
 						class="font-medium text-foreground/80 hover:text-foreground cursor-pointer transition-colors"
