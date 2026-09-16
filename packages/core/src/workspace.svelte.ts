@@ -728,12 +728,10 @@ export class Workspace {
 				}
 				continue;
 			}
-			try {
-				await this.storage.readFile(origin);
-			} catch (e: any) {
-				if (isNotFoundError(e)) {
-					this.markDocumentsDeleted(origin);
-				}
+			const before = doc.deletedOnDisk;
+			await doc.probeDeletedOnDisk();
+			if (!before && doc.deletedOnDisk) {
+				this.debouncedSaveOpenFiles();
 			}
 		}
 	}

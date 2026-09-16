@@ -22,6 +22,7 @@ export class DocumentSession {
 	private saveEpoch = 0;
 	private permissionSeq = 0;
 	private baselineSeq = 0;
+	private probeSeq = 0;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
@@ -190,6 +191,25 @@ export class DocumentSession {
 	markDeletedOnDisk(): void {
 		this.baselineSeq++;
 		this.deletedOnDisk = true;
+	}
+
+	async probeDeletedOnDisk(): Promise<void> {
+		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
+		const readSaveEpoch = this.saveEpoch;
+		const seq = this.baselineSeq;
+		const probeSeq = ++this.probeSeq;
+		try {
+			await this.storage.readFile(readOrigin);
+		} catch (e: any) {
+			if (!this.origin || toURI(this.origin) !== readURI) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
+			if (this.baselineSeq !== seq || this.probeSeq !== probeSeq) return;
+			if (isNotFoundError(e)) {
+				this.markDeletedOnDisk();
+			}
+		}
 	}
 
 	/**

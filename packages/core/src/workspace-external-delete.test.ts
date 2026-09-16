@@ -244,4 +244,109 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 
 		expect(doc.deletedOnDisk).toBe(false);
 	});
+
+	it("does not re-mark a file deleted when the unflagged probe races a successful save", async () => {
+		const { ws, doc, storage } = await makeWsWithOpenFile();
+		const unsavedEdit = "my unsaved in-memory edit\n";
+		ws.updateDocumentContent(doc, unsavedEdit);
+
+		let fireProbe!: (err: unknown) => void;
+		const probeGate = new Promise<never>((_, reject) => {
+			fireProbe = (err) => reject(err);
+		});
+		storage.readFile = mock(async (o: FileOrigin) => {
+			if (o.path === fileOrigin.path) return probeGate;
+			return "";
+		}) as any;
+
+		const reconciling = (ws as any).reconcileExternalDeletions();
+
+		storage.saveFile = mock(async (_content: string, existing?: FileOrigin) => existing ?? fileOrigin) as any;
+		const saved = await ws.saveDocument(doc);
+		expect(saved).toBe(true);
+		expect(doc.deletedOnDisk).toBe(false);
+
+		fireProbe(notFound());
+		await reconciling;
+
+		expect(doc.deletedOnDisk).toBe(false);
+	});
+
+	it("successful reconcile probe does not invalidate a pending restoreDraft baseline read", async () => {
+		const { ws, storage } = await makeWsWithOpenFile("committed content\n");
+		const { DocumentSession } = await import("./document.svelte");
+
+		const restored = new DocumentSession(storage, "", fileOrigin) as any;
+		let resolveRestore!: (v: string) => void;
+		const restoreGate = new Promise<string>((r) => {
+			resolveRestore = r;
+		});
+		let readCalls = 0;
+		storage.readFile = mock(async () => {
+			readCalls++;
+			if (readCalls === 1) return restoreGate;
+			return "committed content\n";
+		}) as any;
+
+		restored.restoreDraft("committed content\n");
+		ws.documents.push(restored);
+		ws.tabs.push({ id: restored.id, type: "document" });
+
+		await (ws as any).reconcileExternalDeletions();
+
+		resolveRestore("committed content\n");
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(restored.isModified).toBe(false);
+	});
+
+	it("older unflagged ENOENT does not mark after a newer successful probe", async () => {
+		const { ws, doc, storage } = await makeWsWithOpenFile();
+
+		let fireProbe1!: (err: unknown) => void;
+		const gate1 = new Promise<never>((_, reject) => {
+			fireProbe1 = (err) => reject(err);
+		});
+		let readCalls = 0;
+		storage.readFile = mock(async () => {
+			readCalls++;
+			if (readCalls === 1) return gate1;
+			return "committed content\n";
+		}) as any;
+
+		const reconciling1 = (ws as any).reconcileExternalDeletions();
+		await (ws as any).reconcileExternalDeletions();
+		expect(doc.deletedOnDisk).toBe(false);
+
+		fireProbe1(notFound());
+		await reconciling1;
+
+		expect(doc.deletedOnDisk).toBe(false);
+	});
+
+	it("late unflagged ENOENT does not mark after a save-as origin change", async () => {
+		const { ws, doc, storage } = await makeWsWithOpenFile();
+		const newOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/b.ts", name: "b.ts" };
+
+		let fireProbe!: (err: unknown) => void;
+		const probeGate = new Promise<never>((_, reject) => {
+			fireProbe = (err) => reject(err);
+		});
+		storage.readFile = mock(async (o: FileOrigin) => {
+			if (o.path === fileOrigin.path) return probeGate;
+			return "";
+		}) as any;
+
+		const reconciling = (ws as any).reconcileExternalDeletions();
+
+		storage.saveFile = mock(async () => newOrigin) as any;
+		const saved = await ws.saveDocument(doc, { forceNewOrigin: true });
+		expect(saved).toBe(true);
+		expect(doc.deletedOnDisk).toBe(false);
+
+		fireProbe(notFound());
+		await reconciling;
+
+		expect(doc.deletedOnDisk).toBe(false);
+	});
 });
