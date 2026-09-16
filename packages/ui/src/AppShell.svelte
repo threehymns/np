@@ -278,7 +278,7 @@
 				</Tooltip.Content>
 			</Tooltip.Root>
 		{/snippet}
-		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background/80 backdrop-blur-md z-50">
+		<footer class="flex shrink-0 items-center justify-between border-t px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums bg-background z-50">
 			<div class="flex items-center gap-1">
 				<Tooltip.Provider>
 					{@render statusButton({
@@ -320,23 +320,14 @@
 						badge: appState.workspace.repository?.changes?.length
 					})}
 				</Tooltip.Provider>
-
-				<div class="flex gap-3 opacity-80 ml-2">
-					<span>{appState.activeDocument?.wordCount ?? 0} words</span>
-					<span>{appState.activeDocument?.charCount ?? 0} chars</span>
-				</div>
-				{#if appState.selection.charCount > 0}
-					<div class="h-3 w-px bg-border/50"></div>
-					<div class="flex gap-3 text-primary animate-in fade-in slide-in-from-left-2 duration-300">
-						<span class="font-medium">{appState.selection.wordCount} selected words</span>
-						<span class="font-medium">{appState.selection.charCount} selected chars</span>
-					</div>
-				{/if}
 			</div>
-			<div class="flex items-center gap-4 opacity-80">
-				<div class="flex gap-4">
-					<span>Ln {appState.selection.line}, Col {appState.selection.column}</span>
-				</div>
+			<div class="flex items-center gap-2">
+				<span>
+				  {appState.selection.line}:{appState.selection.column}
+  				{#if appState.selection.charCount > 0}
+    				({appState.selection.wordCount} words, {appState.selection.charCount} characters)
+  				{/if}
+				</span>
 				<div class="h-3 w-px bg-border/50"></div>
 				<div class="flex gap-4">
 					<span>{appState.prefs.zoom}%</span>
