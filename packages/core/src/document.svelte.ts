@@ -101,7 +101,7 @@ export class DocumentSession {
 		const readOrigin = this.origin;
 		const readURI = toURI(readOrigin);
 		const readSaveEpoch = this.saveEpoch;
-		const seq = this.baselineSeq;
+		const seq = ++this.baselineSeq;
 		try {
 			const fileContent = await this.storage.readFile(readOrigin);
 			// Drop stale reads: a concurrent save (or save-as origin change)
@@ -112,10 +112,8 @@ export class DocumentSession {
 			// concurrent save never gets clobbered.
 			if (!this.origin || toURI(this.origin) !== readURI) return;
 			if (this.saveEpoch !== readSaveEpoch) return;
-			// A baseline operation that started after this read (a delete via
-			// markDeletedOnDisk, a save, a restore) owns freshness. Applying
-			// this success anyway would resurrect a deletedOnDisk flag the
-			// delete set, so drop it like any other stale read.
+			// This load owns baseline freshness until a newer load, rebase,
+			// restore, save, or markDeletedOnDisk invalidates it.
 			if (this.baselineSeq !== seq) return;
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
@@ -125,6 +123,7 @@ export class DocumentSession {
 			this._content = keepEdits ? current : fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
+			this.baselinePending = false;
 		} catch (e: any) {
 			if (!this.origin || toURI(this.origin) !== readURI) throw e;
 			if (this.saveEpoch !== readSaveEpoch) throw e;

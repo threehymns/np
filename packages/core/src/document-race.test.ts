@@ -24,6 +24,85 @@ beforeAll(async () => {
 });
 
 describe("Document load/save revision race", () => {
+	it("older load ENOENT does not resurrect deletion after a newer successful load", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let rejectOlder!: (error: unknown) => void;
+		let resolveNewer!: (content: string) => void;
+		const olderGate = new Promise<string>((_, reject) => { rejectOlder = reject; });
+		const newerGate = new Promise<string>((resolve) => { resolveNewer = resolve; });
+		storage.readFile = mock(() => newerGate).mockImplementationOnce(() => olderGate);
+		const doc = makeDocSession(storage, "base", origin);
+		doc.markDeletedOnDisk();
+
+		const older = doc.loadContent();
+		const newer = doc.loadContent();
+		resolveNewer("recreated content");
+		await newer;
+		expect(doc.deletedOnDisk).toBe(false);
+
+		const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+		rejectOlder(missing);
+		await expect(older).rejects.toThrow("missing");
+
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe("recreated content");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("older successful load does not override a newer load ENOENT", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let resolveOlder!: (content: string) => void;
+		let rejectNewer!: (error: unknown) => void;
+		const olderGate = new Promise<string>((resolve) => { resolveOlder = resolve; });
+		const newerGate = new Promise<string>((_, reject) => { rejectNewer = reject; });
+		storage.readFile = mock(() => newerGate).mockImplementationOnce(() => olderGate);
+		const doc = makeDocSession(storage, "base", origin);
+
+		const older = doc.loadContent();
+		const newer = doc.loadContent();
+		rejectNewer(Object.assign(new Error("missing"), { code: "ENOENT" }));
+		await expect(newer).rejects.toThrow("missing");
+		expect(doc.deletedOnDisk).toBe(true);
+
+		resolveOlder("stale content");
+		await older;
+
+		expect(doc.deletedOnDisk).toBe(true);
+		expect(doc.content).toBe("base");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("accepted load clears pending draft baseline and ignores the older restore read", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let resolveRestore!: (content: string) => void;
+		let resolveLoad!: (content: string) => void;
+		const restoreGate = new Promise<string>((resolve) => { resolveRestore = resolve; });
+		const loadGate = new Promise<string>((resolve) => { resolveLoad = resolve; });
+		storage.readFile = mock(() => loadGate).mockImplementationOnce(() => restoreGate);
+		const doc = makeDocSession(storage, "", origin);
+		doc.restoreDraft("recovered content");
+		expect(doc.isModified).toBe(true);
+
+		const loading = doc.loadContent();
+		resolveLoad("recovered content");
+		await loading;
+
+		try {
+			expect(doc.content).toBe("recovered content");
+			expect(doc.isModified).toBe(false);
+			expect(doc.deletedOnDisk).toBe(false);
+		} finally {
+			resolveRestore("stale disk content");
+			await restoreGate;
+		}
+
+		expect(doc.content).toBe("recovered content");
+		expect(doc.isModified).toBe(false);
+	});
+
 	it("in-flight load does not clobber a concurrent save", async () => {
 		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
 		const storage = createMockStorage({
