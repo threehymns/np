@@ -5,11 +5,15 @@
 
 	let {
 		report,
+		error = null,
+		busy = false,
 		targetBranch,
 		onConfirm,
 		onCancel
 	}: {
 		report: RepositorySafetyReport,
+		error?: string | null,
+		busy?: boolean,
 		targetBranch: string,
 		onConfirm: () => void,
 		onCancel: () => void
@@ -21,7 +25,7 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Cannot Switch Branch</AlertDialog.Title>
 			<AlertDialog.Description>
-				You have unsaved or uncommitted changes that would be overwritten by switching to <strong>{targetBranch}</strong>.
+				{#if error}{error}{:else}Changes prevent switching safely to <strong>{targetBranch}</strong>.{/if}
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 
@@ -30,7 +34,7 @@
 				<div class="space-y-1.5">
 					<h4 class="text-sm font-semibold text-destructive">Unsaved Changes (Editor)</h4>
 					<ul class="text-xs space-y-1 opacity-70 list-disc pl-4">
-						{#each report.unsavedFiles as file}
+						{#each report.unsavedFiles as file (file)}
 							<li>{file}</li>
 						{/each}
 					</ul>
@@ -42,7 +46,7 @@
 				<div class="space-y-1.5">
 					<h4 class="text-sm font-semibold text-destructive">Uncommitted Changes (Disk)</h4>
 					<ul class="text-xs space-y-1 opacity-70 list-disc pl-4">
-						{#each report.uncommittedFiles as file}
+						{#each report.uncommittedFiles as file (file)}
 							<li>{file}</li>
 						{/each}
 					</ul>
@@ -53,7 +57,7 @@
 
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel onclick={onCancel}>Cancel</AlertDialog.Cancel>
-			<Button variant="outline" onclick={onConfirm}>Re-check</Button>
+			<Button variant="outline" onclick={onConfirm} disabled={busy}>Re-check</Button>
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>

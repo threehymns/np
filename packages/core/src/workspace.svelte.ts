@@ -12,6 +12,12 @@ export interface WorkspaceTab {
 	type: 'document' | 'diff';
 }
 
+export interface ProjectIdentity {
+	uri: string;
+	repository: Repository | null;
+	generation: number;
+}
+
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
 	tabs = $state<WorkspaceTab[]>([]);
@@ -22,6 +28,27 @@ export class Workspace {
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
+	projectOpening = $state(false);
+	projectError = $state<string | null>(null);
+	private branchSwitching = $state(false);
+	private projectGeneration = $state(0);
+	commitDrafts = $state<Record<string, string>>({});
+
+	get projectUri() {
+		return this.rootOrigin ? toURI(this.rootOrigin) : '';
+	}
+
+	get projectMutationBusy() {
+		return this.projectOpening || this.branchSwitching || !!this.repository?.isBusy;
+	}
+
+	captureProject(): ProjectIdentity {
+		return { uri: this.projectUri, repository: this.repository, generation: this.projectGeneration };
+	}
+
+	isCurrentProject(target: ProjectIdentity): boolean {
+		return target.uri === this.projectUri && target.repository === this.repository && target.generation === this.projectGeneration;
+	}
 	
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
@@ -370,67 +397,67 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openDirectory(specificOrigin?: FileOrigin) {
-		let origin: FileOrigin | null = null;
-
-		if (specificOrigin) {
-			origin = specificOrigin;
-		} else {
-			origin = await this.storage.pickDirectory();
-		}
-
-		if (!origin) return;
-		
-		// Verify permission
-		const granted = await this.storage.verifyPermission(origin, true);
-		if (!granted) return;
-
-		// Save old state
-		await this.flushSaveOpenFiles();
-		const oldFolderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-		await this.saveFolderState(oldFolderUri);
-
-		this.isRestoring = true;
-
+	async openDirectory(specificOrigin?: FileOrigin): Promise<boolean> {
+		if (this.projectMutationBusy) return false;
+		this.projectOpening = true;
+		this.projectError = null;
+		const previous = {
+			root: this.rootOrigin, repository: this.repository, permission: this.hasRootPermission,
+			documents: this.documents, tabs: this.tabs, active: this.activeTabId,
+			nodes: this.projectTree.nodes, restoring: this.isRestoring
+		};
+		let changed = false;
 		try {
+			if (this.restorePromise) await this.restorePromise;
+			const origin = specificOrigin ?? await this.storage.pickDirectory();
+			if (!origin) return false;
+			if (!await this.storage.verifyPermission(origin, true)) {
+				this.projectError = 'Permission denied. The current project is unchanged.';
+				return false;
+			}
+			if (toURI(origin) === this.projectUri && this.hasRootPermission) return true;
+			await this.flushSaveOpenFiles();
+			await this.saveFolderState(this.projectUri);
+			this.isRestoring = true;
+			this.projectGeneration++;
+			changed = true;
+			this.repository = null;
 			this.rootOrigin = origin;
 			this.hasRootPermission = true;
-
-			// Drop the previous folder's repository before the async VCS probe so
-			// the UI never shows stale branch/changes for the new folder.
-			this.repository = null;
+			this.documents = [];
+			this.tabs = [];
+			this.activeTabId = '';
+			this.projectTree.nodes = [];
 			const repo = new Repository(origin, this.vcsFactory);
-			const detected = await repo.adapter.detect(origin.path);
-			if (detected) {
-				this.repository = repo;
+			if (await repo.adapter.detect(origin.path)) {
 				await repo.refresh();
-			} else {
-				// Not a git repository: keep repository null so the Git panel shows
-				// its "No Git Repository" empty state instead of a dead panel.
-				this.repository = null;
+				this.repository = repo;
 			}
-
-			// Add to recent folders
-			const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
-			this.recentFolders = [origin, ...newRecent].slice(0, 10);
-
-			// Reset project tree expansion state
 			this.projectTree.resetExpansionState();
-
 			await this.projectTree.scan(origin);
-
-			// Load new folder state
-			const folderUri = toURI(origin);
-			await this.loadFolderState(folderUri);
-		} finally {
-			this.isRestoring = false;
-		}
-
-		// Refresh permissions for already open files
-		for (const doc of this.documents) {
-			if (doc.origin && this.coversOrigin(doc.origin)) {
-				doc.markPermissionGranted();
+			await this.loadFolderState(toURI(origin), true);
+			this.recentFolders = [origin, ...this.recentFolders.filter(f => toURI(f) !== toURI(origin))].slice(0, 10);
+			this.pendingCloseId = null;
+			this.projectTree.searchQuery = '';
+			return true;
+		} catch (error) {
+			if (changed) {
+				this.repository = previous.repository;
+				this.rootOrigin = previous.root;
+				this.hasRootPermission = previous.permission;
+				this.documents = previous.documents;
+				this.tabs = previous.tabs;
+				this.activeTabId = previous.active;
+				this.projectTree.nodes = previous.nodes;
+				this.projectTree.resetExpansionState();
 			}
+			if (!(error instanceof Error && error.name === 'AbortError')) {
+				this.projectError = `Failed to open folder: ${error instanceof Error ? error.message : String(error)}`;
+			}
+			return false;
+		} finally {
+			this.isRestoring = changed ? false : previous.restoring;
+			this.projectOpening = false;
 		}
 	}
 
@@ -608,8 +635,8 @@ export class Workspace {
 		}
 	}
 
-	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
-		if (!this.repository) return null;
+	async getBranchSafetyReport(targetBranch: string, target = this.captureProject()): Promise<RepositorySafetyReport | null> {
+		if (!target.repository || !this.isCurrentProject(target) || this.projectMutationBusy) return null;
 		
 		const modifiedFiles = await Promise.all(
 			this.documents
@@ -623,16 +650,20 @@ export class Workspace {
 				})
 		);
 			
-		return await this.repository.getSafetyReport(modifiedFiles, targetBranch);
+		if (!this.isCurrentProject(target) || this.projectMutationBusy) return null;
+		const report = await target.repository.getSafetyReport(modifiedFiles, targetBranch);
+		return this.isCurrentProject(target) && !this.projectMutationBusy ? report : null;
 	}
 
-	async switchBranch(branchName: string): Promise<SwitchResult> {
-		if (!this.repository || !this.rootOrigin) {
-			return { status: 'error', message: 'No repository' };
+	async switchBranch(branchName: string, target = this.captureProject()): Promise<SwitchResult> {
+		if (!target.repository || !this.rootOrigin || !this.isCurrentProject(target)) {
+			return { status: 'error', message: 'Project changed. Select the branch again.' };
 		}
-
+		if (this.projectMutationBusy) return { status: 'error', message: 'Another project or repository operation is running.' };
+		this.branchSwitching = true;
 		try {
-			const result = await this.repository.switchBranch(branchName);
+			const result = await target.repository.switchBranch(branchName);
+			if (!this.isCurrentProject(target)) return { status: 'error', message: 'Project changed.' };
 			
 			if (result.status === 'switched' || result.status === 'noop') {
 				// Full reload after branch switch
@@ -659,6 +690,8 @@ export class Workspace {
 		} catch (e: any) {
 			console.error('Failed to switch branch', e);
 			return { status: 'error', message: e.message || 'Failed to switch branch' };
+		} finally {
+			this.branchSwitching = false;
 		}
 	}
 
@@ -745,7 +778,7 @@ export class Workspace {
 		await this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
 	}
 
-	async loadFolderState(folderUri: string) {
+	async loadFolderState(folderUri: string, strict = false) {
 		this.pendingDiffRestore.clear();
 		try {
 			const origins = await this.persistence.loadOpenFiles(folderUri);
@@ -820,6 +853,7 @@ export class Workspace {
 				await this.newFile();
 			}
 		} catch (e) {
+			if (strict) throw e;
 			console.error('[Workspace] Failed to load folder state', e);
 			this.pendingDiffRestore.clear();
 			this.documents = [];

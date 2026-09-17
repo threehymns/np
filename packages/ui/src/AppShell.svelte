@@ -4,6 +4,8 @@
 	const appState = useAppState();
 
 	import AppMenu from "./components/AppMenu.svelte";
+	import ProjectSelectButton from "./components/ProjectSelectButton.svelte";
+	let menuOpen = $state(false);
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
 	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
@@ -126,9 +128,16 @@
 <ModeWatcher />
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
-	<div class="relative z-50 shrink-0 bg-background flex items-center justify-between px-2 pr-4" class:border-b={appState.documents.length > 1}>
-		<AppMenu />
-	</div>
+	<header aria-label="Workspace" class="relative z-50 h-9 shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
+		<AppMenu bind:open={menuOpen} />
+		{#if !menuOpen}<ProjectSelectButton />{/if}
+	</header>
+	{#if appState.workspace.projectError}
+		<div role="alert" class="flex items-center justify-between gap-2 bg-destructive/10 px-3 py-1 text-xs text-destructive">
+			<span>{appState.workspace.projectError}</span>
+			<button type="button" onclick={() => appState.workspace.projectError = null}>Dismiss</button>
+		</div>
+	{/if}
 
 	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
 		{@render children()}

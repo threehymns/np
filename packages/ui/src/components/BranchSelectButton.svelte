@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { useAppState } from '@np/core';
+	import { onDestroy } from 'svelte';
 	import { CheckIcon, GitBranchIcon } from "phosphor-svelte";
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
@@ -11,32 +12,52 @@
 
 	const appState = useAppState();
 	let branchComboOpen = $state(false);
-	let safetyReport = $state<RepositorySafetyReport | null>(null);
-	let pendingBranch = $state<string | null>(null);
+	const workspace = appState.workspace;
+	let pending = $state<{ branch: string; target: ReturnType<typeof workspace.captureProject>; report: RepositorySafetyReport | null; error: string | null } | null>(null);
+	let checking = $state(false);
+	let request = 0;
+	let visiblePending = $derived(pending && workspace.isCurrentProject(pending.target) && !workspace.projectOpening ? pending : null);
 
-	async function switchBranch(branch: string) {
-		const report = await appState.workspace.getBranchSafetyReport(branch);
-		if (report && !report.canSwitch) {
-			safetyReport = report;
-			pendingBranch = branch;
-			branchComboOpen = false;
-			return;
-		}
-		await appState.workspace.switchBranch(branch);
-		branchComboOpen = false;
+	function cancel() {
+		request++;
+		pending = null;
+		checking = false;
 	}
 
-	async function recheckSafety() {
-		if (!pendingBranch) return;
-		const report = await appState.workspace.getBranchSafetyReport(pendingBranch);
-		if (report && report.canSwitch) {
-			const branch = pendingBranch;
-			safetyReport = null;
-			pendingBranch = null;
-			await appState.workspace.switchBranch(branch);
-		} else {
-			safetyReport = report;
+	async function switchBranch(branch: string, target = workspace.captureProject()) {
+		if (checking || workspace.projectMutationBusy || !workspace.isCurrentProject(target)) return;
+		const id = ++request;
+		checking = true;
+		branchComboOpen = false;
+		try {
+			const report = await workspace.getBranchSafetyReport(branch, target);
+			if (id !== request || !workspace.isCurrentProject(target) || !report) return;
+			if (!report.canSwitch) {
+				pending = { branch, target, report, error: null };
+				return;
+			}
+			const result = await workspace.switchBranch(branch, target);
+			if (id !== request || !workspace.isCurrentProject(target)) return;
+			if (result.status === 'blocked') {
+				pending = { branch, target, report: { canSwitch: false, unsavedFiles: [], uncommittedFiles: result.files }, error: null };
+			} else if (result.status === 'error') {
+				pending = { branch, target, report: null, error: result.message };
+			} else {
+				pending = null;
+			}
+		} catch (error) {
+			if (id === request && workspace.isCurrentProject(target)) {
+				pending = { branch, target, report: null, error: error instanceof Error ? error.message : String(error) };
+			}
+		} finally {
+			if (id === request) checking = false;
 		}
+	}
+
+	onDestroy(cancel);
+
+	function recheckSafety() {
+		if (visiblePending) void switchBranch(visiblePending.branch, visiblePending.target);
 	}
 
 </script>
@@ -47,6 +68,8 @@
 			{#snippet child({ props })}
 				<button
 					{...props}
+					disabled={checking || workspace.projectMutationBusy}
+					title={workspace.currentBranch ?? undefined}
 					class={cn("flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate", className)}
 				>
 					{#if appState.workspace.repository?.isBusy}
@@ -66,6 +89,7 @@
 					{#each appState.workspace.branches as branch (branch)}
 						<Command.Item
 							value={branch}
+							disabled={checking || workspace.projectMutationBusy}
 							onSelect={() => switchBranch(branch)}
 							class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
 						>
@@ -84,12 +108,14 @@
 	</Popover.Root>
 {/if}
 
-{#if safetyReport && pendingBranch}
-	<BranchSafetyModal 
-		report={safetyReport} 
-		targetBranch={pendingBranch} 
+{#if visiblePending}
+	<BranchSafetyModal
+		report={visiblePending.report ?? { canSwitch: false, unsavedFiles: [], uncommittedFiles: [] }}
+		error={visiblePending.error}
+		busy={checking || workspace.projectMutationBusy}
+		targetBranch={visiblePending.branch}
 		onConfirm={recheckSafety}
-		onCancel={() => { safetyReport = null; pendingBranch = null; }}
+		onCancel={cancel}
 	/>
 {/if}
 
