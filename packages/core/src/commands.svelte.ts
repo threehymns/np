@@ -676,6 +676,14 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	appState.commands.register({
+		id: 'applicationMenu.toggle',
+		label: 'Toggle Application Menu',
+		category: 'View',
+		action: () => appState.applicationMenu?.toggle(),
+		isEnabled: () => !!appState.applicationMenu
+	});
+
   appState.commands.register({
     id: 'commandPalette.toggle',
     label: 'Command Palette: Toggle',

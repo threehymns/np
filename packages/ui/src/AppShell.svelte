@@ -3,7 +3,7 @@
 
 	const appState = useAppState();
 
-	import * as Menubar from "./components/ui/menubar/index";
+	import AppMenu from "./components/AppMenu.svelte";
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
 	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
@@ -127,118 +127,7 @@
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<div class="relative z-50 shrink-0 bg-background flex items-center justify-between px-2 pr-4" class:border-b={appState.documents.length > 1}>
-		<Menubar.Root class="border-none bg-transparent p-0">
-			{#each ['File', 'Edit', 'Format', 'View'] as category (category)}
-				<Menubar.Menu>
-					<Menubar.Trigger>{category}</Menubar.Trigger>
-					<Menubar.Content>
-						{#if category === 'File'}
-							{#each appState.commands.getByCategory('File') as command (command.id)}
-								<Menubar.Item
-									onclick={() => command.action()}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-							<Menubar.Separator />
-							<Menubar.Sub>
-								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
-								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('Export') as command (command.id)}
-										<Menubar.Item
-											onclick={() => command.action()}
-											disabled={command.isEnabled && !command.isEnabled()}
-										>
-											{command.label}
-											{#if appState.keymaps.getShortcutForCommand(command.id)}
-												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-											{/if}
-										</Menubar.Item>
-									{/each}
-								</Menubar.SubContent>
-							</Menubar.Sub>
-						{:else if category === 'Format'}
-							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap') as command (command.id)}
-								<Menubar.Item
-									onclick={() => command.action()}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-							<Menubar.Separator />
-							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>
-								Word Wrap
-								{#if appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-						{:else if category === 'View'}
-							<Menubar.Sub>
-								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
-								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom')) as command (command.id)}
-										<Menubar.Item onclick={() => command.action()}>
-											{command.label}
-											{#if appState.keymaps.getShortcutForCommand(command.id)}
-												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-											{/if}
-										</Menubar.Item>
-									{/each}
-								</Menubar.SubContent>
-							</Menubar.Sub>
-							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>
-								Status Bar
-								{#if appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-							<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
-								Sidebar
-								{#if appState.keymaps.getShortcutForCommand('view.toggleSidebar')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleSidebar')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-						{:else}
-							{#each appState.commands.getByCategory(category) as command (command.id)}
-								<Menubar.Item
-									onclick={() => command.action()}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-						{/if}
-
-						{#if category === 'Edit'}
-							<Menubar.Separator />
-							<Menubar.Item onclick={() => appState.settingsOpen = true}>
-								Settings...
-								{#if appState.keymaps.getShortcutForCommand('settings.open')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.Item>
-							<Menubar.Item onclick={() => appState.commands.execute('settings.openConfigJson')}>
-								Open Settings (JSON)
-								{#if appState.keymaps.getShortcutForCommand('settings.openConfigJson')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.openConfigJson')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.Item>
-						{/if}
-					</Menubar.Content>
-				</Menubar.Menu>
-			{/each}
-		</Menubar.Root>
+		<AppMenu />
 	</div>
 
 	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
