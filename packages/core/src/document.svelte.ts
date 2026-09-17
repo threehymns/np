@@ -205,8 +205,16 @@ export class DocumentSession {
 			if (!this.origin || toURI(this.origin) !== readURI) return;
 			if (this.saveEpoch !== readSaveEpoch) return;
 			if (this.baselineSeq !== seq || this.probeSeq !== probeSeq) return;
-			if (isNotFoundError(e)) {
-				this.markDeletedOnDisk();
+			if (!isNotFoundError(e)) return;
+			try {
+				await this.storage.readFile(readOrigin);
+			} catch (confirmationError) {
+				if (!this.origin || toURI(this.origin) !== readURI) return;
+				if (this.saveEpoch !== readSaveEpoch) return;
+				if (this.baselineSeq !== seq || this.probeSeq !== probeSeq) return;
+				if (isNotFoundError(confirmationError)) {
+					this.markDeletedOnDisk();
+				}
 			}
 		}
 	}
