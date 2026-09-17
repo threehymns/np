@@ -349,4 +349,41 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 
 		expect(doc.deletedOnDisk).toBe(false);
 	});
+
+	it("snapshots documents before probing so a close during reconcile does not skip remaining docs", async () => {
+		const { ws, storage } = await makeWsWithOpenFile();
+		ws.documents = [];
+		ws.tabs = [];
+		(storage as any).readFile = mock(async (o: FileOrigin) => `content of ${o.path}\n`);
+		const aOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/a.ts", name: "a.ts" };
+		const bOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/b.ts", name: "b.ts" };
+		const cOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/c.ts", name: "c.ts" };
+		const a = (await ws.openFile(aOrigin))!;
+		const b = (await ws.openFile(bOrigin))!;
+		await ws.openFile(cOrigin);
+
+		let releaseProbe!: () => void;
+		const gate = new Promise<void>((r) => {
+			releaseProbe = r;
+		});
+		const probed: string[] = [];
+		storage.readFile = mock(async (o: FileOrigin) => {
+			probed.push(o.path);
+			if (o.path === aOrigin.path) await gate;
+			return `content of ${o.path}\n`;
+		}) as any;
+
+		const reconciling = (ws as any).reconcileExternalDeletions();
+
+		ws.closeTab(a.id);
+		expect(ws.documents.find((d) => d.id === a.id)).toBeUndefined();
+
+		releaseProbe();
+		await reconciling;
+
+		expect(probed).toContain(bOrigin.path);
+		expect(probed).toContain(cOrigin.path);
+		expect(probed.filter((p) => p === bOrigin.path).length).toBe(1);
+		expect(ws.tabs.some((t) => t.id === b.id)).toBe(true);
+	});
 });

@@ -708,7 +708,7 @@ export class Workspace {
 	 * session flush.
 	 */
 	async reconcileExternalDeletions(): Promise<void> {
-		for (const doc of this.documents) {
+		for (const doc of [...this.documents]) {
 			const origin = doc.origin;
 			if (!origin) continue;
 			if (doc.deletedOnDisk) {
