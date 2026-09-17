@@ -35,3 +35,29 @@ export async function mapBounded<T, R>(
 	await Promise.all(workers);
 	return results;
 }
+
+/**
+ * Checks whether an error represents a missing file or directory (ENOENT / NotFoundError)
+ * across browser File System Access API, Node.js fs, and Electron IPC serialized errors.
+ *
+ * Structured signals (`.code`, `.name`) are authoritative. Message matching is only a
+ * last-resort for IPC-serialized errors whose envelope survives but whose
+ * code/name is stripped — and it is skipped when a structured code contradicts
+ * the classification (e.g. an EACCES whose chained cause happens to mention
+ * ENOENT), so a coded failure of a different kind is never treated as missing.
+ */
+export function isNotFoundError(err: any): boolean {
+	if (!err) return false;
+	if (err.code === 'ENOENT') return true;
+	if (err.name === 'NotFoundError') return true;
+	if (err.name === 'ENOENT') return true;
+	if (typeof err.code === 'string' && err.code !== 'ENOENT') return false;
+	if (typeof err.message === 'string') {
+		if (
+			/^(?:Error invoking remote method '[^']+': |Error: )*(?:(?:ENOENT|NotFoundError)(?::|,|$)|no such file or directory(?:,|$))/.test(err.message)
+		) {
+			return true;
+		}
+	}
+	return false;
+}

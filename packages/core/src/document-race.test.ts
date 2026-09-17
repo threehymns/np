@@ -24,6 +24,85 @@ beforeAll(async () => {
 });
 
 describe("Document load/save revision race", () => {
+	it("older load ENOENT does not resurrect deletion after a newer successful load", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let rejectOlder!: (error: unknown) => void;
+		let resolveNewer!: (content: string) => void;
+		const olderGate = new Promise<string>((_, reject) => { rejectOlder = reject; });
+		const newerGate = new Promise<string>((resolve) => { resolveNewer = resolve; });
+		storage.readFile = mock(() => newerGate).mockImplementationOnce(() => olderGate);
+		const doc = makeDocSession(storage, "base", origin);
+		doc.markDeletedOnDisk();
+
+		const older = doc.loadContent();
+		const newer = doc.loadContent();
+		resolveNewer("recreated content");
+		await newer;
+		expect(doc.deletedOnDisk).toBe(false);
+
+		const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+		rejectOlder(missing);
+		await expect(older).rejects.toThrow("missing");
+
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe("recreated content");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("older successful load does not override a newer load ENOENT", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let resolveOlder!: (content: string) => void;
+		let rejectNewer!: (error: unknown) => void;
+		const olderGate = new Promise<string>((resolve) => { resolveOlder = resolve; });
+		const newerGate = new Promise<string>((_, reject) => { rejectNewer = reject; });
+		storage.readFile = mock(() => newerGate).mockImplementationOnce(() => olderGate);
+		const doc = makeDocSession(storage, "base", origin);
+
+		const older = doc.loadContent();
+		const newer = doc.loadContent();
+		rejectNewer(Object.assign(new Error("missing"), { code: "ENOENT" }));
+		await expect(newer).rejects.toThrow("missing");
+		expect(doc.deletedOnDisk).toBe(true);
+
+		resolveOlder("stale content");
+		await older;
+
+		expect(doc.deletedOnDisk).toBe(true);
+		expect(doc.content).toBe("base");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("accepted load clears pending draft baseline and ignores the older restore read", async () => {
+		const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+		const storage = createMockStorage();
+		let resolveRestore!: (content: string) => void;
+		let resolveLoad!: (content: string) => void;
+		const restoreGate = new Promise<string>((resolve) => { resolveRestore = resolve; });
+		const loadGate = new Promise<string>((resolve) => { resolveLoad = resolve; });
+		storage.readFile = mock(() => loadGate).mockImplementationOnce(() => restoreGate);
+		const doc = makeDocSession(storage, "", origin);
+		doc.restoreDraft("recovered content");
+		expect(doc.isModified).toBe(true);
+
+		const loading = doc.loadContent();
+		resolveLoad("recovered content");
+		await loading;
+
+		try {
+			expect(doc.content).toBe("recovered content");
+			expect(doc.isModified).toBe(false);
+			expect(doc.deletedOnDisk).toBe(false);
+		} finally {
+			resolveRestore("stale disk content");
+			await restoreGate;
+		}
+
+		expect(doc.content).toBe("recovered content");
+		expect(doc.isModified).toBe(false);
+	});
+
 	it("in-flight load does not clobber a concurrent save", async () => {
 		const origin = { scheme: "file", path: "/test.txt", name: "test.txt" } as FileOrigin;
 		const storage = createMockStorage({
@@ -196,6 +275,150 @@ describe("Document load/save revision race", () => {
 		await new Promise((r) => setTimeout(r, 10));
 
 		expect(doc.content).toBe("new-branch-content");
+		expect(doc.isModified).toBe(false);
+	});
+});
+
+describe("Document probe deletion confirmation", () => {
+	const origin: FileOrigin = { scheme: "file", path: "/test.txt", name: "test.txt" };
+	const missing = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+
+	function gate<T>() {
+		let resolve!: (value: T) => void;
+		let reject!: (error: unknown) => void;
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		return { promise, resolve, reject };
+	}
+
+	it("recreated file between initial rejection and confirmation preserves edits and baseline", async () => {
+		const storage = createMockStorage();
+		const initial = gate<string>();
+		let diskContent: string | null = null;
+		storage.readFile = mock(() => diskContent === null
+			? Promise.reject(missing())
+			: Promise.resolve(diskContent)).mockImplementationOnce(() => initial.promise);
+		const doc = makeDocSession(storage, "base", origin);
+		doc.content = "edited";
+
+		const probing = doc.probeDeletedOnDisk();
+		initial.reject(missing());
+		diskContent = "recreated content";
+		await probing;
+
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(storage.readFile).toHaveBeenCalledTimes(2);
+		expect(storage.readFile).toHaveBeenLastCalledWith(origin);
+		expect(doc.content).toBe("edited");
+		expect(doc.isModified).toBe(true);
+		doc.content = "base";
+		expect(doc.isModified).toBe(false);
+	});
+
+	it("only confirmed missing marks deleted and preserves edits and baseline", async () => {
+		const storage = createMockStorage();
+		const initial = gate<string>();
+		const confirmation = gate<string>();
+		storage.readFile = mock(() => confirmation.promise).mockImplementationOnce(() => initial.promise);
+		const doc = makeDocSession(storage, "base", origin);
+		doc.content = "edited";
+
+		const probing = doc.probeDeletedOnDisk();
+		initial.reject(missing());
+		await initial.promise.catch(() => {});
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(storage.readFile).toHaveBeenCalledTimes(2);
+		confirmation.reject(missing());
+		await probing;
+
+		expect(doc.deletedOnDisk).toBe(true);
+		expect(storage.readFile).toHaveBeenCalledTimes(2);
+		expect(doc.content).toBe("edited");
+		expect(doc.isModified).toBe(true);
+		doc.content = "base";
+		expect(doc.isModified).toBe(false);
+	});
+
+	it.each(["initial", "confirmation"])("%s EACCES leaves state unchanged and allows a later retry", async (phase) => {
+		const storage = createMockStorage();
+		storage.readFile = mock(() => Promise.reject(Object.assign(new Error("denied"), { code: "EACCES" })));
+		if (phase === "confirmation") {
+			storage.readFile = mock(storage.readFile).mockImplementationOnce(() => Promise.reject(missing()));
+		}
+		const doc = makeDocSession(storage, "base", origin);
+		doc.content = "edited";
+
+		await doc.probeDeletedOnDisk();
+
+		expect(storage.readFile).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2);
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe("edited");
+		expect(doc.isModified).toBe(true);
+		doc.content = "base";
+		expect(doc.isModified).toBe(false);
+
+		storage.readFile = mock(() => Promise.reject(missing()));
+		await doc.probeDeletedOnDisk();
+		expect(doc.deletedOnDisk).toBe(true);
+		expect(storage.readFile).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(["load", "save", "probe", "origin"])("initial missing result invalidated by a newer %s skips confirmation", async (operation) => {
+		const storage = createMockStorage();
+		const initial = gate<string>();
+		storage.readFile = mock(async () => "base").mockImplementationOnce(() => initial.promise);
+		storage.saveFile = mock(async () => origin);
+		const doc = makeDocSession(storage, "base", origin);
+
+		const probing = doc.probeDeletedOnDisk();
+		if (operation === "load") await doc.loadContent();
+		if (operation === "save") expect(await doc.save({ coveredByRoot: true })).toBe(true);
+		if (operation === "probe") await doc.probeDeletedOnDisk();
+		if (operation === "origin") doc.origin = { scheme: "file", path: "/other.txt", name: "other.txt" };
+		initial.reject(missing());
+		await probing;
+
+		expect(storage.readFile).toHaveBeenCalledTimes(operation === "load" || operation === "probe" ? 2 : 1);
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe("base");
+		expect(doc.isModified).toBe(false);
+	});
+
+	it.each(["load", "save", "probe", "origin"])("confirmation invalidated by a newer %s does not mark deleted", async (operation) => {
+		const storage = createMockStorage();
+		const initial = gate<string>();
+		const confirmation = gate<string>();
+		const newer = gate<string>();
+		storage.readFile = mock(() => newer.promise)
+			.mockImplementationOnce(() => initial.promise)
+			.mockImplementationOnce(() => confirmation.promise);
+		storage.saveFile = mock(async () => origin);
+		const doc = makeDocSession(storage, "base", origin);
+
+		const probing = doc.probeDeletedOnDisk();
+		initial.reject(missing());
+		await initial.promise.catch(() => {});
+		expect(storage.readFile).toHaveBeenCalledTimes(2);
+		expect(doc.deletedOnDisk).toBe(false);
+
+		let pending: Promise<void> | undefined;
+		if (operation === "load") pending = doc.loadContent();
+		if (operation === "save") expect(await doc.save({ coveredByRoot: true })).toBe(true);
+		if (operation === "probe") pending = doc.probeDeletedOnDisk();
+		if (operation === "origin") doc.origin = { scheme: "file", path: "/other.txt", name: "other.txt" };
+
+		confirmation.reject(missing());
+		await probing;
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe("base");
+		expect(doc.isModified).toBe(false);
+
+		newer.resolve("fresh");
+		await pending;
+		expect(doc.deletedOnDisk).toBe(false);
+		expect(doc.content).toBe(operation === "load" ? "fresh" : "base");
 		expect(doc.isModified).toBe(false);
 	});
 });

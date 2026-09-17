@@ -1,4 +1,5 @@
 import { type Storage, type FileOrigin, toURI } from './storage';
+import { isNotFoundError } from './utils';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
@@ -21,6 +22,7 @@ export class DocumentSession {
 	private saveEpoch = 0;
 	private permissionSeq = 0;
 	private baselineSeq = 0;
+	private probeSeq = 0;
 
 	constructor(storage: Storage, initialContent = '', origin: FileOrigin | null = null, untitledTitle = 'Untitled') {
 		this.storage = storage;
@@ -99,6 +101,7 @@ export class DocumentSession {
 		const readOrigin = this.origin;
 		const readURI = toURI(readOrigin);
 		const readSaveEpoch = this.saveEpoch;
+		const seq = ++this.baselineSeq;
 		try {
 			const fileContent = await this.storage.readFile(readOrigin);
 			// Drop stale reads: a concurrent save (or save-as origin change)
@@ -109,6 +112,9 @@ export class DocumentSession {
 			// concurrent save never gets clobbered.
 			if (!this.origin || toURI(this.origin) !== readURI) return;
 			if (this.saveEpoch !== readSaveEpoch) return;
+			// This load owns baseline freshness until a newer load, rebase,
+			// restore, save, or markDeletedOnDisk invalidates it.
+			if (this.baselineSeq !== seq) return;
 			// Don't clobber keystrokes typed while the async read was in
 			// flight: rebase the saved baseline and keep in-memory edits.
 			const keepEdits = this.isModified;
@@ -117,12 +123,15 @@ export class DocumentSession {
 			this._content = keepEdits ? current : fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;
+			this.baselinePending = false;
 		} catch (e: any) {
 			if (!this.origin || toURI(this.origin) !== readURI) throw e;
 			if (this.saveEpoch !== readSaveEpoch) throw e;
-			console.error(`Failed to load content for ${readOrigin.name}`, e);
-			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
+			if (this.baselineSeq !== seq) throw e;
+			if (isNotFoundError(e)) {
 				this.deletedOnDisk = true;
+			} else {
+				console.error(`Failed to load content for ${readOrigin.name}`, e);
 			}
 			throw e;
 		}
@@ -160,7 +169,7 @@ export class DocumentSession {
 			if (!this.origin || toURI(this.origin) !== readURI) throw e;
 			if (this.saveEpoch !== readSaveEpoch) throw e;
 			if (this.baselineSeq !== seq) throw e;
-			if (e.name === 'NotFoundError' || e.code === 'ENOENT') {
+			if (isNotFoundError(e)) {
 				// Expected when the file was removed on the checked-out branch;
 				// not an error worth logging.
 				this.deletedOnDisk = true;
@@ -168,6 +177,45 @@ export class DocumentSession {
 				console.error(`Failed to rebase saved baseline for ${readOrigin.name}`, e);
 			}
 			throw e;
+		}
+	}
+
+	/**
+	 * Mark this document as deleted on disk without discarding edits, moving
+	 * the baseline, or closing the tab. Invalidates any in-flight baseline
+	 * read by bumping `baselineSeq`, so a stale `restoreDraft`/`rebaseSavedBaseline`
+	 * success drops out of its seq guard instead of clearing the flag.
+	 * Used via `Workspace.markDocumentsDeleted` for in-app and external deletes.
+	 */
+	markDeletedOnDisk(): void {
+		this.baselineSeq++;
+		this.deletedOnDisk = true;
+	}
+
+	async probeDeletedOnDisk(): Promise<void> {
+		if (!this.origin) return;
+		const readOrigin = this.origin;
+		const readURI = toURI(readOrigin);
+		const readSaveEpoch = this.saveEpoch;
+		const seq = this.baselineSeq;
+		const probeSeq = ++this.probeSeq;
+		try {
+			await this.storage.readFile(readOrigin);
+		} catch (e: any) {
+			if (!this.origin || toURI(this.origin) !== readURI) return;
+			if (this.saveEpoch !== readSaveEpoch) return;
+			if (this.baselineSeq !== seq || this.probeSeq !== probeSeq) return;
+			if (!isNotFoundError(e)) return;
+			try {
+				await this.storage.readFile(readOrigin);
+			} catch (confirmationError) {
+				if (!this.origin || toURI(this.origin) !== readURI) return;
+				if (this.saveEpoch !== readSaveEpoch) return;
+				if (this.baselineSeq !== seq || this.probeSeq !== probeSeq) return;
+				if (isNotFoundError(confirmationError)) {
+					this.markDeletedOnDisk();
+				}
+			}
 		}
 	}
 
@@ -282,10 +330,18 @@ export class DocumentSession {
 					if (this.baselineSeq !== seq) return;
 					this.savedBaseline = saved;
 					this.baselinePending = false;
+					// A successful read proves the file exists (e.g. recreated
+					// between persist and restart), so clear a stale flag
+					// restored from persistence.
+					this.deletedOnDisk = false;
 				},
 				(err) => {
 					if (this.baselineSeq !== seq) return;
-					console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
+					if (isNotFoundError(err)) {
+						this.deletedOnDisk = true;
+					} else {
+						console.error(`Failed to load saved content for draft: ${this.origin?.name}`, err);
+					}
 				}
 			);
 		}

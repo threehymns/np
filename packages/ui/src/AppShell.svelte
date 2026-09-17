@@ -32,9 +32,13 @@
 			}
 		};
 		const handleFocus = () => {
-			if (appState.workspace.repository && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+			if (appState.workspace.repository) {
 				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
 			}
+			// Surface externally deleted open files (#175) with the same
+			// deleted-on-disk tab state as in-app deletes, edits preserved.
+			appState.workspace.reconcileExternalDeletions().catch(e => console.error('[AppShell] External-delete reconciliation failed', e));
 		};
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 		window.addEventListener('focus', handleFocus);
