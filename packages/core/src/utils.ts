@@ -54,7 +54,7 @@ export function isNotFoundError(err: any): boolean {
 	if (typeof err.code === 'string' && err.code !== 'ENOENT') return false;
 	if (typeof err.message === 'string') {
 		if (
-			/^(?:Error invoking remote method '[^']+': )?(?:Error: )?(?:(?:ENOENT|NotFoundError)(?::|$)|no such file or directory(?:,|$))/.test(err.message)
+			/^(?:Error invoking remote method '[^']+': |Error: )*(?:(?:ENOENT|NotFoundError)(?::|,|$)|no such file or directory(?:,|$))/.test(err.message)
 		) {
 			return true;
 		}

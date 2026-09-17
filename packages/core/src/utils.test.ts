@@ -2,6 +2,39 @@ import { describe, it, expect } from 'bun:test';
 import { isNotFoundError, mapBounded } from './utils';
 
 describe('isNotFoundError', () => {
+	it('keeps the Electron main message fallback identical to core', async () => {
+		const core = await Bun.file(new URL('./utils.ts', import.meta.url)).text();
+		const main = await Bun.file(new URL('../../../apps/desktop/src/main.ts', import.meta.url)).text();
+		const pattern = /^\s*(\/\^.*\/)\.test\((?:err|e)\.message\)/m;
+		const coreMatcher = core.match(pattern)?.[1];
+		const mainMatcher = main.match(pattern)?.[1];
+		expect(coreMatcher).toBeDefined();
+		expect(mainMatcher).toBe(coreMatcher);
+	});
+
+	it.each([
+		"ENOENT, open '/foo'",
+		"NotFoundError, open '/foo'",
+		"Error: ENOENT, open '/foo'",
+		"Error invoking remote method 'x': Error: Error invoking remote method 'y': Error: ENOENT: no such file or directory, open '/foo'",
+		"Error invoking remote method 'x': Error: Error invoking remote method 'y': Error: NotFoundError: missing",
+		'no such file or directory',
+		'NotFoundError'
+	])('recognizes a missing-file message: %s', (message) => {
+		expect(isNotFoundError(new Error(message))).toBe(true);
+	});
+
+	it.each([
+		"EACCES: permission denied opening '/notes/ENOENT.md'",
+		"Error invoking remote method 'x': Error: EACCES: ENOENT: chained cause",
+		"Error invoking remote method 'x': Error: Failed to read '/notes/NotFoundError.md'",
+		'ENOENT.md',
+		'NotFoundErrorBackup',
+		'no such file or directory mentioned in a different error'
+	])('rejects incidental missing-file text: %s', (message) => {
+		expect(isNotFoundError(new Error(message))).toBe(false);
+	});
+
 	it('does not treat a filename mentioning NotFoundError as a missing file', () => {
 		expect(isNotFoundError(new Error("Failed to read '/notes/NotFoundError.md'"))).toBe(false);
 	});

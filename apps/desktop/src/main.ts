@@ -200,7 +200,7 @@ function registerIpcHandlers() {
 		if (typeof e.code === 'string' && e.code !== 'ENOENT') return false;
 		return (
 			typeof e.message === 'string' &&
-			/^(?:Error invoking remote method '[^']+': )?(?:Error: )?(?:(?:ENOENT|NotFoundError)(?::|$)|no such file or directory(?:,|$))/.test(e.message)
+			/^(?:Error invoking remote method '[^']+': |Error: )*(?:(?:ENOENT|NotFoundError)(?::|,|$)|no such file or directory(?:,|$))/.test(e.message)
 		);
 	};
 
