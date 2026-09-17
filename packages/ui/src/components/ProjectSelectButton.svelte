@@ -6,8 +6,10 @@
 
 	const appState = useAppState();
 	const workspace = appState.workspace;
-	let open = $state(false);
+	let { open = $bindable(false) }: { open?: boolean } = $props();
 	let root = $derived(workspace.rootOrigin);
+	let trigger = $state<HTMLButtonElement | null>(null);
+	let restoreFocus = false;
 
 	async function select(origin?: FileOrigin) {
 		if (workspace.projectMutationBusy) return;
@@ -19,7 +21,7 @@
 <div class="min-w-0 flex-1">
 	{#if root}
 		<Popover.Root bind:open>
-			<Popover.Trigger>
+			<Popover.Trigger bind:ref={trigger}>
 				{#snippet child({ props })}
 					<button {...props} type="button" aria-label={`Switch project: ${root.name}`} title={toURI(root)} disabled={workspace.projectMutationBusy} class="flex h-8 max-w-full items-center gap-1 rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50">
 						<span class="truncate">{root.name}</span>
@@ -27,7 +29,15 @@
 					</button>
 				{/snippet}
 			</Popover.Trigger>
-			<Popover.Content aria-label="Recent projects" align="start" class="w-80 max-w-[calc(100vw-1rem)] p-0">
+			<Popover.Content
+				trapFocus={false}
+				onOpenAutoFocus={() => restoreFocus = false}
+				onEscapeKeydown={() => restoreFocus = true}
+				onCloseAutoFocus={(event) => {
+					event.preventDefault();
+					if (restoreFocus) trigger?.focus();
+				}}
+				aria-label="Recent projects" align="start" class="w-80 max-w-[calc(100vw-1rem)] p-0">
 				<Command.Root>
 					<Command.Input aria-label="Search recent projects" placeholder="Search recent projects" />
 					<Command.List class="max-h-64 p-1">

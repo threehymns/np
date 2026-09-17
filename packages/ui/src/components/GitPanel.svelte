@@ -597,10 +597,6 @@
 		</div>
 		</Tooltip.Provider>
 
-		<!-- Footer -->
-		<div class="p-2">
-  		<BranchSelectButton />
-		</div>
 		<!-- Commit Input -->
 		<div class="border-t border-border shrink-0 bg-background flex flex-col relative">
  			{#snippet commitButton()}
@@ -665,7 +661,7 @@
   						<Tooltip.Root>
  							<Tooltip.Trigger>
   								{#snippet child({ props })}
- 									<Dialog.Trigger {...props} class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
+									<Dialog.Trigger {...props} aria-label="Open Commit Modal" class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
   										<CornersOutIcon />
  									</Dialog.Trigger>
   								{/snippet}

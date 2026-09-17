@@ -20,7 +20,7 @@
 	} = $props();
 </script>
 
-<AlertDialog.Root open={true} onOpenChange={(open) => !open && onCancel()}>
+<AlertDialog.Root open={true} onOpenChange={(open) => !open && !busy && onCancel()}>
 	<AlertDialog.Content>
 		<AlertDialog.Header>
 			<AlertDialog.Title>Cannot Switch Branch</AlertDialog.Title>
@@ -56,7 +56,7 @@
 		</div>
 
 		<AlertDialog.Footer>
-			<AlertDialog.Cancel onclick={onCancel}>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Cancel onclick={onCancel} disabled={busy}>Cancel</AlertDialog.Cancel>
 			<Button variant="outline" onclick={onConfirm} disabled={busy}>Re-check</Button>
 		</AlertDialog.Footer>
 	</AlertDialog.Content>

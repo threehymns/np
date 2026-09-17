@@ -1,6 +1,4 @@
 <script lang="ts">
-  import BranchSelectButton from './BranchSelectButton.svelte';
-
 	import { useAppState } from '@np/core';
 	import FileTreeItem from "./FileTreeItem.svelte";
 	import { FolderOpen, ArrowsClockwise, X, Funnel } from "phosphor-svelte";
@@ -46,13 +44,7 @@
 	{#if mounted && appState.workspace.rootOrigin}
 		{@const rootOrigin = appState.workspace.rootOrigin}
 		<div class="px-2 py-1 shrink-0">
-			<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
-				<div class="flex items-center gap-1 min-w-0">
-
-					<BranchSelectButton/>
-				</div>
-
-
+			<div class="flex items-center justify-end px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
 				<div class="flex gap-0.5 shrink-0 opacity-0 pointer-events-none group-hover/header:opacity-100 group-hover/header:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity">
 					<Tooltip.Provider delayDuration={400}>
 						<Tooltip.Root>

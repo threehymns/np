@@ -5,7 +5,14 @@
 
 	import AppMenu from "./components/AppMenu.svelte";
 	import ProjectSelectButton from "./components/ProjectSelectButton.svelte";
+	import BranchSelectButton from "./components/BranchSelectButton.svelte";
 	let menuOpen = $state(false);
+	let picker = $state<'project' | 'branch' | null>(null);
+
+	function setMenuOpen(open: boolean) {
+		menuOpen = open;
+		if (open) picker = null;
+	}
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
 	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
@@ -129,8 +136,13 @@
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<header aria-label="Workspace" class="relative z-50 h-9 shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
-		<AppMenu bind:open={menuOpen} />
-		{#if !menuOpen}<ProjectSelectButton />{/if}
+		<AppMenu bind:open={() => menuOpen, setMenuOpen} />
+		<div class={menuOpen ? 'hidden' : 'flex min-w-0 flex-1 max-w-xl items-center gap-1'}>
+			<ProjectSelectButton bind:open={() => picker === 'project', (open) => picker = open ? 'project' : picker === 'project' ? null : picker} />
+			{#key appState.workspace.repository}
+				<BranchSelectButton class="flex-1" bind:open={() => picker === 'branch', (open) => picker = open ? 'branch' : picker === 'branch' ? null : picker} />
+			{/key}
+		</div>
 	</header>
 	{#if appState.workspace.projectError}
 		<div role="alert" class="flex items-center justify-between gap-2 bg-destructive/10 px-3 py-1 text-xs text-destructive">
