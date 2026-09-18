@@ -99,7 +99,7 @@
 		onValueChange={changeValue}
 		loop
 	>
-		{#each ['File', 'Edit', 'Format', 'View'] as name (name)}
+		{#each CATEGORIES as name (name)}
 			<Menubar.Menu value={name}>
 				<Menubar.Trigger
 					class="focus-visible:outline-2 focus-visible:outline-ring"
@@ -153,7 +153,7 @@
 							</Menubar.Item>
 						{/each}
 						<Menubar.Separator />
-						<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>
+						<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap} onclick={() => void dismiss()}>
 							Word Wrap
 							{#if appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}
 								<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}</Menubar.Shortcut>
@@ -180,13 +180,13 @@
 							</Menubar.SubContent>
 							</Menubar.Portal>
 						</Menubar.Sub>
-						<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>
+						<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar} onclick={() => void dismiss()}>
 							Status Bar
 							{#if appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}
 								<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}</Menubar.Shortcut>
 							{/if}
 						</Menubar.CheckboxItem>
-						<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
+						<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible} onclick={() => void dismiss()}>
 							Sidebar
 							{#if appState.keymaps.getShortcutForCommand('view.toggleSidebar')}
 								<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleSidebar')}</Menubar.Shortcut>

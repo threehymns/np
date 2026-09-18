@@ -401,14 +401,19 @@ export class Workspace {
 		if (this.projectMutationBusy) return false;
 		this.projectOpening = true;
 		this.projectError = null;
+		if (this.restorePromise) {
+			try {
+				await this.restorePromise;
+			} catch {
+			}
+		}
 		const previous = {
 			root: this.rootOrigin, repository: this.repository, permission: this.hasRootPermission,
 			documents: this.documents, tabs: this.tabs, active: this.activeTabId,
-			nodes: this.projectTree.nodes, restoring: this.isRestoring
+			nodes: this.projectTree.nodes
 		};
 		let changed = false;
 		try {
-			if (this.restorePromise) await this.restorePromise;
 			const origin = specificOrigin ?? await this.storage.pickDirectory();
 			if (!origin) return false;
 			if (!await this.storage.verifyPermission(origin, true)) {
@@ -456,7 +461,7 @@ export class Workspace {
 			}
 			return false;
 		} finally {
-			this.isRestoring = changed ? false : previous.restoring;
+			if (changed) this.isRestoring = false;
 			this.projectOpening = false;
 		}
 	}
@@ -890,29 +895,42 @@ export class Workspace {
 
 				if (rootOrigin) {
 					this.rootOrigin = rootOrigin;
+					const restoreUri = toURI(rootOrigin);
+					const restoreGeneration = this.projectGeneration;
 
 					const permission = await this.storage.queryPermission(rootOrigin, true);
-					
+
 					if (permission === 'granted') {
 						this.hasRootPermission = true;
 						// Initialize repo and tree in background
 						(async () => {
 							try {
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) return;
 								// Drop the previous session's repository before the async
 								// VCS probe so the UI never shows stale state.
 								this.repository = null;
 								const repo = new Repository(rootOrigin!, this.vcsFactory);
 								const detected = await repo.adapter.detect(rootOrigin!.path);
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) return;
 								if (detected) {
 									this.repository = repo;
 									await repo.refresh();
+									if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) return;
 									// Session restore loads tabs before the repo exists;
 									// re-apply the persisted diff selection once changes are in.
 									this.applyPendingDiffRestore();
 								} else {
-									this.repository = null;
+									if (this.repository === null || this.repository === repo) {
+										this.repository = null;
+									}
 								}
 								await this.projectTree.scan(rootOrigin!);
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) {
+									const current = this.rootOrigin;
+									if (current && this.hasRootPermission) {
+										await this.projectTree.scan(current);
+									}
+								}
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
 							}
