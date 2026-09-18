@@ -1,24 +1,17 @@
 <script lang="ts">
-  import BranchSelectButton from './BranchSelectButton.svelte';
-
 	import { useAppState } from '@np/core';
 	import FileTreeItem from "./FileTreeItem.svelte";
-	import { FolderOpen, ArrowsClockwise, X, Funnel, CaretUpDown, FolderPlus } from "phosphor-svelte";
+	import { FolderOpen, ArrowsClockwise, X, Funnel } from "phosphor-svelte";
 	import { Button } from './ui/button';
 	import { ScrollArea } from "./ui/scroll-area/index.js";
 	import * as Tooltip from './ui/tooltip/index.js';
-	import * as Command from './ui/command';
-	import * as Popover from './ui/popover';
-	import { toURI, type FileOrigin } from '@np/core';
+	import { toURI, cn } from '@np/core';
 	import { slide } from "svelte/transition";
-	import { cn } from '@np/core';
-	import { tick, onMount } from "svelte";
+	import { onMount } from "svelte";
 
 	const appState = useAppState();
 
 	let showFilter = $state(false);
-	let comboOpen = $state(false);
-	let triggerRef = $state<HTMLButtonElement>(null!);
 	let mounted = $state(false);
 
 	onMount(() => {
@@ -45,93 +38,13 @@
 		appState.workspace.projectTree.searchQuery = "";
 	}
 
-	function closeAndFocusTrigger() {
-		comboOpen = false;
-		tick().then(() => {
-			triggerRef?.focus();
-		});
-	}
-
-	async function selectFolder(origin: FileOrigin) {
-		await appState.workspace.openDirectory(origin);
-		closeAndFocusTrigger();
-	}
 </script>
 
 <div class="flex flex-col h-full text-sidebar-foreground overflow-hidden select-none">
 	{#if mounted && appState.workspace.rootOrigin}
 		{@const rootOrigin = appState.workspace.rootOrigin}
 		<div class="px-2 py-1 shrink-0">
-			<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
-				<div class="flex items-center gap-1 min-w-0">
-					<Popover.Root bind:open={comboOpen}>
-						<Popover.Trigger bind:ref={triggerRef}>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									class="flex items-center gap-1 truncate hover:text-sidebar-foreground transition-all text-left hover:bg-sidebar-accent px-1.5 -ml-1 rounded-sm py-0.5"
-								>
-									<span class="truncate">{rootOrigin.name}</span>
-									<CaretUpDown class="size-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
-								</button>
-							{/snippet}
-						</Popover.Trigger>
-						<Popover.Content class="p-0 flex flex-col" align="start">
-							<Command.Root class="flex-1 p-0">
-								<Command.Input placeholder="Recent Folders" class="h-8" />
-								<Command.List class="px-1 pt-2 pb-0">
-									<Command.Empty class="py-2 text-[11px] text-center">No folders found.</Command.Empty>
-									{#each appState.workspace.recentFolders as folder (folder.name)}
-										<Command.Item
-											value={folder.path}
-											onSelect={() => selectFolder(folder)}
-											class="text-[11px] flex items-center gap-2 px-2 py-1.5"
-										>
-											<div class="flex items-baseline min-w-0 flex-1">
-												<span class="truncate text-[10px] opacity-40 shrink-0">
-													{folder.path.slice(0, folder.path.lastIndexOf(folder.name))}
-												</span>
-												<span class="truncate font-medium">{folder.name}</span>
-											</div>
-											{#if rootOrigin.path === folder.path}
-												<span class="text-[10px] opacity-40 shrink-0">- Current</span>
-											{/if}
-										</Command.Item>
-									{/each}
-								</Command.List>
-							</Command.Root>
-							<div class="border-t p-1 flex justify-end">
-								<Tooltip.Provider delayDuration={400}>
-									<Tooltip.Root>
-										<Tooltip.Trigger>
-											{#snippet child({ props })}
-												<Button 
-													variant="ghost" 
-													size="icon-xs" 
-													{...props} 
-													onclick={() => {
-														appState.workspace.openDirectory();
-														closeAndFocusTrigger();
-													}}
-													class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-												>
-													<FolderPlus class="size-3.5" />
-												</Button>
-											{/snippet}
-										</Tooltip.Trigger>
-										<Tooltip.Content side="top" align="center" class="text-[10px] px-2 py-1">
-											Open New Folder
-										</Tooltip.Content>
-									</Tooltip.Root>
-								</Tooltip.Provider>
-							</div>
-						</Popover.Content>
-					</Popover.Root>
-
-					<BranchSelectButton/>
-				</div>
-
-
+			<div class="flex items-center justify-end px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
 				<div class="flex gap-0.5 shrink-0 opacity-0 pointer-events-none group-hover/header:opacity-100 group-hover/header:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity">
 					<Tooltip.Provider delayDuration={400}>
 						<Tooltip.Root>

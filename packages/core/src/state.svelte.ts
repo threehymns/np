@@ -99,6 +99,7 @@ export class AppState {
 	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
 	settingsOpen = $state(false);
+	applicationMenu: { toggle(): void } | undefined;
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;

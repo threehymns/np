@@ -155,6 +155,8 @@ export class Repository {
 			};
 		}
 
+		if (res.status === 'error') throw new Error(res.message);
+
 		const uncommittedFiles = res.status === 'blocked' ? res.files : [];
 		return {
 			canSwitch: false,

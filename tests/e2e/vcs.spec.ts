@@ -1,6 +1,18 @@
 import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
+import type { Page } from '@playwright/test';
+
+const header = (page: Page) => page.getByRole('banner', { name: 'Workspace' });
+const branchTrigger = (page: Page) => header(page).getByRole('button', { name: /^Switch branch:/ });
+const branchPicker = (page: Page) => page.locator('[data-slot="popover-content"][aria-label="Branches"]');
+const safety = (page: Page) => page.getByRole('alertdialog', { name: 'Cannot Switch Branch' });
+
+async function pickBranch(page: Page, name = 'feature-branch') {
+	await branchTrigger(page).click();
+	await branchPicker(page).getByRole('combobox', { name: 'Search branches' }).fill(name);
+	await branchPicker(page).getByRole('option', { name, exact: true }).click();
+}
 
 test.describe('VCS and Branch Switching Integration Tests', () => {
 	test.beforeEach(async ({ page }) => {
@@ -58,6 +70,319 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				return { root, repository, gitFs };
 			};
 		});
+	});
+
+	test('header searches branches, marks the current branch and makes current selection a noop', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			const w = (window as any).appState.workspace;
+			w.updateDocumentContent(w.documents[0], 'Unsaved draft');
+			w.repository.adapter.switchBranch = async () => { throw new Error('No checkout expected'); };
+		});
+		await branchTrigger(page).click();
+		await expect(branchPicker(page).getByRole('option', { name: 'main', exact: true })).toHaveAttribute('aria-current', 'true');
+		const search = branchPicker(page).getByRole('combobox', { name: 'Search branches' });
+		await expect(search).toBeFocused();
+		await search.fill('missing');
+		await expect(branchPicker(page)).toContainText('No branches found.');
+		await search.fill('feature');
+		await expect(branchPicker(page).getByRole('option')).toHaveCount(1);
+		await search.fill('main');
+		await page.keyboard.press('Enter');
+		await expect(branchPicker(page)).toBeHidden();
+		await expect(safety(page)).toBeHidden();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+		await expect(page.locator('.cm-content')).toContainText('Unsaved draft');
+	});
+
+	test('header eligibility follows permission, loading, non-Git and detached HEAD', async ({ page }) => {
+		await expect(branchTrigger(page)).toHaveCount(0);
+		await page.evaluate(async () => { await (window as any).setupTestGitRepo(); });
+		await expect(branchTrigger(page)).toBeVisible();
+		await page.evaluate(() => { (window as any).appState.workspace.hasRootPermission = false; });
+		await expect(branchTrigger(page)).toHaveCount(0);
+		await page.evaluate(() => {
+			const w = (window as any).appState.workspace;
+			w.hasRootPermission = true;
+			w.repository.currentBranch = null;
+		});
+		await expect(branchTrigger(page)).toHaveCount(0);
+		await page.evaluate(async () => {
+			const w = (window as any).appState.workspace;
+			const git = (window as any).git;
+			const fs = w.repository.adapter.fs;
+			const oid = await git.resolveRef({ fs, dir: '/repo', ref: 'main' });
+			await git.checkout({ fs, dir: '/repo', ref: oid });
+			await w.repository.refresh();
+		});
+		await expect(branchTrigger(page)).toHaveCount(0);
+		await page.evaluate(() => { (window as any).appState.workspace.repository = null; });
+		await expect(branchTrigger(page)).toHaveCount(0);
+	});
+
+	test('header protects unsaved Documents, cancels and re-checks before switching', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			const a = (window as any).appState;
+			a.prefs.sidebarVisible = false;
+			await a.workspace.openFile({ scheme: 'browser', path: 'test-project/README.md', name: 'README.md' });
+			a.workspace.updateDocumentContent(a.workspace.activeDocument, 'Unsaved editor text');
+		});
+		await pickBranch(page);
+		await expect(safety(page)).toContainText('Unsaved Changes (Editor)');
+		await expect(safety(page)).toContainText('README.md');
+		await safety(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+		await expect(page.locator('.cm-content')).toContainText('Unsaved editor text');
+		await pickBranch(page);
+		await safety(page).getByRole('button', { name: 'Re-check' }).click();
+		await expect(safety(page)).toContainText('Unsaved Changes (Editor)');
+		await page.evaluate(async () => {
+			const w = (window as any).appState.workspace;
+			await w.saveDocument(w.activeDocument);
+		});
+		await safety(page).getByRole('button', { name: 'Re-check' }).click();
+		await expect(safety(page)).toBeHidden();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: feature-branch');
+		await expect(page.locator('.cm-content')).toContainText('Unsaved editor text');
+	});
+
+	for (const failure of ['blocked', 'error', 'rejected', 'preflight', 'recheck'] as const) {
+		test(`header reports ${failure} without changing the branch`, async ({ page }) => {
+			await page.evaluate(async (failure) => {
+				await (window as any).setupTestGitRepo();
+				const adapter = (window as any).appState.workspace.repository.adapter;
+				let checks = 0;
+				adapter.switchBranch = async (_branch: string, options?: { dryRun?: boolean }) => {
+					if (options?.dryRun) {
+						checks++;
+						if (failure === 'preflight') return { status: 'error', message: 'Preflight unavailable. Retry.' };
+						if (failure === 'recheck') {
+							if (checks > 1) throw new Error('Re-check unavailable. Retry.');
+							return { status: 'blocked', reason: 'conflict', files: ['README.md'] };
+						}
+						return { status: 'switched' };
+					}
+					if (failure === 'blocked') return { status: 'blocked', reason: 'conflict', files: ['late-conflict.md'] };
+					if (failure === 'rejected') throw new Error('Checkout rejected. Retry.');
+					return { status: 'error', message: 'Checkout failed. Retry.' };
+				};
+			}, failure);
+			await pickBranch(page);
+			if (failure === 'recheck') await safety(page).getByRole('button', { name: 'Re-check' }).click();
+			const message = { blocked: 'late-conflict.md', error: 'Checkout failed. Retry.', rejected: 'Checkout rejected. Retry.', preflight: 'Preflight unavailable. Retry.', recheck: 'Re-check unavailable. Retry.' }[failure];
+			await expect(safety(page)).toContainText(message);
+			await expect(safety(page).getByRole('button', { name: 'Re-check' })).toBeEnabled();
+			await safety(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+			await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+		});
+	}
+
+	test('header switches with Source Control active and carries staged and unstaged contents forward', async ({ page }) => {
+		await page.evaluate(async () => {
+			const { gitFs, repository } = await (window as any).setupTestGitRepo();
+			const git = (window as any).git;
+			await gitFs.promises.writeFile('/repo/README.md', 'Staged content');
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
+			await gitFs.promises.writeFile('/repo/README.md', 'Unstaged content');
+			await repository.refresh();
+			(window as any).appState.activeSidebarTab = 'git';
+		});
+		await expect(page.locator('aside').getByRole('button', { name: /^Switch branch:/ })).toHaveCount(0);
+		await pickBranch(page);
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: feature-branch');
+		const contents = await page.evaluate(async () => {
+			const a = (window as any).appState.workspace.repository.adapter;
+			const git = (window as any).git;
+			const fs = a.fs;
+			let index = '';
+			await git.walk({ fs, dir: '/repo', trees: [git.STAGE()], map: async (path: string, [entry]: any[]) => {
+				if (path === 'README.md' && entry) {
+					const { blob } = await git.readBlob({ fs, dir: '/repo', oid: await entry.oid() });
+					index = new TextDecoder().decode(blob);
+				}
+			} });
+			return { disk: await fs.promises.readFile('/repo/README.md', 'utf8'), index, branch: await git.currentBranch({ fs, dir: '/repo' }) };
+		});
+		expect(contents).toEqual({ disk: 'Unstaged content', index: 'Staged content', branch: 'feature-branch' });
+	});
+
+	test('retains a working branch selector inside the commit dialog only', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			(window as any).appState.activeSidebarTab = 'git';
+		});
+		await expect(page.locator('aside').getByRole('button', { name: /^Switch branch:/ })).toHaveCount(0);
+		await page.locator('aside').getByRole('button', { name: 'Open Commit Modal', exact: true }).click();
+		const dialog = page.getByRole('dialog');
+		await dialog.getByRole('button', { name: 'Switch branch: main', exact: true }).click();
+		await branchPicker(page).getByRole('option', { name: 'feature-branch', exact: true }).click();
+		await expect(dialog.getByRole('button', { name: 'Switch branch: feature-branch', exact: true })).toBeEnabled();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: feature-branch');
+	});
+
+	test('handles an actual noop result without opening failure feedback', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			const w = (window as any).appState.workspace;
+			w.repository.adapter.switchBranch = async () => ({ status: 'noop' });
+		});
+		await pickBranch(page);
+		await expect(branchTrigger(page)).toBeEnabled();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+		await expect(safety(page)).toBeHidden();
+	});
+
+	test('discards delayed preflight after a project change through the header', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			const w = (window as any).appState.workspace;
+			const root = new (window as any).MockDirectoryHandle('destination');
+			await (window as any).browserHandleRegistry.register('browser://destination', root);
+			w.storage.verifyPermission = async () => true;
+			w.recentFolders = [{ scheme: 'browser', path: 'destination', name: 'destination' }];
+			(window as any).checkoutCalls = 0;
+			w.repository.adapter.switchBranch = async (_branch: string, options?: { dryRun?: boolean }) => {
+				if (options?.dryRun) return await new Promise(resolve => { (window as any).finishPreflight = resolve; });
+				(window as any).checkoutCalls++;
+				return { status: 'switched' };
+			};
+		});
+		await pickBranch(page);
+		await expect(branchTrigger(page)).toBeDisabled();
+		await expect(branchTrigger(page)).toHaveAttribute('aria-busy', 'true');
+		await header(page).getByRole('button', { name: 'Switch project: test-project' }).click();
+		await page.getByRole('combobox', { name: 'Search recent projects' }).fill('destination');
+		await page.getByRole('option').filter({ hasText: 'browser://destination' }).click();
+		await expect(header(page).getByRole('button', { name: 'Switch project: destination' })).toBeEnabled();
+		await expect(branchTrigger(page)).toHaveCount(0);
+		await page.evaluate(async () => {
+			(window as any).finishPreflight({ status: 'switched' });
+			await new Promise(resolve => setTimeout(resolve, 0));
+		});
+		expect(await page.evaluate(() => (window as any).checkoutCalls)).toBe(0);
+		await expect(safety(page)).toBeHidden();
+		await expect(branchTrigger(page)).toHaveCount(0);
+	});
+
+	test('excludes project mutations and retains delayed branch errors across menu expansion', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			const w = (window as any).appState.workspace;
+			w.repository.adapter.switchBranch = async (_branch: string, options?: { dryRun?: boolean }) => {
+				if (options?.dryRun) return { status: 'switched' };
+				return await new Promise(resolve => { (window as any).finishSwitch = resolve; });
+			};
+		});
+		await pickBranch(page);
+		await page.waitForFunction(() => typeof (window as any).finishSwitch === 'function');
+		await expect(branchTrigger(page)).toBeDisabled();
+		await expect(header(page).getByRole('button', { name: /^Switch project:/ })).toBeDisabled();
+		expect(await page.evaluate(async () => await (window as any).appState.workspace.openDirectory({ scheme: 'browser', path: 'other', name: 'other' }))).toBe(false);
+		await page.keyboard.press('F10');
+		await expect(branchTrigger(page)).toBeHidden();
+		await page.evaluate(() => { (window as any).finishSwitch({ status: 'error', message: 'Delayed failure. Retry.' }); });
+		await expect(safety(page)).toContainText('Delayed failure. Retry.');
+		await safety(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+		await page.keyboard.press('Escape');
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+		await expect(branchTrigger(page)).toBeEnabled();
+		await expect(header(page).getByRole('button', { name: /^Switch project:/ })).toBeEnabled();
+	});
+
+	test('disables branch selection while a project picker mutation is pending', async ({ page }) => {
+		await page.evaluate(async () => {
+			await (window as any).setupTestGitRepo();
+			(window as any).appState.workspace.storage.pickDirectory = async () => await new Promise(resolve => { (window as any).finishFolder = resolve; });
+		});
+		await header(page).getByRole('button', { name: /^Switch project:/ }).click();
+		await page.locator('[data-slot="popover-content"][aria-label="Recent projects"]').getByRole('button', { name: 'Open Folder', exact: true }).click();
+		await expect(branchTrigger(page)).toBeDisabled();
+		await expect(header(page).getByRole('button', { name: /^Switch project:/ })).toBeDisabled();
+		expect(await page.evaluate(async () => (await (window as any).appState.workspace.switchBranch('feature-branch')).status)).toBe('error');
+		await page.evaluate(() => { (window as any).finishFolder(null); });
+		await expect(branchTrigger(page)).toBeEnabled();
+		await expect(branchTrigger(page)).toHaveAccessibleName('Switch branch: main');
+	});
+
+	test('combined pickers dismiss without orphaned popovers or lost keyboard focus', async ({ page }) => {
+		await page.evaluate(async () => { await (window as any).setupTestGitRepo(); });
+		const project = header(page).getByRole('button', { name: /^Switch project:/ });
+		const hamburger = header(page).getByRole('button', { name: 'Application menu', exact: true });
+		const projectPicker = page.locator('[data-slot="popover-content"][aria-label="Recent projects"]');
+		await project.click();
+		await branchTrigger(page).click();
+		await expect(projectPicker).toBeHidden();
+		await expect(branchPicker(page)).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(branchPicker(page)).toBeHidden();
+		await expect(branchTrigger(page)).toBeFocused();
+		await branchTrigger(page).click();
+		await project.click();
+		await expect(branchPicker(page)).toBeHidden();
+		await expect(projectPicker).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(project).toBeFocused();
+		await branchTrigger(page).click();
+		await page.locator('.cm-content').click();
+		await expect(branchPicker(page)).toBeHidden();
+		await expect(page.locator('.cm-content')).toBeFocused();
+		for (const dismissal of ['Escape', 'F10', 'Tab', 'outside', 'category', 'command']) {
+			await branchTrigger(page).click();
+			await page.keyboard.press('F10');
+			await expect(branchPicker(page)).toBeHidden();
+			await expect(branchTrigger(page)).toBeHidden();
+			await expect(project).toBeHidden();
+			await page.getByRole('menuitem', { name: 'Edit', exact: true }).hover();
+			await page.getByRole('menuitem', { name: 'File', exact: true }).hover();
+			if (dismissal === 'outside') await page.locator('.cm-content').click();
+			else if (dismissal === 'category') await page.getByRole('menuitem', { name: 'File', exact: true }).click();
+			else if (dismissal === 'command') await page.getByRole('menu', { name: 'File', exact: true }).getByRole('menuitem', { name: /^New\b/ }).click();
+			else await page.keyboard.press(dismissal);
+			await expect(branchTrigger(page)).toBeVisible();
+			await expect(project).toBeVisible();
+			await expect(branchPicker(page)).toBeHidden();
+			if (dismissal === 'Escape' || dismissal === 'F10') await expect(hamburger).toBeFocused();
+		}
+	});
+
+	test('long names fit a single-row narrow header and both popovers stay in the viewport', async ({ page }) => {
+		const name = 'a-very-long-project-name-that-must-remain-accessible';
+		const branch = 'feature/a-very-long-branch-name-that-must-remain-accessible';
+		await page.evaluate(async ({ name, branch }) => {
+			await (window as any).setupTestGitRepo();
+			const w = (window as any).appState.workspace;
+			w.rootOrigin.name = name;
+			await (window as any).git.branch({ fs: w.repository.adapter.fs, dir: '/repo', ref: branch, checkout: true });
+			await w.repository.refresh();
+		}, { name, branch });
+		const height = (await header(page).boundingBox())!.height;
+		for (const width of [380, 320]) {
+			await page.setViewportSize({ width, height: 700 });
+			expect((await header(page).boundingBox())!.height).toBe(height);
+			const project = header(page).getByRole('button', { name: `Switch project: ${name}` });
+			await expect(branchTrigger(page)).toHaveAccessibleName(`Switch branch: ${branch}`);
+			await expect(branchTrigger(page)).toHaveAttribute('title', branch);
+			for (const trigger of [project, branchTrigger(page)]) {
+				const box = (await trigger.boundingBox())!;
+				expect(box.width).toBeGreaterThan(30);
+				expect(box.x + box.width).toBeLessThanOrEqual(width);
+				await trigger.click();
+				const popover = trigger === project ? page.locator('[data-slot="popover-content"][aria-label="Recent projects"]') : branchPicker(page);
+				await expect(popover).toBeVisible();
+				const popup = (await popover.boundingBox())!;
+				expect(popup.x).toBeGreaterThanOrEqual(0);
+				expect(popup.x + popup.width).toBeLessThanOrEqual(width);
+				await page.keyboard.press('Escape');
+				await expect(trigger).toBeFocused();
+			}
+			await page.keyboard.press('F10');
+			for (const category of ['File', 'Edit', 'Format', 'View']) await expect(page.getByRole('menuitem', { name: category, exact: true })).toBeVisible();
+			await page.keyboard.press('Escape');
+			expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+		}
 	});
 
 	test('should detect git repository and list branches (TRACER BULLET)', async ({ page }) => {
@@ -225,13 +550,12 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 			await gitFs.promises.writeFile('/repo/README.md', 'Local Conflicting Content');
 		});
 
-		// 2. Click branch button in the file explorer sidebar to open the branch switcher dropdown
-		const branchButton = page.locator('button:has-text("main")');
+		const branchButton = header(page).getByRole('button', { name: 'Switch branch: main', exact: true });
 		await expect(branchButton).toBeVisible();
 		await branchButton.click();
 
 		// 3. Click the target branch in the command list dropdown
-		const targetBranchOption = page.locator('[data-command-item]:has-text("feature-branch")');
+		const targetBranchOption = page.locator('[data-slot="popover-content"][aria-label="Branches"]').getByRole('option', { name: 'feature-branch', exact: true });
 		await expect(targetBranchOption).toBeVisible();
 		await targetBranchOption.click();
 
@@ -246,7 +570,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 		await expect(fileItem).toBeVisible();
 
 		// 5. Click Cancel and verify the modal disappears and branch remains unchanged
-		const cancelButton = page.locator('button:has-text("Cancel")');
+		const cancelButton = page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true });
 		await expect(cancelButton).toBeVisible();
 		await cancelButton.click();
 
