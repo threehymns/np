@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { useAppState } from '@np/core';
 	import type { VisualNode, TreeNode } from '@np/core';
-	import { File, Folder, FolderOpen, CaretRight, Plus, FolderPlus, Trash, PencilSimple } from "phosphor-svelte";
+	import { FileIcon, FolderIcon, FolderOpenIcon, CaretRightIcon, PlusIcon, FolderPlusIcon, TrashIcon, PencilSimpleIcon } from "phosphor-svelte";
 	import { cn } from '@np/core';
 	import * as ContextMenu from './ui/context-menu';
 	import { tick } from "svelte";
@@ -217,7 +217,7 @@
 				oncontextmenu={handleRowContextMenu}
 			>
 				{#if visualNode.kind === 'directory'}
-					<CaretRight
+					<CaretRightIcon
 						class={cn(
 							"size-3 opacity-60 shrink-0 transition-transform duration-200",
 							visualNode.isExpanded && "rotate-90"
@@ -227,7 +227,7 @@
 						resource={visualNode.leafNode.name}
 						type="folder"
 						folderOpen={visualNode.isExpanded}
-						phosphorFallback={visualNode.isExpanded ? FolderOpen : Folder}
+						phosphorFallback={visualNode.isExpanded ? FolderOpenIcon : FolderIcon}
 						class="size-3.5 opacity-90 shrink-0"
 					/>
 				{:else}
@@ -262,20 +262,20 @@
 	</ContextMenu.Trigger>
 	<ContextMenu.Content>
 		<ContextMenu.Item onclick={createNewFile}>
-			<Plus class="mr-2 size-4" />
+			<PlusIcon/>
 			New File
 		</ContextMenu.Item>
 		<ContextMenu.Item onclick={createNewFolder}>
-			<FolderPlus class="mr-2 size-4" />
+			<FolderPlusIcon/>
 			New Folder
 		</ContextMenu.Item>
 		<ContextMenu.Separator />
 		<ContextMenu.Item onclick={startRename}>
-			<PencilSimple class="mr-2 size-4" />
+			<PencilSimpleIcon/>
 			Rename
 		</ContextMenu.Item>
 		<ContextMenu.Item onclick={deleteEntry} class="text-destructive">
-			<Trash class="mr-2 size-4" />
+			<TrashIcon/>
 			Delete
 		</ContextMenu.Item>
 	</ContextMenu.Content>
