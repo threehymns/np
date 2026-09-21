@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { useAppState, toURI, type FileOrigin } from '@np/core';
-	import { CaretUpDown, FolderOpen } from 'phosphor-svelte';
+	import { FolderOpen } from 'phosphor-svelte';
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
+	import Button, { type ButtonSize } from './ui/button/button.svelte';
+
 
 	const appState = useAppState();
 	const workspace = appState.workspace;
-	let { open = $bindable(false) }: { open?: boolean } = $props();
+	let { open = $bindable(false), size = 'default' }: { open?: boolean; size?: ButtonSize } = $props();
 	let root = $derived(workspace.rootOrigin);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let restoreFocus = false;
@@ -23,10 +25,16 @@
 		<Popover.Root bind:open>
 			<Popover.Trigger bind:ref={trigger}>
 				{#snippet child({ props })}
-					<button {...props} type="button" aria-label={`Switch project: ${root.name}`} title={toURI(root)} disabled={workspace.projectMutationBusy} class="flex h-8 max-w-full items-center gap-1 rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50">
+					<Button {...props}
+					  type="button"
+						aria-label={`Switch project: ${root.name}`}
+						title={toURI(root)}
+						disabled={workspace.projectMutationBusy}
+						variant="ghost"
+						size={size}
+					>
 						<span class="truncate">{root.name}</span>
-						<CaretUpDown class="size-3 shrink-0" />
-					</button>
+					</Button>
 				{/snippet}
 			</Popover.Trigger>
 			<Popover.Content
@@ -59,6 +67,15 @@
 			</Popover.Content>
 		</Popover.Root>
 	{:else}
-		<button type="button" onclick={() => select()} disabled={workspace.projectMutationBusy} class="flex h-8 items-center gap-2 rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"><FolderOpen class="size-4" />Open Folder</button>
+		<Button
+			type="button"
+			onclick={() => select()}
+			disabled={workspace.projectMutationBusy}
+			aria-label="Open folder"
+			variant="ghost"
+			size={size}
+		>
+			<FolderOpen />Open Folder
+		</Button>
 	{/if}
 </div>

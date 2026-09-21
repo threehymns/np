@@ -7,8 +7,9 @@
 	import BranchSafetyModal from './BranchSafetyModal.svelte';
 	import type { RepositorySafetyReport } from '@np/core';
 	import { cn } from '@np/core';
+	import Button, { type ButtonSize } from './ui/button/button.svelte';
 
-	let { class: className = '', open = $bindable(false) }: { class?: string; open?: boolean } = $props();
+	let { class: className = '', open = $bindable(false), size = 'default' }: { class?: string; open?: boolean; size?: ButtonSize } = $props();
 
 	const appState = useAppState();
 	const workspace = appState.workspace;
@@ -68,22 +69,24 @@
 	<Popover.Root bind:open={open}>
 		<Popover.Trigger bind:ref={trigger}>
 			{#snippet child({ props })}
-				<button
+				<Button
 					{...props}
 					type="button"
 					disabled={checking || workspace.projectMutationBusy}
 					aria-label={`Switch branch: ${workspace.currentBranch}`}
 					aria-busy={checking || workspace.projectMutationBusy}
 					title={workspace.currentBranch ?? undefined}
-					class={cn("flex h-8 min-w-0 max-w-full items-center gap-1 rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50", className)}
+					class={className}
+					variant="ghost"
+					size={size}
 				>
 					{#if checking || workspace.projectMutationBusy}
 						<div class="size-3 shrink-0 animate-spin border-2 border-current border-t-transparent rounded-full"></div>
 					{:else}
-						<GitBranchIcon class="size-3 shrink-0" />
+						<GitBranchIcon />
 					{/if}
 					<span class="truncate">{appState.workspace.currentBranch}</span>
-				</button>
+				</Button>
 			{/snippet}
 		</Popover.Trigger>
 		<Popover.Content

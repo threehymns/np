@@ -6,6 +6,7 @@
 	import AppMenu from "./components/AppMenu.svelte";
 	import ProjectSelectButton from "./components/ProjectSelectButton.svelte";
 	import BranchSelectButton from "./components/BranchSelectButton.svelte";
+	import { headerSizes, type HeaderSize } from "./components/header-sizes";
 	let menuOpen = $state(false);
 	let picker = $state<'project' | 'branch' | null>(null);
 
@@ -29,7 +30,8 @@
 	let CommandPalette = $state<typeof CommandPaletteComponent | null>(null);
 	let WhichKey = $state<typeof WhichKeyComponent | null>(null);
 
-	let { children } = $props<{ children: Snippet }>();
+	let { children, size = 'default' }: { children: Snippet; size?: HeaderSize } = $props();
+	const header = $derived(headerSizes[size]);
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
@@ -135,12 +137,12 @@
 <ModeWatcher />
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
-	<header aria-label="Workspace" class="relative z-50 h-9 shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
-		<AppMenu bind:open={() => menuOpen, setMenuOpen} />
-		<div class={menuOpen ? 'hidden' : 'flex min-w-0 flex-1 max-w-xl items-center gap-1'}>
-			<ProjectSelectButton bind:open={() => picker === 'project', (open) => picker = open ? 'project' : picker === 'project' ? null : picker} />
+	<header aria-label="Workspace" class="relative z-50 {header.height} shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
+		<AppMenu size={size} bind:open={() => menuOpen, setMenuOpen} />
+		<div class={menuOpen ? 'hidden' : 'flex min-w-0 max-w-xl items-center gap-1'}>
+			<ProjectSelectButton size={header.wide} bind:open={() => picker === 'project', (open) => picker = open ? 'project' : picker === 'project' ? null : picker} />
 			{#key appState.workspace.repository}
-				<BranchSelectButton class="flex-1" bind:open={() => picker === 'branch', (open) => picker = open ? 'branch' : picker === 'branch' ? null : picker} />
+				<BranchSelectButton size={header.wide} bind:open={() => picker === 'branch', (open) => picker = open ? 'branch' : picker === 'branch' ? null : picker} />
 			{/key}
 		</div>
 	</header>

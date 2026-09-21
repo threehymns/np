@@ -2,12 +2,16 @@
 	import { flushSync, onMount, tick } from 'svelte';
 	import { ListIcon } from 'phosphor-svelte';
 	import { useAppState } from '@np/core/state.svelte';
+	import { cn } from '@np/core';
 	import * as Menubar from './ui/menubar/index';
+	import Button from './ui/button/button.svelte';
+	import { headerSizes, type HeaderSize } from './header-sizes';
 
-	let { open = $bindable(false) }: { open?: boolean } = $props();
+	let { open = $bindable(false), size = 'default' }: { open?: boolean; size?: HeaderSize } = $props();
+	const sizes = $derived(headerSizes[size]);
 	const appState = useAppState();
 	let category = $state('File');
-	let hamburger = $state<HTMLButtonElement>();
+	let hamburger = $state<HTMLButtonElement | null>(null);
 
 	function changeValue(value: string) {
 		if (value) category = value;
@@ -76,25 +80,26 @@
 
 <svelte:window onpointerdowncapture={interactOutside} />
 
-<div class="flex h-9 min-w-0 items-center">
-	<button
-		{@attach (node) => { hamburger = node; }}
+<div class={cn("flex min-w-0 items-center", sizes.height)}>
+	<Button
 		type="button"
 		hidden={open}
 		aria-label="Application menu"
 		aria-haspopup="menu"
 		aria-expanded={open}
 		aria-keyshortcuts={appState.keymaps.getShortcutForCommand('applicationMenu.toggle')}
-		class="size-8 shrink-0 rounded-md hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1"
 		onpointerdown={(event) => event.preventDefault()}
 		onclick={toggle}
+		variant="ghost"
+		size={sizes.icon}
+		bind:ref={hamburger}
 	>
-		<ListIcon class="mx-auto size-4" />
-	</button>
+		<ListIcon />
+	</Button>
 	<Menubar.Root
 		hidden={!open}
 		aria-label="Application menu"
-		class="border-none bg-transparent p-0"
+		class={cn("border-none bg-transparent p-0", sizes.height)}
 		value={open ? category : ''}
 		onValueChange={changeValue}
 		loop
@@ -102,7 +107,7 @@
 		{#each CATEGORIES as name (name)}
 			<Menubar.Menu value={name}>
 				<Menubar.Trigger
-					class="focus-visible:outline-2 focus-visible:outline-ring"
+					class={cn("focus-visible:outline-2 focus-visible:outline-ring", sizes.trigger)}
 					onfocus={() => { if (open) category = name; }}
 					onkeydown={handleTriggerKeydown}
 				>{name}</Menubar.Trigger>
