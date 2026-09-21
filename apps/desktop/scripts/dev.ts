@@ -15,6 +15,9 @@ const distMainDir = path.resolve(desktopRoot, 'dist-main');
 let electronProcess: ChildProcess | null = null;
 let isBuilding = false;
 let rebuildQueued: { filename: string } | null = null;
+// Resolved after the Vite server starts. Defaults to the configured port,
+// but Vite moves to a free port when 5183 is taken (e.g. a second worktree).
+let devUrl = 'http://localhost:5183';
 
 async function buildMainProcess(): Promise<boolean> {
 	const startTime = performance.now();
@@ -150,7 +153,7 @@ function startElectron(electronPath: string, onExit: (code: number | null) => vo
 			stdio: 'inherit',
 			env: {
 				...process.env,
-				ELECTRON_DEV_URL: 'http://localhost:5183',
+				ELECTRON_DEV_URL: devUrl,
 				NODE_ENV: 'development'
 			}
 		}
@@ -236,7 +239,12 @@ async function start() {
 		server: { port: 5183 }
 	}).then(async (server) => {
 		await server.listen();
-		console.log('Vite dev server listening on http://localhost:5183');
+		// Port 5183 may be taken by another worktree's dev server, in which
+		// case Vite binds a free port. Point Electron at the resolved URL so
+		// it loads this worktree's renderer instead of the other one's.
+		const localUrl = server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0];
+		if (localUrl) devUrl = localUrl;
+		console.log(`Vite dev server listening on ${devUrl}`);
 		return server;
 	});
 
