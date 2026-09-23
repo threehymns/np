@@ -363,7 +363,7 @@ export class PluginHost implements PluginHostInterface {
 					Object.keys(otherManifest.dependsOn).some((iface) => providedInterfaces.includes(iface));
 				if (dependsOnThis) {
 					// Cascade deactivate dependent first
-					await this.deactivate(otherId, `${otherManifest.name} was disabled because ${manifest.name} was disabled.`);
+					await this.deactivate(otherId, `${otherManifest.name} is off because ${manifest.name} is off.`);
 				}
 			}
 		}
