@@ -1,0 +1,3 @@
+# Plugins touch the editor only through host-composed contributions
+
+Plugins never access the editor view or dispatch transactions directly. CodeMirror extensions (gutter markers, decorations, editor-scoped keybindings) are declared as contributions that the host places into the correct compartments of its single composed editor configuration, preserving language and precedence rules. Document text changes go through a host document-edit operation applied as one undo transaction with revision checks; raw transaction dispatch from plugin code is rejected. Registering whole new language modes is deferred to a follow-up specification; plugins may contribute settings and decorations for existing languages in the meantime.

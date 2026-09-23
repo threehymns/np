@@ -1,0 +1,3 @@
+# Plugin definition pairs a static manifest with a setup function
+
+Each plugin exposes a static manifest (identity, version, supported platforms, and provided/required interface dependencies) alongside a setup function that registers its contributions through host-owned, replayable registries and returns cleanup. The host reads the manifest without loading or executing the plugin's implementation, so dependency ordering, platform gating, and disabled-plugin metadata do not defeat lazy loading. All other contributions (commands, settings, keybindings, UI) are self-describing data registered during setup, not manifest fields and not per-feature host methods.
