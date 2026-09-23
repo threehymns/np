@@ -1,0 +1,81 @@
+<script lang="ts">
+	import { useAppState, toURI, type FileOrigin } from '@np/core';
+	import { FolderOpen } from 'phosphor-svelte';
+	import * as Command from './ui/command';
+	import * as Popover from './ui/popover';
+	import Button, { type ButtonSize } from './ui/button/button.svelte';
+
+
+	const appState = useAppState();
+	const workspace = appState.workspace;
+	let { open = $bindable(false), size = 'default' }: { open?: boolean; size?: ButtonSize } = $props();
+	let root = $derived(workspace.rootOrigin);
+	let trigger = $state<HTMLButtonElement | null>(null);
+	let restoreFocus = false;
+
+	async function select(origin?: FileOrigin) {
+		if (workspace.projectMutationBusy) return;
+		open = false;
+		await workspace.openDirectory(origin);
+	}
+</script>
+
+<div class="min-w-0 flex-1">
+	{#if root}
+		<Popover.Root bind:open>
+			<Popover.Trigger bind:ref={trigger}>
+				{#snippet child({ props })}
+					<Button {...props}
+					  type="button"
+						aria-label={`Switch project: ${root.name}`}
+						title={toURI(root)}
+						disabled={workspace.projectMutationBusy}
+						variant="ghost"
+						size={size}
+					>
+						<span class="truncate">{root.name}</span>
+					</Button>
+				{/snippet}
+			</Popover.Trigger>
+			<Popover.Content
+				trapFocus={false}
+				onOpenAutoFocus={() => restoreFocus = false}
+				onEscapeKeydown={() => restoreFocus = true}
+				onCloseAutoFocus={(event) => {
+					event.preventDefault();
+					if (restoreFocus) trigger?.focus();
+				}}
+				aria-label="Recent projects" align="start" class="w-80 max-w-[calc(100vw-1rem)] p-0">
+				<Command.Root>
+					<Command.Input aria-label="Search recent projects" placeholder="Search recent projects" />
+					<Command.List class="max-h-64 p-1">
+						<Command.Empty>No projects found.</Command.Empty>
+						{#each workspace.recentFolders as folder (toURI(folder))}
+							<Command.Item value={toURI(folder)} keywords={[folder.name, folder.path]} onSelect={() => select(folder)} disabled={workspace.projectMutationBusy} class="flex min-w-0 gap-2 text-xs">
+								<div class="min-w-0 flex-1" title={toURI(folder)}>
+									<div class="truncate">{folder.name}</div>
+									<div class="truncate text-[10px] text-muted-foreground">{toURI(folder)}</div>
+								</div>
+								{#if toURI(folder) === workspace.projectUri}<span class="shrink-0 text-[10px]">Current</span>{/if}
+							</Command.Item>
+						{/each}
+					</Command.List>
+				</Command.Root>
+				<div class="border-t p-1">
+					<button type="button" onclick={() => select()} disabled={workspace.projectMutationBusy} class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><FolderOpen class="size-4" />Open Folder</button>
+				</div>
+			</Popover.Content>
+		</Popover.Root>
+	{:else}
+		<Button
+			type="button"
+			onclick={() => select()}
+			disabled={workspace.projectMutationBusy}
+			aria-label="Open folder"
+			variant="ghost"
+			size={size}
+		>
+			<FolderOpen />Open Folder
+		</Button>
+	{/if}
+</div>

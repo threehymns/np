@@ -133,7 +133,11 @@
         {/if}
       {:else if appState.activeSidebarTab === 'git'}
         {#if GitPanel}
-          <GitPanel />
+          {#key appState.workspace.projectUri}
+            {#key appState.workspace.repository}
+              <GitPanel />
+            {/key}
+          {/key}
         {:else}
           <div class="p-4 space-y-2 animate-pulse">
             <div class="h-4 bg-muted rounded w-3/4"></div>
