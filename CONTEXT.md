@@ -33,6 +33,15 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Platform App**: A concrete application target (`apps/web`, `apps/desktop`) that instantiates the Core, injects platform-specific adapters (Storage, VCS), and mounts the UI Shell via an `<AppShell>` component.
 
 ## Extension Ecosystem
+- **Plugin**: An application feature with an explicit lifecycle that contributes behavior or presentation to np. Distinct from an Editor Extension, which changes editing behavior.
+- **Core Plugin**: A Plugin shipped with np rather than installed separately. Optional Core Plugins can be disabled while the basic editor remains usable. _Avoid_: external plugin, Core (when referring to a bundled feature rather than the headless application layer).
+- **Git Plugin**: The Core Plugin containing np's Git functionality. Its purpose is to make Git optional and exercise the Plugin model; it does not imply a parent VCS Plugin.
+- **Settings Namespace**: A plugin-owned section of the settings tree (for example `git` or `editor`), with its own schema and defaults. Setting names follow Zed's conventions wherever they fit.
+- **Transform**: A function a Plugin registers to describe its change to a shared registry. The host replays transforms in order from an empty initial value on every rebuild.
+- **Reload**: Rebuilding a registry from its current transforms, for example after a plugin refreshes its underlying data.
+- **Reactivation**: Dropping one plugin's transforms and running its new code after the plugin is added, edited, removed, enabled, or disabled, then rebuilding affected registries.
+- **Event**: A record that something happened, offered for observation only. Subscribers cannot mutate, veto, or fail the operation.
+- **Hook**: Participation in a running host operation through before/after phases. Before-hooks run sequentially in activation order and may modify inputs or cancel with a reason.
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
 - **UI Icon Pack (Product Icon Theme)**: A collection of icons representing application UI actions, controls, and navigation elements (e.g., Phosphor, Codicons).
 - **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., Catppuccin, Material, VS Code Icons).
