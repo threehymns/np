@@ -138,15 +138,41 @@ export class PluginHost implements PluginHostInterface {
 			const manifest = this.registrations.get(currentId)!.manifest;
 
 			if (manifest.dependsOn) {
-				for (const [requiredIface, requiredVer] of Object.entries(manifest.dependsOn)) {
-					const provider = interfaceProviders.get(requiredIface);
+				for (const [requiredKey, requiredVer] of Object.entries(manifest.dependsOn)) {
+					// Direct plugin-ID dependency takes precedence over interface names.
+					// This supports dependsOn entries like { 'plugin-b': 0 } where the
+					// key names another registered plugin (e.g. for cycle detection),
+					// while preserving interface resolution (e.g. { 'vcs': 0 }).
+					const directTarget = this.registrations.get(requiredKey);
+					if (directTarget) {
+						if (directTarget.manifest.version !== requiredVer) {
+							throw new InterfaceVersionMismatchError(
+								requiredKey,
+								currentId,
+								requiredVer,
+								requiredKey,
+								directTarget.manifest.version
+							);
+						}
+
+						adj.get(currentId)!.add(requiredKey);
+
+						if (!visitedForGraph.has(requiredKey)) {
+							visitedForGraph.add(requiredKey);
+							adj.set(requiredKey, new Set<string>());
+							queue.push(requiredKey);
+						}
+						continue;
+					}
+
+					const provider = interfaceProviders.get(requiredKey);
 					if (!provider) {
-						throw new MissingDependencyError(currentId, requiredIface, requiredVer);
+						throw new MissingDependencyError(currentId, requiredKey, requiredVer);
 					}
 
 					if (provider.version !== requiredVer) {
 						throw new InterfaceVersionMismatchError(
-							requiredIface,
+							requiredKey,
 							currentId,
 							requiredVer,
 							provider.pluginId,
@@ -323,22 +349,21 @@ export class PluginHost implements PluginHostInterface {
 			return;
 		}
 
-		// Find active plugins that depend on interfaces provided by this plugin (Cascade rule)
+		// Find active plugins that depend on this plugin, either via interfaces
+		// it provides or via a direct plugin-ID dependsOn entry (Cascade rule).
 		const manifest = this.getManifest(id)!;
 		const providedInterfaces = manifest.provides ? Object.keys(manifest.provides) : [];
 
-		if (providedInterfaces.length > 0) {
-			for (const otherId of this.activationOrder) {
-				if (otherId === id || !this.isPluginActive(otherId)) continue;
-				const otherManifest = this.getManifest(otherId)!;
-				if (otherManifest.dependsOn) {
-					const dependsOnThis = Object.keys(otherManifest.dependsOn).some((iface) =>
-						providedInterfaces.includes(iface)
-					);
-					if (dependsOnThis) {
-						// Cascade deactivate dependent first
-						await this.deactivate(otherId, `${otherManifest.name} was disabled because ${manifest.name} was disabled.`);
-					}
+		for (const otherId of [...this.activationOrder]) {
+			if (otherId === id || !this.isPluginActive(otherId)) continue;
+			const otherManifest = this.getManifest(otherId)!;
+			if (otherManifest.dependsOn) {
+				const dependsOnThis =
+					Object.hasOwn(otherManifest.dependsOn, id) ||
+					Object.keys(otherManifest.dependsOn).some((iface) => providedInterfaces.includes(iface));
+				if (dependsOnThis) {
+					// Cascade deactivate dependent first
+					await this.deactivate(otherId, `${otherManifest.name} was disabled because ${manifest.name} was disabled.`);
 				}
 			}
 		}
