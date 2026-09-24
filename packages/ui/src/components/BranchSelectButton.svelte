@@ -4,6 +4,7 @@
 	import { CheckIcon, GitBranchIcon } from "phosphor-svelte";
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
+	import * as Tooltip from './ui/tooltip';
 	import BranchSafetyModal from './BranchSafetyModal.svelte';
 	import type { RepositorySafetyReport } from '@np/core';
 	import { cn } from '@np/core';
@@ -66,29 +67,40 @@
 </script>
 
 {#if appState.workspace.hasRootPermission && appState.workspace.currentBranch}
+	<Tooltip.Provider delayDuration={400}>
 	<Popover.Root bind:open={open}>
-		<Popover.Trigger bind:ref={trigger}>
-			{#snippet child({ props })}
-				<Button
-					{...props}
-					type="button"
-					disabled={checking || workspace.projectMutationBusy}
-					aria-label={`Switch branch: ${workspace.currentBranch}`}
-					aria-busy={checking || workspace.projectMutationBusy}
-					title={workspace.currentBranch ?? undefined}
-					class={className}
-					variant="ghost"
-					size={size}
-				>
-					{#if checking || workspace.projectMutationBusy}
-						<div class="size-3 shrink-0 animate-spin border-2 border-current border-t-transparent rounded-full"></div>
-					{:else}
-						<GitBranchIcon />
-					{/if}
-					<span class="truncate">{appState.workspace.currentBranch}</span>
-				</Button>
-			{/snippet}
-		</Popover.Trigger>
+		<Tooltip.Root disabled={open}>
+			<Tooltip.Trigger>
+				{#snippet child({ props })}
+					<span {...props} class="inline-flex min-w-0">
+						<Popover.Trigger bind:ref={trigger}>
+							{#snippet child({ props: popoverProps })}
+								<Button
+									{...popoverProps}
+									type="button"
+									disabled={checking || workspace.projectMutationBusy}
+									aria-label={`Switch branch: ${workspace.currentBranch}`}
+									aria-busy={checking || workspace.projectMutationBusy}
+									class={className}
+									variant="ghost"
+									size={size}
+								>
+									{#if checking || workspace.projectMutationBusy}
+										<div class="size-3 shrink-0 animate-spin border-2 border-current border-t-transparent rounded-full"></div>
+									{:else}
+										<GitBranchIcon />
+									{/if}
+									<span class="truncate">{appState.workspace.currentBranch}</span>
+								</Button>
+							{/snippet}
+						</Popover.Trigger>
+					</span>
+				{/snippet}
+			</Tooltip.Trigger>
+			<Tooltip.Content side="bottom" align="start" class="text-[10px] px-2 py-1 max-w-xs break-all">
+				{workspace.currentBranch}
+			</Tooltip.Content>
+		</Tooltip.Root>
 		<Popover.Content
 			trapFocus={false}
 			onOpenAutoFocus={() => restoreFocus = false}
@@ -103,27 +115,37 @@
 				<Command.List class="px-1 py-1">
 					<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
 					{#each appState.workspace.branches as branch (branch)}
-						<Command.Item
-							value={branch}
-							aria-current={workspace.currentBranch === branch ? 'true' : undefined}
-							title={branch}
-							disabled={checking || workspace.projectMutationBusy}
-							onSelect={() => switchBranch(branch)}
-							class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
-						>
-							<div class="flex items-center gap-2 truncate">
-								<GitBranchIcon class="size-3 opacity-50" />
-								<span class="truncate">{branch}</span>
-							</div>
-							{#if appState.workspace.currentBranch === branch}
-								<CheckIcon class="size-3 opacity-50" />
-							{/if}
-						</Command.Item>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<Command.Item
+										{...props}
+										value={branch}
+										aria-current={workspace.currentBranch === branch ? 'true' : undefined}
+										disabled={checking || workspace.projectMutationBusy}
+										onSelect={() => switchBranch(branch)}
+										class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
+									>
+										<div class="flex items-center gap-2 truncate">
+											<GitBranchIcon class="size-3 opacity-50" />
+											<span class="truncate">{branch}</span>
+										</div>
+										{#if appState.workspace.currentBranch === branch}
+											<CheckIcon class="size-3 opacity-50" />
+										{/if}
+									</Command.Item>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="right" align="center" class="text-[10px] px-2 py-1 max-w-xs break-all">
+								{branch}
+							</Tooltip.Content>
+						</Tooltip.Root>
 					{/each}
 				</Command.List>
 			</Command.Root>
 		</Popover.Content>
 	</Popover.Root>
+	</Tooltip.Provider>
 {/if}
 
 {#if visiblePending}
