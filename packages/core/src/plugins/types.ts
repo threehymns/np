@@ -12,6 +12,7 @@ import type {
 	AfterSaveContext,
 	ActiveHookContext
 } from './hooks';
+import type { SettingNamespaceSchema, SettingSchemaTransform, SettingsRegistryLike } from './settings';
 
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
@@ -136,4 +137,16 @@ export interface PluginHostInterface {
 	isExecutingSaveHook(): boolean;
 	getActiveSaveHook(): ActiveHookContext | null;
 	checkSaveReentry(operation?: string, phase?: string): void;
+
+	// Shared settings registry (ADR 0012, ADR 0014). Generic contribution
+	// types only: plugins register schemas where they are implemented and
+	// the host replays transforms in order from an empty initial value.
+	readonly settings: SettingsRegistryLike;
+	registerSettingSchema(pluginId: string, schema: SettingNamespaceSchema): void;
+	registerSettingTransform(pluginId: string, transform: SettingSchemaTransform): void;
+	removePluginSettings(pluginId: string): void;
+	rebuildSettings(): void;
+	refreshSettings(): void;
+	getSettingSchema(namespace: string): SettingNamespaceSchema | undefined;
+	getSettingSchemas(): SettingNamespaceSchema[];
 }
