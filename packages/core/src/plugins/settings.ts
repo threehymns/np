@@ -1279,28 +1279,68 @@ export class SettingsManager {
 				typeof this.storedWorkspaceData[namespace] === 'object'
 			) {
 				delete this.storedWorkspaceData[namespace][key];
-				if (Object.keys(this.storedWorkspaceData[namespace]).length === 0) {
+				const namespaceEmpty = Object.keys(this.storedWorkspaceData[namespace]).length === 0;
+				if (namespaceEmpty) {
 					delete this.storedWorkspaceData[namespace];
 				}
 				this.explicitlyModifiedWorkspaceKeys.delete(`${namespace}.${key}`);
-				this.storedWorkspaceText =
-					Object.keys(this.storedWorkspaceData).length > 0
-						? JSON.stringify(this.storedWorkspaceData, null, 2)
-						: '';
+				if (this.storedWorkspaceText && this.storedWorkspaceText.trim()) {
+					try {
+						let next = applySettingEditToJsonc(this.storedWorkspaceText, [namespace, key], undefined);
+						if (namespaceEmpty) {
+							try {
+								next = applySettingEditToJsonc(next, [namespace], undefined);
+							} catch {
+								// Keep key-level edit when namespace removal is a no-op.
+							}
+						}
+						this.storedWorkspaceText = next;
+					} catch {
+						this.storedWorkspaceText =
+							Object.keys(this.storedWorkspaceData).length > 0
+								? JSON.stringify(this.storedWorkspaceData, null, 2)
+								: '';
+					}
+				} else {
+					this.storedWorkspaceText =
+						Object.keys(this.storedWorkspaceData).length > 0
+							? JSON.stringify(this.storedWorkspaceData, null, 2)
+							: '';
+				}
 				this.validateAll();
 				this.saveWorkspace().catch((e) => console.error('Failed to save workspace settings:', e));
 			}
 		} else {
 			if (this.storedRawData[namespace] && typeof this.storedRawData[namespace] === 'object') {
 				delete this.storedRawData[namespace][key];
-				if (Object.keys(this.storedRawData[namespace]).length === 0) {
+				const namespaceEmpty = Object.keys(this.storedRawData[namespace]).length === 0;
+				if (namespaceEmpty) {
 					delete this.storedRawData[namespace];
 				}
 				this.explicitlyModifiedKeys.delete(`${namespace}.${key}`);
-				this.storedRawText =
-					Object.keys(this.storedRawData).length > 0
-						? JSON.stringify(this.storedRawData, null, 2)
-						: '';
+				if (this.storedRawText && this.storedRawText.trim()) {
+					try {
+						let next = applySettingEditToJsonc(this.storedRawText, [namespace, key], undefined);
+						if (namespaceEmpty) {
+							try {
+								next = applySettingEditToJsonc(next, [namespace], undefined);
+							} catch {
+								// Keep key-level edit when namespace removal is a no-op.
+							}
+						}
+						this.storedRawText = next;
+					} catch {
+						this.storedRawText =
+							Object.keys(this.storedRawData).length > 0
+								? JSON.stringify(this.storedRawData, null, 2)
+								: '';
+					}
+				} else {
+					this.storedRawText =
+						Object.keys(this.storedRawData).length > 0
+							? JSON.stringify(this.storedRawData, null, 2)
+							: '';
+				}
 				this.validateAll();
 				this.save();
 			}
