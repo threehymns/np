@@ -49,6 +49,9 @@ const DEFAULTS = {
 	productIconThemeId: 'phosphor' as string,
 };
 
+/** Separate storage key for plugin enablement (app-scoped per ADR 0009: never workspace-overridden). */
+const PLUGIN_ENABLEMENT_KEY = 'np-plugin-enablement-v1';
+
 export class Preferences {
 	activeScope = $state<SettingScope>('user');
 	private _data = $state({ ...DEFAULTS });
@@ -204,6 +207,49 @@ export class Preferences {
 
 	get<T = any>(namespace: string, key: string, scope?: SettingScope): T {
 		return this.settings.get<T>(namespace, key, scope);
+	}
+
+	/**
+	 * Effective plugin enablement (ADR 0009: app-scoped configuration).
+	 * Returns the explicitly persisted toggle when the user ever changed
+	 * it, otherwise the manifest's `defaultEnabled`.
+	 */
+	isPluginEnabled(pluginId: string, defaultEnabled = false): boolean {
+		try {
+			const raw = this.storage.getItem(PLUGIN_ENABLEMENT_KEY);
+			if (!raw) return defaultEnabled;
+			const parsed: unknown = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>)[pluginId] === 'boolean') {
+				return (parsed as Record<string, boolean>)[pluginId];
+			}
+			return defaultEnabled;
+		} catch {
+			return defaultEnabled;
+		}
+	}
+
+	/**
+	 * Persists an explicit plugin enablement choice under its own storage
+	 * key, leaving every other stored namespace untouched (including
+	 * disabled-plugin settings, ADR 0014).
+	 */
+	setPluginEnabled(pluginId: string, enabled: boolean): void {
+		let map: Record<string, boolean> = {};
+		try {
+			const raw = this.storage.getItem(PLUGIN_ENABLEMENT_KEY);
+			if (raw) {
+				const parsed: unknown = JSON.parse(raw);
+				if (parsed && typeof parsed === 'object') map = { ...(parsed as Record<string, boolean>) };
+			}
+		} catch {
+			map = {};
+		}
+		map[pluginId] = enabled;
+		try {
+			this.storage.setItem(PLUGIN_ENABLEMENT_KEY, JSON.stringify(map));
+		} catch (e) {
+			console.error('Failed to save plugin enablement', e);
+		}
 	}
 
 	set<T = any>(namespace: string, key: string, value: T, scope: SettingScope = 'user'): void {

@@ -125,6 +125,13 @@ export interface PluginHostInterface {
 	isPluginActive(id: string): boolean;
 	getDeactivationReason(id: string): string | undefined;
 
+	/**
+	 * Lists active plugins that depend on the given plugin, directly or
+	 * transitively, in cascade order (dependents before dependencies).
+	 * Used to explain the disable cascade before it happens (ADR 0017).
+	 */
+	getActiveDependents(id: string): string[];
+
 	computeActivationOrder(pluginIds?: string[]): string[];
 
 	activate(id: string): Promise<void>;
