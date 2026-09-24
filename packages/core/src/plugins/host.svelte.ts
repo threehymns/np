@@ -8,6 +8,10 @@ import type {
 	PluginState
 } from './types';
 import {
+	DirectEditorViewAccessError,
+	RawTransactionDispatchError,
+	DocumentRevisionMismatchError,
+	DuplicateEditorContributionIdError,
 	DependencyCycleError,
 	DuplicatePluginIdError,
 	HookReentryError,
@@ -18,6 +22,18 @@ import {
 	SaveCancelledError,
 	UnsupportedPlatformError
 } from './errors';
+import type { DocumentSession } from "../document.svelte";
+import {
+	createEditorContributionCompartments,
+	applyDocumentEditOperation,
+	type EditorContribution,
+	type EditorContributionEntry,
+	type EditorContributionType,
+	type ApplyDocumentEditOptions,
+	type DocumentEditResult,
+	type AttachedEditor,
+	type EditorCompartments
+} from "./editor";
 import {
 	CORE_COMMANDS_OWNER,
 	createAddCommandsTransform,
@@ -95,6 +111,12 @@ export class PluginHost implements PluginHostInterface {
 	private afterSaveHooks: AfterSaveHookEntry[] = [];
 	private activeSaveHook: ActiveHookContext | null = null;
 	lastHookError: { pluginId: string; error: unknown } | null = null;
+
+	// Editor contribution contract (ADR 0016)
+	readonly editorCompartments: EditorCompartments = createEditorContributionCompartments();
+	private editorContributions: EditorContributionEntry[] = [];
+	private attachedEditors = new Map<string, AttachedEditor>();
+	private documentSessions = new Map<string, DocumentSession>();
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -209,6 +231,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginEvents(id);
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);
+		this.removePluginEditorContributions(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -1177,6 +1200,112 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginEvents(id);
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);
+		this.removePluginEditorContributions(id);
+	}
+
+	// -------------------------------------------------------------------------
+	// Editor contribution & mediated contract (ADR 0016)
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Direct view access from plugin code is strictly rejected (ADR 0016).
+	 */
+	get view(): never {
+		throw new DirectEditorViewAccessError("host.view");
+	}
+
+	get editorView(): never {
+		throw new DirectEditorViewAccessError("host.editorView");
+	}
+
+	getActiveEditorView(): never {
+		throw new DirectEditorViewAccessError("host.getActiveEditorView()");
+	}
+
+	/**
+	 * Direct raw transaction dispatch is strictly rejected (ADR 0016).
+	 */
+	dispatch(): never {
+		throw new RawTransactionDispatchError(
+			"Direct dispatch on PluginHost is rejected. Use host.applyDocumentEdit() instead."
+		);
+	}
+
+	dispatchTransaction(): never {
+		throw new RawTransactionDispatchError(
+			"Direct dispatchTransaction on PluginHost is rejected. Use host.applyDocumentEdit() instead."
+		);
+	}
+
+	registerEditorContribution(pluginId: string, contribution: EditorContribution): void {
+		this.registerEditorContributions(pluginId, [contribution]);
+	}
+
+	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void {
+		for (const incoming of contributions) {
+			const existing = this.editorContributions.find((e) => e.contribution.id === incoming.id);
+			if (existing) {
+				if (existing.pluginId !== pluginId) {
+					throw new DuplicateEditorContributionIdError(incoming.id, existing.pluginId, pluginId);
+				}
+				// Same plugin re-registering: replace with fresh contribution
+				this.editorContributions = this.editorContributions.filter((e) => e.contribution.id !== incoming.id);
+			}
+			this.editorContributions.push({ pluginId, contribution: incoming });
+		}
+	}
+
+	removePluginEditorContributions(pluginId: string): void {
+		this.editorContributions = this.editorContributions.filter((e) => e.pluginId !== pluginId);
+	}
+
+	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[] {
+		if (!type) return [...this.editorContributions];
+		return this.editorContributions.filter((e) => e.contribution.type === type);
+	}
+
+	/**
+	 * Internal host shell hook to bind an active editor view to a document session.
+	 * NEVER exposed to plugin manifests or public plugin APIs.
+	 */
+	attachEditorInternal(docId: string, editor: AttachedEditor, language?: string): void {
+		this.attachedEditors.set(docId, editor);
+	}
+
+	detachEditorInternal(docId: string): void {
+		this.attachedEditors.delete(docId);
+	}
+
+	getAttachedEditorInternal(docId: string): AttachedEditor | undefined {
+		return this.attachedEditors.get(docId);
+	}
+
+	registerDocumentSession(doc: DocumentSession): void {
+		this.documentSessions.set(doc.id, doc);
+	}
+
+	unregisterDocumentSession(docId: string): void {
+		this.documentSessions.delete(docId);
+	}
+
+	getDocumentSession(docId: string): DocumentSession | undefined {
+		return this.documentSessions.get(docId);
+	}
+
+	/**
+	 * Document text changes go through a host operation applied as one
+	 * undo transaction with revision checks (ADR 0016).
+	 */
+	applyDocumentEdit(options: ApplyDocumentEditOptions): DocumentEditResult {
+		let targetDoc = options.doc;
+		if (!targetDoc && options.documentId) {
+			targetDoc = this.documentSessions.get(options.documentId);
+		}
+		if (!targetDoc) {
+			throw new Error("Target document must be specified in ApplyDocumentEditOptions (doc or documentId).");
+		}
+		const attached = this.attachedEditors.get(targetDoc.id);
+		return applyDocumentEditOperation(options, targetDoc, attached);
 	}
 
 	/**

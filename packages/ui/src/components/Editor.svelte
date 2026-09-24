@@ -78,6 +78,9 @@
 					wrapCompartment,
 					languageCompartment,
 					vimCompartment,
+					gutterCompartment: appState.plugins?.editorCompartments?.gutterCompartment,
+					decorationsCompartment: appState.plugins?.editorCompartments?.decorationsCompartment,
+					keybindingsCompartment: appState.plugins?.editorCompartments?.keybindingsCompartment,
 					wrap,
 					vimEnabled: untrack(() => appState.prefs.vimMode),
 					initialLanguageExtensions: initialExtensions,
@@ -133,6 +136,11 @@
 				parent: editorEl,
 			});
 
+			appState.plugins?.attachEditorInternal(doc.id, {
+				getState: () => view!.state,
+				dispatch: (spec) => view!.dispatch(spec as any)
+			}, untrack(() => doc.language));
+
 			if (doc.scrollPosition) {
 				view.scrollDOM.scrollTop = doc.scrollPosition.top;
 				view.scrollDOM.scrollLeft = doc.scrollPosition.left;
@@ -147,6 +155,7 @@
 
 		return () => {
 			isDestroyed = true;
+			appState.plugins?.detachEditorInternal(doc.id);
 			if (view) {
 				doc.editorState = view.state.toJSON({ history: historyField });
 				doc.scrollPosition = {
