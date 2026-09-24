@@ -1281,6 +1281,34 @@ export class SettingsManager {
 	}
 
 	/**
+	 * Removes a setting key from a JSONC document with a targeted edit so
+	 * comments, formatting, and unrelated namespaces survive. Returns null
+	 * when the document is blank or the edit cannot be applied, letting the
+	 * caller preserve the existing empty-document behavior.
+	 */
+	private applyUnsetToJsonc(
+		text: string,
+		namespace: string,
+		key: string,
+		namespaceEmpty: boolean
+	): string | null {
+		if (!text || !text.trim()) return null;
+		try {
+			let next = applySettingEditToJsonc(text, [namespace, key], undefined);
+			if (namespaceEmpty) {
+				try {
+					next = applySettingEditToJsonc(next, [namespace], undefined);
+				} catch {
+					// Namespace removal is a no-op; keep the key-level edit.
+				}
+			}
+			return next;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
 	 * Removes a setting override from the specified scope so it falls back to the parent scope.
 	 */
 	unset(namespace: string, key: string, scope: SettingScope = 'workspace'): void {
@@ -1295,29 +1323,9 @@ export class SettingsManager {
 					delete this.storedWorkspaceData[namespace];
 				}
 				this.explicitlyModifiedWorkspaceKeys.delete(`${namespace}.${key}`);
-				if (this.storedWorkspaceText && this.storedWorkspaceText.trim()) {
-					try {
-						let next = applySettingEditToJsonc(this.storedWorkspaceText, [namespace, key], undefined);
-						if (namespaceEmpty) {
-							try {
-								next = applySettingEditToJsonc(next, [namespace], undefined);
-							} catch {
-								// Keep key-level edit when namespace removal is a no-op.
-							}
-						}
-						this.storedWorkspaceText = next;
-					} catch {
-						this.storedWorkspaceText =
-							Object.keys(this.storedWorkspaceData).length > 0
-								? JSON.stringify(this.storedWorkspaceData, null, 2)
-								: '';
-					}
-				} else {
-					this.storedWorkspaceText =
-						Object.keys(this.storedWorkspaceData).length > 0
-							? JSON.stringify(this.storedWorkspaceData, null, 2)
-							: '';
-				}
+				this.storedWorkspaceText =
+					this.applyUnsetToJsonc(this.storedWorkspaceText, namespace, key, namespaceEmpty) ??
+					this.serializeStoredWorkspaceData();
 				this.validateAll();
 				this.saveWorkspace().catch((e) => console.error('Failed to save workspace settings:', e));
 			}
@@ -1329,29 +1337,9 @@ export class SettingsManager {
 					delete this.storedRawData[namespace];
 				}
 				this.explicitlyModifiedKeys.delete(`${namespace}.${key}`);
-				if (this.storedRawText && this.storedRawText.trim()) {
-					try {
-						let next = applySettingEditToJsonc(this.storedRawText, [namespace, key], undefined);
-						if (namespaceEmpty) {
-							try {
-								next = applySettingEditToJsonc(next, [namespace], undefined);
-							} catch {
-								// Keep key-level edit when namespace removal is a no-op.
-							}
-						}
-						this.storedRawText = next;
-					} catch {
-						this.storedRawText =
-							Object.keys(this.storedRawData).length > 0
-								? JSON.stringify(this.storedRawData, null, 2)
-								: '';
-					}
-				} else {
-					this.storedRawText =
-						Object.keys(this.storedRawData).length > 0
-							? JSON.stringify(this.storedRawData, null, 2)
-							: '';
-				}
+				this.storedRawText =
+					this.applyUnsetToJsonc(this.storedRawText, namespace, key, namespaceEmpty) ??
+					this.serializeStoredRawData();
 				this.validateAll();
 				this.save();
 			}
@@ -1377,6 +1365,24 @@ export class SettingsManager {
 	 */
 	getWorkspaceText(): string {
 		return this.storedWorkspaceText;
+	}
+
+	/**
+	 * Serializes the stored user document for blank-document fallback.
+	 */
+	private serializeStoredRawData(): string {
+		return Object.keys(this.storedRawData).length > 0
+			? JSON.stringify(this.storedRawData, null, 2)
+			: '';
+	}
+
+	/**
+	 * Serializes the stored workspace document for blank-document fallback.
+	 */
+	private serializeStoredWorkspaceData(): string {
+		return Object.keys(this.storedWorkspaceData).length > 0
+			? JSON.stringify(this.storedWorkspaceData, null, 2)
+			: '';
 	}
 
 	/**
