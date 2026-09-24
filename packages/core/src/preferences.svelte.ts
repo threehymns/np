@@ -1,7 +1,5 @@
 import {
 	SettingsManager,
-	EDITOR_SCHEMA,
-	UI_SCHEMA,
 	FileWorkspaceSettingsStorage,
 	type ResolvedSetting,
 	type SettingDiagnostic,
@@ -70,9 +68,6 @@ export class Preferences {
 
 	/** Underlying settings manager providing namespaces, schema validation, and diagnostics */
 	readonly settings: SettingsManager;
-	private storedRawData: Record<string, any> = {};
-	private explicitlyModifiedKeys = new Set<string>();
-	private explicitlyModifiedNamespaces = new Set<string>();
 
 	constructor(storage: PreferenceStorage = new LocalStorageAdapter()) {
 		this.storage = storage;
@@ -92,7 +87,6 @@ export class Preferences {
 	set wordWrap(val: boolean) {
 		if (this._data.wordWrap === val) return;
 		this._data.wordWrap = val;
-		this.explicitlyModifiedKeys.add('editor.word_wrap');
 		this.syncToSettingsAndSave('editor', 'word_wrap', val);
 	}
 
@@ -100,7 +94,6 @@ export class Preferences {
 	set statusBar(val: boolean) {
 		if (this._data.statusBar === val) return;
 		this._data.statusBar = val;
-		this.explicitlyModifiedKeys.add('ui.status_bar');
 		this.syncToSettingsAndSave('ui', 'status_bar', val);
 	}
 
@@ -108,7 +101,6 @@ export class Preferences {
 	set vimMode(val: boolean) {
 		if (this._data.vimMode === val) return;
 		this._data.vimMode = val;
-		this.explicitlyModifiedKeys.add('editor.vim_mode');
 		this.syncToSettingsAndSave('editor', 'vim_mode', val);
 	}
 
@@ -116,7 +108,6 @@ export class Preferences {
 	set vimSyncClipboard(val: boolean) {
 		if (this._data.vimSyncClipboard === val) return;
 		this._data.vimSyncClipboard = val;
-		this.explicitlyModifiedKeys.add('editor.vim_sync_clipboard');
 		this.syncToSettingsAndSave('editor', 'vim_sync_clipboard', val);
 	}
 
@@ -124,7 +115,6 @@ export class Preferences {
 	set tabSize(val: number) {
 		if (this._data.tabSize === val) return;
 		this._data.tabSize = val;
-		this.explicitlyModifiedKeys.add('editor.tab_size');
 		this.syncToSettingsAndSave('editor', 'tab_size', val);
 	}
 
@@ -132,7 +122,6 @@ export class Preferences {
 	set lineNumbers(val: boolean) {
 		if (this._data.lineNumbers === val) return;
 		this._data.lineNumbers = val;
-		this.explicitlyModifiedKeys.add('editor.line_numbers');
 		this.syncToSettingsAndSave('editor', 'line_numbers', val);
 	}
 
@@ -140,7 +129,6 @@ export class Preferences {
 	set zoom(val: number) {
 		if (this._data.zoom === val) return;
 		this._data.zoom = val;
-		this.explicitlyModifiedKeys.add('ui.zoom');
 		this.syncToSettingsAndSave('ui', 'zoom', val);
 	}
 
@@ -148,7 +136,6 @@ export class Preferences {
 	set theme(val: Theme) {
 		if (this._data.theme === val) return;
 		this._data.theme = val;
-		this.explicitlyModifiedKeys.add('ui.theme');
 		this.syncToSettingsAndSave('ui', 'theme', val);
 	}
 
@@ -156,7 +143,6 @@ export class Preferences {
 	set appearanceMode(val: AppearanceMode) {
 		if (this._data.appearanceMode === val) return;
 		this._data.appearanceMode = val;
-		this.explicitlyModifiedKeys.add('ui.appearance_mode');
 		this.syncToSettingsAndSave('ui', 'appearance_mode', val);
 	}
 
@@ -164,7 +150,6 @@ export class Preferences {
 	set accentColor(val: string) {
 		if (this._data.accentColor === val) return;
 		this._data.accentColor = val;
-		this.explicitlyModifiedKeys.add('ui.accent_color');
 		this.syncToSettingsAndSave('ui', 'accent_color', val);
 	}
 
@@ -172,7 +157,6 @@ export class Preferences {
 	set sidebarVisible(val: boolean) {
 		if (this._data.sidebarVisible === val) return;
 		this._data.sidebarVisible = val;
-		this.explicitlyModifiedKeys.add('ui.sidebar_visible');
 		this.syncToSettingsAndSave('ui', 'sidebar_visible', val);
 	}
 
@@ -180,7 +164,6 @@ export class Preferences {
 	set sidebarWidth(val: number) {
 		if (this._data.sidebarWidth === val) return;
 		this._data.sidebarWidth = val;
-		this.explicitlyModifiedKeys.add('ui.sidebar_width');
 		this.syncToSettingsAndSave('ui', 'sidebar_width', val);
 	}
 
@@ -188,7 +171,6 @@ export class Preferences {
 	set fileIconThemeId(val: string) {
 		if (this._data.fileIconThemeId === val) return;
 		this._data.fileIconThemeId = val;
-		this.explicitlyModifiedKeys.add('ui.file_icon_theme_id');
 		this.onIconThemeChange?.('file', val);
 		this.syncToSettingsAndSave('ui', 'file_icon_theme_id', val);
 	}
@@ -197,7 +179,6 @@ export class Preferences {
 	set productIconThemeId(val: string) {
 		if (this._data.productIconThemeId === val) return;
 		this._data.productIconThemeId = val;
-		this.explicitlyModifiedKeys.add('ui.product_icon_theme_id');
 		this.onIconThemeChange?.('product', val);
 		this.syncToSettingsAndSave('ui', 'product_icon_theme_id', val);
 	}
@@ -269,25 +250,15 @@ export class Preferences {
 		}
 
 		// Persist once through SettingsManager.set (comment-preserving JSONC
-		// edit, single storage write). Do not subsequently overwrite the
-		// settings document via save(), which would lose comments and
-		// materialize inherited values.
-		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
-		this.explicitlyModifiedNamespaces.add(namespace);
+		// edit, single storage write). The document is never rewritten
+		// wholesale afterwards, which would lose comments and materialize
+		// inherited values.
 		this.settings.set(namespace, key, value, 'user');
-		this.storedRawData = this.settings.getStoredDocument();
 		this.refreshEffectiveData();
 	}
 
 	unset(namespace: string, key: string, scope: SettingScope = 'workspace'): void {
 		this.settings.unset(namespace, key, scope);
-		if (scope === 'user') {
-			this.explicitlyModifiedKeys.delete(`${namespace}.${key}`);
-			this.storedRawData = this.settings.getStoredDocument();
-			if (!this.storedRawData[namespace]) {
-				this.explicitlyModifiedNamespaces.delete(namespace);
-			}
-		}
 		this.refreshEffectiveData();
 	}
 
@@ -351,40 +322,12 @@ export class Preferences {
 		}
 	}
 
-	private updateDataFromNamespacedKey(namespace: string, key: string, value: any): void {
-		if (namespace === 'editor') {
-			if (key === 'word_wrap' || key === 'wordWrap') this._data.wordWrap = value;
-			else if (key === 'vim_mode' || key === 'vimMode') this._data.vimMode = value;
-			else if (key === 'vim_sync_clipboard' || key === 'vimSyncClipboard') this._data.vimSyncClipboard = value;
-			else if (key === 'tab_size' || key === 'tabSize') this._data.tabSize = value;
-			else if (key === 'line_numbers' || key === 'lineNumbers') this._data.lineNumbers = value;
-		} else if (namespace === 'ui') {
-			if (key === 'theme') this._data.theme = value;
-			else if (key === 'appearance_mode' || key === 'appearanceMode') this._data.appearanceMode = value;
-			else if (key === 'accent_color' || key === 'accentColor') this._data.accentColor = value;
-			else if (key === 'zoom') this._data.zoom = value;
-			else if (key === 'status_bar' || key === 'statusBar') this._data.statusBar = value;
-			else if (key === 'sidebar_visible' || key === 'sidebarVisible') this._data.sidebarVisible = value;
-			else if (key === 'sidebar_width' || key === 'sidebarWidth') this._data.sidebarWidth = value;
-			else if (key === 'file_icon_theme_id' || key === 'fileIconThemeId') {
-				this._data.fileIconThemeId = value;
-				this.onIconThemeChange?.('file', value);
-			} else if (key === 'product_icon_theme_id' || key === 'productIconThemeId') {
-				this._data.productIconThemeId = value;
-				this.onIconThemeChange?.('product', value);
-			}
-		}
-	}
-
 	private syncToSettingsAndSave(namespace: string, key: string, value: any): void {
 		if (!this.isInitialized || this.isRestoring) return;
 
-		// Single comment-preserving write through SettingsManager; mirror the
-		// stored document instead of overwriting it via save().
-		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
-		this.explicitlyModifiedNamespaces.add(namespace);
+		// Single comment-preserving write through SettingsManager; it owns the
+		// stored document, so there is no second copy to keep in sync here.
 		this.settings.set(namespace, key, value, 'user');
-		this.storedRawData = this.settings.getStoredDocument();
 	}
 
 	private resetToDefaults() {
@@ -403,15 +346,9 @@ export class Preferences {
 		this.resetToDefaults();
 		this.settings.loadFromText(raw);
 
-		if (!raw) {
-			this.storedRawData = {};
-			return;
-		}
+		if (!raw) return;
 
 		try {
-			// Synchronize _data from settings resolver
-			this.storedRawData = this.settings.getStoredDocument();
-
 			// Resolve editor settings
 			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
 			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
@@ -451,51 +388,6 @@ export class Preferences {
 			this.applyData(content);
 		} finally {
 			this.isRestoring = false;
-		}
-	}
-
-	private buildStoragePayload(): Record<string, any> {
-		// Preserve stored raw data (unknown namespaces, disabled-plugin
-		// settings) and add only explicitly modified keys using their user-set
-		// values. Unmodified keys are never filled from _data, and flat aliases
-		// are never written.
-		const payload: Record<string, any> = { ...this.storedRawData };
-		for (const ns of Object.keys(payload)) {
-			if (payload[ns] && typeof payload[ns] === 'object' && !Array.isArray(payload[ns])) {
-				payload[ns] = { ...payload[ns] };
-			}
-		}
-
-		for (const fullKey of this.explicitlyModifiedKeys) {
-			const dot = fullKey.indexOf('.');
-			if (dot === -1) continue;
-			const namespace = fullKey.slice(0, dot);
-			const key = fullKey.slice(dot + 1);
-			let userValue: unknown;
-			try {
-				userValue = this.settings.get(namespace, key, 'user');
-			} catch {
-				continue;
-			}
-			if (userValue === undefined) continue;
-			if (typeof payload[namespace] !== 'object' || payload[namespace] === null) {
-				payload[namespace] = {};
-			}
-			payload[namespace][key] = userValue;
-		}
-
-		return payload;
-	}
-
-	private save() {
-		if (!this.isInitialized || this.isRestoring) return;
-		try {
-			const payload = this.buildStoragePayload();
-			const serialized = JSON.stringify(payload);
-			this.storage.setItem(this.storageKey, serialized);
-			this.settings.loadFromText(serialized);
-		} catch (e) {
-			console.error('Failed to save preferences', e);
 		}
 	}
 
