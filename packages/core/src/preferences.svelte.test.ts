@@ -118,7 +118,10 @@ describe("Preferences lifecycle and hardening", () => {
 		prefs.wordWrap = false;
 		expect(storage.setItemCalls.length).toBe(1);
 		let savedData = JSON.parse(storage.setItemCalls[0][1]);
-		expect(savedData.wordWrap).toBe(false);
+		expect(savedData.editor?.word_wrap).toBe(false);
+		// Flat aliases are not materialized; unmodified keys stay absent.
+		expect(savedData.wordWrap).toBeUndefined();
+		expect(savedData.ui).toBeUndefined();
 
 		// Setting to false again should NOT trigger storage write:
 		prefs.wordWrap = false;
@@ -132,7 +135,8 @@ describe("Preferences lifecycle and hardening", () => {
 		prefs.zoom = 110;
 		expect(storage.setItemCalls.length).toBe(2);
 		savedData = JSON.parse(storage.setItemCalls[1][1]);
-		expect(savedData.zoom).toBe(110);
+		expect(savedData.ui?.zoom).toBe(110);
+		expect(savedData.zoom).toBeUndefined();
 
 		// Setting zoom to 110 again -> no write:
 		prefs.zoom = 110;

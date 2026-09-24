@@ -259,10 +259,14 @@ export class Preferences {
 			return;
 		}
 
+		// Persist once through SettingsManager.set (comment-preserving JSONC
+		// edit, single storage write). Do not subsequently overwrite the
+		// settings document via save(), which would lose comments and
+		// materialize inherited values.
 		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
 		this.explicitlyModifiedNamespaces.add(namespace);
 		this.settings.set(namespace, key, value, 'user');
-		this.syncToSettingsAndSave(namespace, key, value);
+		this.storedRawData = this.settings.getStoredDocument();
 		this.refreshEffectiveData();
 	}
 
@@ -270,14 +274,10 @@ export class Preferences {
 		this.settings.unset(namespace, key, scope);
 		if (scope === 'user') {
 			this.explicitlyModifiedKeys.delete(`${namespace}.${key}`);
-			if (this.storedRawData[namespace] && typeof this.storedRawData[namespace] === 'object') {
-				delete this.storedRawData[namespace][key];
-				if (Object.keys(this.storedRawData[namespace]).length === 0) {
-					delete this.storedRawData[namespace];
-					this.explicitlyModifiedNamespaces.delete(namespace);
-				}
+			this.storedRawData = this.settings.getStoredDocument();
+			if (!this.storedRawData[namespace]) {
+				this.explicitlyModifiedNamespaces.delete(namespace);
 			}
-			this.save();
 		}
 		this.refreshEffectiveData();
 	}
@@ -370,16 +370,12 @@ export class Preferences {
 	private syncToSettingsAndSave(namespace: string, key: string, value: any): void {
 		if (!this.isInitialized || this.isRestoring) return;
 
+		// Single comment-preserving write through SettingsManager; mirror the
+		// stored document instead of overwriting it via save().
 		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
 		this.explicitlyModifiedNamespaces.add(namespace);
-
-		// Update stored raw data
-		if (typeof this.storedRawData[namespace] !== 'object' || this.storedRawData[namespace] === null) {
-			this.storedRawData[namespace] = {};
-		}
-		this.storedRawData[namespace][key] = value;
-
-		this.save();
+		this.settings.set(namespace, key, value, 'user');
+		this.storedRawData = this.settings.getStoredDocument();
 	}
 
 	private resetToDefaults() {
@@ -450,48 +446,40 @@ export class Preferences {
 	}
 
 	private buildStoragePayload(): Record<string, any> {
-		// Start with stored raw data to preserve unknown namespaces and disabled plugins
+		// Preserve stored raw data (unknown namespaces, comments live in text,
+		// disabled-plugin settings) and add only explicitly modified keys
+		// using their user-set values. Unmodified keys are never filled from
+		// _data, and flat aliases are never written unless the user explicitly
+		// set a flat key (tracked as `flat:<key>`).
 		const payload: Record<string, any> = { ...this.storedRawData };
-
-		const hasEditorNs = ('editor' in this.storedRawData) || this.explicitlyModifiedNamespaces.has('editor');
-		if (hasEditorNs) {
-			const editorNs = typeof payload.editor === 'object' && payload.editor !== null ? { ...payload.editor } : {};
-			editorNs.tab_size = this.explicitlyModifiedKeys.has('editor.tab_size') ? this._data.tabSize : (editorNs.tab_size ?? this._data.tabSize);
-			editorNs.line_numbers = this.explicitlyModifiedKeys.has('editor.line_numbers') ? this._data.lineNumbers : (editorNs.line_numbers ?? this._data.lineNumbers);
-			editorNs.word_wrap = this.explicitlyModifiedKeys.has('editor.word_wrap') ? this._data.wordWrap : (editorNs.word_wrap ?? this._data.wordWrap);
-			editorNs.vim_mode = this.explicitlyModifiedKeys.has('editor.vim_mode') ? this._data.vimMode : (editorNs.vim_mode ?? this._data.vimMode);
-			editorNs.vim_sync_clipboard = this.explicitlyModifiedKeys.has('editor.vim_sync_clipboard') ? this._data.vimSyncClipboard : (editorNs.vim_sync_clipboard ?? this._data.vimSyncClipboard);
-			payload.editor = editorNs;
+		for (const ns of Object.keys(payload)) {
+			if (payload[ns] && typeof payload[ns] === 'object' && !Array.isArray(payload[ns])) {
+				payload[ns] = { ...payload[ns] };
+			}
 		}
 
-		const hasUiNs = ('ui' in this.storedRawData) || this.explicitlyModifiedNamespaces.has('ui');
-		if (hasUiNs) {
-			const uiNs = typeof payload.ui === 'object' && payload.ui !== null ? { ...payload.ui } : {};
-			uiNs.theme = this.explicitlyModifiedKeys.has('ui.theme') ? this._data.theme : (uiNs.theme ?? this._data.theme);
-			uiNs.appearance_mode = this.explicitlyModifiedKeys.has('ui.appearance_mode') ? this._data.appearanceMode : (uiNs.appearance_mode ?? this._data.appearanceMode);
-			uiNs.accent_color = this.explicitlyModifiedKeys.has('ui.accent_color') ? this._data.accentColor : (uiNs.accent_color ?? this._data.accentColor);
-			uiNs.zoom = this.explicitlyModifiedKeys.has('ui.zoom') ? this._data.zoom : (uiNs.zoom ?? this._data.zoom);
-			uiNs.status_bar = this.explicitlyModifiedKeys.has('ui.status_bar') ? this._data.statusBar : (uiNs.status_bar ?? this._data.statusBar);
-			uiNs.sidebar_visible = this.explicitlyModifiedKeys.has('ui.sidebar_visible') ? this._data.sidebarVisible : (uiNs.sidebar_visible ?? this._data.sidebarVisible);
-			uiNs.sidebar_width = this.explicitlyModifiedKeys.has('ui.sidebar_width') ? this._data.sidebarWidth : (uiNs.sidebar_width ?? this._data.sidebarWidth);
-			uiNs.file_icon_theme_id = this.explicitlyModifiedKeys.has('ui.file_icon_theme_id') ? this._data.fileIconThemeId : (uiNs.file_icon_theme_id ?? this._data.fileIconThemeId);
-			uiNs.product_icon_theme_id = this.explicitlyModifiedKeys.has('ui.product_icon_theme_id') ? this._data.productIconThemeId : (uiNs.product_icon_theme_id ?? this._data.productIconThemeId);
-			payload.ui = uiNs;
+		for (const fullKey of this.explicitlyModifiedKeys) {
+			if (fullKey.startsWith('flat:')) {
+				const flatKey = fullKey.slice('flat:'.length);
+				(payload as Record<string, any>)[flatKey] = (this._data as Record<string, any>)[flatKey];
+				continue;
+			}
+			const dot = fullKey.indexOf('.');
+			if (dot === -1) continue;
+			const namespace = fullKey.slice(0, dot);
+			const key = fullKey.slice(dot + 1);
+			let userValue: unknown;
+			try {
+				userValue = this.settings.get(namespace, key, 'user');
+			} catch {
+				continue;
+			}
+			if (userValue === undefined) continue;
+			if (typeof payload[namespace] !== 'object' || payload[namespace] === null) {
+				payload[namespace] = {};
+			}
+			payload[namespace][key] = userValue;
 		}
-
-		// Backward-compatible flat aliases at root level
-		payload.wordWrap = this._data.wordWrap;
-		payload.statusBar = this._data.statusBar;
-		payload.vimMode = this._data.vimMode;
-		payload.vimSyncClipboard = this._data.vimSyncClipboard;
-		payload.zoom = this._data.zoom;
-		payload.theme = this._data.theme;
-		payload.appearanceMode = this._data.appearanceMode;
-		payload.accentColor = this._data.accentColor;
-		payload.sidebarVisible = this._data.sidebarVisible;
-		payload.sidebarWidth = this._data.sidebarWidth;
-		payload.fileIconThemeId = this._data.fileIconThemeId;
-		payload.productIconThemeId = this._data.productIconThemeId;
 
 		return payload;
 	}
