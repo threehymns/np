@@ -99,18 +99,12 @@ export function checkManifestSource(source: string, filename = 'manifest.ts'): M
 			}
 
 			// Clause is explicitly type-only: import type { ... } from '...';
+			// Only statement-level `import type` is exempt. Inline `type`
+			// specifiers (import { type Foo }), default bindings, and empty
+			// imports still emit a runtime import shell under
+			// verbatimModuleSyntax and must remain subject to the check.
 			if (node.importClause.isTypeOnly) {
 				return;
-			}
-
-			// Check individual named imports: import { type Foo, Bar } from '...';
-			if (node.importClause.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
-				const elements = node.importClause.namedBindings.elements;
-				const nonTypeElements = elements.filter((el) => !el.isTypeOnly);
-				if (nonTypeElements.length === 0) {
-					// All specifiers are type-only
-					return;
-				}
 			}
 
 			// If it's a value import, check if it's heavy or implementation
@@ -122,6 +116,24 @@ export function checkManifestSource(source: string, filename = 'manifest.ts'): M
 					moduleSpecifier: specifier,
 					reason: check.reason
 				});
+			}
+		}
+
+		// Check import-equals declarations: import foo = require('./foo');
+		// External-module references load the implementation at runtime.
+		if (ts.isImportEqualsDeclaration(node)) {
+			if (!node.isTypeOnly && ts.isExternalModuleReference(node.moduleReference)) {
+				const expr = node.moduleReference.expression;
+				const specifier = ts.isStringLiteral(expr) ? expr.text : '<dynamic>';
+				const check = isHeavyOrImplementationModule(specifier);
+				if (check.isViolation) {
+					violations.push({
+						file: filename,
+						line: getLineNumber(node.getStart()),
+						moduleSpecifier: specifier,
+						reason: `import equals declaration for "${specifier}" is forbidden in manifest modules. ${check.reason}`
+					});
+				}
 			}
 		}
 
