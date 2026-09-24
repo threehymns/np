@@ -782,11 +782,16 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	registerSidebarPanels(pluginId: string, panels: readonly SidebarPanelContribution[]): void {
-		this.sidebarPanelTransforms.push({
+		const entry = {
 			pluginId,
 			transform: createAddSidebarPanelsTransform(panels, pluginId)
-		});
-		this.rebuildUIContributions();
+		};
+		const nextTransforms = [...this.sidebarPanelTransforms, entry];
+		const nextPanelMap = rebuildSidebarPanels(this.orderTransformsByOwner(nextTransforms));
+		const nextStatusMap = rebuildStatusBarItems(this.orderedStatusBarItemTransforms());
+		this.sidebarPanelTransforms = nextTransforms;
+		this.sidebarPanelsMap = nextPanelMap;
+		this.statusBarItemsMap = nextStatusMap;
 	}
 
 	removePluginSidebarPanels(pluginId: string): void {
@@ -810,11 +815,16 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	registerStatusBarItems(pluginId: string, items: readonly StatusBarItemContribution[]): void {
-		this.statusBarItemTransforms.push({
+		const entry = {
 			pluginId,
 			transform: createAddStatusBarItemsTransform(items, pluginId)
-		});
-		this.rebuildUIContributions();
+		};
+		const nextTransforms = [...this.statusBarItemTransforms, entry];
+		const nextStatusMap = rebuildStatusBarItems(this.orderTransformsByOwner(nextTransforms));
+		const nextPanelMap = rebuildSidebarPanels(this.orderedSidebarPanelTransforms());
+		this.statusBarItemTransforms = nextTransforms;
+		this.statusBarItemsMap = nextStatusMap;
+		this.sidebarPanelsMap = nextPanelMap;
 	}
 
 	removePluginStatusBarItems(pluginId: string): void {
@@ -849,8 +859,10 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	rebuildUIContributions(): void {
-		this.sidebarPanelsMap = rebuildSidebarPanels(this.orderedSidebarPanelTransforms());
-		this.statusBarItemsMap = rebuildStatusBarItems(this.orderedStatusBarItemTransforms());
+		const nextPanelMap = rebuildSidebarPanels(this.orderedSidebarPanelTransforms());
+		const nextStatusMap = rebuildStatusBarItems(this.orderedStatusBarItemTransforms());
+		this.sidebarPanelsMap = nextPanelMap;
+		this.statusBarItemsMap = nextStatusMap;
 	}
 
 	private orderedSidebarPanelTransforms(): SidebarPanelTransformEntry[] {

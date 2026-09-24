@@ -344,11 +344,14 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 	}
 
 	registerSidebarPanels(pluginId: string, panels: readonly SidebarPanelContribution[]): void {
-		this.panelTransforms.push({
+		const entry = {
 			pluginId,
 			transform: createAddSidebarPanelsTransform(panels, pluginId)
-		});
-		this.rebuild();
+		};
+		const nextTransforms = [...this.panelTransforms, entry];
+		const nextMap = rebuildSidebarPanels(nextTransforms);
+		this.panelTransforms = nextTransforms;
+		this.panelMap = nextMap;
 	}
 
 	removePluginSidebarPanels(pluginId: string): void {
@@ -372,11 +375,14 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 	}
 
 	registerStatusBarItems(pluginId: string, items: readonly StatusBarItemContribution[]): void {
-		this.statusTransforms.push({
+		const entry = {
 			pluginId,
 			transform: createAddStatusBarItemsTransform(items, pluginId)
-		});
-		this.rebuild();
+		};
+		const nextTransforms = [...this.statusTransforms, entry];
+		const nextMap = rebuildStatusBarItems(nextTransforms);
+		this.statusTransforms = nextTransforms;
+		this.statusMap = nextMap;
 	}
 
 	removePluginStatusBarItems(pluginId: string): void {
@@ -398,8 +404,10 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 	}
 
 	rebuild(): void {
-		this.panelMap = rebuildSidebarPanels(this.panelTransforms);
-		this.statusMap = rebuildStatusBarItems(this.statusTransforms);
+		const nextPanelMap = rebuildSidebarPanels(this.panelTransforms);
+		const nextStatusMap = rebuildStatusBarItems(this.statusTransforms);
+		this.panelMap = nextPanelMap;
+		this.statusMap = nextStatusMap;
 	}
 
 	removePlugin(pluginId: string): void {
