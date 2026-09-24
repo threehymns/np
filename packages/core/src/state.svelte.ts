@@ -111,6 +111,12 @@ export class AppState {
 		return this.plugins.commands;
 	}
 	settingsOpen = $state(false);
+	/**
+	 * Actionable startup failure from the plugin dependency check
+	 * (cycle / missing interface / version mismatch, ADR 0017), surfaced
+	 * in the Plugins settings page instead of failing silently.
+	 */
+	pluginStartupError = $state<string | null>(null);
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
@@ -160,8 +166,11 @@ export class AppState {
 		this.plugins.register(helloRegistration);
 		// Bundled feature plugins (e.g. version control) register through the
 		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
-		// of feature names. Hello stays registered but inactive until plugin
-		// enablement UI lands (a later spec step).
+		// of feature names. Hello stays registered but inactive until the
+		// user enables it in the Plugins settings page (#204).
+		// Plugin-contributed settings schemas flow into the generated
+		// settings UI (#199) through the shared host registry.
+		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
@@ -186,22 +195,35 @@ export class AppState {
 	}
 
 	async init() {
-		// Activate bundled plugins marked default-on before session restore
-		// so per-workspace lifecycles are plugin-owned from the first open.
-		// Generic: no feature names here; manifests declare `defaultEnabled`.
-		// Guarded for custom hosts that never registered them.
+		// Cycle/interface check first (ADR 0017): a broken dependency graph
+		// surfaces as one actionable error in the Plugins settings page
+		// instead of partial per-plugin failures.
 		try {
-			for (const manifest of this.plugins.getManifests()) {
-				if (manifest.defaultEnabled && !this.plugins.isPluginActive(manifest.id)) {
-					try {
-						await this.plugins.activate(manifest.id);
-					} catch (e) {
-						console.error(`[AppState] Failed to activate plugin "${manifest.id}":`, e);
+			this.plugins.computeActivationOrder();
+		} catch (e) {
+			this.pluginStartupError = (e as Error).message;
+			console.error('[AppState] Plugin dependency check failed:', e);
+		}
+
+		// Activate enabled plugins before session restore so per-workspace
+		// lifecycles are plugin-owned from the first open. Generic: no
+		// feature names here; persisted toggles win, otherwise manifests
+		// declare `defaultEnabled`. Guarded for custom hosts that never
+		// registered them.
+		if (!this.pluginStartupError) {
+			try {
+				for (const manifest of this.plugins.getManifests()) {
+					if (this.isPluginEnabled(manifest.id) && !this.plugins.isPluginActive(manifest.id)) {
+						try {
+							await this.plugins.activate(manifest.id);
+						} catch (e) {
+							console.error(`[AppState] Failed to activate plugin "${manifest.id}":`, e);
+						}
 					}
 				}
+			} catch (e) {
+				console.error('[AppState] Failed to activate default plugins:', e);
 			}
-		} catch (e) {
-			console.error('[AppState] Failed to activate default plugins:', e);
 		}
 
 		try {
@@ -214,6 +236,43 @@ export class AppState {
 			this.icons.initialize().catch((e) => {
 				console.error('[AppState] Failed to initialize icons:', e);
 			});
+		}
+	}
+
+	/**
+	 * Effective enablement for a plugin: the persisted user toggle wins,
+	 * otherwise the manifest's `defaultEnabled` (ADR 0009: app-scoped).
+	 */
+	isPluginEnabled(id: string): boolean {
+		const manifest = this.plugins.getManifest(id);
+		return this.prefs.isPluginEnabled(id, manifest?.defaultEnabled ?? false);
+	}
+
+	/**
+	 * Live enable/disable without restart (ADR 0008): activates or
+	 * deactivates through the host, then persists the choice. On disable,
+	 * cascade-deactivated dependents are also persisted as off so they
+	 * never auto re-enable (ADR 0017).
+	 */
+	async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+		if (enabled) {
+			await this.plugins.activate(id);
+			this.prefs.setPluginEnabled(id, true);
+			return;
+		}
+		const activeBefore = new Set(
+			this.plugins.getManifests().map((m) => m.id).filter((pid) => this.plugins.isPluginActive(pid))
+		);
+		const manifest = this.plugins.getManifest(id);
+		await this.plugins.deactivate(
+			id,
+			manifest ? `${manifest.name} disabled in settings.` : 'Disabled in settings.'
+		);
+		this.prefs.setPluginEnabled(id, false);
+		for (const pid of activeBefore) {
+			if (pid !== id && !this.plugins.isPluginActive(pid)) {
+				this.prefs.setPluginEnabled(pid, false);
+			}
 		}
 	}
 

@@ -275,6 +275,49 @@ export class PluginHost implements PluginHostInterface {
 		return this.deactivationReasons.get(id);
 	}
 
+	/**
+	 * Lists active plugins that depend on the given plugin, directly or
+	 * transitively, in cascade order (dependents before dependencies).
+	 * A dependent matches either via a direct plugin-ID dependsOn entry or
+	 * via an interface this plugin provides (Cascade rule, ADR 0017).
+	 */
+	getActiveDependents(id: string): string[] {
+		const result: string[] = [];
+		const visited = new Set<string>([id]);
+		const queue: string[] = [id];
+		while (queue.length > 0) {
+			const current = queue.shift()!;
+			for (const dependent of this.directActiveDependents(current)) {
+				if (!visited.has(dependent)) {
+					visited.add(dependent);
+					result.push(dependent);
+					queue.push(dependent);
+				}
+			}
+		}
+		return result;
+	}
+
+	private directActiveDependents(id: string): string[] {
+		const manifest = this.getManifest(id);
+		if (!manifest) return [];
+		const providedInterfaces = manifest.provides ? Object.keys(manifest.provides) : [];
+		const dependents: string[] = [];
+		for (const otherId of this.activationOrder) {
+			if (otherId === id || !this.isPluginActive(otherId)) continue;
+			const otherManifest = this.getManifest(otherId);
+			if (otherManifest?.dependsOn) {
+				const dependsOnThis =
+					Object.hasOwn(otherManifest.dependsOn, id) ||
+					Object.keys(otherManifest.dependsOn).some((iface) => providedInterfaces.includes(iface));
+				if (dependsOnThis) {
+					dependents.push(otherId);
+				}
+			}
+		}
+		return dependents;
+	}
+
 	// --------------------------------------------------------------------------
 	// Command Registry Methods (ADR 0012, ADR 0015)
 	// --------------------------------------------------------------------------
@@ -1222,6 +1265,7 @@ export class PluginHost implements PluginHostInterface {
 			// were excluded from intermediate rebuilds. Rebuild now that it
 			// is active to materialize its contributions in order.
 			this.rebuildCommands();
+			this.rebuildSettings();
 			this.rebuildUIContributions();
 		} catch (error) {
 			this.states.set(id, 'error');
@@ -1242,23 +1286,17 @@ export class PluginHost implements PluginHostInterface {
 			return;
 		}
 
-		// Find active plugins that depend on this plugin, either via interfaces
-		// it provides or via a direct plugin-ID dependsOn entry (Cascade rule).
+		// Cascade: unload active dependents first (ADR 0017). Each recursive
+		// call handles its own transitive dependents, so already-unloaded
+		// plugins are skipped.
 		const manifest = this.getManifest(id)!;
-		const providedInterfaces = manifest.provides ? Object.keys(manifest.provides) : [];
-
-		for (const otherId of [...this.activationOrder]) {
-			if (otherId === id || !this.isPluginActive(otherId)) continue;
-			const otherManifest = this.getManifest(otherId)!;
-			if (otherManifest.dependsOn) {
-				const dependsOnThis =
-					Object.hasOwn(otherManifest.dependsOn, id) ||
-					Object.keys(otherManifest.dependsOn).some((iface) => providedInterfaces.includes(iface));
-				if (dependsOnThis) {
-					// Cascade deactivate dependent first
-					await this.deactivate(otherId, `${otherManifest.name} is off because ${manifest.name} is off.`);
-				}
-			}
+		for (const dependentId of this.getActiveDependents(id)) {
+			if (!this.isPluginActive(dependentId)) continue;
+			const dependentManifest = this.getManifest(dependentId)!;
+			await this.deactivate(
+				dependentId,
+				`${dependentManifest.name} is off because ${manifest.name} is off.`
+			);
 		}
 
 		this.states.set(id, 'deactivating');
