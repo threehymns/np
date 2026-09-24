@@ -63,7 +63,10 @@ export class GitInitController {
 		this.error = null;
 
 		try {
-			const success = await appState.workspace.initializeRepository();
+			// Repository initialization is owned by the Git Core Plugin (#202):
+			// the UI drives it through the shared `git.init` command rather
+			// than a workspace method.
+			const success = await appState.commands.execute('git.init');
 			if (currentGen !== this.generation) {
 				return false;
 			}

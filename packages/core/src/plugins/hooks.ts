@@ -1,4 +1,5 @@
 import type { DocumentSession } from '../document.svelte';
+import type { FileOrigin } from '../storage';
 
 export const CORE_HOOKS_OWNER = 'core';
 
@@ -60,4 +61,32 @@ export interface ActiveHookContext {
 	readonly pluginId: string;
 	readonly operation: string;
 	readonly phase: string;
+}
+
+/**
+ * Context passed to workspace-opened hooks (#202, ADR 0013 extension).
+ * The workspace passes itself opaquely: the host never names the
+ * workspace type, and each consumer casts to the type it needs. The
+ * origin is the folder the workspace just opened with permission granted.
+ */
+export interface WorkspaceOpenedContext {
+	readonly origin: FileOrigin;
+	readonly workspace: unknown;
+}
+
+/**
+ * Hook function executed after a workspace opens a folder, awaited by the
+ * workspace before it proceeds (tree scan, session restore). Lets feature
+ * plugins own per-workspace resources (repository detection, watchers)
+ * without hardwired core paths. Errors propagate to the folder-open
+ * caller, matching the previous inline-probe behavior; hooks of inactive
+ * plugins are skipped.
+ */
+export type WorkspaceOpenedHook = (
+	context: WorkspaceOpenedContext
+) => Promise<void> | void;
+
+export interface WorkspaceOpenedHookEntry {
+	readonly pluginId: string;
+	readonly hook: WorkspaceOpenedHook;
 }

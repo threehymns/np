@@ -4,7 +4,7 @@ import { expect } from 'bun:test';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { Text } from '../../packages/core/node_modules/@codemirror/state';
 import { Chunk } from '../../packages/core/node_modules/@codemirror/merge';
-import { applyHunkAction, type HunkRange } from '../../packages/core/src/commands.svelte';
+import { applyHunkAction, type HunkRange } from '../../packages/core/src/plugins/git/commands';
 import { Repository } from '../../packages/core/src/project/repository.svelte';
 import type { AppState } from '../../packages/core/src/state.svelte';
 import type { FileOrigin } from '@np/core/storage';
@@ -59,15 +59,14 @@ const isomorphicEngine: Engine = {
 function createTestContext(r: TestRepo, adapter: VCSAdapter) {
 	const repoOrigin = origin(r);
 	const repository = new Repository(repoOrigin, () => adapter);
+	// Hunk actions take the Git plugin's command context (#202).
 	const appState = {
-		workspace: {
-			repository
+		getWorkspace: () => ({ repository }),
+		alert: async (msg: string) => {
+			throw new Error(`Unexpected alert dialog: ${msg}`);
 		},
-		dialogService: {
-			alert: async (msg: string) => {
-				throw new Error(`Unexpected alert dialog: ${msg}`);
-			}
-		}
+		confirm: async () => false,
+		getDiffNavigator: () => undefined
 	} as unknown as AppState;
 	return { repository, appState };
 }
