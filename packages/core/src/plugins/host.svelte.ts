@@ -16,6 +16,15 @@ import {
 	PluginNotFoundError,
 	UnsupportedPlatformError
 } from './errors';
+import {
+	CORE_COMMANDS_OWNER,
+	createAddCommandsTransform,
+	rebuildCommands,
+	type CommandRegistryLike,
+	type CommandTransform,
+	type CommandTransformEntry,
+	type PluginCommand
+} from './commands';
 
 export class PluginHost implements PluginHostInterface {
 	readonly hostVersion = 0;
@@ -27,6 +36,29 @@ export class PluginHost implements PluginHostInterface {
 	private deactivationReasons = $state<Map<string, string>>(new Map());
 	private cleanups = new Map<string, PluginCleanup>();
 	private activationOrder = $state<string[]>([]);
+
+	// Shared command registry: replayable transforms + materialized view.
+	// Plugins contribute via registerCommands/registerCommandTransform during
+	// setup; the host replays in order from an empty initial value on every
+	// rebuild (ADR 0012). Palette and menus are views over this state.
+	private commandTransforms: CommandTransformEntry[] = [];
+	private commandMap = $state<Map<string, PluginCommand>>(new Map());
+
+	/**
+	 * Command registry facade with the same shape as the standalone
+	 * CommandRegistry, so `AppState.commands` stays a drop-in view.
+	 */
+	readonly commands: CommandRegistryLike = {
+		registerTransform: (pluginId, transform) => this.registerCommandTransform(pluginId, transform),
+		registerCommands: (pluginId, commands) => this.registerCommands(pluginId, commands),
+		removePlugin: (pluginId) => this.removePluginCommands(pluginId),
+		rebuild: () => this.rebuildCommands(),
+		refresh: () => this.refreshCommands(),
+		get: (id) => this.getCommand(id),
+		getAll: () => this.getCommands(),
+		getByCategory: (category) => this.getCommandsByCategory(category),
+		execute: (id, ...args) => this.executeCommand(id, ...args)
+	};
 
 	constructor(options: PluginHostOptions = {}) {
 		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
@@ -68,6 +100,7 @@ export class PluginHost implements PluginHostInterface {
 		this.registrations.delete(id);
 		this.states.delete(id);
 		this.deactivationReasons.delete(id);
+		this.removePluginCommands(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -95,6 +128,107 @@ export class PluginHost implements PluginHostInterface {
 
 	getDeactivationReason(id: string): string | undefined {
 		return this.deactivationReasons.get(id);
+	}
+
+	/**
+	 * Contributes a command transform for one owner and rebuilds by
+	 * replaying all transforms in order from an empty initial value.
+	 * Called by plugins during setup (ADR 0015: commands register where
+	 * they are implemented).
+	 */
+	registerCommandTransform(pluginId: string, transform: CommandTransform): void {
+		this.commandTransforms.push({ pluginId, transform });
+		this.rebuildCommands();
+	}
+
+	/**
+	 * Convenience for the common additive case: appends commands to the
+	 * accumulated state during replay.
+	 */
+	registerCommands(pluginId: string, commands: readonly PluginCommand[]): void {
+		this.registerCommandTransform(pluginId, createAddCommandsTransform(commands));
+	}
+
+	/**
+	 * Drops one owner's transforms and rebuilds without them
+	 * (Reactivation). Runs automatically on deactivate/unregister.
+	 */
+	removePluginCommands(pluginId: string): void {
+		const kept = this.commandTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.commandTransforms.length) {
+			this.commandTransforms = kept;
+			this.rebuildCommands();
+		}
+	}
+
+	/**
+	 * Replays current transforms from an empty initial value.
+	 * Idempotent: same transforms always yield the same registry.
+	 */
+	rebuildCommands(): void {
+		this.commandMap = rebuildCommands(this.orderedCommandTransforms());
+	}
+
+	/** Reload alias for rebuild (Reload terminology). */
+	refreshCommands(): void {
+		this.rebuildCommands();
+	}
+
+	getCommand(id: string): PluginCommand | undefined {
+		return this.commandMap.get(id);
+	}
+
+	getCommands(): PluginCommand[] {
+		return Array.from(this.commandMap.values());
+	}
+
+	getCommandsByCategory(category: string): PluginCommand[] {
+		return this.getCommands().filter((command) => command.category === category);
+	}
+
+	executeCommand(id: string, ...args: any[]): any {
+		const command = this.getCommand(id);
+		if (command && (!command.isEnabled || command.isEnabled())) {
+			return command.action(...args);
+		}
+	}
+
+	/**
+	 * Orders transform owners deterministically: built-in core first, then
+	 * active plugins in activation order, then any remaining owners
+	 * alphabetically. Registered-but-inactive owners are excluded so a
+	 * missed disposal can never leak commands.
+	 */
+	private orderedCommandTransforms(): CommandTransformEntry[] {
+		const byOwner = new Map<string, CommandTransformEntry[]>();
+		for (const entry of this.commandTransforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) {
+				list.push(entry);
+			} else {
+				byOwner.set(entry.pluginId, [entry]);
+			}
+		}
+
+		const orderedOwners: string[] = [];
+		if (byOwner.has(CORE_COMMANDS_OWNER)) {
+			orderedOwners.push(CORE_COMMANDS_OWNER);
+		}
+		for (const id of this.activationOrder) {
+			if (byOwner.has(id) && !orderedOwners.includes(id)) {
+				orderedOwners.push(id);
+			}
+		}
+		for (const id of [...byOwner.keys()].sort()) {
+			if (!orderedOwners.includes(id)) {
+				orderedOwners.push(id);
+			}
+		}
+
+		const included = orderedOwners.filter(
+			(id) => id === CORE_COMMANDS_OWNER || !this.registrations.has(id) || this.isPluginActive(id)
+		);
+		return included.flatMap((id) => byOwner.get(id)!);
 	}
 
 	/**
@@ -330,6 +464,10 @@ export class PluginHost implements PluginHostInterface {
 			if (!this.activationOrder.includes(id)) {
 				this.activationOrder.push(id);
 			}
+			// Setup ran while this plugin was 'activating', so its transforms
+			// were excluded from intermediate rebuilds. Rebuild now that it
+			// is active to materialize its contributions in order.
+			this.rebuildCommands();
 		} catch (error) {
 			this.states.set(id, 'error');
 			throw new PluginActivationError(id, error);
@@ -385,6 +523,7 @@ export class PluginHost implements PluginHostInterface {
 		this.states.set(id, 'inactive');
 		this.deactivationReasons.set(id, reason);
 		this.activationOrder = this.activationOrder.filter((item) => item !== id);
+		this.removePluginCommands(id);
 	}
 
 	/**
