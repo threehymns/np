@@ -408,6 +408,44 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			errorSpy.mockRestore();
 		});
 
+		it('serializes concurrent independent saves instead of rejecting them as hook re-entry', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage({ '/a.md': '', '/b.md': '' });
+			const persistence = new MemorySessionPersistence();
+			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
+
+			let enteredHook = false;
+			let releaseHook!: () => void;
+			const gate = new Promise<void>((resolve) => (releaseHook = resolve));
+			host.registerBeforeSaveHook('slow-saver', async () => {
+				enteredHook = true;
+				await gate;
+			});
+
+			const originA: FileOrigin = { scheme: 'file', path: '/a.md', name: 'a.md' };
+			const docA = new DocumentSession(storage, '', originA);
+			docA.content = 'A';
+
+			const first = workspace.saveDocument(docA);
+			// Let the first save reach (and suspend inside) its beforeSave hook.
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(enteredHook).toBe(true);
+
+			const originB: FileOrigin = { scheme: 'file', path: '/b.md', name: 'b.md' };
+			const docB = new DocumentSession(storage, '', originB);
+			docB.content = 'B';
+
+			// The independent save must wait, not throw HookReentryError.
+			const second = workspace.saveDocument(docB);
+			releaseHook();
+
+			const [firstResult, secondResult] = await Promise.all([first, second]);
+			expect(firstResult).toBe(true);
+			expect(secondResult).toBe(true);
+			expect(docA.content).toBe('A');
+			expect(docB.content).toBe('B');
+		});
+
 		it('flows repository refresh on save through the Git plugin afterSave hook with no behavior change', async () => {
 			const host = new PluginHost();
 			const { gitRegistration } = await import('./git/registration');

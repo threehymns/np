@@ -22,7 +22,6 @@ import {
 	SaveCancelledError,
 	UnsupportedPlatformError
 } from './errors';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type { DocumentSession } from "../document.svelte";
 import {
 	createEditorContributionCompartments,
@@ -114,8 +113,11 @@ export class PluginHost implements PluginHostInterface {
 	private beforeSaveHooks: BeforeSaveHookEntry[] = [];
 	private afterSaveHooks: AfterSaveHookEntry[] = [];
 	private activeSaveHook: ActiveHookContext | null = null;
-	private activeSaveId: symbol | null = null;
-	private saveIdStorage = new AsyncLocalStorage<symbol>();
+	// True only while a hook is executing synchronously; cleared as soon as
+	// the hook first yields. Re-entry from the same save's hook is detected
+	// here, while an independent concurrent save (issued from another task
+	// while the hook is suspended) is serialized by saveQueue instead.
+	private hookExecutingSync = false;
 	private saveQueue: Promise<void> = Promise.resolve();
 	lastHookError: { pluginId: string; error: unknown } | null = null;
 
@@ -543,17 +545,11 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	checkSaveReentry(operation = 'saveDocument', phase = 'beforeSave hook'): void {
-		if (!this.activeSaveHook) return;
-		// Per-save context: only reject re-entry from the same save's hook.
-		// A concurrent independent save runs in a different async context
-		// (different save ID or no save ID) and must wait via the save queue
-		// instead of being misidentified as hook re-entry.
-		if (this.activeSaveId !== null) {
-			const currentSaveId = this.saveIdStorage.getStore();
-			if (currentSaveId !== this.activeSaveId) {
-				return;
-			}
-		}
+		// Only reject a call made re-entrantly from the same save's hook,
+		// detected by the hook running synchronously on the current stack. A
+		// concurrent independent save is issued from another task while the
+		// hook is suspended and is serialized by runSaveExclusive instead.
+		if (!this.activeSaveHook || !this.hookExecutingSync) return;
 		throw new HookReentryError(
 			this.activeSaveHook.pluginId,
 			operation,
@@ -576,11 +572,41 @@ export class PluginHost implements PluginHostInterface {
 		});
 		this.saveQueue = prev.then(() => current);
 		await prev;
-		const saveId = Symbol('save');
 		try {
-			return await this.saveIdStorage.run(saveId, fn);
+			return await fn();
 		} finally {
 			release();
+		}
+	}
+
+	/**
+	 * Invokes a save hook, marking synchronous execution so re-entry from
+	 * within the hook is detectable, and releasing that mark as soon as the
+	 * hook yields so concurrent saves wait rather than being rejected.
+	 */
+	private async invokeSaveHook<T>(
+		pluginId: string,
+		phase: string,
+		invoke: () => T | Promise<T>
+	): Promise<T> {
+		this.activeSaveHook = { pluginId, operation: 'saveDocument', phase };
+		this.hookExecutingSync = true;
+		let result: T | Promise<T>;
+		try {
+			result = invoke();
+		} catch (error) {
+			this.hookExecutingSync = false;
+			this.activeSaveHook = null;
+			throw error;
+		}
+		queueMicrotask(() => {
+			this.hookExecutingSync = false;
+		});
+		try {
+			return await result;
+		} finally {
+			this.hookExecutingSync = false;
+			this.activeSaveHook = null;
 		}
 	}
 
@@ -593,18 +619,14 @@ export class PluginHost implements PluginHostInterface {
 		this.checkSaveReentry('saveDocument', 'beforeSave hook');
 
 		const ordered = this.getOrderedBeforeSaveHooks();
-		const saveId = this.saveIdStorage.getStore() ?? null;
 
 		for (const entry of ordered) {
-			this.activeSaveHook = {
-				pluginId: entry.pluginId,
-				operation: 'saveDocument',
-				phase: 'beforeSave hook'
-			};
-			this.activeSaveId = saveId;
-
 			try {
-				const result = await entry.hook(context);
+				const result = await this.invokeSaveHook(
+					entry.pluginId,
+					'beforeSave hook',
+					() => entry.hook(context)
+				);
 				if (result && typeof result === 'object' && result.cancel) {
 					return {
 						cancel: true,
@@ -620,9 +642,6 @@ export class PluginHost implements PluginHostInterface {
 				}
 				this.lastHookError = { pluginId: entry.pluginId, error };
 				console.error(`[PluginHost] Error in beforeSave hook for plugin "${entry.pluginId}":`, error);
-			} finally {
-				this.activeSaveHook = null;
-				this.activeSaveId = null;
 			}
 		}
 
@@ -638,24 +657,17 @@ export class PluginHost implements PluginHostInterface {
 	 */
 	async runAfterSave(context: AfterSaveContext): Promise<void> {
 		const ordered = this.getOrderedAfterSaveHooks();
-		const saveId = this.saveIdStorage.getStore() ?? null;
 
 		for (const entry of ordered) {
-			this.activeSaveHook = {
-				pluginId: entry.pluginId,
-				operation: 'saveDocument',
-				phase: 'afterSave hook'
-			};
-			this.activeSaveId = saveId;
-
 			try {
-				await entry.hook(context);
+				await this.invokeSaveHook(
+					entry.pluginId,
+					'afterSave hook',
+					() => entry.hook(context)
+				);
 			} catch (error) {
 				this.lastHookError = { pluginId: entry.pluginId, error };
 				console.error(`[PluginHost] Error in afterSave hook for plugin "${entry.pluginId}":`, error);
-			} finally {
-				this.activeSaveHook = null;
-				this.activeSaveId = null;
 			}
 		}
 	}
