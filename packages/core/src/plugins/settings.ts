@@ -856,6 +856,12 @@ export interface SettingsManagerOptions {
 	schemaRegistry?: SettingsRegistryLike;
 	initialSchemas?: readonly SettingNamespaceSchema[];
 	onDiagnosticsChange?: (diagnostics: readonly SettingDiagnostic[]) => void;
+	/**
+	 * Notified after any mutation that changes stored values, overrides, or
+	 * diagnostics (set, unset, load*, validateAll). Lets reactive consumers
+	 * (e.g. Preferences) expose a version signal the UI can depend on.
+	 */
+	onChange?: () => void;
 }
 
 /**
@@ -877,6 +883,7 @@ export class SettingsManager {
 	private explicitlyModifiedKeys = new Set<string>();
 	private explicitlyModifiedWorkspaceKeys = new Set<string>();
 	private onDiagnosticsChange?: (diagnostics: readonly SettingDiagnostic[]) => void;
+	private onChange?: () => void;
 
 	readonly resolver: SettingsResolver;
 
@@ -886,6 +893,7 @@ export class SettingsManager {
 		this.workspaceStorage = options.workspaceStorage;
 		this.schemaRegistry = options.schemaRegistry;
 		this.onDiagnosticsChange = options.onDiagnosticsChange;
+		this.onChange = options.onChange;
 
 		this.resolver = new SettingsResolver(
 			(ns) => this.getSchema(ns),
@@ -1042,6 +1050,7 @@ export class SettingsManager {
 				syntaxDiag
 			];
 			this.onDiagnosticsChange?.(this.currentDiagnostics);
+			this.onChange?.();
 			return;
 		}
 
@@ -1085,6 +1094,7 @@ export class SettingsManager {
 				syntaxDiag
 			];
 			this.onDiagnosticsChange?.(this.currentDiagnostics);
+			this.onChange?.();
 			return;
 		}
 
@@ -1192,6 +1202,7 @@ export class SettingsManager {
 
 		this.currentDiagnostics = diagnostics;
 		this.onDiagnosticsChange?.(this.currentDiagnostics);
+		this.onChange?.();
 		return diagnostics;
 	}
 

@@ -452,3 +452,29 @@ describe('Settings schema registry lifecycle (host-owned)', () => {
 		expect(host.getSettingSchema('alpha')?.properties.enabled.default).toBe(false);
 	});
 });
+
+describe('Settings observability (onChange) for reactive consumers', () => {
+	it('notifies on set, unset, load, and validate so UI can refresh derived state', () => {
+		const storage = new MockStorage({
+			'np-prefs-v2': JSON.stringify({ editor: { tab_size: 4 } })
+		});
+		let changes = 0;
+		const manager = new SettingsManager({ storage, onChange: () => changes++ });
+
+		const before = changes;
+		manager.set('editor', 'tab_size', 8, 'user');
+		expect(changes).toBeGreaterThan(before);
+
+		const afterSet = changes;
+		manager.unset('editor', 'tab_size', 'user');
+		expect(changes).toBeGreaterThan(afterSet);
+
+		const afterUnset = changes;
+		manager.loadFromText(JSON.stringify({ editor: { line_numbers: false } }));
+		expect(changes).toBeGreaterThan(afterUnset);
+
+		const afterLoad = changes;
+		manager.validateAll();
+		expect(changes).toBeGreaterThan(afterLoad);
+	});
+});

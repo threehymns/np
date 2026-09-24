@@ -286,4 +286,17 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(events).toEqual([{ type: "file", id: "phosphor" }]);
 		expect(storage.setItemCalls.length).toBe(0);
 	});
+
+	it("bumps settingsVersion when the underlying settings manager mutates", () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+
+		const before = prefs.settingsVersion;
+		prefs.settings.set("editor", "tab_size", 8, "user");
+		expect(prefs.settingsVersion).toBeGreaterThan(before);
+
+		const afterSet = prefs.settingsVersion;
+		prefs.settings.unset("editor", "tab_size", "user");
+		expect(prefs.settingsVersion).toBeGreaterThan(afterSet);
+	});
 });

@@ -20,18 +20,29 @@
 
 	const appState = useAppState();
 
-	const resolved = $derived(appState.prefs.settings.resolve(namespace, keyName));
-	const hasOverride = $derived(appState.prefs.hasWorkspaceOverride
-		? (scope === 'workspace' ? appState.prefs.hasWorkspaceOverride(namespace, keyName) : appState.prefs.settings.hasOverride(namespace, keyName, 'user'))
-		: appState.prefs.settings.hasOverride(namespace, keyName, scope));
+	// Reactive version bumped by SettingsManager on every mutation, so edits
+	// refresh resolved/hasOverride/diagnostics without remounting the modal.
+	const settingsVersion = $derived(appState.prefs.settingsVersion);
+
+	const resolved = $derived.by(() => {
+		settingsVersion;
+		return appState.prefs.settings.resolve(namespace, keyName);
+	});
+	const hasOverride = $derived.by(() => {
+		settingsVersion;
+		return appState.prefs.hasWorkspaceOverride
+			? (scope === 'workspace' ? appState.prefs.hasWorkspaceOverride(namespace, keyName) : appState.prefs.settings.hasOverride(namespace, keyName, 'user'))
+			: appState.prefs.settings.hasOverride(namespace, keyName, scope);
+	});
 
 	const isScopeAllowed = $derived(!schema.scope || schema.scope.includes(scope));
 
-	const diagnostics = $derived(
-		appState.prefs.settings.getDiagnostics(scope).filter(
+	const diagnostics = $derived.by(() => {
+		settingsVersion;
+		return appState.prefs.settings.getDiagnostics(scope).filter(
 			(d) => d.namespace === namespace && d.key === keyName
-		)
-	);
+		);
+	});
 
 	const effectiveValue = $derived(resolved.value);
 	const provenance = $derived(resolved.provenance);

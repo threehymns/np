@@ -55,6 +55,12 @@ const PLUGIN_ENABLEMENT_KEY = 'np-plugin-enablement-v1';
 export class Preferences {
 	activeScope = $state<SettingScope>('user');
 	private _data = $state({ ...DEFAULTS });
+	/**
+	 * Reactive version bumped by the SettingsManager on every mutation
+	 * (set, unset, load*, validateAll). UI that renders resolved values or
+	 * diagnostics reads this so it refreshes without remounting.
+	 */
+	settingsVersion = $state(0);
 	onIconThemeChange?: (type: 'file' | 'product', id: string) => void;
 
 	private storage: PreferenceStorage;
@@ -72,7 +78,10 @@ export class Preferences {
 		this.storage = storage;
 		this.settings = new SettingsManager({
 			storage,
-			storageKey: this.storageKey
+			storageKey: this.storageKey,
+			onChange: () => {
+				this.settingsVersion++;
+			}
 		});
 
 		this.reload();
