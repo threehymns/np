@@ -414,11 +414,11 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
 
-			let enteredHook = false;
+			let hookRuns = 0;
 			let releaseHook!: () => void;
 			const gate = new Promise<void>((resolve) => (releaseHook = resolve));
 			host.registerBeforeSaveHook('slow-saver', async () => {
-				enteredHook = true;
+				hookRuns++;
 				await gate;
 			});
 
@@ -429,19 +429,33 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const first = workspace.saveDocument(docA);
 			// Let the first save reach (and suspend inside) its beforeSave hook.
 			await new Promise((resolve) => setTimeout(resolve, 10));
-			expect(enteredHook).toBe(true);
+			expect(hookRuns).toBe(1);
 
 			const originB: FileOrigin = { scheme: 'file', path: '/b.md', name: 'b.md' };
 			const docB = new DocumentSession(storage, '', originB);
 			docB.content = 'B';
 
 			// The independent save must wait, not throw HookReentryError.
-			const second = workspace.saveDocument(docB);
-			releaseHook();
+			let secondSettled = false;
+			const second = workspace.saveDocument(docB).then((result) => {
+				secondSettled = true;
+				return result;
+			});
+
+			try {
+				// The first hook is still blocked, so the second save must not
+				// have advanced into its own hook or settled yet.
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				expect(secondSettled).toBe(false);
+				expect(hookRuns).toBe(1);
+			} finally {
+				releaseHook();
+			}
 
 			const [firstResult, secondResult] = await Promise.all([first, second]);
 			expect(firstResult).toBe(true);
 			expect(secondResult).toBe(true);
+			expect(hookRuns).toBe(2);
 			expect(docA.content).toBe('A');
 			expect(docB.content).toBe('B');
 		});
