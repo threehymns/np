@@ -18,6 +18,7 @@ import {
 	PILOT_KEYBINDING_CONTRIBUTION,
 	addPilotDecorationEffect,
 	pilotDecorationField,
+	getContributionsForType,
 	composeEditorContributions,
 	reconfigureEditorContributions,
 	type EditorContribution,
@@ -117,8 +118,8 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 
 			// c2 has priority 10, so it appears first. c1 and c3 both have priority 5,
 			// plugin-1 comes before plugin-2 alphabetically.
-			const composed = composeEditorContributions(registered, host.editorCompartments);
-			expect(composed.length).toBe(3);
+			const sorted = getContributionsForType(registered, 'gutter');
+			expect(sorted.map((e) => e.contribution.id)).toEqual(['a-gutter', 'c-gutter', 'b-gutter']);
 		});
 
 		it('filters contributions by language when specified', () => {
@@ -142,12 +143,12 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 
 			host.registerEditorContributions('test-plugin', [mdOnly, jsOnly, universal]);
 
-			const mdComposed = composeEditorContributions(
+			const mdContributions = getContributionsForType(
 				host.getEditorContributions('gutter'),
-				host.editorCompartments,
+				'gutter',
 				'markdown'
 			);
-			expect(mdComposed.length).toBe(3); // 3 compartments
+			expect(mdContributions.map((e) => e.contribution.id)).toEqual(['all-gutter', 'md-gutter']);
 		});
 
 		it('rejects duplicate contribution IDs across different plugins with an actionable error', () => {
@@ -280,6 +281,60 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 			expect(result.success).toBe(true);
 			expect(doc.content).toBe('Greetings earth');
 			expect(doc.revision).toBe(1);
+		});
+
+		it('rejects document edits where "to" exceeds unattached document length', () => {
+			const doc = new DocumentSession(storage, 'Short');
+			host.registerDocumentSession(doc);
+
+			expect(() => {
+				host.applyDocumentEdit({
+					doc,
+					expectedRevision: 0,
+					changes: [{ from: 0, to: 10, insert: 'Longer' }]
+				});
+			}).toThrow(/Invalid change range/);
+			expect(doc.content).toBe('Short');
+		});
+
+		it('rejects document edits where "to" exceeds attached editor document length', () => {
+			const doc = new DocumentSession(storage, 'Short');
+			host.registerDocumentSession(doc);
+			let state = EditorState.create({ doc: 'Short' });
+			host.attachEditorInternal(doc.id, {
+				getState: () => state,
+				dispatch: (spec) => {
+					state = state.update({
+						changes: spec.changes.map((c) => ({ from: c.from, to: c.to, insert: c.insert }))
+					}).state;
+				}
+			});
+
+			expect(() => {
+				host.applyDocumentEdit({
+					doc,
+					expectedRevision: 0,
+					changes: [{ from: 2, to: 6, insert: 'x' }]
+				});
+			}).toThrow(/Invalid change range/);
+			expect(state.doc.toString()).toBe('Short');
+		});
+
+		it('rejects document edits with overlapping ranges before dispatch', () => {
+			const doc = new DocumentSession(storage, 'Hello world');
+			host.registerDocumentSession(doc);
+
+			expect(() => {
+				host.applyDocumentEdit({
+					doc,
+					expectedRevision: 0,
+					changes: [
+						{ from: 0, to: 6, insert: 'Hey ' },
+						{ from: 4, to: 8, insert: 'there' }
+					]
+				});
+			}).toThrow(/Overlapping change ranges/);
+			expect(doc.content).toBe('Hello world');
 		});
 
 		it('rejects raw CodeMirror Transaction objects passed to host.applyDocumentEdit', () => {

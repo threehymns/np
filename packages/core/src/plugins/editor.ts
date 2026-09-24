@@ -247,13 +247,28 @@ export function applyDocumentEditOperation(
 		};
 	}
 
+	const docLength = attachedEditor
+		? attachedEditor.getState().doc.length
+		: (targetDoc.content?.length ?? 0);
+
 	// Validate edits
 	for (const change of rawChanges) {
 		if (typeof change.from !== 'number' || typeof change.to !== 'number' || typeof change.insert !== 'string') {
 			throw new Error('Each document edit must specify numeric "from", "to", and string "insert" properties.');
 		}
-		if (change.from < 0 || change.to < change.from) {
+		if (change.from < 0 || change.to < change.from || change.to > docLength) {
 			throw new Error(`Invalid change range: from=${change.from}, to=${change.to}`);
+		}
+	}
+
+	if (rawChanges.length > 1) {
+		const sorted = [...rawChanges].sort((a, b) => a.from - b.from || b.to - a.to);
+		for (let i = 0; i < sorted.length - 1; i++) {
+			if (sorted[i].to > sorted[i + 1].from) {
+				throw new Error(
+					`Overlapping change ranges: [${sorted[i].from}, ${sorted[i].to}] and [${sorted[i + 1].from}, ${sorted[i + 1].to}]`
+				);
+			}
 		}
 	}
 
