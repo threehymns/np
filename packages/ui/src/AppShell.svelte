@@ -6,11 +6,12 @@
 	import * as Menubar from "./components/ui/menubar/index";
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
-	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
+	import { SidebarIcon, FolderOpenIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
 	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
+	import { provideAllPluginUIs } from "./plugins/index";
 
 	import type SettingsModalComponent from "./components/SettingsModal.svelte";
 	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
@@ -76,6 +77,10 @@
 
 	onMount(async () => {
 		try {
+			// Generic bundled-plugin UI bridge (#203): registers feature
+			// plugins and provides their UI components before default-enabled
+			// activation. No feature names here; see `./plugins/index`.
+			provideAllPluginUIs(appState.plugins);
 			await appState.init();
 		} catch (err) {
 			console.error("[AppShell] Failed to initialize app state:", err);
@@ -308,23 +313,7 @@
 						}
 					})}
 
-					{@render statusButton({
-						icon: GitMergeIcon,
-						class: `flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
-						title: 'Source Control',
-						shortcut: appState.keymaps.getShortcutForCommand('view.showGit'),
-						onclick: () => {
-							if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
-								appState.prefs.sidebarVisible = false;
-							} else {
-								appState.activeSidebarTab = 'git';
-								appState.prefs.sidebarVisible = true;
-							}
-						},
-						badge: appState.workspace.repository?.changes?.length
-					})}
-
-					<!-- Contributed Sidebar Panels -->
+					<!-- Contributed Sidebar Panels (including version-control panel when its plugin is active) -->
 					{#each appState.plugins.getSidebarPanels() as panel (panel.id)}
 						{@const PanelIcon = panel.icon}
 						{@render statusButton({

@@ -1,26 +1,26 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
-	import { Button, buttonVariants } from './ui/button';
-	import { Checkbox } from './ui/checkbox';
-	import { ButtonGroup } from './ui/button-group';
+	import { Button, buttonVariants } from '../../components/ui/button';
+	import { Checkbox } from '../../components/ui/checkbox';
+	import { ButtonGroup } from '../../components/ui/button-group';
 	import {
 		GitBranchIcon, PlusIcon, MinusIcon, ArrowCounterClockwiseIcon, CheckIcon,
 		CaretDownIcon, PlusMinusIcon, TrashIcon, GitDiffIcon, CornersOutIcon
 	} from 'phosphor-svelte';
-	import Icon from './Icon.svelte';
+	import Icon from '../../components/Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
-	import * as Tooltip from './ui/tooltip/index';
-	import * as ContextMenu from './ui/context-menu';
-	import * as DropdownMenu from './ui/dropdown-menu';
-	import * as Dialog from './ui/dialog';
+	import * as Tooltip from '../../components/ui/tooltip/index';
+	import * as ContextMenu from '../../components/ui/context-menu';
+	import * as DropdownMenu from '../../components/ui/dropdown-menu';
+	import * as Dialog from '../../components/ui/dialog';
 	import { runGitAction, GitInitController } from './git-actions.svelte';
 	import { slide } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { type GitChange, type GroupedChange } from '@np/core';
-    import { Textarea } from './ui/textarea';
-  import BranchSelectButton from './BranchSelectButton.svelte';
+    import { Textarea } from '../../components/ui/textarea';
+  import BranchSelectButton from '../../components/BranchSelectButton.svelte';
 
 	const appState = useAppState();
 	let repo = $derived(appState.workspace.repository);

@@ -11,7 +11,7 @@ import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
-import { PluginHost, helloRegistration, gitRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginHost, helloRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
 import { DIALOGS_SERVICE_KEY, DIFF_NAVIGATOR_SERVICE_KEY } from './plugins/services';
 
 export interface DialogService {
@@ -72,8 +72,8 @@ export interface ExportService {
 
 /**
  * Hunk-navigation bridge published by the mounted diff view (issue #80).
- * Core `git.nextHunk` / `git.prevHunk` commands call through this slot so
- * they mirror the DiffViewer's button handlers including wrap behavior.
+ * Feature hunk commands call through this slot so they mirror the
+ * DiffViewer's button handlers including wrap behavior.
  */
 export interface DiffHunkNavigator {
 	nextHunk(): void;
@@ -118,7 +118,7 @@ export class AppState {
 	private _activeSidebarTab = $state<string>('explorer');
 
 	get activeSidebarTab(): string {
-		if (this._activeSidebarTab !== 'explorer' && this._activeSidebarTab !== 'git') {
+		if (this._activeSidebarTab !== 'explorer') {
 			if (!this.plugins.getSidebarPanel(this._activeSidebarTab)) {
 				this._activeSidebarTab = 'explorer';
 			}
@@ -158,11 +158,10 @@ export class AppState {
 
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
 		this.plugins.register(helloRegistration);
-		// The Git Core Plugin ships bundled and default-on (#202): with it
-		// enabled, repository lifecycle and Git commands work as before, now
-		// owned by the plugin. Hello stays registered but inactive until
-		// plugin enablement UI lands (a later spec step).
-		this.plugins.register(gitRegistration);
+		// Bundled feature plugins (e.g. version control) register through the
+		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
+		// of feature names. Hello stays registered but inactive until plugin
+		// enablement UI lands (a later spec step).
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
@@ -187,15 +186,22 @@ export class AppState {
 	}
 
 	async init() {
-		// Activate the bundled Git plugin before session restore so the
-		// folder-open lifecycle is plugin-owned from the first open (#202).
-		// Guarded for custom hosts that never registered it.
+		// Activate bundled plugins marked default-on before session restore
+		// so per-workspace lifecycles are plugin-owned from the first open.
+		// Generic: no feature names here; manifests declare `defaultEnabled`.
+		// Guarded for custom hosts that never registered them.
 		try {
-			if (this.plugins.hasPlugin('git') && !this.plugins.isPluginActive('git')) {
-				await this.plugins.activate('git');
+			for (const manifest of this.plugins.getManifests()) {
+				if (manifest.defaultEnabled && !this.plugins.isPluginActive(manifest.id)) {
+					try {
+						await this.plugins.activate(manifest.id);
+					} catch (e) {
+						console.error(`[AppState] Failed to activate plugin "${manifest.id}":`, e);
+					}
+				}
 			}
 		} catch (e) {
-			console.error('[AppState] Failed to activate git plugin:', e);
+			console.error('[AppState] Failed to activate default plugins:', e);
 		}
 
 		try {

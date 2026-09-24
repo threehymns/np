@@ -12,16 +12,20 @@
   import DiffViewer from './DiffViewer.svelte';
   import type EditorComponent from './Editor.svelte';
   import type FileExplorerComponent from './FileExplorer.svelte';
-  import type GitPanelComponent from './GitPanel.svelte';
   import * as Tooltip from './ui/tooltip';
   import { cn } from '@np/core';
 
   const appState = useAppState();
 
-  // Lazy load heavy components
+  // Lazy load heavy components. Contributed sidebar panels (including the
+  // version-control panel) render from the host registry below — never
+  // imported here — so disabling a plugin removes its panel with no residue.
+  // NOTE: diff tabs (`tab.type === 'diff'`) still render here pending a
+  // generic tab-content contribution interface (proposed follow-up; the diff
+  // icon below is the only remaining feature-specific reference in this
+  // container and is allowlisted in `git-ui.test.ts`).
   let Editor = $state<typeof EditorComponent | null>(null);
   let FileExplorer = $state<typeof FileExplorerComponent | null>(null);
-  let GitPanel = $state<typeof GitPanelComponent | null>(null);
 
   let draggedId = $state<string | null>(null);
   let initialTabIds: string[] | null = null;
@@ -76,12 +80,10 @@
     // Load heavy components after the first paint
     Promise.all([
       import("./Editor.svelte"),
-      import("./FileExplorer.svelte"),
-      import("./GitPanel.svelte")
-    ]).then(([editorMod, explorerMod, gitMod]) => {
+      import("./FileExplorer.svelte")
+    ]).then(([editorMod, explorerMod]) => {
       Editor = editorMod.default;
       FileExplorer = explorerMod.default;
-      GitPanel = gitMod.default;
     }).catch(err => {
       console.error("[MainLayout] Failed to load components:", err);
     });
@@ -124,16 +126,6 @@
       {#if appState.activeSidebarTab === 'explorer'}
         {#if FileExplorer}
           <FileExplorer />
-        {:else}
-          <div class="p-4 space-y-2 animate-pulse">
-            <div class="h-4 bg-muted rounded w-3/4"></div>
-            <div class="h-4 bg-muted rounded w-1/2"></div>
-            <div class="h-4 bg-muted rounded w-2/3"></div>
-          </div>
-        {/if}
-      {:else if appState.activeSidebarTab === 'git'}
-        {#if GitPanel}
-          <GitPanel />
         {:else}
           <div class="p-4 space-y-2 animate-pulse">
             <div class="h-4 bg-muted rounded w-3/4"></div>
