@@ -3,6 +3,7 @@ export type PluginPlatform = 'web' | 'desktop';
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
 
 import type { CommandTransform, PluginCommand } from './commands';
+import type { SettingNamespaceSchema, SettingSchemaTransform, SettingsRegistryLike } from './settings';
 
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
@@ -111,4 +112,16 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	// Shared settings registry (ADR 0012, ADR 0014). Generic contribution
+	// types only: plugins register schemas where they are implemented and
+	// the host replays transforms in order from an empty initial value.
+	readonly settings: SettingsRegistryLike;
+	registerSettingSchema(pluginId: string, schema: SettingNamespaceSchema): void;
+	registerSettingTransform(pluginId: string, transform: SettingSchemaTransform): void;
+	removePluginSettings(pluginId: string): void;
+	rebuildSettings(): void;
+	refreshSettings(): void;
+	getSettingSchema(namespace: string): SettingNamespaceSchema | undefined;
+	getSettingSchemas(): SettingNamespaceSchema[];
 }

@@ -26,6 +26,18 @@ import {
 	type PluginCommand
 } from './commands';
 
+import {
+	CORE_SETTINGS_OWNER,
+	EDITOR_SCHEMA,
+	UI_SCHEMA,
+	createAddSettingSchemaTransform,
+	rebuildSettingSchemas,
+	type SettingNamespaceSchema,
+	type SettingSchemaTransform,
+	type SettingSchemaTransformEntry,
+	type SettingsRegistryLike
+} from './settings';
+
 export class PluginHost implements PluginHostInterface {
 	readonly hostVersion = 0;
 	readonly platform: PluginPlatform;
@@ -48,6 +60,20 @@ export class PluginHost implements PluginHostInterface {
 	 * Command registry facade with the same shape as the standalone
 	 * CommandRegistry, so `AppState.commands` stays a drop-in view.
 	 */
+	// Shared settings schema registry: replayable transforms + materialized view (ADR 0012, ADR 0014).
+	private settingSchemaTransforms: SettingSchemaTransformEntry[] = [];
+	private settingSchemaMap = $state<Map<string, SettingNamespaceSchema>>(new Map());
+
+	readonly settings: SettingsRegistryLike = {
+		registerTransform: (pluginId, transform) => this.registerSettingTransform(pluginId, transform),
+		registerSchema: (pluginId, schema) => this.registerSettingSchema(pluginId, schema),
+		removePlugin: (pluginId) => this.removePluginSettings(pluginId),
+		rebuild: () => this.rebuildSettings(),
+		refresh: () => this.refreshSettings(),
+		getSchema: (namespace) => this.getSettingSchema(namespace),
+		getAllSchemas: () => this.getSettingSchemas()
+	};
+
 	readonly commands: CommandRegistryLike = {
 		registerTransform: (pluginId, transform) => this.registerCommandTransform(pluginId, transform),
 		registerCommands: (pluginId, commands) => this.registerCommands(pluginId, commands),
@@ -61,6 +87,8 @@ export class PluginHost implements PluginHostInterface {
 	};
 
 	constructor(options: PluginHostOptions = {}) {
+		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
+		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
 		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
 		if (options.initialPlugins) {
 			this.registerAll(options.initialPlugins);
@@ -101,6 +129,7 @@ export class PluginHost implements PluginHostInterface {
 		this.states.delete(id);
 		this.deactivationReasons.delete(id);
 		this.removePluginCommands(id);
+		this.removePluginSettings(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -235,6 +264,71 @@ export class PluginHost implements PluginHostInterface {
 	 * Computes deterministic activation order using topological sort.
 	 * Detects cycles and interface requirements.
 	 */
+	registerSettingTransform(pluginId: string, transform: SettingSchemaTransform): void {
+		this.settingSchemaTransforms.push({ pluginId, transform });
+		this.rebuildSettings();
+	}
+
+	registerSettingSchema(pluginId: string, schema: SettingNamespaceSchema): void {
+		this.registerSettingTransform(pluginId, createAddSettingSchemaTransform(schema));
+	}
+
+	removePluginSettings(pluginId: string): void {
+		const kept = this.settingSchemaTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.settingSchemaTransforms.length) {
+			this.settingSchemaTransforms = kept;
+			this.rebuildSettings();
+		}
+	}
+
+	rebuildSettings(): void {
+		this.settingSchemaMap = rebuildSettingSchemas(this.orderedSettingTransforms());
+	}
+
+	refreshSettings(): void {
+		this.rebuildSettings();
+	}
+
+	getSettingSchema(namespace: string): SettingNamespaceSchema | undefined {
+		return this.settingSchemaMap.get(namespace);
+	}
+
+	getSettingSchemas(): SettingNamespaceSchema[] {
+		return Array.from(this.settingSchemaMap.values());
+	}
+
+	private orderedSettingTransforms(): SettingSchemaTransformEntry[] {
+		const byOwner = new Map<string, SettingSchemaTransformEntry[]>();
+		for (const entry of this.settingSchemaTransforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) {
+				list.push(entry);
+			} else {
+				byOwner.set(entry.pluginId, [entry]);
+			}
+		}
+
+		const orderedOwners: string[] = [];
+		if (byOwner.has(CORE_SETTINGS_OWNER)) {
+			orderedOwners.push(CORE_SETTINGS_OWNER);
+		}
+		for (const id of this.activationOrder) {
+			if (byOwner.has(id) && !orderedOwners.includes(id)) {
+				orderedOwners.push(id);
+			}
+		}
+		for (const id of [...byOwner.keys()].sort()) {
+			if (!orderedOwners.includes(id)) {
+				orderedOwners.push(id);
+			}
+		}
+
+		const included = orderedOwners.filter(
+			(id) => id === CORE_SETTINGS_OWNER || !this.registrations.has(id) || this.isPluginActive(id)
+		);
+		return included.flatMap((id) => byOwner.get(id)!);
+	}
+
 	computeActivationOrder(pluginIds?: string[]): string[] {
 		const targetIds = pluginIds
 			? Array.from(new Set(pluginIds))
@@ -524,6 +618,7 @@ export class PluginHost implements PluginHostInterface {
 		this.deactivationReasons.set(id, reason);
 		this.activationOrder = this.activationOrder.filter((item) => item !== id);
 		this.removePluginCommands(id);
+		this.removePluginSettings(id);
 	}
 
 	/**
