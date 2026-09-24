@@ -120,7 +120,7 @@ export class DuplicateSettingNamespaceError extends Error {
 
 	constructor(namespace: string, existingPluginId: string, incomingPluginId: string) {
 		super(
-			`Duplicate settings namespace "${namespace}" contributed by both "${existingPluginId}" and "${incomingPluginId}".\\n` +
+			`Duplicate settings namespace "${namespace}" contributed by both "${existingPluginId}" and "${incomingPluginId}".\n` +
 				`Action: Every settings namespace must be uniquely owned. Rename the incoming namespace or remove the conflicting plugin.`
 		);
 		this.name = 'DuplicateSettingNamespaceError';
