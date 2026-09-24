@@ -844,6 +844,32 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	// Generic diff/hunk navigation (non-plugin core commands). The mounted
+	// diff view publishes its navigator on AppState regardless of which
+	// plugins are enabled, so these survive with all optional plugins
+	// disabled and keep working for any present or future diff provider.
+	// Only Git-mutating hunk ops (stage/unstage/discard) live in the Git
+	// plugin; pure navigation belongs to the basic editor.
+	coreCommands.push({
+		id: 'diff.nextHunk',
+		label: 'Next Hunk',
+		category: 'Go',
+		action: () => {
+			appState.activeDiffNavigator?.nextHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
+
+	coreCommands.push({
+		id: 'diff.prevHunk',
+		label: 'Previous Hunk',
+		category: 'Go',
+		action: () => {
+			appState.activeDiffNavigator?.prevHunk();
+		},
+		isEnabled: () => !!appState.activeDiffNavigator
+	});
+
 	coreCommands.push({
 		id: 'format.toggleWordWrap',
 		label: 'Word Wrap',

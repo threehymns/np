@@ -17,6 +17,32 @@
 
 	let activeCategory = $state('appearance');
 
+	/**
+	 * Single owner of the plugin-category string protocol: categories for
+	 * generated plugin sections are `plugin:<namespace>`, and the state
+	 * badge labels come from one lookup. Nothing else in this file may
+	 * hardcode the prefix, its length, or a state label.
+	 */
+	const PLUGIN_CATEGORY_PREFIX = 'plugin:';
+
+	const PLUGIN_STATE_LABELS: Record<string, string> = {
+		active: 'Active',
+		activating: 'Activating…',
+		deactivating: 'Deactivating…',
+		error: 'Error',
+		inactive: 'Off'
+	};
+
+	function pluginCategoryFor(namespace: string): string {
+		return `${PLUGIN_CATEGORY_PREFIX}${namespace}`;
+	}
+
+	function pluginNamespaceForCategory(category: string): string | null {
+		return category.startsWith(PLUGIN_CATEGORY_PREFIX)
+			? category.slice(PLUGIN_CATEGORY_PREFIX.length)
+			: null;
+	}
+
 	function handleModeChange(value: string) {
 		if (value === 'system') {
 			resetMode();
@@ -91,13 +117,7 @@
 	let pluginConfirmId = $state<string | null>(null);
 
 	function pluginStateLabel(state: string): string {
-		switch (state) {
-			case 'active': return 'Active';
-			case 'activating': return 'Activating…';
-			case 'deactivating': return 'Deactivating…';
-			case 'error': return 'Error';
-			default: return 'Off';
-		}
+		return PLUGIN_STATE_LABELS[state] ?? PLUGIN_STATE_LABELS.inactive;
 	}
 
 	async function doTogglePlugin(id: string, enable: boolean) {
@@ -281,15 +301,15 @@
 						</div>
 						{#each pluginSchemas as schema (schema.namespace)}
 							<button
-								onclick={() => activeCategory = `plugin:${schema.namespace}`}
+								onclick={() => activeCategory = pluginCategoryFor(schema.namespace)}
 								class={cn(
 									"flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-									activeCategory === `plugin:${schema.namespace}` 
-										? "bg-primary text-primary-foreground shadow-md" 
+									activeCategory === pluginCategoryFor(schema.namespace)
+										? "bg-primary text-primary-foreground shadow-md"
 										: "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
 								)}
 							>
-								<PuzzlePiece size={18} weight={activeCategory === `plugin:${schema.namespace}` ? "fill" : "regular"} />
+								<PuzzlePiece size={18} weight={activeCategory === pluginCategoryFor(schema.namespace) ? "fill" : "regular"} />
 								<span class="truncate">{schema.title || schema.namespace}</span>
 							</button>
 						{/each}
@@ -350,8 +370,8 @@
 						</div>
 					{/if}
 
-					{#if activeCategory.startsWith('plugin:')}
-						{@const ns = activeCategory.slice(7)}
+					{#if pluginNamespaceForCategory(activeCategory)}
+						{@const ns = pluginNamespaceForCategory(activeCategory) ?? ''}
 						{@const schema = appState.prefs.settings.getSchema(ns)}
 						{#if schema}
 							<GeneratedSettingsSection

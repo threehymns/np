@@ -1,3 +1,4 @@
+import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, vi } from 'bun:test';
 import {
 	SettingsManager,
@@ -391,5 +392,63 @@ describe('Preferences Migration onto Namespaced Schemas (#198)', () => {
 
 		// Storage is NOT rewritten to erase the user's invalid setting
 		expect(storage.setItemCalls.length).toBe(0);
+	});
+});
+
+describe('Settings schema registry lifecycle (host-owned)', () => {
+	function schemaFor(namespace: string): SettingNamespaceSchema {
+		return {
+			namespace,
+			title: namespace,
+			properties: {
+				enabled: { type: 'boolean', default: false, title: 'Enabled', control: 'toggle' }
+			}
+		};
+	}
+
+	function pluginWithSchema(id: string) {
+		return {
+			manifest: { id, name: id, version: 0 },
+			setup: (host: any) => {
+				host.registerSettingSchema(id, schemaFor(id));
+			}
+		};
+	}
+
+	const namespacesOf = (host: PluginHost): string[] =>
+		host
+			.getSettingSchemas()
+			.map((s) => s.namespace)
+			.sort();
+
+	it('deactivating one plugin yields the same registry as a clean build without it', async () => {
+		const host = new PluginHost();
+		host.register(pluginWithSchema('alpha'));
+		host.register(pluginWithSchema('beta'));
+		await host.activateAll();
+		expect(namespacesOf(host)).toEqual(['alpha', 'beta', 'editor', 'ui']);
+
+		await host.deactivate('beta');
+		expect(host.getSettingSchema('beta')).toBeUndefined();
+
+		const clean = new PluginHost();
+		clean.register(pluginWithSchema('alpha'));
+		await clean.activateAll();
+		expect(namespacesOf(host)).toEqual(namespacesOf(clean));
+	});
+
+	it('refresh-mid-session rebuilds with no duplicates or losses', async () => {
+		const host = new PluginHost();
+		host.register(pluginWithSchema('alpha'));
+		host.register(pluginWithSchema('beta'));
+		await host.activateAll();
+
+		const before = namespacesOf(host);
+		host.refreshSettings();
+		host.rebuildSettings();
+		host.refreshSettings();
+		expect(namespacesOf(host)).toEqual(before);
+		expect(new Set(namespacesOf(host)).size).toBe(namespacesOf(host).length);
+		expect(host.getSettingSchema('alpha')?.properties.enabled.default).toBe(false);
 	});
 });

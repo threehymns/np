@@ -493,4 +493,64 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(savedEvents[0].origin).toEqual(origin);
 		});
 	});
+
+	describe('Workspace-opened hooks (ADR 0013 containment)', () => {
+		it('contains a throwing hook with plugin attribution and still runs remaining hooks', async () => {
+			const host = new PluginHost();
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+			const ran: string[] = [];
+
+			host.registerWorkspaceOpenedHook('faulty-plugin', () => {
+				throw new Error('Detect blew up');
+			});
+			host.registerWorkspaceOpenedHook('steady-plugin', () => {
+				ran.push('steady-plugin');
+			});
+
+			const origin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
+			await expect(host.runWorkspaceOpened({ origin, workspace: {} })).resolves.toBeUndefined();
+
+			// Remaining hooks still run; the failure is never an implicit veto.
+			expect(ran).toEqual(['steady-plugin']);
+			// Attributed and actionable: recorded plus logged with an AI-fixable Action.
+			expect(host.lastHookError?.pluginId).toBe('faulty-plugin');
+			expect(errorSpy).toHaveBeenCalled();
+			const logged = errorSpy.mock.calls.flat().map(String).join('\n');
+			expect(logged).toContain('faulty-plugin');
+			expect(logged).toContain('Action:');
+
+			errorSpy.mockRestore();
+		});
+
+		it('lets folder open proceed with an empty slot when the owning hook fails', async () => {
+			const host = new PluginHost();
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+			const { gitRegistration } = await import('./git/registration');
+			host.register(gitRegistration);
+			const storage = createLocalMockStorage({ '/repo/file.md': '' });
+			const persistence = new MemorySessionPersistence();
+			const failingFactory = (): VCSAdapter => ({
+				detect: mock(async () => {
+					throw new Error('probe crashed');
+				}),
+				getCurrentBranch: async () => 'main',
+				getBranches: async () => ['main'],
+				getChanges: async () => [],
+				getCommits: async () => [],
+				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+				switchBranch: mock(async () => ({ status: 'switched' as const }))
+			});
+			const workspace = new Workspace(storage, failingFactory, persistence, host);
+			await host.activate('git');
+
+			// Folder open proceeds instead of aborting: no throw, empty
+			// slot (never stale), tree scan still ran.
+			await workspace.openDirectory({ scheme: 'file', path: '/repo', name: 'repo' });
+			expect(workspace.repository).toBeNull();
+			expect(storage.readDirectory).toHaveBeenCalled();
+			expect(host.lastHookError?.pluginId).toBe('git');
+
+			errorSpy.mockRestore();
+		});
+	});
 });

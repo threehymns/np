@@ -78,9 +78,9 @@ export interface WorkspaceOpenedContext {
  * Hook function executed after a workspace opens a folder, awaited by the
  * workspace before it proceeds (tree scan, session restore). Lets feature
  * plugins own per-workspace resources (repository detection, watchers)
- * without hardwired core paths. Errors propagate to the folder-open
- * caller, matching the previous inline-probe behavior; hooks of inactive
- * plugins are skipped.
+ * without hardwired core paths. Per ADR 0013 a throwing hook is contained,
+ * logged against its plugin, and never an implicit veto: remaining hooks
+ * still run and folder open proceeds. Hooks of inactive plugins are skipped.
  */
 export type WorkspaceOpenedHook = (
 	context: WorkspaceOpenedContext

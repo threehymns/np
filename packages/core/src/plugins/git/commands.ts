@@ -2,7 +2,7 @@ import { Text } from '@codemirror/state';
 import { Chunk } from '@codemirror/merge';
 import type { PluginCommand } from '../commands';
 import type { DiffNavigatorLike } from '../services';
-import { DEFAULT_DIFF_CONFIG, type GitChange } from '../../project/vcs';
+import { DEFAULT_DIFF_CONFIG, type GitChange, type VCSAdapter } from '../../project/vcs';
 import { runExclusively } from '../../project/repository.svelte';
 import { mapRange } from '../../commands.svelte';
 import type { Workspace } from '../../workspace.svelte';
@@ -38,6 +38,23 @@ export interface HunkRange {
 	toA: number;
 	fromB: number;
 	toB: number;
+}
+
+/**
+ * Single owner of the `getWorkspace()?.repository` + adapter-capability
+ * guard: resolves the workspace repository only when it offers the named
+ * optional adapter method, otherwise undefined so the caller degrades to
+ * `false`/no-op (matching pre-plugin repository-less behavior). Hunk
+ * actions keep their own throwing guards (they need per-action messages),
+ * everything else goes through here.
+ */
+function requireRepositoryWithAdapter<M extends keyof VCSAdapter>(
+	ctx: GitCommandContext,
+	method: M
+): NonNullable<Workspace['repository']> | undefined {
+	const repo = ctx.getWorkspace()?.repository;
+	if (!repo || !repo.adapter[method]) return undefined;
+	return repo;
 }
 
 /**
@@ -127,13 +144,10 @@ export function createGitCommands(
 		category: 'Source Control',
 		action: async (filepath: string) => {
 			if (!filepath) return false;
-			const repo = ctx.getWorkspace()?.repository;
-			if (repo?.adapter.stageFile) {
-				return await runGitOp(`Failed to stage file '${filepath}'`, async (r) => {
-					await r.adapter.stageFile!(filepath);
-				});
-			}
-			return false;
+			if (!requireRepositoryWithAdapter(ctx, 'stageFile')) return false;
+			return await runGitOp(`Failed to stage file '${filepath}'`, async (r) => {
+				await r.adapter.stageFile!(filepath);
+			});
 		}
 	});
 
@@ -143,13 +157,10 @@ export function createGitCommands(
 		category: 'Source Control',
 		action: async (filepath: string) => {
 			if (!filepath) return false;
-			const repo = ctx.getWorkspace()?.repository;
-			if (repo?.adapter.unstageFile) {
-				return await runGitOp(`Failed to unstage file '${filepath}'`, async (r) => {
-					await r.adapter.unstageFile!(filepath);
-				});
-			}
-			return false;
+			if (!requireRepositoryWithAdapter(ctx, 'unstageFile')) return false;
+			return await runGitOp(`Failed to unstage file '${filepath}'`, async (r) => {
+				await r.adapter.unstageFile!(filepath);
+			});
 		}
 	});
 
@@ -165,13 +176,11 @@ export function createGitCommands(
 				);
 				if (!confirmed) return false;
 			}
-			const repo = ctx.getWorkspace()?.repository;
-			if (repo?.adapter.discardChanges) {
-				return await runGitOp(`Failed to discard changes in '${filepath}'`, async (r) => {
-					await r.adapter.discardChanges!(filepath, options);
-				});
-			}
-			return false;
+			const repo = requireRepositoryWithAdapter(ctx, 'discardChanges');
+			if (!repo) return false;
+			return await runGitOp(`Failed to discard changes in '${filepath}'`, async (r) => {
+				await r.adapter.discardChanges!(filepath, options);
+			});
 		}
 	});
 
@@ -183,8 +192,8 @@ export function createGitCommands(
 			message: string,
 			options?: { author?: { name: string; email: string }; amend?: boolean }
 		) => {
-			const repo = ctx.getWorkspace()?.repository;
-			if (!repo || !repo.adapter.commit) return false;
+			const repo = requireRepositoryWithAdapter(ctx, 'commit');
+			if (!repo) return false;
 
 			const stagedCount = repo.changes.filter((c) => c.staged).length;
 			if (stagedCount === 0 && !options?.amend) {
@@ -204,13 +213,10 @@ export function createGitCommands(
 		category: 'Source Control',
 		action: async (branchName: string) => {
 			if (!branchName) return false;
-			const repo = ctx.getWorkspace()?.repository;
-			if (repo?.adapter.createBranch) {
-				return await runGitOp(`Failed to create branch '${branchName}'`, async (r) => {
-					await r.adapter.createBranch!(branchName);
-				});
-			}
-			return false;
+			if (!requireRepositoryWithAdapter(ctx, 'createBranch')) return false;
+			return await runGitOp(`Failed to create branch '${branchName}'`, async (r) => {
+				await r.adapter.createBranch!(branchName);
+			});
 		}
 	});
 
@@ -219,8 +225,8 @@ export function createGitCommands(
 		label: 'Git: Stage All Changes',
 		category: 'Source Control',
 		action: async () => {
-			const repo = ctx.getWorkspace()?.repository;
-			if (!repo?.adapter.stageAll) return false;
+			const repo = requireRepositoryWithAdapter(ctx, 'stageAll');
+			if (!repo) return false;
 			try {
 				return await repo.stageAll();
 			} catch (e) {
@@ -236,8 +242,8 @@ export function createGitCommands(
 		label: 'Git: Unstage All Changes',
 		category: 'Source Control',
 		action: async () => {
-			const repo = ctx.getWorkspace()?.repository;
-			if (!repo?.adapter.unstageAll) return false;
+			const repo = requireRepositoryWithAdapter(ctx, 'unstageAll');
+			if (!repo) return false;
 			try {
 				return await repo.unstageAll();
 			} catch (e) {
@@ -258,8 +264,8 @@ export function createGitCommands(
 			);
 			if (!confirmed) return false;
 
-			const repo = ctx.getWorkspace()?.repository;
-			if (!repo?.adapter.discardAll) return false;
+			const repo = requireRepositoryWithAdapter(ctx, 'discardAll');
+			if (!repo) return false;
 			try {
 				return await repo.discardAll();
 			} catch (e) {
@@ -287,26 +293,6 @@ export function createGitCommands(
 				ws.repository.setActiveDiffFileByPath(filepath);
 			}
 		}
-	});
-
-	gitCommands.push({
-		id: 'git.nextHunk',
-		label: 'Git: Next Hunk',
-		category: 'Source Control',
-		action: () => {
-			ctx.getDiffNavigator()?.nextHunk();
-		},
-		isEnabled: () => !!ctx.getDiffNavigator()
-	});
-
-	gitCommands.push({
-		id: 'git.prevHunk',
-		label: 'Git: Previous Hunk',
-		category: 'Source Control',
-		action: () => {
-			ctx.getDiffNavigator()?.prevHunk();
-		},
-		isEnabled: () => !!ctx.getDiffNavigator()
 	});
 
 	gitCommands.push({

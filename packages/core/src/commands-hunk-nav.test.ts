@@ -1,7 +1,6 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
 import { registerCoreCommands, CommandRegistry } from "./commands.svelte";
-import { createGitCommands } from "./plugins/git/commands";
 import { defaultKeymap, parseKeySequence } from "./keymap.svelte";
 
 function createMockAppState() {
@@ -12,38 +11,32 @@ function createMockAppState() {
 			| { nextHunk(): void; prevHunk(): void }
 			| undefined
 	};
+	// Hunk navigation is core-owned (not Git-owned): the mounted diff view
+	// publishes its navigator on the app state regardless of which plugins
+	// are enabled, so navigation survives with Git disabled.
 	registerCoreCommands(appState as any);
-	// Hunk navigation commands live in the Git plugin's modules (#202) and
-	// register through the shared registry; the context adapts the mock app
-	// state (diff navigator read lazily so later assignment is visible).
-	commands.registerCommands('git', createGitCommands({
-		getWorkspace: () => undefined,
-		alert: async () => {},
-		confirm: async () => false,
-		getDiffNavigator: () => appState.activeDiffNavigator ?? undefined
-	}, { initializeRepository: async () => false }));
 	return appState;
 }
 
-describe("Hunk navigation commands ('git.nextHunk' / 'git.prevHunk')", () => {
-	it("registers both commands under Source Control", () => {
+describe("Hunk navigation commands ('diff.nextHunk' / 'diff.prevHunk')", () => {
+	it("registers both commands as core commands under Go", () => {
 		const appState = createMockAppState();
-		const next = appState.commands.get("git.nextHunk");
-		const prev = appState.commands.get("git.prevHunk");
+		const next = appState.commands.get("diff.nextHunk");
+		const prev = appState.commands.get("diff.prevHunk");
 		expect(next).toBeDefined();
 		expect(prev).toBeDefined();
-		expect(next!.category).toBe("Source Control");
-		expect(prev!.category).toBe("Source Control");
+		expect(next!.category).toBe("Go");
+		expect(prev!.category).toBe("Go");
 	});
 
 	it("is disabled without a mounted diff navigator and executes nothing", () => {
 		const appState = createMockAppState();
-		const next = appState.commands.get("git.nextHunk")!;
-		const prev = appState.commands.get("git.prevHunk")!;
+		const next = appState.commands.get("diff.nextHunk")!;
+		const prev = appState.commands.get("diff.prevHunk")!;
 		expect(next.isEnabled!()).toBe(false);
 		expect(prev.isEnabled!()).toBe(false);
-		expect(appState.commands.execute("git.nextHunk")).toBeUndefined();
-		expect(appState.commands.execute("git.prevHunk")).toBeUndefined();
+		expect(appState.commands.execute("diff.nextHunk")).toBeUndefined();
+		expect(appState.commands.execute("diff.prevHunk")).toBeUndefined();
 	});
 
 	it("dispatches to the mounted navigator, mirroring the header buttons", () => {
@@ -52,11 +45,25 @@ describe("Hunk navigation commands ('git.nextHunk' / 'git.prevHunk')", () => {
 		const prevHunk = mock(() => {});
 		appState.activeDiffNavigator = { nextHunk, prevHunk };
 
-		expect(appState.commands.get("git.nextHunk")!.isEnabled!()).toBe(true);
-		appState.commands.execute("git.nextHunk");
-		appState.commands.execute("git.prevHunk");
+		expect(appState.commands.get("diff.nextHunk")!.isEnabled!()).toBe(true);
+		appState.commands.execute("diff.nextHunk");
+		appState.commands.execute("diff.prevHunk");
 		expect(nextHunk).toHaveBeenCalledTimes(1);
 		expect(prevHunk).toHaveBeenCalledTimes(1);
+	});
+
+	it("lives in core, not the Git plugin (only Git-mutating hunk ops are plugin-owned)", async () => {
+		const { PluginHost } = await import("./plugins/host.svelte");
+		const { gitRegistration } = await import("./plugins/git/registration");
+		const host = new PluginHost();
+		host.register(gitRegistration);
+		await host.activate("git");
+
+		expect(host.getCommand("git.nextHunk")).toBeUndefined();
+		expect(host.getCommand("git.prevHunk")).toBeUndefined();
+		expect(host.getCommand("git.stageHunk")).toBeDefined();
+		expect(host.getCommand("git.unstageHunk")).toBeDefined();
+		expect(host.getCommand("git.discardHunk")).toBeDefined();
 	});
 });
 
@@ -64,8 +71,8 @@ describe("Hunk navigation default keybindings", () => {
 	it("binds Zed-style ]c / [c in vim normal mode", () => {
 		const vimBlock = defaultKeymap.find((b) => b.context === "editor && vim_mode == normal");
 		expect(vimBlock).toBeDefined();
-		expect(vimBlock!.bindings["] c"]).toBe("git.nextHunk");
-		expect(vimBlock!.bindings["[ c"]).toBe("git.prevHunk");
+		expect(vimBlock!.bindings["] c"]).toBe("diff.nextHunk");
+		expect(vimBlock!.bindings["[ c"]).toBe("diff.prevHunk");
 	});
 
 	it("parses ]c / [c into two plain keystrokes", () => {
@@ -77,13 +84,13 @@ describe("Hunk navigation default keybindings", () => {
 	it("binds Zed-style cmd+f8 / cmd+shift+f8 in standard editor and global keymaps", () => {
 		const editorBlock = defaultKeymap.find((b) => b.context === "editor");
 		expect(editorBlock).toBeDefined();
-		expect(editorBlock!.bindings["cmd+f8"]).toBe("git.nextHunk");
-		expect(editorBlock!.bindings["cmd+shift+f8"]).toBe("git.prevHunk");
+		expect(editorBlock!.bindings["cmd+f8"]).toBe("diff.nextHunk");
+		expect(editorBlock!.bindings["cmd+shift+f8"]).toBe("diff.prevHunk");
 
 		const globalBlock = defaultKeymap.find((b) => !b.context);
 		expect(globalBlock).toBeDefined();
-		expect(globalBlock!.bindings["cmd+f8"]).toBe("git.nextHunk");
-		expect(globalBlock!.bindings["cmd+shift+f8"]).toBe("git.prevHunk");
+		expect(globalBlock!.bindings["cmd+f8"]).toBe("diff.nextHunk");
+		expect(globalBlock!.bindings["cmd+shift+f8"]).toBe("diff.prevHunk");
 	});
 
 	it("parses cmd+f8 and cmd+shift+f8 with correct modifiers", () => {

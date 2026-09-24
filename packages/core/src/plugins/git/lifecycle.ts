@@ -68,7 +68,9 @@ export function disposePublishedRepository(state: WorkspaceGitState): void {
  * A fresh Repository (fresh adapter via the workspace's generic
  * vcsFactory) is created per open, so the old adapter.reset() dance is
  * unnecessary: the stale adapter is discarded with the old Repository.
- * Detect errors propagate to the folder-open caller, as before.
+ * Detect errors no longer reach the folder-open caller: the host contains
+ * per-hook failures (ADR 0013), logs them against this plugin, and folder
+ * open proceeds with the slot in the safe empty state (null).
  */
 export async function openFolderRepository(
 	state: WorkspaceGitState,
@@ -107,10 +109,22 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	const targetOrigin = workspace.rootOrigin;
 	const targetUri = toURI(targetOrigin);
 
-	// Clear stale repository state before async initialization. Init is an
-	// explicit user gesture that takes ownership of the slot, so the clear
-	// is unconditional (unlike folder-open, which only drops what it owns);
-	// the staleness guards below still protect newer folders from stale
+	// Ownership guard (ADR 0009: runtime resources are scoped to their
+	// actual owner). Init takes ownership only when the slot is empty or
+	// holds this plugin's own publication: a foreign repository published
+	// by another contributor is never dropped. Aborting with an actionable
+	// diagnostic keeps the failure AI-fixable instead of silently
+	// clobbering state this plugin does not own.
+	if (workspace.repository !== null && workspace.repository !== state.repository) {
+		throw new Error(
+			`Cannot initialize repository: the workspace slot holds a repository owned by another contributor, not the Git plugin.\n` +
+				`Action: Remove or disable the owning contributor before running "Git: Initialize Repository", or publish through the Git plugin's folder-open lifecycle instead.`
+		);
+	}
+	// Clear stale repository state before async initialization. At this
+	// point the slot is empty or owned, so dropping it is safe (unlike a
+	// foreign publication, which the guard above already rejected); the
+	// staleness guards below still protect newer folders from stale
 	// publication.
 	workspace.repository = null;
 	state.repository = null;
@@ -126,8 +140,13 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	await track(state, adapter.init(targetOrigin.path));
 
 	// The folder may have switched while init was deferred; do not
-	// publish results for an outdated folder.
+	// publish results for an outdated folder. Likewise, never clobber a
+	// foreign repository another contributor published while init was in
+	// flight (ADR 0009): drop the stale result instead.
 	if (state.disposed || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+		return false;
+	}
+	if (workspace.repository !== null && workspace.repository !== state.repository) {
 		return false;
 	}
 
