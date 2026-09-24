@@ -160,6 +160,13 @@ export class AppState {
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		this.workspace.onRootOriginChange = async (origin) => {
+			if (origin && this.workspace.hasRootPermission) {
+				await this.prefs.attachWorkspace(this.storage, origin);
+			} else {
+				this.prefs.clearWorkspace();
+			}
+		};
 		registerCoreCommands(this);
 	}
 

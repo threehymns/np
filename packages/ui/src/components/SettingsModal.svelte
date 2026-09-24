@@ -6,7 +6,8 @@
 	import { Switch } from './ui/switch/index.js';
 	import { useAppState } from '@np/core';
 	import { setMode, resetMode } from "mode-watcher";
-	import { Palette, TextT, Gear, Keyboard } from "phosphor-svelte";
+	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
+	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { cn } from '@np/core';
 	import type { AppearanceMode } from '@np/core';
 
@@ -43,6 +44,12 @@
 		{ id: 'dark', name: 'Dark', icon: 'moon' },
 		{ id: 'system', name: 'System', icon: 'monitor' }
 	];
+
+	const pluginSchemas = $derived(
+		appState.prefs.settings
+			? appState.prefs.settings.getAllSchemas().filter((s) => s.namespace !== 'editor' && s.namespace !== 'ui')
+			: []
+	);
 
 	const categories = [
 		{ id: 'appearance', name: 'Appearance', icon: Palette },
@@ -182,7 +189,7 @@
 					<span class="font-bold tracking-tight text-lg">Settings</span>
 				</div>
 				
-				<nav class="flex flex-col gap-1">
+				<nav class="flex flex-col gap-1 flex-1 overflow-y-auto">
 					{#each categories as cat (cat.id)}
 						<button
 							onclick={() => activeCategory = cat.id}
@@ -197,13 +204,92 @@
 							{cat.name}
 						</button>
 					{/each}
+
+					{#if pluginSchemas.length > 0}
+						<div class="pt-4 pb-1 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+							Plugins
+						</div>
+						{#each pluginSchemas as schema (schema.namespace)}
+							<button
+								onclick={() => activeCategory = `plugin:${schema.namespace}`}
+								class={cn(
+									"flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+									activeCategory === `plugin:${schema.namespace}` 
+										? "bg-primary text-primary-foreground shadow-md" 
+										: "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+								)}
+							>
+								<PuzzlePiece size={18} weight={activeCategory === `plugin:${schema.namespace}` ? "fill" : "regular"} />
+								<span class="truncate">{schema.title || schema.namespace}</span>
+							</button>
+						{/each}
+					{/if}
 				</nav>
 			</aside>
 
 			<!-- Content Area -->
 			<main class="flex-1 flex flex-col min-w-0 bg-background overflow-y-auto">
-				<div class="px-8 pt-8 pb-6">
-					{#if activeCategory === 'appearance'}
+				<!-- Scope Switcher Header -->
+				<div class="px-8 pt-6 pb-4 border-b border-border/60 flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur z-10">
+					<div class="flex items-center gap-1.5 p-1 rounded-lg bg-muted/60 border border-border/50">
+						<button
+							onclick={() => appState.prefs.activeScope = 'user'}
+							class={cn(
+								"px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer",
+								appState.prefs.activeScope === 'user'
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground"
+							)}
+						>
+							User Settings
+						</button>
+						<button
+							onclick={() => appState.prefs.activeScope = 'workspace'}
+							class={cn(
+								"px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 cursor-pointer",
+								appState.prefs.activeScope === 'workspace'
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground"
+							)}
+						>
+							<span>Workspace Settings</span>
+							{#if appState.workspace.rootOrigin}
+								<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+							{/if}
+						</button>
+					</div>
+
+					<div class="text-xs text-muted-foreground flex items-center gap-2">
+						{#if appState.prefs.activeScope === 'workspace'}
+							{#if appState.workspace.rootOrigin}
+								<FolderOpen size={14} class="text-emerald-500" />
+								<span class="font-medium text-foreground truncate max-w-xs">{appState.workspace.rootOrigin.name || appState.workspace.rootOrigin.path}</span>
+								<span class="font-mono text-[11px] opacity-70">(.np/settings.json)</span>
+							{:else}
+								<span class="text-amber-500 font-medium">No folder open</span>
+							{/if}
+						{/if}
+					</div>
+				</div>
+
+				<div class="px-8 pt-6 pb-6">
+					{#if appState.prefs.activeScope === 'workspace' && !appState.workspace.rootOrigin}
+						<div class="p-6 rounded-xl border border-dashed border-border bg-card/40 text-center space-y-1.5 mb-6">
+							<p class="text-sm font-semibold text-foreground">No Workspace Open</p>
+							<p class="text-xs text-muted-foreground">Workspace settings are stored in <code class="font-mono text-primary bg-muted px-1.5 py-0.5 rounded">.np/settings.json</code> in the project root. Open a directory to configure workspace-specific settings.</p>
+						</div>
+					{/if}
+
+					{#if activeCategory.startsWith('plugin:')}
+						{@const ns = activeCategory.slice(7)}
+						{@const schema = appState.prefs.settings.getSchema(ns)}
+						{#if schema}
+							<GeneratedSettingsSection
+								{schema}
+								scope={appState.prefs.activeScope}
+							/>
+						{/if}
+					{:else if activeCategory === 'appearance'}
 						<div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
 							<header>
 								<h2 class="text-2xl font-bold tracking-tight">Appearance</h2>

@@ -24,6 +24,7 @@ export class Workspace {
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
+	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
 	
@@ -431,6 +432,7 @@ export class Workspace {
 		try {
 			this.rootOrigin = origin;
 			this.hasRootPermission = true;
+			await this.onRootOriginChange?.(origin);
 
 			// Drop the previous folder's repository before the async VCS probe so
 			// the UI never shows stale branch/changes for the new folder.
@@ -475,6 +477,7 @@ export class Workspace {
 		const granted = await this.storage.verifyPermission(this.rootOrigin, true);
 		if (granted) {
 			this.hasRootPermission = true;
+			await this.onRootOriginChange?.(this.rootOrigin);
 
 			// Drop any stale repository before the async VCS probe so the UI
 			// never shows the previous folder's state while detecting.
@@ -897,6 +900,7 @@ export class Workspace {
 					
 					if (permission === 'granted') {
 						this.hasRootPermission = true;
+						await this.onRootOriginChange?.(rootOrigin);
 						// Initialize repo and tree in background
 						(async () => {
 							try {
