@@ -673,7 +673,7 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		for (const id of sortedRegisteredIds) {
-			if (!orderedOwners.includes(id)) {
+			if (byOwner.has(id) && !orderedOwners.includes(id)) {
 				orderedOwners.push(id);
 			}
 		}
