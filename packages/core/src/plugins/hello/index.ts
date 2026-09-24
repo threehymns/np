@@ -24,7 +24,7 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 
 	return () => {
 		activeInstances--;
-		helloPluginState.active = false;
+		helloPluginState.active = activeInstances > 0;
 		helloPluginState.deactivationCount++;
 	};
 }
