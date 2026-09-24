@@ -5,6 +5,7 @@ import {
 	DIFF_NAVIGATOR_SERVICE_KEY,
 	type DiffNavigatorProvider
 } from '../services';
+import { createPilotComponent } from '../ui-contributions';
 import type { DialogService } from '../../state.svelte';
 import type { Workspace } from '../../workspace.svelte';
 import { manifest } from './manifest';
@@ -17,6 +18,15 @@ import {
 	disposeWorkspaceGitState,
 	type WorkspaceGitState
 } from './lifecycle';
+import { createGitEditorContributions } from './gutter';
+import {
+	GIT_PANEL_ID,
+	GIT_PANEL_TITLE,
+	GIT_PANEL_ORDER,
+	GIT_STATUS_ID,
+	GIT_STATUS_ORDER,
+	getGitUIComponents
+} from './ui';
 
 /**
  * Setup entrypoint for the Git Core Plugin.
@@ -27,11 +37,21 @@ import {
  * save-triggered refresh, the shared command registry for Git commands,
  * and generic services for collaborators. No host interface mentions Git.
  *
+ * Presentation is purely contributory (#203): the sidebar panel and status
+ * entries register through `host.registerSidebarPanel` /
+ * `host.registerStatusBarItem`, and gutter decorations through
+ * `host.registerEditorContribution`, composed by the host with unchanged
+ * precedence. Real Svelte components arrive via the generic UI-components
+ * service provided by the UI bridge (`@np/ui`); headless hosts (Bun tests)
+ * fall back to pilot components so the wiring is verified without importing
+ * `.svelte` files into `@np/core`.
+ *
  * Per-workspace states live in this setup closure (never module globals),
  * so concurrent hosts and tests stay isolated. Returns a cleanup that
  * stops new operations, awaits active ones, and drops published
- * repositories (ADR 0009). Command/hook/event removal is handled by the
- * host itself on deactivate/unregister.
+ * repositories (ADR 0009). Command/hook/event/UI/editor removal is handled
+ * by the host itself on deactivate/unregister — verified by tests, not
+ * reimplemented here.
  */
 export function setup(host: PluginHostInterface): PluginCleanup {
 	const states = new Map<Workspace, WorkspaceGitState>();
@@ -66,6 +86,38 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 			initializeRepository: (workspace) => initializeWorkspaceRepository(stateFor(workspace))
 		})
 	);
+
+	host.registerEditorContributions(manifest.id, createGitEditorContributions());
+
+	const uiComponents = getGitUIComponents(host);
+	if (uiComponents) {
+		host.registerSidebarPanel(manifest.id, {
+			id: GIT_PANEL_ID,
+			title: GIT_PANEL_TITLE,
+			order: GIT_PANEL_ORDER,
+			icon: uiComponents.panelIcon,
+			component: uiComponents.panelComponent
+		});
+		host.registerStatusBarItem(manifest.id, {
+			id: GIT_STATUS_ID,
+			alignment: 'left',
+			order: GIT_STATUS_ORDER,
+			component: uiComponents.statusComponent
+		});
+	} else {
+		host.registerSidebarPanel(manifest.id, {
+			id: GIT_PANEL_ID,
+			title: GIT_PANEL_TITLE,
+			order: GIT_PANEL_ORDER,
+			component: createPilotComponent('git-panel')
+		});
+		host.registerStatusBarItem(manifest.id, {
+			id: GIT_STATUS_ID,
+			alignment: 'left',
+			order: GIT_STATUS_ORDER,
+			component: createPilotComponent('git-status')
+		});
+	}
 
 	host.registerAfterSaveHook(manifest.id, async (context) => {
 		if (!context.success) return;

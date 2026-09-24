@@ -16,3 +16,5 @@ export { manifest as helloManifest } from './hello/manifest';
 export { helloRegistration } from './hello/registration';
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
+export * from './git/ui';
+export * from './git/gutter';

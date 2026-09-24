@@ -71,6 +71,14 @@ export interface PluginManifest {
 	 * e.g. { 'vcs': 0 }
 	 */
 	readonly provides?: Readonly<Record<string, number>>;
+
+	/**
+	 * Whether the app activates this bundled plugin by default on startup.
+	 * Generic opt-in flag (no feature names): the app activates all
+	 * registered plugins with `defaultEnabled: true` without naming them.
+	 * If omitted, defaults to false (inactive until explicitly enabled).
+	 */
+	readonly defaultEnabled?: boolean;
 }
 
 export type PluginCleanup = () => void | Promise<void>;
