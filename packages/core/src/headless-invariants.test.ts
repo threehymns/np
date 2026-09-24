@@ -80,4 +80,30 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		expect(registry.getFolderIcon("src")).toBeNull();
 		expect(registry.getFileThemes()).toEqual([]);
 	});
+
+	it("keeps node-only tooling out of the browser-reachable plugins barrel", () => {
+		// state.svelte imports the plugins barrel into client code. boundary-check.ts
+		// imports typescript + node:fs, which Vite externalizes for browser compatibility
+		// and crashes the app at runtime. It is dev/test tooling and must stay directly
+		// importable without leaking through the barrel.
+		const pluginsDir = resolve(__dirname, "plugins");
+		const barrel = readFileSync(resolve(pluginsDir, "index.ts"), "utf-8");
+		expect(barrel).not.toMatch(/export\s+[^;]*from\s+['"]\.\/boundary-check['"]/);
+
+		// Generalize the invariant: every module re-exported by the barrel must be free
+		// of runtime node:/typescript imports, since the barrel ships to the browser.
+		const targets = [...barrel.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
+		expect(targets.length).toBeGreaterThan(0);
+		const offenders: string[] = [];
+		for (const target of targets) {
+			const file = resolve(pluginsDir, `${target.slice(2)}.ts`);
+			const source = readFileSync(file, "utf-8");
+			for (const line of source.split("\n")) {
+				if (/^\s*import\s+(?!type\b)[^;]*from\s+['"](node:[^'"]*|typescript)['"]/.test(line)) {
+					offenders.push(`${target}: ${line.trim()}`);
+				}
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
 });

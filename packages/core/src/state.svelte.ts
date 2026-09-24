@@ -11,6 +11,7 @@ import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
+import { PluginHost, helloRegistration, type PluginPlatform } from './plugins';
 
 export interface DialogService {
 	alert?(message: string): Promise<void> | void;
@@ -87,6 +88,8 @@ export interface AppStateOptions {
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
 	iconRegistry?: IconRegistryInterface;
+	pluginHost?: PluginHost;
+	platform?: PluginPlatform;
 }
 
 export class AppState {
@@ -98,6 +101,7 @@ export class AppState {
 	icons: IconRegistryInterface;
 	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
+	plugins: PluginHost;
 	settingsOpen = $state(false);
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
@@ -126,6 +130,9 @@ export class AppState {
 				this.icons.activeProductThemeId = id;
 			}
 		};
+
+		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
+		this.plugins.register(helloRegistration);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);

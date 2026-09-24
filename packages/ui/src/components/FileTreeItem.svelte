@@ -235,7 +235,7 @@
 					<Icon
 						resource={visualNode.name}
 						type="file"
-						phosphorFallback={File}
+						phosphorFallback={FileIcon}
 						class="size-3.5 opacity-90 shrink-0"
 					/>
 				{/if}
