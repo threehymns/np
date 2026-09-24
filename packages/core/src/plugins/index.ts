@@ -4,6 +4,7 @@ export * from './errors';
 export * from './commands';
 export * from './events';
 export * from './hooks';
+export * from './services';
 export * from './settings';
 export * from './ui-contributions';
 export * from './host.svelte';
@@ -13,3 +14,5 @@ export * from './host.svelte';
 // from node runtimes (tests, scripts) instead.
 export { manifest as helloManifest } from './hello/manifest';
 export { helloRegistration } from './hello/registration';
+export { manifest as gitManifest } from './git/manifest';
+export { gitRegistration } from './git/registration';

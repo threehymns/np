@@ -11,7 +11,8 @@ import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
-import { PluginHost, helloRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginHost, helloRegistration, gitRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { DIALOGS_SERVICE_KEY, DIFF_NAVIGATOR_SERVICE_KEY } from './plugins/services';
 
 export interface DialogService {
 	alert?(message: string): Promise<void> | void;
@@ -157,9 +158,24 @@ export class AppState {
 
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
 		this.plugins.register(helloRegistration);
+		// The Git Core Plugin ships bundled and default-on (#202): with it
+		// enabled, repository lifecycle and Git commands work as before, now
+		// owned by the plugin. Hello stays registered but inactive until
+		// plugin enablement UI lands (a later spec step).
+		this.plugins.register(gitRegistration);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
 		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		// Generic collaborator services for feature plugins (#202, ADR 0008):
+		// dialog capability and the mounted diff view's hunk navigator. The
+		// workspace publishes itself. Keys are generic; values are consumed
+		// by each plugin with its own types.
+		if (this.dialogService) {
+			this.plugins.provideService(DIALOGS_SERVICE_KEY, this.dialogService);
+		}
+		this.plugins.provideService(DIFF_NAVIGATOR_SERVICE_KEY, {
+			getCurrentNavigator: () => this.activeDiffNavigator ?? undefined
+		});
 		this.workspace.onRootOriginChange = async (origin) => {
 			if (origin && this.workspace.hasRootPermission) {
 				await this.prefs.attachWorkspace(this.storage, origin);
@@ -171,6 +187,17 @@ export class AppState {
 	}
 
 	async init() {
+		// Activate the bundled Git plugin before session restore so the
+		// folder-open lifecycle is plugin-owned from the first open (#202).
+		// Guarded for custom hosts that never registered it.
+		try {
+			if (this.plugins.hasPlugin('git') && !this.plugins.isPluginActive('git')) {
+				await this.plugins.activate('git');
+			}
+		} catch (e) {
+			console.error('[AppState] Failed to activate git plugin:', e);
+		}
+
 		try {
 			await this.workspace.restoreSession();
 		} catch (e) {

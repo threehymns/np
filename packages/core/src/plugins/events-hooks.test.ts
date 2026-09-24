@@ -408,13 +408,16 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			errorSpy.mockRestore();
 		});
 
-		it('flows repository refresh on save through the new afterSave mechanism with no behavior change', async () => {
+		it('flows repository refresh on save through the Git plugin afterSave hook with no behavior change', async () => {
 			const host = new PluginHost();
+			const { gitRegistration } = await import('./git/registration');
+			host.register(gitRegistration);
 			const storage = createLocalMockStorage({ '/repo/file.md': '' });
 			const persistence = new MemorySessionPersistence();
 
 			const vcsFactory = createMockVcsFactory();
 			const workspace = new Workspace(storage, vcsFactory, persistence, host);
+			await host.activate('git');
 
 			// Open a folder so workspace.repository is initialized
 			const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
@@ -433,8 +436,37 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const saved = await workspace.saveDocument(doc);
 			expect(saved).toBe(true);
 
-			// Verify repository.refresh() was called via afterSave hook
+			// Verify repository.refresh() was called via the Git plugin's afterSave hook
 			expect(refreshSpy).toHaveBeenCalled();
+
+			refreshSpy.mockRestore();
+		});
+
+		it('performs no repository refresh on save without the Git plugin (no hardwired hook)', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage({ '/repo/file.md': '' });
+			const persistence = new MemorySessionPersistence();
+
+			const vcsFactory = createMockVcsFactory();
+			const workspace = new Workspace(storage, vcsFactory, persistence, host);
+
+			const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
+			workspace.rootOrigin = rootOrigin;
+			workspace.hasRootPermission = true;
+			const repo = new Repository(rootOrigin, vcsFactory);
+			const refreshSpy = spyOn(repo, 'refresh');
+			workspace.repository = repo;
+
+			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/file.md', name: 'file.md' };
+			const doc = new DocumentSession(storage, '', fileOrigin);
+			doc.content = 'Updated file content';
+
+			const saved = await workspace.saveDocument(doc);
+			expect(saved).toBe(true);
+
+			// The old hardwired core:repository-refresh hook is gone (#202):
+			// without the Git plugin nothing refreshes on save.
+			expect(refreshSpy).not.toHaveBeenCalled();
 
 			refreshSpy.mockRestore();
 		});

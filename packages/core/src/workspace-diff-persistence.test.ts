@@ -6,6 +6,8 @@ import { MemorySessionPersistence } from "./persistence";
 import { Repository } from "./project/repository.svelte";
 import type { VCSAdapter, GitChange } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
+import { gitRegistration } from "./plugins/git/registration";
+import { DIALOGS_SERVICE_KEY } from "./plugins/services";
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -14,10 +16,23 @@ beforeAll(async () => {
 	}));
 });
 
-let makeWorkspace: (storage: ReturnType<typeof createMockStorage>, factory: (root: FileOrigin) => VCSAdapter, persistence: MemorySessionPersistence) => Workspace;
+let makeWorkspace: (storage: ReturnType<typeof createMockStorage>, factory: (root: FileOrigin) => VCSAdapter, persistence: MemorySessionPersistence) => Promise<Workspace>;
 beforeAll(async () => {
 	const mod = await import("./workspace.svelte");
-	makeWorkspace = (storage, factory, persistence) => new mod.Workspace(storage, factory, persistence);
+	const hostMod = await import("./plugins/host.svelte");
+	// Repository lifecycle is owned by the Git Core Plugin (#202): folder
+	// open only detects/refreshes with the plugin registered and enabled.
+	makeWorkspace = async (storage, factory, persistence) => {
+		const host = new hostMod.PluginHost();
+		host.register(gitRegistration);
+		host.provideService(DIALOGS_SERVICE_KEY, {
+			alert: mock(async () => {}),
+			confirm: mock(async () => true)
+		});
+		const ws = new mod.Workspace(storage, factory, persistence, host);
+		await host.activate('git');
+		return ws;
+	};
 });
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/projects/np", name: "np" };
@@ -58,7 +73,7 @@ function createLocalMockStorage() {
 describe("diff tab session persistence", () => {
 	it("serializes the active diff file's filepath and staged scope", async () => {
 		const persistence = new MemorySessionPersistence();
-		const ws = makeWorkspace(createLocalMockStorage(), createVcsFactory([]), persistence);
+		const ws = await makeWorkspace(createLocalMockStorage(), createVcsFactory([]), persistence);
 		await ws.restoreSession();
 
 		ws.repository = new Repository(rootOrigin, createVcsFactory([]));
@@ -79,7 +94,7 @@ describe("diff tab session persistence", () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createLocalMockStorage();
 		const factory = createVcsFactory([makeChange("src/a.ts", false), makeChange("docs/b.md", true)]);
-		const ws = makeWorkspace(storage, factory, persistence);
+		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
 		await persistence.saveOpenFiles(
@@ -102,7 +117,7 @@ describe("diff tab session persistence", () => {
 		const persistence = new MemorySessionPersistence();
 		const storage = createLocalMockStorage();
 		const factory = createVcsFactory([makeChange("src/a.ts", false), makeChange("docs/b.md", false)]);
-		const ws = makeWorkspace(storage, factory, persistence);
+		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
 		await persistence.saveOpenFiles(
@@ -129,7 +144,7 @@ describe("diff tab session persistence", () => {
 		// change, so refresh's default first-change fallback can't mask the
 		// outcome.
 		const factory = createVcsFactory([makeChange("other/c.ts", false), makeChange("docs/b.md", true)]);
-		const ws = makeWorkspace(storage, factory, persistence);
+		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
 		await persistence.saveOpenFiles(
@@ -177,7 +192,7 @@ describe("diff tab session persistence", () => {
 		);
 		await persistence.saveActiveDocumentId("__project_diff__", folderUri);
 
-		const ws = makeWorkspace(storage, () => slowAdapter, persistence);
+		const ws = await makeWorkspace(storage, () => slowAdapter, persistence);
 
 		// restoreSession hands back once session state loads; repository.refresh()
 		// is still blocked on getChanges at this point.
@@ -213,7 +228,7 @@ describe("diff tab session persistence", () => {
 		);
 		await persistence.saveActiveDocumentId("__project_diff__", folderUri);
 
-		const ws = makeWorkspace(storage, () => stalledAdapter, persistence);
+		const ws = await makeWorkspace(storage, () => stalledAdapter, persistence);
 
 		// Restore finishes with the repository's refresh still hung, so
 		// activeDiffFile is unset and the selection lives only in the

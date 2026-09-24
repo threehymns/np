@@ -17,7 +17,9 @@ import type {
 	BeforeSaveResult,
 	AfterSaveHook,
 	AfterSaveContext,
-	ActiveHookContext
+	ActiveHookContext,
+	WorkspaceOpenedHook,
+	WorkspaceOpenedContext
 } from './hooks';
 import type { SettingNamespaceSchema, SettingSchemaTransform, SettingsRegistryLike } from './settings';
 import type {
@@ -151,6 +153,23 @@ export interface PluginHostInterface {
 	isExecutingSaveHook(): boolean;
 	getActiveSaveHook(): ActiveHookContext | null;
 	checkSaveReentry(operation?: string, phase?: string): void;
+
+	// Generic workspace-lifecycle hooks (#202, ADR 0013 extension).
+	// Awaited participation in folder open: the workspace runs these after
+	// the root is set and permission granted, before it proceeds, so
+	// feature plugins can own per-workspace resources (repository
+	// detection, watchers) with no hardwired core path and no
+	// feature-specific host methods.
+	registerWorkspaceOpenedHook(pluginId: string, hook: WorkspaceOpenedHook): () => void;
+	removePluginWorkspaceHooks(pluginId: string): void;
+	runWorkspaceOpened(context: WorkspaceOpenedContext): Promise<void>;
+
+	// Generic application-service sharing (#202, ADR 0008). The host is a
+	// neutral meeting point: the app publishes opaque services (workspace,
+	// dialogs) and plugins consume them by key with their own types.
+	// Well-known keys live in './services'; the host never names features.
+	provideService(key: string, service: unknown): void;
+	getService<T = unknown>(key: string): T | undefined;
 
 	// Shared settings registry (ADR 0012, ADR 0014). Generic contribution
 	// types only: plugins register schemas where they are implemented and

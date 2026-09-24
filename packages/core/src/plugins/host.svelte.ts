@@ -53,7 +53,10 @@ import {
 	type BeforeSaveContext,
 	type BeforeSaveHook,
 	type BeforeSaveHookEntry,
-	type BeforeSaveResult
+	type BeforeSaveResult,
+	type WorkspaceOpenedContext,
+	type WorkspaceOpenedHook,
+	type WorkspaceOpenedHookEntry
 } from './hooks';
 
 import {
@@ -111,6 +114,16 @@ export class PluginHost implements PluginHostInterface {
 	private afterSaveHooks: AfterSaveHookEntry[] = [];
 	private activeSaveHook: ActiveHookContext | null = null;
 	lastHookError: { pluginId: string; error: unknown } | null = null;
+
+	// Generic workspace-lifecycle hooks (#202): awaited participation in
+	// folder open, ordered and filtered like save hooks.
+	private workspaceOpenedHooks: WorkspaceOpenedHookEntry[] = [];
+
+	// Generic application-service sharing (#202, ADR 0008): opaque
+	// key-value publication. Keys are conventions owned by
+	// provider/consumer pairs (see './services'); values are untyped here
+	// so the host never names features.
+	private services = new Map<string, unknown>();
 
 	// Editor contribution contract (ADR 0016)
 	readonly editorCompartments: EditorCompartments = createEditorContributionCompartments();
@@ -228,6 +241,7 @@ export class PluginHost implements PluginHostInterface {
 		this.deactivationReasons.delete(id);
 		this.removePluginCommands(id);
 		this.removePluginHooks(id);
+		this.removePluginWorkspaceHooks(id);
 		this.removePluginEvents(id);
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);
@@ -561,14 +575,25 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	private getOrderedBeforeSaveHooks(): BeforeSaveHookEntry[] {
-		return this.orderHooks(this.beforeSaveHooks);
+		return this.orderOwnedHooks(this.beforeSaveHooks);
 	}
 
 	private getOrderedAfterSaveHooks(): AfterSaveHookEntry[] {
-		return this.orderHooks(this.afterSaveHooks);
+		return this.orderOwnedHooks(this.afterSaveHooks);
 	}
 
-	private orderHooks<T extends { pluginId: string }>(hooks: T[]): T[] {
+	private getOrderedWorkspaceOpenedHooks(): WorkspaceOpenedHookEntry[] {
+		return this.orderOwnedHooks(this.workspaceOpenedHooks);
+	}
+
+	/**
+	 * Orders hook entries deterministically: built-in core owners first,
+	 * then registered active plugins in activation order, then
+	 * non-registered owners alphabetically. Registered-but-inactive owners
+	 * are excluded so a missed disposal can never leak hook behavior.
+	 * Shared by save hooks and workspace-lifecycle hooks (#202).
+	 */
+	private orderOwnedHooks<T extends { pluginId: string }>(hooks: T[]): T[] {
 		const byOwner = new Map<string, T[]>();
 		for (const hook of hooks) {
 			const list = byOwner.get(hook.pluginId);
@@ -626,6 +651,64 @@ export class PluginHost implements PluginHostInterface {
 		);
 
 		return included.flatMap((id) => byOwner.get(id)!);
+	}
+
+	// --------------------------------------------------------------------------
+	// Generic workspace-lifecycle hooks (#202, ADR 0013 extension)
+	// --------------------------------------------------------------------------
+
+	/**
+	 * Registers a workspace-opened hook. The workspace awaits registered
+	 * hooks after the root is set and permission granted, before it
+	 * proceeds (tree scan, session restore), so feature plugins can own
+	 * per-workspace resources with no hardwired core path.
+	 */
+	registerWorkspaceOpenedHook(pluginId: string, hook: WorkspaceOpenedHook): () => void {
+		const entry: WorkspaceOpenedHookEntry = { pluginId, hook };
+		this.workspaceOpenedHooks.push(entry);
+		return () => {
+			const idx = this.workspaceOpenedHooks.indexOf(entry);
+			if (idx !== -1) {
+				this.workspaceOpenedHooks.splice(idx, 1);
+			}
+		};
+	}
+
+	removePluginWorkspaceHooks(pluginId: string): void {
+		this.workspaceOpenedHooks = this.workspaceOpenedHooks.filter((e) => e.pluginId !== pluginId);
+	}
+
+	/**
+	 * Runs workspace-opened hooks sequentially in activation order and
+	 * awaits each. Unlike save hooks there is no cancel shape: errors
+	 * propagate to the folder-open caller, matching the previous
+	 * inline-probe behavior. Hooks of inactive plugins are skipped.
+	 */
+	async runWorkspaceOpened(context: WorkspaceOpenedContext): Promise<void> {
+		for (const entry of this.getOrderedWorkspaceOpenedHooks()) {
+			await entry.hook(context);
+		}
+	}
+
+	// --------------------------------------------------------------------------
+	// Generic application-service sharing (#202, ADR 0008)
+	// --------------------------------------------------------------------------
+
+	/**
+	 * Publishes an opaque application service under a well-known key (see
+	 * './services'). Last write wins; the host never inspects values.
+	 */
+	provideService(key: string, service: unknown): void {
+		this.services.set(key, service);
+	}
+
+	/**
+	 * Resolves a published service, or undefined when absent. Plugins
+	 * resolve lazily (at action time, not setup time) so activation order
+	 * relative to app construction does not matter.
+	 */
+	getService<T = unknown>(key: string): T | undefined {
+		return this.services.get(key) as T | undefined;
 	}
 
 	// ------------------------------------------------------------------------
@@ -1197,6 +1280,7 @@ export class PluginHost implements PluginHostInterface {
 		this.activationOrder = this.activationOrder.filter((item) => item !== id);
 		this.removePluginCommands(id);
 		this.removePluginHooks(id);
+		this.removePluginWorkspaceHooks(id);
 		this.removePluginEvents(id);
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);

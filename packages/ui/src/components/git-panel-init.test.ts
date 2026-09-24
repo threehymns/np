@@ -15,17 +15,22 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 		mockWorkspace = {
 			rootOrigin,
 			hasRootPermission: true,
-			repository: null,
-			initializeRepository: mock(async () => {
-				mockWorkspace.repository = { currentBranch: "main", changes: [] };
-				return true;
-			})
+			repository: null
 		};
 
 		mockAppState = {
 			workspace: mockWorkspace,
 			commands: {
-				execute: mock(async () => true)
+				// Repository initialization is owned by the Git Core Plugin
+				// (#202): the controller drives it through the shared
+				// `git.init` command.
+				execute: mock(async (id: string) => {
+					if (id === 'git.init') {
+						mockWorkspace.repository = { currentBranch: "main", changes: [] };
+						return true;
+					}
+					return undefined;
+				})
 			}
 		};
 
@@ -50,7 +55,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 			const result = await controller.initialize();
 			expect(result).toBe(false);
-			expect(mockWorkspace.initializeRepository).not.toHaveBeenCalled();
+			expect(mockAppState.commands.execute).not.toHaveBeenCalled();
 			expect(controller.isInitializing).toBe(false);
 			expect(controller.error).toBeNull();
 		});
@@ -63,7 +68,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 			const result = await controller.initialize();
 			expect(result).toBe(false);
-			expect(mockWorkspace.initializeRepository).not.toHaveBeenCalled();
+			expect(mockAppState.commands.execute).not.toHaveBeenCalled();
 			expect(controller.isInitializing).toBe(false);
 			expect(controller.error).toBeNull();
 		});
@@ -75,7 +80,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			const initDeferred = new Promise<void>((r) => (resolveInit = r));
 
 			let initCallCount = 0;
-			mockWorkspace.initializeRepository = mock(async () => {
+			mockAppState.commands.execute = mock(async () => {
 				initCallCount++;
 				await initDeferred;
 				mockWorkspace.repository = { currentBranch: "main", changes: [] };
@@ -109,7 +114,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 	describe("3. Error presentation and retry lifecycle", () => {
 		it("captures thrown error message, presents error state, and resets busy flag", async () => {
-			mockWorkspace.initializeRepository = mock(async () => {
+			mockAppState.commands.execute = mock(async () => {
 				throw new Error("Filesystem write permission denied");
 			});
 
@@ -121,7 +126,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 		});
 
 		it("handles non-throwing falsy returns when workspace is not initialized", async () => {
-			mockWorkspace.initializeRepository = mock(async () => false);
+			mockAppState.commands.execute = mock(async () => false);
 
 			const result = await controller.initialize();
 
@@ -132,7 +137,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 		it("retries initialization, clears existing error, and transitions to success", async () => {
 			let attempt = 0;
-			mockWorkspace.initializeRepository = mock(async () => {
+			mockAppState.commands.execute = mock(async () => {
 				attempt++;
 				if (attempt === 1) {
 					throw new Error("Temporary locked file error");
@@ -158,7 +163,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			let resolveInit!: () => void;
 			const initDeferred = new Promise<void>((r) => (resolveInit = r));
 
-			mockWorkspace.initializeRepository = mock(async () => {
+			mockAppState.commands.execute = mock(async () => {
 				await initDeferred;
 				throw new Error("Late error after reset");
 			});
@@ -181,7 +186,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			let resolveInit!: () => void;
 			const initDeferred = new Promise<void>((r) => (resolveInit = r));
 
-			mockWorkspace.initializeRepository = mock(async () => {
+			mockAppState.commands.execute = mock(async () => {
 				await initDeferred;
 				throw new Error("Stale directory error");
 			});

@@ -1,6 +1,7 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
 import { registerCoreCommands, CommandRegistry } from "./commands.svelte";
+import { createGitCommands } from "./plugins/git/commands";
 import { defaultKeymap, parseKeySequence } from "./keymap.svelte";
 
 function createMockAppState() {
@@ -12,6 +13,15 @@ function createMockAppState() {
 			| undefined
 	};
 	registerCoreCommands(appState as any);
+	// Hunk navigation commands live in the Git plugin's modules (#202) and
+	// register through the shared registry; the context adapts the mock app
+	// state (diff navigator read lazily so later assignment is visible).
+	commands.registerCommands('git', createGitCommands({
+		getWorkspace: () => undefined,
+		alert: async () => {},
+		confirm: async () => false,
+		getDiffNavigator: () => appState.activeDiffNavigator ?? undefined
+	}, { initializeRepository: async () => false }));
 	return appState;
 }
 

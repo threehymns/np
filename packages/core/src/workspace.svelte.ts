@@ -1,11 +1,12 @@
 import { PluginHost } from './plugins/host.svelte';
 import type { PluginHostInterface } from './plugins/types';
+import { WORKSPACE_SERVICE_KEY } from './plugins/services';
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { ProjectTree } from './project/tree.svelte';
-import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
+import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
@@ -94,17 +95,12 @@ export class Workspace {
 	 * this over `doc.save` — a direct save leaves persistence holding a stale
 	 * `draftContent` until some unrelated flush happens to clear it.
 	 */
-	private registerRepositoryRefreshHook() {
-		this.pluginHost.registerAfterSaveHook('core:repository-refresh', async (context) => {
-			if (context.success) {
-				await this.repository?.refresh().catch((e) => console.error('Auto-refresh after save failed', e));
-			}
-		});
-	}
-
 	setPluginHost(host: PluginHostInterface) {
 		this.pluginHost = host;
-		this.registerRepositoryRefreshHook();
+		// Re-publish under the generic workspace service key so feature
+		// plugins resolving the workspace lazily keep working after a host
+		// swap. The key is generic; the host never names features.
+		this.pluginHost.provideService(WORKSPACE_SERVICE_KEY, this);
 	}
 
 	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
@@ -253,7 +249,10 @@ export class Workspace {
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
 		this.pluginHost = pluginHost ?? new PluginHost();
-		this.registerRepositoryRefreshHook();
+		// Publish under the generic workspace service key (#202): feature
+		// plugins (e.g. Git) resolve the workspace lazily through the host
+		// instead of the core hardwiring feature lifecycles.
+		this.pluginHost.provideService(WORKSPACE_SERVICE_KEY, this);
 
 		$effect.root(() => {
 			$effect(() => {
@@ -434,19 +433,13 @@ export class Workspace {
 			this.hasRootPermission = true;
 			await this.onRootOriginChange?.(origin);
 
-			// Drop the previous folder's repository before the async VCS probe so
-			// the UI never shows stale branch/changes for the new folder.
+			// Repository lifecycle is owned by feature plugins (#202) through
+			// the generic workspace-opened hook: with the Git plugin enabled
+			// this detects and refreshes; with it disabled the slot stays
+			// null. The slot is cleared unconditionally so the UI never shows
+			// stale branch/changes for the new folder.
 			this.repository = null;
-			const repo = new Repository(origin, this.vcsFactory);
-			const detected = await repo.adapter.detect(origin.path);
-			if (detected) {
-				this.repository = repo;
-				await repo.refresh();
-			} else {
-				// Not a git repository: keep repository null so the Git panel shows
-				// its "No Git Repository" empty state instead of a dead panel.
-				this.repository = null;
-			}
+			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 
 			// Add to recent folders
 			const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
@@ -479,25 +472,13 @@ export class Workspace {
 			this.hasRootPermission = true;
 			await this.onRootOriginChange?.(this.rootOrigin);
 
-			// Drop any stale repository before the async VCS probe so the UI
-			// never shows the previous folder's state while detecting.
+			// Repository lifecycle is plugin-owned (#202, see openDirectory):
+			// clear unconditionally, then let the workspace-opened hook
+			// detect and refresh when the owning plugin is enabled. A fresh
+			// adapter is created per open, so no adapter reset is needed.
 			this.repository = null;
-			const repo = new Repository(this.rootOrigin, this.vcsFactory);
-
-			// Fresh start for the adapter
-			const adapter = (repo as any).adapter;
-			if (adapter && typeof adapter.reset === 'function') {
-				adapter.reset();
-			}
-
-			const detected = await adapter.detect(this.rootOrigin.path);
-			if (detected) {
-				this.repository = repo;
-				await repo.refresh();
-				this.applyPendingDiffRestore();
-			} else {
-				this.repository = null;
-			}
+			await this.pluginHost.runWorkspaceOpened({ origin: this.rootOrigin, workspace: this });
+			this.applyPendingDiffRestore();
 
 			await this.projectTree.scan(this.rootOrigin);
 
@@ -509,64 +490,6 @@ export class Workspace {
 			}
 		}
 		return granted;
-	}
-
-	async initializeRepository(): Promise<boolean> {
-		if (!this.rootOrigin || !this.hasRootPermission) {
-			return false;
-		}
-
-		const targetOrigin = this.rootOrigin;
-		const targetUri = toURI(targetOrigin);
-
-		// Clear stale repository state before async initialization
-		this.repository = null;
-
-		let repo: Repository | null = null;
-		try {
-			repo = new Repository(targetOrigin, this.vcsFactory);
-			const adapter = repo.adapter;
-
-			if (!adapter.init || typeof adapter.init !== 'function') {
-				throw new Error('VCS adapter does not support repository initialization');
-			}
-
-			await adapter.init(targetOrigin.path);
-
-			// The folder may have switched while init was deferred; do not
-			// publish results for an outdated folder.
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				return false;
-			}
-
-			this.repository = repo;
-			const refreshed = await repo.refresh();
-			if (!refreshed) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			await this.projectTree.scan(targetOrigin);
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			return true;
-		} catch (e) {
-			if (!repo || this.repository === repo) {
-				this.repository = null;
-			}
-			throw e;
-		}
 	}
 
 	closeDocument(id: string) {
@@ -904,20 +827,18 @@ export class Workspace {
 						// Initialize repo and tree in background
 						(async () => {
 							try {
-								// Drop the previous session's repository before the async
-								// VCS probe so the UI never shows stale state.
+								// Drop the previous session's repository before the
+								// plugin-owned probe so the UI never shows stale
+								// state. Detection/refresh run through the generic
+								// workspace-opened hook (#202).
 								this.repository = null;
-								const repo = new Repository(rootOrigin!, this.vcsFactory);
-								const detected = await repo.adapter.detect(rootOrigin!.path);
-								if (detected) {
-									this.repository = repo;
-									await repo.refresh();
-									// Session restore loads tabs before the repo exists;
-									// re-apply the persisted diff selection once changes are in.
-									this.applyPendingDiffRestore();
-								} else {
-									this.repository = null;
-								}
+								await this.pluginHost.runWorkspaceOpened({
+									origin: rootOrigin!,
+									workspace: this
+								});
+								// Session restore loads tabs before the repo exists;
+								// re-apply the persisted diff selection once changes are in.
+								this.applyPendingDiffRestore();
 								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
