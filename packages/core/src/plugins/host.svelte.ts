@@ -723,13 +723,32 @@ export class PluginHost implements PluginHostInterface {
 
 	/**
 	 * Runs workspace-opened hooks sequentially in activation order and
-	 * awaits each. Unlike save hooks there is no cancel shape: errors
-	 * propagate to the folder-open caller, matching the previous
-	 * inline-probe behavior. Hooks of inactive plugins are skipped.
+	 * awaits each. Per ADR 0013 a throwing hook is contained, logged
+	 * against its plugin, and never an implicit veto: remaining hooks
+	 * still run and folder open proceeds (tree scan, session restore).
+	 * Hooks of inactive plugins are skipped.
+	 *
+	 * Explicit repository decision: the workspace clears its slot BEFORE
+	 * running these hooks, so when the owning hook fails the slot stays
+	 * in the safe empty state (null) rather than showing stale
+	 * branch/changes for the new folder. The host never clears or
+	 * republishes the slot itself; whatever a hook managed to publish
+	 * before failing is left for its owner's disposal path. Failures are
+	 * recorded on `lastHookError` and logged with plugin attribution plus
+	 * an action, so the message is sufficient to prompt an AI fix.
 	 */
 	async runWorkspaceOpened(context: WorkspaceOpenedContext): Promise<void> {
 		for (const entry of this.getOrderedWorkspaceOpenedHooks()) {
-			await entry.hook(context);
+			try {
+				await entry.hook(context);
+			} catch (error) {
+				this.lastHookError = { pluginId: entry.pluginId, error };
+				console.error(
+					`[PluginHost] Error in workspaceOpened hook for plugin "${entry.pluginId}" during folder open:`,
+					error,
+					`\nAction: Inspect the "${entry.pluginId}" plugin's workspace-opened hook; folder open proceeded without its contribution.`
+				);
+			}
 		}
 	}
 

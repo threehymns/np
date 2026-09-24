@@ -437,7 +437,11 @@ export class Workspace {
 			// the generic workspace-opened hook: with the Git plugin enabled
 			// this detects and refreshes; with it disabled the slot stays
 			// null. The slot is cleared unconditionally so the UI never shows
-			// stale branch/changes for the new folder.
+			// stale branch/changes for the new folder. Explicit failure
+			// decision (ADR 0013): a throwing hook is contained by the host
+			// with plugin attribution, so when the owning hook fails the slot
+			// stays in this safe empty state and open proceeds (tree scan,
+			// session restore) instead of aborting or showing stale state.
 			this.repository = null;
 			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 

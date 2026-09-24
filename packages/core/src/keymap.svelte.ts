@@ -40,8 +40,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's vim-mode `]c` / `[c`
-			"] c": "git.nextHunk",
-			"[ c": "git.prevHunk",
+			"] c": "diff.nextHunk",
+			"[ c": "diff.prevHunk",
 			"space v s": "view.toggleSidebar",
 			"space p": "commandPalette.toggle",
 			"space d": "window.toggleDevTools"
@@ -59,8 +59,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+a": "edit.selectAll",
 			"cmd+k m": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
-			"cmd+f8": "git.nextHunk",
-			"cmd+shift+f8": "git.prevHunk"
+			"cmd+f8": "diff.nextHunk",
+			"cmd+shift+f8": "diff.prevHunk"
 		}
 	},
 	{
@@ -79,8 +79,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools",
-			"cmd+f8": "git.nextHunk",
-			"cmd+shift+f8": "git.prevHunk"
+			"cmd+f8": "diff.nextHunk",
+			"cmd+shift+f8": "diff.prevHunk"
 		}
 	}
 ];

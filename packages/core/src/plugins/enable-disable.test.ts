@@ -10,6 +10,7 @@ import { Workspace } from '../workspace.svelte';
 import { DocumentSession } from '../document.svelte';
 import { MemorySessionPersistence } from '../persistence';
 import { AppState } from '../state.svelte';
+import { toURI } from '../storage';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 
@@ -248,6 +249,26 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			doc.content = 'edited while off';
 			expect(await app.workspace.saveDocument(doc)).toBe(true);
 
+			// Generic hunk navigation is core-owned, so it survives with Git
+			// off: commands exist, gate on the mounted navigator, and dispatch.
+			expect(host.getCommand('diff.nextHunk')).toBeDefined();
+			expect(host.getCommand('diff.prevHunk')).toBeDefined();
+			expect(host.getCommand('git.nextHunk')).toBeUndefined();
+			expect(host.getCommand('diff.nextHunk')?.isEnabled?.()).toBe(false);
+			let navigated = 0;
+			app.activeDiffNavigator = {
+				nextHunk: () => {
+					navigated++;
+				},
+				prevHunk: () => {
+					navigated++;
+				}
+			};
+			expect(host.getCommand('diff.nextHunk')?.isEnabled?.()).toBe(true);
+			host.executeCommand('diff.nextHunk');
+			expect(navigated).toBe(1);
+			app.activeDiffNavigator = undefined;
+
 			// Toggle on: full function restored without restart.
 			await app.setPluginEnabled('git', true);
 			expect(host.isPluginActive('git')).toBe(true);
@@ -263,22 +284,43 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 
 		it('preserves unsaved drafts across the round trip', async () => {
 			const { app, host } = await makeApp();
+			await app.workspace.openDirectory();
+			const folderUri = toURI(app.workspace.rootOrigin!);
+
+			// Open through the workspace so the tab is tracked, then type so
+			// the draft is persisted (not just live in memory).
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/notes.md', name: 'notes.md' };
-			const doc = new DocumentSession(app.workspace.storage, 'saved content', fileOrigin);
-			doc.content = 'unsaved draft edits';
-			expect(doc.isModified).toBe(true);
+			const doc = await app.workspace.openFile(fileOrigin);
+			expect(doc).toBeDefined();
+			app.workspace.updateDocumentContent(doc!, 'unsaved draft edits');
+			await app.workspace.flushSaveOpenFiles();
+
+			// The draft is on disk in session persistence before the toggle.
+			const persisted = await app.workspace.persistence.loadOpenFiles(folderUri);
+			const entry = persisted.find((s) => s.origin?.path === '/repo/notes.md');
+			expect(entry?.draftContent).toBe('unsaved draft edits');
 
 			await app.setPluginEnabled('git', false);
-			expect(doc.content).toBe('unsaved draft edits');
-			expect(doc.isModified).toBe(true);
 			expect(host.isPluginActive('git')).toBe(false);
 
 			await app.setPluginEnabled('git', true);
-			expect(doc.content).toBe('unsaved draft edits');
-			expect(doc.isModified).toBe(true);
+			expect(host.isPluginActive('git')).toBe(true);
 
-			expect(await app.workspace.saveDocument(doc)).toBe(true);
-			expect(doc.isModified).toBe(false);
+			// Destroy the live session and reload through the real restore
+			// path: content must come back from persistence, not the old object.
+			app.workspace.documents = [];
+			app.workspace.tabs = [];
+			await app.workspace.loadFolderState(folderUri);
+			await tick();
+
+			const restored = app.workspace.documents.find((d) => d.origin?.path === '/repo/notes.md');
+			expect(restored).toBeDefined();
+			expect(restored).not.toBe(doc);
+			expect(restored!.content).toBe('unsaved draft edits');
+			expect(restored!.isModified).toBe(true);
+
+			expect(await app.workspace.saveDocument(restored!)).toBe(true);
+			expect(restored!.isModified).toBe(false);
 		});
 	});
 

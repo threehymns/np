@@ -135,6 +135,9 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	const removeWorkspaceOpenedHook = host.registerWorkspaceOpenedHook(
 		manifest.id,
 		async (context) => {
+			// A throw here (e.g. detect failure) is contained by the host
+			// (ADR 0013): logged against this plugin with remaining hooks
+			// still running, folder open proceeding with an empty slot.
 			await openFolderRepository(stateFor(context.workspace as Workspace), context.origin);
 		}
 	);

@@ -104,8 +104,6 @@ const EXPECTED_GIT_COMMAND_IDS = [
 	'git.unstageAll',
 	'git.discardAll',
 	'git.openDiff',
-	'git.nextHunk',
-	'git.prevHunk',
 	'git.stageHunk',
 	'git.unstageHunk',
 	'git.discardHunk'
@@ -463,14 +461,29 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 		});
 
 		it('alerts and returns false when the adapter lacks init capability', async () => {
-			const { host, workspace, alerts } = await makeHarness({ detected: false });
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
-			workspace.repository = { currentBranch: 'stale' } as any;
+			const { host, workspace, alerts } = await makeHarness({ detected: true });
+			// Establish an OWNED publication through folder open: init may
+			// clear what it owns, never what it does not (ADR 0009).
+			await workspace.openDirectory();
+			expect(workspace.repository).not.toBeNull();
 
 			expect(await host.executeCommand('git.init')).toBe(false);
 			expect(alerts).toEqual(['Failed to initialize repository: VCS adapter does not support repository initialization']);
 			expect(workspace.repository).toBeNull();
+		});
+
+		it('never drops a foreign repository it does not own (ADR 0009)', async () => {
+			const { host, workspace, alerts } = await makeHarness({ init: async () => {} });
+			workspace.rootOrigin = rootOrigin;
+			workspace.hasRootPermission = true;
+			const foreign = new Repository(rootOrigin, createMockVcsFactory());
+			workspace.repository = foreign;
+
+			expect(await host.executeCommand('git.init')).toBe(false);
+			expect(workspace.repository).toBe(foreign);
+			expect(alerts).toHaveLength(1);
+			expect(alerts[0]).toContain('another contributor');
+			expect(alerts[0]).toContain('Action:');
 		});
 
 		it('alerts and returns false when adapter init rejects', async () => {
@@ -497,9 +510,9 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					await initPromise;
 				}
 			});
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
-			workspace.repository = { currentBranch: 'old-branch' } as any;
+			// Owned stale state (folder-open publication): init may clear it.
+			await workspace.openDirectory();
+			expect(workspace.repository).not.toBeNull();
 
 			const initTask = host.executeCommand('git.init');
 			await tick();
