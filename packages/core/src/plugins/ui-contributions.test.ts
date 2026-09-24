@@ -20,6 +20,7 @@ import {
 	type StatusBarItemTransformEntry
 } from './ui-contributions';
 import { helloRegistration } from './hello/registration';
+import { HELLO_UI_COMPONENTS_KEY } from './hello/ui';
 import { AppState } from '../state.svelte';
 import { createMockStorage } from '../../../../tests/mock-storage';
 
@@ -599,6 +600,25 @@ describe('Additive UI Contributions (ADR 0010, ADR 0012, ADR 0015, #200)', () =>
 			expect(host.getStatusBarItem('hello-status')).toBeUndefined();
 			expect(host.getSidebarPanels()).toHaveLength(0);
 			expect(host.getStatusBarItems()).toHaveLength(0);
+		});
+
+		it('hello plugin uses UI components from the presented UI service when available', async () => {
+			const host = new PluginHost();
+			host.register(helloRegistration);
+
+			const panelComponent = () => {};
+			const statusComponent = () => {};
+			host.provideService(HELLO_UI_COMPONENTS_KEY, {
+				panelComponent,
+				statusComponent
+			});
+
+			await host.activate('hello');
+
+			expect(host.getSidebarPanel('hello-panel')?.component).toBe(panelComponent);
+			expect(host.getStatusBarItem('hello-status')?.component).toBe(statusComponent);
+
+			await host.deactivate('hello');
 		});
 	});
 });

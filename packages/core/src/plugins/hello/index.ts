@@ -1,6 +1,14 @@
 import type { PluginCleanup, PluginHostInterface } from '../types';
 import { createPilotComponent } from '../ui-contributions';
 import { manifest } from './manifest';
+import {
+	HELLO_PANEL_ID,
+	HELLO_PANEL_TITLE,
+	HELLO_PANEL_ORDER,
+	HELLO_STATUS_ID,
+	HELLO_STATUS_ORDER,
+	getHelloUIComponents
+} from './ui';
 
 let activeInstances = 0;
 
@@ -24,22 +32,43 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	helloPluginState.activationCount++;
 
 	// Additive UI contributions (ADR 0010, ADR 0015):
-	// Contributes a pilot sidebar panel and a pilot status-bar entry
-	host.registerSidebarPanel(manifest.id, {
-		id: 'hello-panel',
-		title: 'Hello',
-		order: 100,
-		component: createPilotComponent('hello-panel'),
-		props: { message: 'Hello from Hello Plugin' }
-	});
-
-	host.registerStatusBarItem(manifest.id, {
-		id: 'hello-status',
-		alignment: 'left',
-		order: 100,
-		component: createPilotComponent('hello-status'),
-		props: { message: 'Hello Status' }
-	});
+	// Contributes a pilot sidebar panel and a pilot status-bar entry.
+	// Real Svelte components arrive via the generic UI-components service
+	// provided by the UI bridge (`@np/ui`); headless hosts (Bun tests) fall
+	// back to pilot components so the wiring is verified without importing
+	// `.svelte` files into `@np/core`.
+	const uiComponents = getHelloUIComponents(host);
+	if (uiComponents) {
+		host.registerSidebarPanel(manifest.id, {
+			id: HELLO_PANEL_ID,
+			title: HELLO_PANEL_TITLE,
+			order: HELLO_PANEL_ORDER,
+			component: uiComponents.panelComponent,
+			props: { message: 'Hello from Hello Plugin' }
+		});
+		host.registerStatusBarItem(manifest.id, {
+			id: HELLO_STATUS_ID,
+			alignment: 'left',
+			order: HELLO_STATUS_ORDER,
+			component: uiComponents.statusComponent,
+			props: { message: 'Hello Status' }
+		});
+	} else {
+		host.registerSidebarPanel(manifest.id, {
+			id: HELLO_PANEL_ID,
+			title: HELLO_PANEL_TITLE,
+			order: HELLO_PANEL_ORDER,
+			component: createPilotComponent('hello-panel'),
+			props: { message: 'Hello from Hello Plugin' }
+		});
+		host.registerStatusBarItem(manifest.id, {
+			id: HELLO_STATUS_ID,
+			alignment: 'left',
+			order: HELLO_STATUS_ORDER,
+			component: createPilotComponent('hello-status'),
+			props: { message: 'Hello Status' }
+		});
+	}
 
 	return () => {
 		activeInstances--;
