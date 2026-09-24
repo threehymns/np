@@ -1137,7 +1137,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.registerCommands(CORE_COMMANDS_OWNER, coreCommands);	appState.commands.registerCommands(CORE_COMMANDS_OWNER, coreCommands);
+	appState.commands.registerCommands(CORE_COMMANDS_OWNER, coreCommands);
 }
 
 // HunkRange now lives with the Git commands that consume it (#202);
