@@ -23,6 +23,7 @@ import {
 	UnsupportedPlatformError
 } from './errors';
 import type { DocumentSession } from "../document.svelte";
+import { SvelteMap } from 'svelte/reactivity';
 import {
 	createEditorContributionCompartments,
 	applyDocumentEditOperation,
@@ -94,8 +95,11 @@ export class PluginHost implements PluginHostInterface {
 
 	// Internal state tracking
 	private registrations = new Map<string, PluginRegistration>();
-	private states = $state<Map<string, PluginState>>(new Map());
-	private deactivationReasons = $state<Map<string, string>>(new Map());
+	// SvelteMap so UI derived state (e.g. SettingsModal plugin rows)
+	// recomputes after activate/deactivate; a $state-wrapped plain Map does
+	// not track .set/.delete mutations.
+	private states = new SvelteMap<string, PluginState>();
+	private deactivationReasons = new SvelteMap<string, string>();
 	private cleanups = new Map<string, PluginCleanup>();
 	private activationOrder = $state<string[]>([]);
 
