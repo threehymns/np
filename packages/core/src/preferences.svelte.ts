@@ -2,8 +2,10 @@ import {
 	SettingsManager,
 	EDITOR_SCHEMA,
 	UI_SCHEMA,
+	FileWorkspaceSettingsStorage,
 	type ResolvedSetting,
-	type SettingDiagnostic
+	type SettingDiagnostic,
+	type SettingScope
 } from './plugins/settings';
 
 export type Theme = 
@@ -48,6 +50,7 @@ const DEFAULTS = {
 };
 
 export class Preferences {
+	activeScope = $state<SettingScope>('user');
 	private _data = $state({ ...DEFAULTS });
 	onIconThemeChange?: (type: 'file' | 'product', id: string) => void;
 
@@ -199,16 +202,98 @@ export class Preferences {
 		return this.settings.resolve<T>(namespace, key);
 	}
 
-	get<T = any>(namespace: string, key: string): T {
-		return this.settings.get<T>(namespace, key);
+	get<T = any>(namespace: string, key: string, scope?: SettingScope): T {
+		return this.settings.get<T>(namespace, key, scope);
 	}
 
-	set<T = any>(namespace: string, key: string, value: T): void {
+	set<T = any>(namespace: string, key: string, value: T, scope: SettingScope = 'user'): void {
+		if (scope === 'workspace') {
+			this.settings.set(namespace, key, value, 'workspace');
+			this.refreshEffectiveData();
+			return;
+		}
+
 		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
 		this.explicitlyModifiedNamespaces.add(namespace);
-		// Update corresponding _data property if it is a core property
-		this.updateDataFromNamespacedKey(namespace, key, value);
+		this.settings.set(namespace, key, value, 'user');
 		this.syncToSettingsAndSave(namespace, key, value);
+		this.refreshEffectiveData();
+	}
+
+	unset(namespace: string, key: string, scope: SettingScope = 'workspace'): void {
+		this.settings.unset(namespace, key, scope);
+		if (scope === 'user') {
+			this.explicitlyModifiedKeys.delete(`${namespace}.${key}`);
+			if (this.storedRawData[namespace] && typeof this.storedRawData[namespace] === 'object') {
+				delete this.storedRawData[namespace][key];
+				if (Object.keys(this.storedRawData[namespace]).length === 0) {
+					delete this.storedRawData[namespace];
+					this.explicitlyModifiedNamespaces.delete(namespace);
+				}
+			}
+			this.save();
+		}
+		this.refreshEffectiveData();
+	}
+
+	async attachWorkspace(storage: any, rootOrigin: any): Promise<void> {
+		const wsStorage = new FileWorkspaceSettingsStorage(storage, rootOrigin);
+		await this.settings.attachWorkspaceStorage(wsStorage);
+		this.refreshEffectiveData();
+	}
+
+	clearWorkspace(): void {
+		this.settings.clearWorkspace();
+		this.refreshEffectiveData();
+	}
+
+	loadWorkspaceFromText(rawText: string | null | undefined): void {
+		this.settings.loadWorkspaceFromText(rawText);
+		this.refreshEffectiveData();
+	}
+
+	getWorkspaceDocument(): Record<string, any> {
+		return this.settings.getWorkspaceDocument();
+	}
+
+	getWorkspaceText(): string {
+		return this.settings.getWorkspaceText();
+	}
+
+	hasWorkspaceOverride(namespace: string, key: string): boolean {
+		return this.settings.hasOverride(namespace, key, 'workspace');
+	}
+
+	private refreshEffectiveData(): void {
+		try {
+			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
+			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
+			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
+			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
+			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+
+			this._data.theme = this.settings.resolve('ui', 'theme').value;
+			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
+			this._data.accentColor = this.settings.resolve('ui', 'accent_color').value;
+			this._data.zoom = this.settings.resolve('ui', 'zoom').value;
+			this._data.statusBar = this.settings.resolve('ui', 'status_bar').value;
+			this._data.sidebarVisible = this.settings.resolve('ui', 'sidebar_visible').value;
+			this._data.sidebarWidth = this.settings.resolve('ui', 'sidebar_width').value;
+
+			const newFileIconTheme = this.settings.resolve('ui', 'file_icon_theme_id').value;
+			if (newFileIconTheme !== this._data.fileIconThemeId) {
+				this._data.fileIconThemeId = newFileIconTheme;
+				this.onIconThemeChange?.('file', newFileIconTheme);
+			}
+
+			const newProductIconTheme = this.settings.resolve('ui', 'product_icon_theme_id').value;
+			if (newProductIconTheme !== this._data.productIconThemeId) {
+				this._data.productIconThemeId = newProductIconTheme;
+				this.onIconThemeChange?.('product', newProductIconTheme);
+			}
+		} catch (e) {
+			console.error('Failed to refresh effective preferences data:', e);
+		}
 	}
 
 	private updateDataFromNamespacedKey(namespace: string, key: string, value: any): void {
@@ -238,6 +323,9 @@ export class Preferences {
 
 	private syncToSettingsAndSave(namespace: string, key: string, value: any): void {
 		if (!this.isInitialized || this.isRestoring) return;
+
+		this.explicitlyModifiedKeys.add(`${namespace}.${key}`);
+		this.explicitlyModifiedNamespaces.add(namespace);
 
 		// Update stored raw data
 		if (typeof this.storedRawData[namespace] !== 'object' || this.storedRawData[namespace] === null) {
@@ -366,7 +454,9 @@ export class Preferences {
 		if (!this.isInitialized || this.isRestoring) return;
 		try {
 			const payload = this.buildStoragePayload();
-			this.storage.setItem(this.storageKey, JSON.stringify(payload));
+			const serialized = JSON.stringify(payload);
+			this.storage.setItem(this.storageKey, serialized);
+			this.settings.loadFromText(serialized);
 		} catch (e) {
 			console.error('Failed to save preferences', e);
 		}
