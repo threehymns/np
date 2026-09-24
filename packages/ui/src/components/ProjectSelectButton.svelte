@@ -19,6 +19,10 @@
 		open = false;
 		await workspace.openDirectory(origin);
 	}
+
+	function toDisplayPath(origin: FileOrigin): string {
+		return origin.scheme === 'file' ? origin.path : toURI(origin);
+	}
 </script>
 
 <div class="min-w-0 flex-1">
@@ -46,7 +50,7 @@
 					{/snippet}
 				</Tooltip.Trigger>
 				<Tooltip.Content side="bottom" align="start" class="text-[10px] px-2 py-1 max-w-xs break-all">
-					{toURI(root)}
+					{toDisplayPath(root)}
 				</Tooltip.Content>
 			</Tooltip.Root>
 			<Popover.Content
@@ -66,17 +70,17 @@
 						<Tooltip.Root>
 							<Tooltip.Trigger>
 								{#snippet child({ props })}
-									<Command.Item {...props} value={toURI(folder)} keywords={[folder.name, folder.path]} onSelect={() => select(folder)} disabled={workspace.projectMutationBusy} class="flex min-w-0 gap-2 text-xs">
+									<Command.Item {...props} value={folder.path} keywords={[folder.name, folder.path]} onSelect={() => select(folder)} disabled={workspace.projectMutationBusy} class="flex min-w-0 gap-2 text-xs">
 										<div class="min-w-0 flex-1">
 											<div class="truncate">{folder.name}</div>
-											<div class="truncate text-[10px] text-muted-foreground">{toURI(folder)}</div>
+											<div class="truncate text-[10px] text-muted-foreground">{toDisplayPath(folder)}</div>
 										</div>
 										{#if toURI(folder) === workspace.projectUri}<span class="shrink-0 text-[10px]">Current</span>{/if}
 									</Command.Item>
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Content side="right" align="center" class="text-[10px] px-2 py-1 max-w-xs break-all">
-								{toURI(folder)}
+								{toDisplayPath(folder)}
 							</Tooltip.Content>
 						</Tooltip.Root>
 					{/each}
