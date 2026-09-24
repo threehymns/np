@@ -124,10 +124,11 @@ export class AppState {
 	private _activeSidebarTab = $state<string>('explorer');
 
 	get activeSidebarTab(): string {
-		if (this._activeSidebarTab !== 'explorer') {
-			if (!this.plugins.getSidebarPanel(this._activeSidebarTab)) {
-				this._activeSidebarTab = 'explorer';
-			}
+		if (
+			this._activeSidebarTab !== 'explorer' &&
+			!this.plugins.getSidebarPanel(this._activeSidebarTab)
+		) {
+			return 'explorer';
 		}
 		return this._activeSidebarTab;
 	}
