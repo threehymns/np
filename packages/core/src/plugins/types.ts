@@ -2,6 +2,8 @@ export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
 
+import type { CommandTransform, PluginCommand } from './commands';
+
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
  * Must remain dependency-free and readable without loading plugin implementation.
@@ -96,4 +98,17 @@ export interface PluginHostInterface {
 
 	deactivate(id: string, reason?: string): Promise<void>;
 	dispose(): Promise<void>;
+
+	// Shared command registry (ADR 0012, ADR 0015). Generic contribution
+	// types only: plugins register commands where they are implemented and
+	// the host replays transforms in order from an empty initial value.
+	registerCommandTransform(pluginId: string, transform: CommandTransform): void;
+	registerCommands(pluginId: string, commands: readonly PluginCommand[]): void;
+	removePluginCommands(pluginId: string): void;
+	rebuildCommands(): void;
+	refreshCommands(): void;
+	getCommand(id: string): PluginCommand | undefined;
+	getCommands(): PluginCommand[];
+	getCommandsByCategory(category: string): PluginCommand[];
+	executeCommand(id: string, ...args: any[]): any;
 }

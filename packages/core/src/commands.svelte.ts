@@ -9,6 +9,14 @@ import { allLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import { type GitChange, DEFAULT_DIFF_CONFIG } from "./project/vcs";
 import { runExclusively } from "./project/repository.svelte";
+import {
+	CORE_COMMANDS_OWNER,
+	createAddCommandsTransform,
+	rebuildCommands,
+	type CommandTransform,
+	type CommandTransformEntry,
+	type PluginCommand
+} from "./plugins/commands";
 
 async function showAlert(appState: AppState, msg: string): Promise<void> {
 	if (appState.dialogService?.alert) {
@@ -46,32 +54,66 @@ function isAbsoluteFilesystemPath(target: string): boolean {
 	return target.startsWith('/') || /^[a-zA-Z]:[/\\\\]/.test(target) || target.startsWith('\\\\');
 }
 
-export interface Command {
-	id: string;
-	label: string;
-	category: string;
-	action: (...args: any[]) => any;
-	isVisible?: () => boolean;
-	isEnabled?: () => boolean;
-}
+export type Command = PluginCommand;
 
 export class CommandRegistry {
-	private commands = $state<Command[]>([]);
+	private transforms: CommandTransformEntry[] = [];
+	private commandMap = $state<Map<string, Command>>(new Map());
 
-	register(command: Command) {
-		this.commands.push(command);
+	/**
+	 * Contributes a transform to the shared registry and rebuilds by
+	 * replaying all transforms in order from an empty initial value
+	 * (ADR 0012). Transforms must be pure and repeatable.
+	 */
+	registerTransform(pluginId: string, transform: CommandTransform) {
+		this.transforms.push({ pluginId, transform });
+		this.rebuild();
+	}
+
+	/**
+	 * Convenience for the common additive case: contributes commands that
+	 * are appended to the accumulated state during replay.
+	 */
+	registerCommands(pluginId: string, commands: readonly Command[]) {
+		this.registerTransform(pluginId, createAddCommandsTransform(commands));
+	}
+
+	/**
+	 * Drops one owner's transforms and rebuilds without them
+	 * (Reactivation). Used by tests and the plugin host disposal path.
+	 */
+	removePlugin(pluginId: string) {
+		const kept = this.transforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.transforms.length) {
+			this.transforms = kept;
+			this.rebuild();
+		}
+	}
+
+	/**
+	 * Replays current transforms from an empty initial value.
+	 * Idempotent: the same transform list always yields the same registry,
+	 * so refresh-mid-session rebuilds produce no duplicates or losses.
+	 */
+	rebuild() {
+		this.commandMap = rebuildCommands(this.transforms);
+	}
+
+	/** Reload alias for rebuild (CONTEXT.md Reload terminology). */
+	refresh() {
+		this.rebuild();
 	}
 
 	get(id: string) {
-		return this.commands.find(c => c.id === id);
+		return this.commandMap.get(id);
 	}
 
 	getAll() {
-		return Array.from(this.commands.values());
+		return Array.from(this.commandMap.values());
 	}
 
 	getByCategory(category: string) {
-		return this.commands.filter(c => c.category === category);
+		return this.getAll().filter(c => c.category === category);
 	}
 
 	execute(id: string, ...args: any[]) {
@@ -423,9 +465,15 @@ function toggleFootnoteFormat(appState: AppState) {
 	view.focus();
 }
 
-// Initial registration of core commands
+// Core command contributions, registered as one replayable transform (ADR 0012).
+// The host replays registered transforms in order from an empty initial value
+// on every rebuild; removing a plugin rebuilds without its commands and a
+// refresh replays the same transforms with no duplicates or losses.
+// Feature sections below push their commands where they are implemented;
+// Git commands stay here until #202 moves them into the Git plugin's modules.
 export function registerCoreCommands(appState: AppState) {
-	appState.commands.register({
+	const coreCommands: Command[] = [];
+	coreCommands.push({
 		id: 'file.new',
 		label: 'New',
 		category: 'File',
@@ -459,35 +507,35 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	};
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'file.open',
 		label: 'Open...',
 		category: 'File',
 		action: openFileAction
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'file.openFolder',
 		label: 'Open Folder...',
 		category: 'File',
 		action: () => appState.workspace.openDirectory()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'file.save',
 		label: 'Save',
 		category: 'File',
 		action: () => appState.saveFile()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'file.saveAs',
 		label: 'Save As...',
 		category: 'File',
 		action: () => appState.saveFileAs()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',
@@ -500,7 +548,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.redo',
 		label: 'Redo',
 		category: 'Edit',
@@ -513,7 +561,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.cut',
 		label: 'Cut',
 		category: 'Edit',
@@ -544,7 +592,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.copy',
 		label: 'Copy',
 		category: 'Edit',
@@ -566,7 +614,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.paste',
 		label: 'Paste',
 		category: 'Edit',
@@ -587,7 +635,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.find',
 		label: 'Find...',
 		category: 'Edit',
@@ -595,7 +643,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.addInternalLink',
 		label: 'Add internal link',
 		category: 'Edit',
@@ -620,7 +668,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.selectAll',
 		label: 'Select All',
 		category: 'Edit',
@@ -633,7 +681,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'transformer.copyHTML',
 		label: 'Copy as HTML',
 		category: 'Export',
@@ -648,7 +696,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'transformer.exportHTML',
 		label: 'Export to HTML...',
 		category: 'Export',
@@ -676,7 +724,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-  appState.commands.register({
+  coreCommands.push({
     id: 'commandPalette.toggle',
     label: 'Command Palette: Toggle',
     category: 'View',
@@ -685,7 +733,7 @@ export function registerCoreCommands(appState: AppState) {
     }
   });
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'edit.changeLanguageMode',
 		label: 'Change Language Mode',
 		category: 'Edit',
@@ -757,7 +805,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'view.toggleSidebar',
 		label: 'Toggle Sidebar',
 		category: 'View',
@@ -766,28 +814,28 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'view.zoomIn',
 		label: 'Zoom In',
 		category: 'View',
 		action: () => appState.prefs.zoomIn()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'view.zoomOut',
 		label: 'Zoom Out',
 		category: 'View',
 		action: () => appState.prefs.zoomOut()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'view.zoomReset',
 		label: 'Restore Default Zoom',
 		category: 'View',
 		action: () => appState.prefs.resetZoom()
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'view.toggleStatusBar',
 		label: 'Status Bar',
 		category: 'View',
@@ -796,7 +844,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.toggleWordWrap',
 		label: 'Word Wrap',
 		category: 'Format',
@@ -806,7 +854,7 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	// Markdown formatting commands
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.bold',
 		label: 'Bold',
 		category: 'Format',
@@ -814,7 +862,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.italic',
 		label: 'Italic',
 		category: 'Format',
@@ -822,7 +870,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.strikethrough',
 		label: 'Strikethrough',
 		category: 'Format',
@@ -830,7 +878,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.highlight',
 		label: 'Highlight',
 		category: 'Format',
@@ -838,7 +886,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.code',
 		label: 'Inline Code',
 		category: 'Format',
@@ -846,7 +894,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.codeBlock',
 		label: 'Code Block',
 		category: 'Format',
@@ -854,7 +902,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading1',
 		label: 'Heading 1',
 		category: 'Format',
@@ -862,7 +910,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading2',
 		label: 'Heading 2',
 		category: 'Format',
@@ -870,7 +918,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading3',
 		label: 'Heading 3',
 		category: 'Format',
@@ -878,7 +926,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading4',
 		label: 'Heading 4',
 		category: 'Format',
@@ -886,7 +934,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading5',
 		label: 'Heading 5',
 		category: 'Format',
@@ -894,7 +942,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.heading6',
 		label: 'Heading 6',
 		category: 'Format',
@@ -902,7 +950,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.bulletList',
 		label: 'Bullet List',
 		category: 'Format',
@@ -910,7 +958,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.numberedList',
 		label: 'Numbered List',
 		category: 'Format',
@@ -918,7 +966,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.taskList',
 		label: 'Task List',
 		category: 'Format',
@@ -926,7 +974,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.blockquote',
 		label: 'Blockquote',
 		category: 'Format',
@@ -934,7 +982,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.callout',
 		label: 'Callout',
 		category: 'Format',
@@ -942,7 +990,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.horizontalRule',
 		label: 'Horizontal Rule',
 		category: 'Format',
@@ -950,7 +998,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.table',
 		label: 'Table',
 		category: 'Format',
@@ -958,7 +1006,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.insertTable',
 		label: 'Insert Table',
 		category: 'Format',
@@ -966,7 +1014,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.inlineMath',
 		label: 'Inline Math',
 		category: 'Format',
@@ -974,7 +1022,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.blockMath',
 		label: 'Block Math',
 		category: 'Format',
@@ -982,7 +1030,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.footnote',
 		label: 'Footnote',
 		category: 'Format',
@@ -990,7 +1038,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.comment',
 		label: 'Comment',
 		category: 'Format',
@@ -998,7 +1046,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'format.link',
 		label: 'Add Link',
 		category: 'Format',
@@ -1006,7 +1054,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'window.toggleDevTools',
 		label: 'Toggle Developer Tools',
 		category: 'Window',
@@ -1018,7 +1066,7 @@ export function registerCoreCommands(appState: AppState) {
 		isVisible: () => typeof window !== 'undefined' && !!(window as any).electronAPI
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'settings.open',
 		label: 'Preferences: Open Settings',
 		category: 'Preferences',
@@ -1027,7 +1075,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'settings.openConfigJson',
 		label: 'Preferences: Open Settings (JSON)',
 		category: 'Preferences',
@@ -1053,7 +1101,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'keybindings.open',
 		label: 'Preferences: Open Keymaps (JSON)',
 		category: 'Preferences',
@@ -1063,7 +1111,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.init',
 		label: 'Git: Initialize Repository',
 		category: 'Source Control',
@@ -1097,7 +1145,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	}
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.stage',
 		label: 'Git: Stage File',
 		category: 'Source Control',
@@ -1113,7 +1161,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.unstage',
 		label: 'Git: Unstage File',
 		category: 'Source Control',
@@ -1129,7 +1177,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.discard',
 		label: 'Git: Discard Changes',
 		category: 'Source Control',
@@ -1149,7 +1197,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.commit',
 		label: 'Git: Commit',
 		category: 'Source Control',
@@ -1169,7 +1217,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.createBranch',
 		label: 'Git: Create Branch',
 		category: 'Source Control',
@@ -1185,7 +1233,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.stageAll',
 		label: 'Git: Stage All Changes',
 		category: 'Source Control',
@@ -1202,7 +1250,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.unstageAll',
 		label: 'Git: Unstage All Changes',
 		category: 'Source Control',
@@ -1219,7 +1267,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.discardAll',
 		label: 'Git: Discard All Changes',
 		category: 'Source Control',
@@ -1239,7 +1287,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.openDiff',
 		label: 'Git: Open Uncommitted Changes',
 		category: 'Source Control',
@@ -1258,7 +1306,7 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.nextHunk',
 		label: 'Git: Next Hunk',
 		category: 'Source Control',
@@ -1268,7 +1316,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeDiffNavigator
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.prevHunk',
 		label: 'Git: Previous Hunk',
 		category: 'Source Control',
@@ -1278,7 +1326,7 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeDiffNavigator
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.stageHunk',
 		label: 'Git: Stage Hunk',
 		category: 'Source Control',
@@ -1287,7 +1335,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.unstageHunk',
 		label: 'Git: Unstage Hunk',
 		category: 'Source Control',
@@ -1296,7 +1344,7 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
-	appState.commands.register({
+	coreCommands.push({
 		id: 'git.discardHunk',
 		label: 'Git: Discard Hunk',
 		category: 'Source Control',
@@ -1304,6 +1352,8 @@ export function registerCoreCommands(appState: AppState) {
 			await applyHunkAction(appState, change, hunk, 'discard');
 		}
 	});
+
+	appState.commands.registerCommands(CORE_COMMANDS_OWNER, coreCommands);
 }
 
 export interface HunkRange {

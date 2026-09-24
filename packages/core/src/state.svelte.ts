@@ -3,7 +3,7 @@ import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
-import { CommandRegistry, registerCoreCommands } from './commands.svelte';
+import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
 import { selectionState } from './editor/selection.svelte';
 import { CommandPaletteState } from './components/commandPalette.svelte';
@@ -11,7 +11,7 @@ import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
-import { PluginHost, helloRegistration, type PluginPlatform } from './plugins';
+import { PluginHost, helloRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
 
 export interface DialogService {
 	alert?(message: string): Promise<void> | void;
@@ -99,9 +99,16 @@ export class AppState {
 	selection = selectionState;
 	commandPalette = new CommandPaletteState();
 	icons: IconRegistryInterface;
-	commands = new CommandRegistry();
 	keymaps = new KeymapRegistry(this);
 	plugins: PluginHost;
+
+	/**
+	 * Shared command registry, backed by the plugin host's replayable
+	 * transforms. Palette and menus are views over this state.
+	 */
+	get commands(): CommandRegistryLike {
+		return this.plugins.commands;
+	}
 	settingsOpen = $state(false);
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
