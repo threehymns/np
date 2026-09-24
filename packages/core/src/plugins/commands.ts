@@ -13,7 +13,7 @@
  * (unit tests, mock AppStates) and the `PluginHost` (canonical registry
  * backing `AppState.commands`) replay through `rebuildCommands`, so their
  * behavior is identical by construction. Reactivity lives in the wrappers
- * (`$state` Maps); the replay logic here is synchronously testable.
+ * (reactive Maps); the replay logic here is synchronously testable.
  *
  * Transforms must be pure functions of their inputs and repeatable: no
  * side effects, no UI mounting, no document mutations (ADR 0012).
