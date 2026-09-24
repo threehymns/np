@@ -455,11 +455,10 @@ export class Preferences {
 	}
 
 	private buildStoragePayload(): Record<string, any> {
-		// Preserve stored raw data (unknown namespaces, comments live in text,
-		// disabled-plugin settings) and add only explicitly modified keys
-		// using their user-set values. Unmodified keys are never filled from
-		// _data, and flat aliases are never written unless the user explicitly
-		// set a flat key (tracked as `flat:<key>`).
+		// Preserve stored raw data (unknown namespaces, disabled-plugin
+		// settings) and add only explicitly modified keys using their user-set
+		// values. Unmodified keys are never filled from _data, and flat aliases
+		// are never written.
 		const payload: Record<string, any> = { ...this.storedRawData };
 		for (const ns of Object.keys(payload)) {
 			if (payload[ns] && typeof payload[ns] === 'object' && !Array.isArray(payload[ns])) {
@@ -468,11 +467,6 @@ export class Preferences {
 		}
 
 		for (const fullKey of this.explicitlyModifiedKeys) {
-			if (fullKey.startsWith('flat:')) {
-				const flatKey = fullKey.slice('flat:'.length);
-				(payload as Record<string, any>)[flatKey] = (this._data as Record<string, any>)[flatKey];
-				continue;
-			}
 			const dot = fullKey.indexOf('.');
 			if (dot === -1) continue;
 			const namespace = fullKey.slice(0, dot);
