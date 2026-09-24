@@ -10,10 +10,12 @@ import type {
 import {
 	DependencyCycleError,
 	DuplicatePluginIdError,
+	HookReentryError,
 	InterfaceVersionMismatchError,
 	MissingDependencyError,
 	PluginActivationError,
 	PluginNotFoundError,
+	SaveCancelledError,
 	UnsupportedPlatformError
 } from './errors';
 import {
@@ -25,6 +27,18 @@ import {
 	type CommandTransformEntry,
 	type PluginCommand
 } from './commands';
+import type { EventHandler, EventHandlerEntry } from './events';
+import {
+	CORE_HOOKS_OWNER,
+	type ActiveHookContext,
+	type AfterSaveContext,
+	type AfterSaveHook,
+	type AfterSaveHookEntry,
+	type BeforeSaveContext,
+	type BeforeSaveHook,
+	type BeforeSaveHookEntry,
+	type BeforeSaveResult
+} from './hooks';
 
 export class PluginHost implements PluginHostInterface {
 	readonly hostVersion = 0;
@@ -43,6 +57,15 @@ export class PluginHost implements PluginHostInterface {
 	// rebuild (ADR 0012). Palette and menus are views over this state.
 	private commandTransforms: CommandTransformEntry[] = [];
 	private commandMap = $state<Map<string, PluginCommand>>(new Map());
+
+	// Event handlers (ADR 0013: events observe, fire-and-forget)
+	private eventHandlers = new Map<string, EventHandlerEntry[]>();
+
+	// Operation hooks (ADR 0013: hooks participate)
+	private beforeSaveHooks: BeforeSaveHookEntry[] = [];
+	private afterSaveHooks: AfterSaveHookEntry[] = [];
+	private activeSaveHook: ActiveHookContext | null = null;
+	lastHookError: { pluginId: string; error: unknown } | null = null;
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -101,6 +124,8 @@ export class PluginHost implements PluginHostInterface {
 		this.states.delete(id);
 		this.deactivationReasons.delete(id);
 		this.removePluginCommands(id);
+		this.removePluginHooks(id);
+		this.removePluginEvents(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -129,6 +154,10 @@ export class PluginHost implements PluginHostInterface {
 	getDeactivationReason(id: string): string | undefined {
 		return this.deactivationReasons.get(id);
 	}
+
+	// --------------------------------------------------------------------------
+	// Command Registry Methods (ADR 0012, ADR 0015)
+	// --------------------------------------------------------------------------
 
 	/**
 	 * Contributes a command transform for one owner and rebuilds by
@@ -231,6 +260,272 @@ export class PluginHost implements PluginHostInterface {
 		return included.flatMap((id) => byOwner.get(id)!);
 	}
 
+	// --------------------------------------------------------------------------
+	// Event Observation Methods (ADR 0013: Events observe, fire-and-forget)
+	// --------------------------------------------------------------------------
+
+	/**
+	 * Subscribes an event handler for observation.
+	 * Handlers cannot mutate payload outcome, veto, or fail host operations.
+	 */
+	on<T = any>(event: string, handler: EventHandler<T>, pluginId?: string): () => void {
+		let list = this.eventHandlers.get(event);
+		if (!list) {
+			list = [];
+			this.eventHandlers.set(event, list);
+		}
+		const entry: EventHandlerEntry<T> = { pluginId, handler };
+		list.push(entry);
+		return () => {
+			this.off(event, handler);
+		};
+	}
+
+	off<T = any>(event: string, handler: EventHandler<T>): void {
+		const list = this.eventHandlers.get(event);
+		if (!list) return;
+		const index = list.findIndex((e) => e.handler === handler);
+		if (index !== -1) {
+			list.splice(index, 1);
+		}
+		if (list.length === 0) {
+			this.eventHandlers.delete(event);
+		}
+	}
+
+	emit<T = any>(event: string, payload?: T): void {
+		const list = this.eventHandlers.get(event);
+		if (!list || list.length === 0) return;
+
+		for (const entry of [...list]) {
+			try {
+				const result = entry.handler(payload);
+				if (result && typeof (result as Promise<any>).catch === 'function') {
+					(result as Promise<any>).catch((err) => {
+						console.error(
+							`[PluginHost] Error in async event handler for "${event}"${entry.pluginId ? ` (plugin "${entry.pluginId}")` : ''}:`,
+							err
+						);
+					});
+				}
+			} catch (err) {
+				console.error(
+					`[PluginHost] Error in event handler for "${event}"${entry.pluginId ? ` (plugin "${entry.pluginId}")` : ''}:`,
+					err
+				);
+			}
+		}
+	}
+
+	removePluginEvents(pluginId: string): void {
+		for (const [event, list] of this.eventHandlers.entries()) {
+			const filtered = list.filter((e) => e.pluginId !== pluginId);
+			if (filtered.length === 0) {
+				this.eventHandlers.delete(event);
+			} else {
+				this.eventHandlers.set(event, filtered);
+			}
+		}
+	}
+
+	// --------------------------------------------------------------------------
+	// Document Save Hooks (ADR 0013: Hooks participate)
+	// --------------------------------------------------------------------------
+
+	/**
+	 * Registers a before-save hook.
+	 * Runs sequentially in plugin activation order and is always awaited.
+	 */
+	registerBeforeSaveHook(pluginId: string, hook: BeforeSaveHook): () => void {
+		const entry: BeforeSaveHookEntry = { pluginId, hook };
+		this.beforeSaveHooks.push(entry);
+		return () => {
+			const idx = this.beforeSaveHooks.indexOf(entry);
+			if (idx !== -1) {
+				this.beforeSaveHooks.splice(idx, 1);
+			}
+		};
+	}
+
+	/**
+	 * Registers an after-save hook.
+	 * Runs after save finishes and is awaited.
+	 */
+	registerAfterSaveHook(pluginId: string, hook: AfterSaveHook): () => void {
+		const entry: AfterSaveHookEntry = { pluginId, hook };
+		this.afterSaveHooks.push(entry);
+		return () => {
+			const idx = this.afterSaveHooks.indexOf(entry);
+			if (idx !== -1) {
+				this.afterSaveHooks.splice(idx, 1);
+			}
+		};
+	}
+
+	removePluginHooks(pluginId: string): void {
+		this.beforeSaveHooks = this.beforeSaveHooks.filter((e) => e.pluginId !== pluginId);
+		this.afterSaveHooks = this.afterSaveHooks.filter((e) => e.pluginId !== pluginId);
+	}
+
+	isExecutingSaveHook(): boolean {
+		return this.activeSaveHook !== null;
+	}
+
+	getActiveSaveHook(): ActiveHookContext | null {
+		return this.activeSaveHook;
+	}
+
+	checkSaveReentry(operation = 'saveDocument', phase = 'beforeSave hook'): void {
+		if (this.activeSaveHook) {
+			throw new HookReentryError(
+				this.activeSaveHook.pluginId,
+				operation,
+				this.activeSaveHook.phase ?? phase
+			);
+		}
+	}
+
+	/**
+	 * Runs before-save hooks sequentially in plugin activation order.
+	 * A throwing hook is logged against its plugin and never vetos save.
+	 * Can cancel save if a hook returns `{ cancel: true, reason }` or throws `SaveCancelledError`.
+	 */
+	async runBeforeSave(context: BeforeSaveContext): Promise<BeforeSaveResult> {
+		this.checkSaveReentry('saveDocument', 'beforeSave hook');
+
+		const ordered = this.getOrderedBeforeSaveHooks();
+
+		for (const entry of ordered) {
+			this.activeSaveHook = {
+				pluginId: entry.pluginId,
+				operation: 'saveDocument',
+				phase: 'beforeSave hook'
+			};
+
+			try {
+				const result = await entry.hook(context);
+				if (result && typeof result === 'object' && result.cancel) {
+					return {
+						cancel: true,
+						reason: result.reason ?? 'Save cancelled by plugin'
+					};
+				}
+			} catch (error) {
+				if (error instanceof SaveCancelledError) {
+					return {
+						cancel: true,
+						reason: error.reason
+					};
+				}
+				this.lastHookError = { pluginId: entry.pluginId, error };
+				console.error(`[PluginHost] Error in beforeSave hook for plugin "${entry.pluginId}":`, error);
+			} finally {
+				this.activeSaveHook = null;
+			}
+		}
+
+		return { cancel: false };
+	}
+
+	/**
+	 * Runs after-save hooks in plugin activation order.
+	 * Errors are caught and logged against the contributing plugin.
+	 */
+	async runAfterSave(context: AfterSaveContext): Promise<void> {
+		this.checkSaveReentry('saveDocument', 'afterSave hook');
+
+		const ordered = this.getOrderedAfterSaveHooks();
+
+		for (const entry of ordered) {
+			this.activeSaveHook = {
+				pluginId: entry.pluginId,
+				operation: 'saveDocument',
+				phase: 'afterSave hook'
+			};
+
+			try {
+				await entry.hook(context);
+			} catch (error) {
+				this.lastHookError = { pluginId: entry.pluginId, error };
+				console.error(`[PluginHost] Error in afterSave hook for plugin "${entry.pluginId}":`, error);
+			} finally {
+				this.activeSaveHook = null;
+			}
+		}
+	}
+
+	private getOrderedBeforeSaveHooks(): BeforeSaveHookEntry[] {
+		return this.orderHooks(this.beforeSaveHooks);
+	}
+
+	private getOrderedAfterSaveHooks(): AfterSaveHookEntry[] {
+		return this.orderHooks(this.afterSaveHooks);
+	}
+
+	private orderHooks<T extends { pluginId: string }>(hooks: T[]): T[] {
+		const byOwner = new Map<string, T[]>();
+		for (const hook of hooks) {
+			const list = byOwner.get(hook.pluginId);
+			if (list) {
+				list.push(hook);
+			} else {
+				byOwner.set(hook.pluginId, [hook]);
+			}
+		}
+
+		const orderedOwners: string[] = [];
+
+		// Core / built-in hooks first
+		for (const id of Array.from(byOwner.keys()).sort()) {
+			if (id === CORE_HOOKS_OWNER || id.startsWith('core:')) {
+				if (!orderedOwners.includes(id)) {
+					orderedOwners.push(id);
+				}
+			}
+		}
+
+		// Registered active plugins in activation order
+		const registeredActiveIds = Array.from(byOwner.keys()).filter(
+			(id) => this.registrations.has(id) && this.isPluginActive(id)
+		);
+
+		let sortedRegisteredIds: string[] = [];
+		if (registeredActiveIds.length > 0) {
+			try {
+				sortedRegisteredIds = this.computeActivationOrder(registeredActiveIds);
+			} catch {
+				sortedRegisteredIds = this.activationOrder.filter((id) => registeredActiveIds.includes(id));
+			}
+		}
+
+		for (const id of sortedRegisteredIds) {
+			if (!orderedOwners.includes(id)) {
+				orderedOwners.push(id);
+			}
+		}
+
+		// Non-registered owners in alphabetical order
+		for (const id of Array.from(byOwner.keys()).sort()) {
+			if (!orderedOwners.includes(id) && !this.registrations.has(id)) {
+				orderedOwners.push(id);
+			}
+		}
+
+		const included = orderedOwners.filter(
+			(id) =>
+				id === CORE_HOOKS_OWNER ||
+				id.startsWith('core:') ||
+				!this.registrations.has(id) ||
+				this.isPluginActive(id)
+		);
+
+		return included.flatMap((id) => byOwner.get(id)!);
+	}
+
+	// --------------------------------------------------------------------------
+	// Topological Sort & Lifecycle
+	// --------------------------------------------------------------------------
+
 	/**
 	 * Computes deterministic activation order using topological sort.
 	 * Detects cycles and interface requirements.
@@ -259,74 +554,66 @@ export class PluginHost implements PluginHostInterface {
 
 		// Build dependency adjacency list: id -> list of plugin IDs it depends on
 		const adj = new Map<string, Set<string>>();
-		for (const id of targetIds) {
-			adj.set(id, new Set<string>());
-		}
+		const visitedForGraph = new Set<string>();
 
-		// Closure to add all transitive dependencies to the graph
-		const queue = [...targetIds];
-		const visitedForGraph = new Set<string>(targetIds);
+		const collectDeps = (id: string, path: string[]) => {
+			if (visitedForGraph.has(id)) return;
+			visitedForGraph.add(id);
 
-		while (queue.length > 0) {
-			const currentId = queue.shift()!;
-			const manifest = this.registrations.get(currentId)!.manifest;
+			const reg = this.registrations.get(id);
+			if (!reg) return;
 
-			if (manifest.dependsOn) {
-				for (const [requiredKey, requiredVer] of Object.entries(manifest.dependsOn)) {
-					// Direct plugin-ID dependency takes precedence over interface names.
-					// This supports dependsOn entries like { 'plugin-b': 0 } where the
-					// key names another registered plugin (e.g. for cycle detection),
-					// while preserving interface resolution (e.g. { 'vcs': 0 }).
-					const directTarget = this.registrations.get(requiredKey);
-					if (directTarget) {
-						if (directTarget.manifest.version !== requiredVer) {
+			const deps = new Set<string>();
+			adj.set(id, deps);
+
+			if (reg.manifest.dependsOn) {
+				for (const [depName, requiredVersion] of Object.entries(reg.manifest.dependsOn)) {
+					let targetPluginId: string | undefined;
+
+					// Direct plugin ID dependency
+					if (this.registrations.has(depName)) {
+						targetPluginId = depName;
+						const targetManifest = this.registrations.get(depName)!.manifest;
+						if (targetManifest.version !== requiredVersion) {
 							throw new InterfaceVersionMismatchError(
-								requiredKey,
-								currentId,
-								requiredVer,
-								requiredKey,
-								directTarget.manifest.version
+								depName,
+								id,
+								requiredVersion,
+								targetPluginId,
+								targetManifest.version
 							);
 						}
-
-						adj.get(currentId)!.add(requiredKey);
-
-						if (!visitedForGraph.has(requiredKey)) {
-							visitedForGraph.add(requiredKey);
-							adj.set(requiredKey, new Set<string>());
-							queue.push(requiredKey);
+					}
+					// Interface provider dependency
+					else if (interfaceProviders.has(depName)) {
+						const provider = interfaceProviders.get(depName)!;
+						targetPluginId = provider.pluginId;
+						if (provider.version !== requiredVersion) {
+							throw new InterfaceVersionMismatchError(
+								depName,
+								id,
+								requiredVersion,
+								provider.pluginId,
+								provider.version
+							);
 						}
-						continue;
+					} else {
+						throw new MissingDependencyError(id, depName, requiredVersion);
 					}
 
-					const provider = interfaceProviders.get(requiredKey);
-					if (!provider) {
-						throw new MissingDependencyError(currentId, requiredKey, requiredVer);
-					}
-
-					if (provider.version !== requiredVer) {
-						throw new InterfaceVersionMismatchError(
-							requiredKey,
-							currentId,
-							requiredVer,
-							provider.pluginId,
-							provider.version
-						);
-					}
-
-					adj.get(currentId)!.add(provider.pluginId);
-
-					if (!visitedForGraph.has(provider.pluginId)) {
-						visitedForGraph.add(provider.pluginId);
-						adj.set(provider.pluginId, new Set<string>());
-						queue.push(provider.pluginId);
+					if (targetPluginId) {
+						deps.add(targetPluginId);
+						collectDeps(targetPluginId, [...path, id]);
 					}
 				}
 			}
+		};
+
+		for (const id of targetIds) {
+			collectDeps(id, []);
 		}
 
-		// Cycle detection and topological sort using Kahn's algorithm or DFS
-		// To ensure deterministic tie-breaking (ADR 0017), sort nodes alphabetically
+		// Kahn's algorithm for topological sorting
 		const inDegree = new Map<string, number>();
 		const reverseAdj = new Map<string, string[]>(); // dependency -> dependents
 
@@ -524,6 +811,8 @@ export class PluginHost implements PluginHostInterface {
 		this.deactivationReasons.set(id, reason);
 		this.activationOrder = this.activationOrder.filter((item) => item !== id);
 		this.removePluginCommands(id);
+		this.removePluginHooks(id);
+		this.removePluginEvents(id);
 	}
 
 	/**

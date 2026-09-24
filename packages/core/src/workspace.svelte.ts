@@ -1,3 +1,5 @@
+import { PluginHost } from './plugins/host.svelte';
+import type { PluginHostInterface } from './plugins/types';
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
@@ -22,6 +24,8 @@ export class Workspace {
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
+	pluginHost: PluginHostInterface;
+	lastSaveCancellationReason = $state<string | null>(null);
 	
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
@@ -89,7 +93,31 @@ export class Workspace {
 	 * this over `doc.save` — a direct save leaves persistence holding a stale
 	 * `draftContent` until some unrelated flush happens to clear it.
 	 */
+	private registerRepositoryRefreshHook() {
+		this.pluginHost.registerAfterSaveHook('core:repository-refresh', async (context) => {
+			if (context.success) {
+				await this.repository?.refresh().catch((e) => console.error('Auto-refresh after save failed', e));
+			}
+		});
+	}
+
+	setPluginHost(host: PluginHostInterface) {
+		this.pluginHost = host;
+		this.registerRepositoryRefreshHook();
+	}
+
 	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
+		this.pluginHost?.checkSaveReentry('saveDocument', 'beforeSave hook');
+
+		if (this.pluginHost) {
+			const beforeResult = await this.pluginHost.runBeforeSave({ document: doc, options });
+			if (beforeResult.cancel) {
+				this.lastSaveCancellationReason = beforeResult.reason ?? 'Save cancelled by plugin';
+				return false;
+			}
+		}
+
+		this.lastSaveCancellationReason = null;
 		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
 		const needsPicker = !doc.origin || options.forceNewOrigin;
 		const ok = await doc.save({
@@ -101,8 +129,13 @@ export class Workspace {
 			suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
 			startDirectory: needsPicker ? this.rootOrigin : undefined
 		});
+
+		if (this.pluginHost) {
+			await this.pluginHost.runAfterSave({ document: doc, options, success: ok });
+		}
+
 		if (ok) {
-			this.repository?.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+			this.pluginHost?.emit('document:saved', { document: doc, origin: doc.origin });
 			this.debouncedSaveOpenFiles();
 		}
 		return ok;
@@ -212,11 +245,14 @@ export class Workspace {
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: SessionPersistence
+		persistence: SessionPersistence,
+		pluginHost?: PluginHostInterface
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
+		this.pluginHost = pluginHost ?? new PluginHost();
+		this.registerRepositoryRefreshHook();
 
 		$effect.root(() => {
 			$effect(() => {

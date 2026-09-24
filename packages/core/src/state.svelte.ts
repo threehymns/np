@@ -142,7 +142,7 @@ export class AppState {
 		this.plugins.register(helloRegistration);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
-		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
+		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
 		registerCoreCommands(this);
 	}
 
@@ -171,10 +171,30 @@ export class AppState {
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
 	async saveFile() {
-		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument);
+		if (this.activeDocument) {
+			const ok = await this.workspace.saveDocument(this.activeDocument);
+			if (!ok && this.workspace.lastSaveCancellationReason) {
+				if (this.dialogService?.alert) {
+					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+				} else if (typeof window !== 'undefined' && window.alert) {
+					window.alert(this.workspace.lastSaveCancellationReason);
+				}
+			}
+			return ok;
+		}
 	}
 	async saveFileAs() {
-		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+		if (this.activeDocument) {
+			const ok = await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+			if (!ok && this.workspace.lastSaveCancellationReason) {
+				if (this.dialogService?.alert) {
+					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+				} else if (typeof window !== 'undefined' && window.alert) {
+					window.alert(this.workspace.lastSaveCancellationReason);
+				}
+			}
+			return ok;
+		}
 	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }

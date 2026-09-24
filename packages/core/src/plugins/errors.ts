@@ -181,3 +181,36 @@ export class PluginDeactivationError extends Error {
 		this.cause = actualCause;
 	}
 }
+
+/**
+ * Error thrown when a plugin hook re-enters its own operation (ADR 0013).
+ */
+export class HookReentryError extends Error {
+	readonly pluginId: string;
+	readonly operation: string;
+	readonly phase: string;
+
+	constructor(pluginId: string, operation = 'saveDocument', phase = 'beforeSave hook') {
+		super(
+			`Plugin "${pluginId}" re-entered ${operation} during ${phase}.\n` +
+				`Action: Avoid calling save operations from within a save hook. Use events or deferred background operations instead.`
+		);
+		this.name = 'HookReentryError';
+		this.pluginId = pluginId;
+		this.operation = operation;
+		this.phase = phase;
+	}
+}
+
+/**
+ * Error thrown to explicitly cancel an operation with a user-visible reason (ADR 0013).
+ */
+export class SaveCancelledError extends Error {
+	readonly reason: string;
+
+	constructor(reason: string) {
+		super(`Save cancelled: ${reason}`);
+		this.name = 'SaveCancelledError';
+		this.reason = reason;
+	}
+}

@@ -3,6 +3,15 @@ export type PluginPlatform = 'web' | 'desktop';
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
 
 import type { CommandTransform, PluginCommand } from './commands';
+import type { EventHandler } from './events';
+import type {
+	BeforeSaveHook,
+	BeforeSaveContext,
+	BeforeSaveResult,
+	AfterSaveHook,
+	AfterSaveContext,
+	ActiveHookContext
+} from './hooks';
 
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
@@ -111,4 +120,20 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	// Event observation (ADR 0013: Events observe, fire-and-forget)
+	on<T = any>(event: string, handler: EventHandler<T>, pluginId?: string): () => void;
+	off<T = any>(event: string, handler: EventHandler<T>): void;
+	emit<T = any>(event: string, payload?: T): void;
+	removePluginEvents(pluginId: string): void;
+
+	// Operation hooks (ADR 0013: Hooks participate)
+	registerBeforeSaveHook(pluginId: string, hook: BeforeSaveHook): () => void;
+	registerAfterSaveHook(pluginId: string, hook: AfterSaveHook): () => void;
+	removePluginHooks(pluginId: string): void;
+	runBeforeSave(context: BeforeSaveContext): Promise<BeforeSaveResult>;
+	runAfterSave(context: AfterSaveContext): Promise<void>;
+	isExecutingSaveHook(): boolean;
+	getActiveSaveHook(): ActiveHookContext | null;
+	checkSaveReentry(operation?: string, phase?: string): void;
 }
