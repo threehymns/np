@@ -86,7 +86,7 @@ describe('ElectronConfigStorage', () => {
 		expect(writtenText).toContain('"customPluginSetting"');
 		expect(writtenText).toContain('"apiEndpoint": "https://example.local"');
 		expect(writtenText).toContain('"experimentalFlag": "on"');
-		expect(writtenText).toContain('"wordWrap": false');
+		expect(writtenText).toContain('"word_wrap": false');
 	});
 
 	it('3. Syntax-error fallback: invalid JSONC leaves the file untouched and falls back to defaults', () => {
@@ -274,10 +274,10 @@ describe('ElectronConfigStorage', () => {
 		// The inline comment must stay attached to "theme", not the inserted key.
 		expect(writtenText).toContain('"theme": "default" // This comment belongs to theme');
 		// The new property is present and not carrying the stray comment.
-		expect(writtenText).toContain('"wordWrap": false');
+		expect(writtenText).toMatch(/"word_wrap"\s*:\s*false/);
 		const themeLine = writtenText.split('\n').find((l) => l.includes('"theme"'));
 		expect(themeLine).toContain('// This comment belongs to theme');
-		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"wordWrap"'));
+		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"word_wrap"'));
 		expect(wordWrapLine).not.toContain('// This comment belongs to theme');
 	});
 
@@ -303,7 +303,7 @@ describe('ElectronConfigStorage', () => {
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 		const lastWritten = mockWriteConfigFile.mock.calls[1][0];
 		expect(lastWritten).toContain('"zoom": 120');
-		expect(lastWritten).toContain('"wordWrap": false');
+		expect(lastWritten).toContain('"word_wrap": false');
 	});
 
 	it('12. Queued write resolution: the newest write wins the final cached state even when the queue frees one write at a time', async () => {
