@@ -181,3 +181,79 @@ export class PluginDeactivationError extends Error {
 		this.cause = actualCause;
 	}
 }
+
+/**
+ * Actionable diagnostic error thrown when plugin code attempts to access
+ * the CodeMirror EditorView directly (ADR 0016).
+ */
+export class DirectEditorViewAccessError extends Error {
+	readonly accessor: string;
+
+	constructor(accessor = "view") {
+		super(
+			`Direct editor view access via "${accessor}" is strictly rejected (ADR 0016).\n` +
+				`Action: Plugins touch the editor only through host-composed contributions ` +
+				`(gutters, decorations, editor-scoped keybindings) and host document-edit operations.`
+		);
+		this.name = "DirectEditorViewAccessError";
+		this.accessor = accessor;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when plugin code attempts to dispatch
+ * raw transactions directly rather than using host document edit operations (ADR 0016).
+ */
+export class RawTransactionDispatchError extends Error {
+	constructor(details?: string) {
+		const detailStr = details ? `\n  Details: ${details}` : "";
+		super(
+			`Raw transaction dispatch from plugin code is strictly rejected (ADR 0016).${detailStr}\n` +
+				`Action: Plugins must use host document-edit operations (host.applyDocumentEdit) ` +
+				`with structured changes and revision checks.`
+		);
+		this.name = "RawTransactionDispatchError";
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when applying a document edit against
+ * an outdated or mismatched document revision (ADR 0016).
+ */
+export class DocumentRevisionMismatchError extends Error {
+	readonly expectedRevision: number;
+	readonly actualRevision: number;
+	readonly documentId?: string;
+
+	constructor(expectedRevision: number, actualRevision: number, documentId?: string) {
+		const docStr = documentId ? ` for document "${documentId}"` : "";
+		super(
+			`Document revision mismatch${docStr}: expected revision ${expectedRevision}, but document is at revision ${actualRevision}.\n` +
+				`Action: Re-read the document state and revision before applying edits to avoid clobbering concurrent changes.`
+		);
+		this.name = "DocumentRevisionMismatchError";
+		this.expectedRevision = expectedRevision;
+		this.actualRevision = actualRevision;
+		this.documentId = documentId;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when duplicate editor contribution IDs are registered (ADR 0007, ADR 0016).
+ */
+export class DuplicateEditorContributionIdError extends Error {
+	readonly contributionId: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(contributionId: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Duplicate editor contribution ID "${contributionId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every editor contribution must declare a unique "id". Rename the contribution ID or remove the conflicting plugin.`
+		);
+		this.name = "DuplicateEditorContributionIdError";
+		this.contributionId = contributionId;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
+	}
+}

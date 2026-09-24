@@ -1,3 +1,10 @@
+import type {
+	EditorContribution,
+	EditorContributionEntry,
+	EditorContributionType,
+	ApplyDocumentEditOptions,
+	DocumentEditResult
+} from "./editor";
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -111,4 +118,16 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	// Editor contribution contract (ADR 0016).
+	// Plugins declare CodeMirror extensions as contributions that the host
+	// places into the correct compartments of its single composed configuration.
+	registerEditorContribution(pluginId: string, contribution: EditorContribution): void;
+	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void;
+	removePluginEditorContributions(pluginId: string): void;
+	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[];
+
+	// Document text changes go through a host document-edit operation
+	// applied as one undo transaction with revision checks.
+	applyDocumentEdit(options: ApplyDocumentEditOptions): DocumentEditResult;
 }

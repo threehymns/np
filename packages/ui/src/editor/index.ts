@@ -209,16 +209,32 @@ export function createEditorExtensions(options: {
 	wrapCompartment: Compartment;
 	languageCompartment: Compartment;
 	vimCompartment: Compartment;
+	gutterCompartment?: Compartment;
+	decorationsCompartment?: Compartment;
+	keybindingsCompartment?: Compartment;
 	wrap: boolean;
 	vimEnabled: boolean;
 	initialLanguageExtensions: any[];
 }) {
-	const { wrapCompartment, languageCompartment, vimCompartment, wrap, vimEnabled, initialLanguageExtensions } = options;
+	const {
+		wrapCompartment,
+		languageCompartment,
+		vimCompartment,
+		gutterCompartment,
+		decorationsCompartment,
+		keybindingsCompartment,
+		wrap,
+		vimEnabled,
+		initialLanguageExtensions
+	} = options;
 
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
 		languageCompartment.of(initialLanguageExtensions),
 		vimCompartment.of(vimEnabled ? vim() : []),
+		...(gutterCompartment ? [gutterCompartment.of([])] : []),
+		...(decorationsCompartment ? [decorationsCompartment.of([])] : []),
+		...(keybindingsCompartment ? [keybindingsCompartment.of([])] : []),
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),
