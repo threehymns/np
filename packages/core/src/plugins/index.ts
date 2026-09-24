@@ -1,6 +1,7 @@
 export * from './types';
 export * from './errors';
 export * from './commands';
+export * from './ui-contributions';
 export * from './host.svelte';
 // NOTE: boundary-check is intentionally NOT re-exported here. It imports
 // typescript + node:fs (dev/test tooling) which Vite externalizes for browser

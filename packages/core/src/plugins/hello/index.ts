@@ -1,4 +1,5 @@
 import type { PluginCleanup, PluginHostInterface } from '../types';
+import { createPilotComponent } from '../ui-contributions';
 import { manifest } from './manifest';
 
 let activeInstances = 0;
@@ -21,6 +22,24 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	activeInstances++;
 	helloPluginState.active = true;
 	helloPluginState.activationCount++;
+
+	// Additive UI contributions (ADR 0010, ADR 0015):
+	// Contributes a pilot sidebar panel and a pilot status-bar entry
+	host.registerSidebarPanel(manifest.id, {
+		id: 'hello-panel',
+		title: 'Hello',
+		order: 100,
+		component: createPilotComponent('hello-panel'),
+		props: { message: 'Hello from Hello Plugin' }
+	});
+
+	host.registerStatusBarItem(manifest.id, {
+		id: 'hello-status',
+		alignment: 'left',
+		order: 100,
+		component: createPilotComponent('hello-status'),
+		props: { message: 'Hello Status' }
+	});
 
 	return () => {
 		activeInstances--;

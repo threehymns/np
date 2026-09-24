@@ -3,6 +3,13 @@ export type PluginPlatform = 'web' | 'desktop';
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
 
 import type { CommandTransform, PluginCommand } from './commands';
+import type {
+	SidebarPanelContribution,
+	StatusBarItemContribution,
+	StatusBarAlignment,
+	MountedContribution,
+	UIContributionRegistryLike
+} from './ui-contributions';
 
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
@@ -111,4 +118,27 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	// UI contributions (ADR 0010, ADR 0015)
+	readonly ui: UIContributionRegistryLike;
+	registerSidebarPanel(pluginId: string, panel: SidebarPanelContribution): void;
+	registerSidebarPanels(pluginId: string, panels: readonly SidebarPanelContribution[]): void;
+	removePluginSidebarPanels(pluginId: string): void;
+	getSidebarPanel(id: string): SidebarPanelContribution | undefined;
+	getSidebarPanels(): SidebarPanelContribution[];
+
+	registerStatusBarItem(pluginId: string, item: StatusBarItemContribution): void;
+	registerStatusBarItems(pluginId: string, items: readonly StatusBarItemContribution[]): void;
+	removePluginStatusBarItems(pluginId: string): void;
+	getStatusBarItem(id: string): StatusBarItemContribution | undefined;
+	getStatusBarItems(alignment?: StatusBarAlignment): StatusBarItemContribution[];
+
+	mountContribution(
+		pluginId: string,
+		contributionId: string,
+		target: any,
+		props?: Record<string, any>
+	): MountedContribution;
+	unmountContribution(instanceId: string): void;
+	rebuildUIContributions(): void;
 }

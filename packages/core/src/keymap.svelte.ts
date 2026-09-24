@@ -345,7 +345,7 @@ export class KeymapRegistry {
 			} catch (e) {
 				console.error('Failed to read user keymap via IPC:', e);
 			}
-		} else if (typeof window !== 'undefined') {
+		} else if (typeof window !== 'undefined' && window.localStorage) {
 			const content = window.localStorage.getItem('np-keymap');
 			if (content) return content;
 		}

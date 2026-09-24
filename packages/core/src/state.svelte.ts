@@ -114,7 +114,24 @@ export class AppState {
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
 	
-	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
+	private _activeSidebarTab = $state<string>('explorer');
+
+	get activeSidebarTab(): string {
+		if (this._activeSidebarTab !== 'explorer' && this._activeSidebarTab !== 'git') {
+			if (!this.plugins.getSidebarPanel(this._activeSidebarTab)) {
+				this._activeSidebarTab = 'explorer';
+			}
+		}
+		return this._activeSidebarTab;
+	}
+
+	set activeSidebarTab(val: string) {
+		this._activeSidebarTab = val;
+	}
+
+	get ui() {
+		return this.plugins.ui;
+	}
 	activeEditorView = $state<any>(undefined);
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.

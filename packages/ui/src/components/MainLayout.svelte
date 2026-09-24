@@ -141,6 +141,10 @@
             <div class="h-4 bg-muted rounded w-2/3"></div>
           </div>
         {/if}
+      {:else if appState.plugins.getSidebarPanel(appState.activeSidebarTab)}
+        {@const panel = appState.plugins.getSidebarPanel(appState.activeSidebarTab)!}
+        {@const PanelComponent = panel.component}
+        <PanelComponent {...(panel.props ?? {})} />
       {/if}
     </div>
     

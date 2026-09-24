@@ -323,9 +323,39 @@
 						},
 						badge: appState.workspace.repository?.changes?.length
 					})}
+
+					<!-- Contributed Sidebar Panels -->
+					{#each appState.plugins.getSidebarPanels() as panel (panel.id)}
+						{@const PanelIcon = panel.icon}
+						{@render statusButton({
+							icon: PanelIcon ?? SidebarIcon,
+							class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === panel.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+							title: panel.title,
+							shortcut: null,
+							onclick: () => {
+								if (appState.activeSidebarTab === panel.id && appState.prefs.sidebarVisible) {
+									appState.prefs.sidebarVisible = false;
+								} else {
+									appState.activeSidebarTab = panel.id;
+									appState.prefs.sidebarVisible = true;
+								}
+							}
+						})}
+					{/each}
+
+					<!-- Contributed Left Status Bar Items -->
+					{#each appState.plugins.getStatusBarItems('left') as item (item.id)}
+						{@const ItemComponent = item.component}
+						<ItemComponent {...(item.props ?? {})} />
+					{/each}
 				</Tooltip.Provider>
 			</div>
 			<div class="flex items-center gap-2">
+				<!-- Contributed Right Status Bar Items -->
+				{#each appState.plugins.getStatusBarItems('right') as item (item.id)}
+					{@const ItemComponent = item.component}
+					<ItemComponent {...(item.props ?? {})} />
+				{/each}
 				<span>
 				  {appState.selection.line}:{appState.selection.column}
   				{#if appState.selection.charCount > 0}
