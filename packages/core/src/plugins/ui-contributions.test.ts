@@ -433,6 +433,43 @@ describe('Additive UI Contributions (ADR 0010, ADR 0012, ADR 0015, #200)', () =>
 			expect(host.ui.getMountedContributions('pilot-plugin')).toHaveLength(0);
 		});
 
+		it('removes host contributions and mounted views before running plugin cleanup', async () => {
+			const host = new PluginHost();
+			let panelsDuringCleanup = -1;
+			let editorContributionsDuringCleanup = -1;
+			let mountedDuringCleanup = -1;
+
+			host.register({
+				manifest: { id: 'cleanup-order-plugin', name: 'Cleanup Order Plugin', version: 0 },
+				setup: (h) => {
+					h.registerSidebarPanel('cleanup-order-plugin', {
+						id: 'cleanup-panel',
+						title: 'Cleanup Panel',
+						order: 1,
+						component: createPilotComponent('cleanup-panel')
+					});
+					h.registerEditorContribution('cleanup-order-plugin', {
+						id: 'cleanup-editor',
+						type: 'decoration',
+						extension: []
+					});
+					return async () => {
+						panelsDuringCleanup = h.getSidebarPanels().length;
+						editorContributionsDuringCleanup = h.getEditorContributions().length;
+						mountedDuringCleanup = h.ui.getMountedContributions('cleanup-order-plugin').length;
+					};
+				}
+			});
+
+			await host.activate('cleanup-order-plugin');
+			host.mountContribution('cleanup-order-plugin', 'cleanup-panel', {});
+			await host.deactivate('cleanup-order-plugin');
+
+			expect(panelsDuringCleanup).toBe(0);
+			expect(editorContributionsDuringCleanup).toBe(0);
+			expect(mountedDuringCleanup).toBe(0);
+		});
+
 		it('disabling a plugin cleanly unmounts and removes its panels and status entries with no residue (ADR 0009, ADR 0015)', async () => {
 			const host = new PluginHost();
 

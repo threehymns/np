@@ -1651,6 +1651,16 @@ export class PluginHost implements PluginHostInterface {
 
 		await this.waitForPluginOperations(id);
 
+		this.removePluginCommands(id);
+		this.removePluginHooks(id);
+		this.removePluginWorkspaceHooks(id);
+		this.removePluginEvents(id);
+		this.removePluginSettings(id);
+		this.removePluginUIContributions(id);
+		this.removePluginEditorContributions(id);
+		this.removePluginKeymaps(id);
+		this.removePluginIcons(id);
+
 		// Execute cleanup if present
 		const cleanup = this.cleanups.get(id);
 		if (cleanup) {
@@ -1666,15 +1676,6 @@ export class PluginHost implements PluginHostInterface {
 		this.states.set(id, 'inactive');
 		this.deactivationReasons.set(id, reason);
 		this.activationOrder = this.activationOrder.filter((item) => item !== id);
-		this.removePluginCommands(id);
-		this.removePluginHooks(id);
-		this.removePluginWorkspaceHooks(id);
-		this.removePluginEvents(id);
-		this.removePluginSettings(id);
-		this.removePluginUIContributions(id);
-		this.removePluginEditorContributions(id);
-		this.removePluginKeymaps(id);
-		this.removePluginIcons(id);
 	}
 
 	// -------------------------------------------------------------------------
