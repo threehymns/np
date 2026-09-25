@@ -28,7 +28,10 @@ async function buildMainProcess(): Promise<boolean> {
 		}),
 		Bun.build({
 			entrypoints: [path.resolve(srcDir, 'preload.cts')],
-			outfile: path.resolve(distMainDir, 'preload.cjs'),
+			outdir: distMainDir,
+			// NOTE: the Bun.build JS API has no `outfile` option (it's CLI-only);
+			// without `outdir` the bundle stays in memory and nothing is written.
+			naming: 'preload.cjs',
 			target: 'node',
 			format: 'cjs',
 			packages: 'external',
