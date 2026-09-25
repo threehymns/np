@@ -325,9 +325,13 @@ export class Preferences {
 	private syncToSettingsAndSave(namespace: string, key: string, value: any): void {
 		if (!this.isInitialized || this.isRestoring) return;
 
-		// Single comment-preserving write through SettingsManager; it owns the
-		// stored document, so there is no second copy to keep in sync here.
-		this.settings.set(namespace, key, value, 'user');
+		try {
+			// Single comment-preserving write through SettingsManager; it owns the
+			// stored document, so there is no second copy to keep in sync here.
+			this.settings.set(namespace, key, value, this.activeScope);
+		} finally {
+			this.refreshEffectiveData();
+		}
 	}
 
 	private resetToDefaults() {

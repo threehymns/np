@@ -299,4 +299,27 @@ describe("Preferences lifecycle and hardening", () => {
 		prefs.settings.unset("editor", "tab_size", "user");
 		expect(prefs.settingsVersion).toBeGreaterThan(afterSet);
 	});
+
+	it("writes using activeScope and refreshes effective data in finally block", () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+
+		// Switch to workspace scope
+		prefs.activeScope = "workspace";
+
+		// Set tabSize while activeScope is workspace
+		prefs.tabSize = 8;
+		expect(prefs.tabSize).toBe(8);
+		expect(prefs.hasWorkspaceOverride("editor", "tab_size")).toBe(true);
+		// User storage must not have been touched
+		expect(storage.setItemCalls.length).toBe(0);
+
+		// An invalid value causes SettingsManager.set to throw
+		expect(() => {
+			(prefs as any).appearanceMode = "invalid-mode";
+		}).toThrow();
+
+		// finally block refreshed effective data so appearanceMode is reverted to system
+		expect(prefs.appearanceMode).toBe("system");
+	});
 });
