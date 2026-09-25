@@ -6,6 +6,7 @@ import {
 	DependencyCycleError,
 	MissingDependencyError,
 	InterfaceVersionMismatchError,
+	DuplicateInterfaceProviderError,
 	UnsupportedPlatformError,
 	PluginNotFoundError
 } from './errors';
@@ -152,6 +153,34 @@ describe('PluginHost Skeleton', () => {
 			} catch (err: any) {
 				expect(err).toBeInstanceOf(DependencyCycleError);
 				expect(err.message).toContain('dependency cycle detected');
+				expect(err.message).toContain('Action:');
+			}
+		});
+
+		it('rejects two plugins providing the same interface instead of picking one silently', () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'vcs-a', name: 'VCS A', version: 0, provides: { 'vcs': 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'vcs-b', name: 'VCS B', version: 0, provides: { 'vcs': 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'git', name: 'Git', version: 0, dependsOn: { 'vcs': 0 } },
+				setup: () => {}
+			});
+
+			// Last-write-wins would bind `git` to whichever provider happened to
+			// register last, and a version mismatch would blame the wrong one.
+			expect(() => host.computeActivationOrder()).toThrow(DuplicateInterfaceProviderError);
+			try {
+				host.computeActivationOrder();
+			} catch (err: any) {
+				expect(err.message).toContain('vcs');
+				expect(err.message).toContain('vcs-a');
+				expect(err.message).toContain('vcs-b');
 				expect(err.message).toContain('Action:');
 			}
 		});

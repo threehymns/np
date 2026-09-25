@@ -112,6 +112,33 @@ export class InterfaceVersionMismatchError extends Error {
 }
 
 /**
+ * Actionable diagnostic error thrown when two plugins declare the same
+ * interface in their manifests (ADR 0008, ADR 0017).
+ *
+ * Interface names are the addressing scheme dependents bind to, so one name
+ * may have exactly one provider. Silently keeping the last registration would
+ * bind consumers to whichever plugin registered last and blame the wrong
+ * plugin in any later version mismatch.
+ */
+export class DuplicateInterfaceProviderError extends Error {
+	readonly interfaceName: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(interfaceName: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Interface "${interfaceName}" is provided by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: An interface name must have exactly one provider. Remove "${interfaceName}" from the ` +
+				`"provides" map of one of the two manifests, or rename the interface so each provider owns a distinct name.`
+		);
+		this.name = 'DuplicateInterfaceProviderError';
+		this.interfaceName = interfaceName;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
+	}
+}
+
+/**
  * Error thrown when a plugin is activated on an unsupported platform (ADR 0006).
  */
 export class UnsupportedPlatformError extends Error {

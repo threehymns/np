@@ -13,6 +13,7 @@ import {
 	RawTransactionDispatchError,
 	DocumentRevisionMismatchError,
 	DependencyCycleError,
+	DuplicateInterfaceProviderError,
 	DuplicatePluginIdError,
 	HookReentryError,
 	InterfaceVersionMismatchError,
@@ -1507,6 +1508,10 @@ export class PluginHost implements PluginHostInterface {
 		for (const [id, reg] of this.registrations.entries()) {
 			if (reg.manifest.provides) {
 				for (const [iface, ver] of Object.entries(reg.manifest.provides)) {
+					const existing = interfaceProviders.get(iface);
+					if (existing !== undefined && existing.pluginId !== id) {
+						throw new DuplicateInterfaceProviderError(iface, existing.pluginId, id);
+					}
 					interfaceProviders.set(iface, { pluginId: id, version: ver });
 				}
 			}
