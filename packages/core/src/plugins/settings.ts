@@ -848,6 +848,7 @@ export interface SettingsRegistryLike {
 	refresh(): void;
 	getSchema(namespace: string): SettingNamespaceSchema | undefined;
 	getAllSchemas(): SettingNamespaceSchema[];
+	subscribe(listener: () => void): () => void;
 }
 
 export interface SettingsManagerOptions {
@@ -874,6 +875,7 @@ export class SettingsManager {
 	private storageKey: string;
 	private workspaceStorage?: WorkspaceSettingsStorage;
 	private schemaRegistry?: SettingsRegistryLike;
+	private unsubscribeSchemaRegistry?: () => void;
 	private schemas = new Map<string, SettingNamespaceSchema>();
 	private schemaTransforms: SettingSchemaTransformEntry[] = [];
 	private storedRawData: Record<string, any> = {};
@@ -894,7 +896,6 @@ export class SettingsManager {
 		this.storage = options.storage;
 		this.storageKey = options.storageKey ?? 'np-prefs-v2';
 		this.workspaceStorage = options.workspaceStorage;
-		this.schemaRegistry = options.schemaRegistry;
 		this.onDiagnosticsChange = options.onDiagnosticsChange;
 		this.onChange = options.onChange;
 
@@ -913,6 +914,9 @@ export class SettingsManager {
 				this.registerSchema('initial', s);
 			}
 		}
+		if (options.schemaRegistry) {
+			this.setSchemaRegistry(options.schemaRegistry);
+		}
 
 		this.load();
 		if (this.workspaceStorage) {
@@ -921,7 +925,9 @@ export class SettingsManager {
 	}
 
 	setSchemaRegistry(registry: SettingsRegistryLike): void {
+		this.unsubscribeSchemaRegistry?.();
 		this.schemaRegistry = registry;
+		this.unsubscribeSchemaRegistry = registry.subscribe(() => this.validateAll());
 		this.validateAll();
 	}
 
@@ -1021,6 +1027,7 @@ export class SettingsManager {
 	 */
 	async attachWorkspaceStorage(storage: WorkspaceSettingsStorage): Promise<void> {
 		this.workspaceStorage = storage;
+		this.clearDocumentDiagnostics('workspace');
 		this.workspaceLoaded = false;
 		this.storedWorkspaceData = {};
 		this.storedWorkspaceText = '';
@@ -1034,6 +1041,7 @@ export class SettingsManager {
 	 */
 	clearWorkspace(): void {
 		this.workspaceGeneration++;
+		this.clearDocumentDiagnostics('workspace');
 		this.storedWorkspaceData = {};
 		this.storedWorkspaceText = '';
 		this.explicitlyModifiedWorkspaceKeys.clear();
@@ -1047,6 +1055,7 @@ export class SettingsManager {
 	 */
 	loadFromText(rawText: string | null | undefined): void {
 		if (!rawText || !rawText.trim()) {
+			this.clearDocumentDiagnostics('user');
 			this.storedRawData = {};
 			this.storedRawText = rawText ?? '';
 			this.validateAll();
@@ -1078,9 +1087,24 @@ export class SettingsManager {
 		}
 
 		if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+			this.clearDocumentDiagnostics('user');
 			this.storedRawData = parsed;
 		} else {
 			this.storedRawData = {};
+			const diagnostic: SettingDiagnostic = {
+				namespace: 'core',
+				key: '$document',
+				message: 'Settings document must contain a JSON object.',
+				severity: 'error',
+				scope: 'user'
+			};
+			this.currentDiagnostics = [
+				...this.currentDiagnostics.filter((item) => item.scope !== 'user'),
+				diagnostic
+			];
+			this.onDiagnosticsChange?.(this.currentDiagnostics);
+			this.onChange?.();
+			return;
 		}
 
 		this.validateAll();
@@ -1091,6 +1115,7 @@ export class SettingsManager {
 	 */
 	loadWorkspaceFromText(rawText: string | null | undefined): void {
 		if (!rawText || !rawText.trim()) {
+			this.clearDocumentDiagnostics('workspace');
 			this.storedWorkspaceData = {};
 			this.storedWorkspaceText = rawText ?? '';
 			this.validateAll();
@@ -1122,9 +1147,24 @@ export class SettingsManager {
 		}
 
 		if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+			this.clearDocumentDiagnostics('workspace');
 			this.storedWorkspaceData = parsed;
 		} else {
 			this.storedWorkspaceData = {};
+			const diagnostic: SettingDiagnostic = {
+				namespace: 'workspace',
+				key: '$document',
+				message: 'Workspace settings document must contain a JSON object.',
+				severity: 'error',
+				scope: 'workspace'
+			};
+			this.currentDiagnostics = [
+				...this.currentDiagnostics.filter((item) => item.scope !== 'workspace'),
+				diagnostic
+			];
+			this.onDiagnosticsChange?.(this.currentDiagnostics);
+			this.onChange?.();
+			return;
 		}
 
 		this.validateAll();
@@ -1134,6 +1174,12 @@ export class SettingsManager {
 	 * Validates all stored user and workspace values against current registered schemas.
 	 * Collects diagnostics without modifying or resetting stored data.
 	 */
+	private clearDocumentDiagnostics(scope: SettingScope): void {
+		this.currentDiagnostics = this.currentDiagnostics.filter(
+			(diagnostic) => diagnostic.scope !== scope || !diagnostic.key.startsWith('$')
+		);
+	}
+
 	validateAll(): SettingDiagnostic[] {
 		const diagnostics: SettingDiagnostic[] = [];
 		const allSchemas = this.getAllSchemas();
@@ -1223,10 +1269,13 @@ export class SettingsManager {
 			}
 		}
 
-		this.currentDiagnostics = diagnostics;
+		const documentDiagnostics = this.currentDiagnostics.filter(
+			(diagnostic) => diagnostic.key === '$document' || diagnostic.key === '$syntax'
+		);
+		this.currentDiagnostics = [...documentDiagnostics, ...diagnostics];
 		this.onDiagnosticsChange?.(this.currentDiagnostics);
 		this.onChange?.();
-		return diagnostics;
+		return this.currentDiagnostics;
 	}
 
 	getDiagnostics(scope?: SettingScope): SettingDiagnostic[] {

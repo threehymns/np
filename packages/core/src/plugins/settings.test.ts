@@ -370,6 +370,31 @@ describe('Preferences Migration onto Namespaced Schemas (#198)', () => {
 		expect(prefs.resolve('editor', 'tab_size').provenance).toBe('user');
 	});
 
+	it('reports invalid root settings documents without rewriting storage', () => {
+		const storage = new MockStorage({ 'np-prefs-v2': '[]' });
+		const manager = new SettingsManager({ storage });
+
+		expect(manager.getDiagnostics().some((diagnostic) =>
+			diagnostic.key === '$document' && diagnostic.scope === 'user'
+		)).toBe(true);
+		expect(storage.setItemCalls).toHaveLength(0);
+	});
+
+	it('keeps an invalid root diagnostic across schema rebuilds', async () => {
+		const storage = new MockStorage({ 'np-prefs-v2': '[]' });
+		const host = new PluginHost();
+		host.register({
+			manifest: { id: 'observer', name: 'Observer', version: 0 },
+			setup: () => {}
+		});
+		const manager = new SettingsManager({ storage });
+		manager.setSchemaRegistry(host.settings);
+
+		await host.activate('observer');
+
+		expect(manager.getDiagnostics().some((diagnostic) => diagnostic.key === '$document')).toBe(true);
+	});
+
 	it('exposes diagnostics for invalid stored preference values', () => {
 		const storage = new MockStorage({
 			'np-prefs-v2': JSON.stringify({
@@ -435,6 +460,28 @@ describe('Settings schema registry lifecycle (host-owned)', () => {
 		clean.register(pluginWithSchema('alpha'));
 		await clean.activateAll();
 		expect(namespacesOf(host)).toEqual(namespacesOf(clean));
+	});
+
+	it('revalidates stored plugin values after disable and re-enable', async () => {
+		const storage = new MockStorage({
+			'np-prefs-v2': JSON.stringify({ alpha: { enabled: 'not-a-boolean' } })
+		});
+		const host = new PluginHost();
+		host.register(pluginWithSchema('alpha'));
+		const manager = new SettingsManager({ storage });
+		manager.setSchemaRegistry(host.settings);
+
+		expect(manager.getDiagnostics()).toHaveLength(0);
+		await host.activate('alpha');
+		expect(manager.getDiagnostics()).toEqual([
+			expect.objectContaining({ namespace: 'alpha', key: 'enabled', scope: 'user' })
+		]);
+		await host.deactivate('alpha');
+		expect(manager.getDiagnostics()).toHaveLength(0);
+		await host.activate('alpha');
+		expect(manager.getDiagnostics()).toEqual([
+			expect.objectContaining({ namespace: 'alpha', key: 'enabled', scope: 'user' })
+		]);
 	});
 
 	it('refresh-mid-session rebuilds with no duplicates or losses', async () => {

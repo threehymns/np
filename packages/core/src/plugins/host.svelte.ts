@@ -219,6 +219,7 @@ export class PluginHost implements PluginHostInterface {
 	// Shared settings schema registry: replayable transforms + materialized view (ADR 0012, ADR 0014).
 	private settingSchemaTransforms: SettingSchemaTransformEntry[] = [];
 	private settingSchemaMap = $state<Map<string, SettingNamespaceSchema>>(new Map());
+	private settingsListeners = new Set<() => void>();
 
 	readonly settings: SettingsRegistryLike = {
 		registerTransform: (pluginId, transform) => this.registerSettingTransform(pluginId, transform),
@@ -227,7 +228,13 @@ export class PluginHost implements PluginHostInterface {
 		rebuild: () => this.rebuildSettings(),
 		refresh: () => this.refreshSettings(),
 		getSchema: (namespace) => this.getSettingSchema(namespace),
-		getAllSchemas: () => this.getSettingSchemas()
+		getAllSchemas: () => this.getSettingSchemas(),
+		subscribe: (listener) => {
+			this.settingsListeners.add(listener);
+			return () => {
+				this.settingsListeners.delete(listener);
+			};
+		}
 	};
 
 	readonly commands: CommandRegistryLike = {
@@ -1258,6 +1265,7 @@ export class PluginHost implements PluginHostInterface {
 
 	rebuildSettings(): void {
 		this.settingSchemaMap = rebuildSettingSchemas(this.orderedSettingTransforms());
+		for (const listener of this.settingsListeners) listener();
 	}
 
 	refreshSettings(): void {
