@@ -12,6 +12,7 @@ import { MemorySessionPersistence } from '../persistence';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';
+import { openFolderRepository, createWorkspaceGitState } from './git/lifecycle';
 
 const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
 
@@ -622,6 +623,111 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(await host.executeCommand('git.init')).toBe(false);
 			expect(alerts).toEqual(['Failed to initialize repository: Project tree scan failure']);
 			expect(workspace.repository).toBeNull();
+		});
+	});
+
+	describe("stale folder-open handling in git lifecycle", () => {
+		it("rejects stale folder open when a newer open starts while detect is pending", async () => {
+			let releaseDetectA!: () => void;
+			const detectGateA = new Promise<void>((resolve) => (releaseDetectA = resolve));
+			let detectACalled = false;
+
+			const host = new PluginHost();
+			const storage = createLocalMockStorage();
+			const persistence = new MemorySessionPersistence();
+			const originA: FileOrigin = { scheme: "file", path: "/repo-a", name: "repo-a" };
+			const originB: FileOrigin = { scheme: "file", path: "/repo-b", name: "repo-b" };
+
+			const workspace = new Workspace(
+				storage,
+				(root: FileOrigin) => ({
+					detect: mock(async (path?: string) => {
+						if (path === "/repo-a") {
+							detectACalled = true;
+							await detectGateA;
+							return true;
+						}
+						return true;
+					}),
+					getCurrentBranch: async () => "main",
+					getBranches: async () => ["main"],
+					getChanges: async () => [],
+					getCommits: async () => [],
+					getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+					refresh: async () => {}
+				}),
+				persistence,
+				host
+			);
+
+			const state = createWorkspaceGitState(workspace);
+			workspace.rootOrigin = originA;
+
+			// Start opening folder A (will pause on detectGateA)
+			const openTaskA = openFolderRepository(state, originA);
+			for (let i = 0; i < 20 && !detectACalled; i++) await tick(1);
+			expect(detectACalled).toBe(true);
+
+			// Now switch workspace to folder B and start opening folder B
+			workspace.rootOrigin = originB;
+			const openTaskB = openFolderRepository(state, originB);
+			await openTaskB;
+
+			// Folder B is now published
+			expect(workspace.repository).not.toBeNull();
+			
+			const repoB = workspace.repository;
+
+			// Now release folder A detect
+			releaseDetectA();
+			await openTaskA;
+
+			// Workspace repository must NOT have been overwritten or disposed by the stale open A!
+			expect(workspace.repository).toBe(repoB);
+			expect(state.repository).toBe(repoB);
+		});
+
+		it("rejects folder open when workspace root changes during refresh", async () => {
+			let releaseRefresh!: () => void;
+			const refreshGate = new Promise<void>((resolve) => (releaseRefresh = resolve));
+
+			const host = new PluginHost();
+			const storage = createLocalMockStorage();
+			const persistence = new MemorySessionPersistence();
+			const originA: FileOrigin = { scheme: "file", path: "/repo-a", name: "repo-a" };
+			const originB: FileOrigin = { scheme: "file", path: "/repo-b", name: "repo-b" };
+
+			const workspace = new Workspace(
+				storage,
+				(root: FileOrigin) => ({
+					detect: mock(async () => true),
+					getCurrentBranch: async () => {
+						await refreshGate;
+						return "main";
+					},
+					getBranches: async () => ["main"],
+					getChanges: async () => [],
+					getCommits: async () => [],
+					getStatus: async () => ({ isDirty: false, uncommittedFiles: [] })
+				}),
+				persistence,
+				host
+			);
+
+			const state = createWorkspaceGitState(workspace);
+			workspace.rootOrigin = originA;
+
+			const openTaskA = openFolderRepository(state, originA);
+			await tick(5);
+
+			// Root changed while refresh was in flight
+			workspace.rootOrigin = originB;
+			releaseRefresh();
+			await openTaskA;
+
+			// Stale repo for folder A was cleared and not left active for folder B
+			expect(workspace.repository).toBeNull();
+			expect(state.repository).toBeNull();
 		});
 	});
 

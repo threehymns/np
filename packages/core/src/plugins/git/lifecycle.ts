@@ -21,6 +21,8 @@ export interface WorkspaceGitState {
 	pending: Set<Promise<unknown>>;
 	/** Per-workspace disposables (watchers); run on cleanup. */
 	disposables: Array<() => void>;
+	/** Token identifying the most recently initiated folder-open operation. */
+	currentOpenId: number;
 }
 
 export function createWorkspaceGitState(workspace: Workspace): WorkspaceGitState {
@@ -29,7 +31,8 @@ export function createWorkspaceGitState(workspace: Workspace): WorkspaceGitState
 		repository: null,
 		disposed: false,
 		pending: new Set(),
-		disposables: []
+		disposables: [],
+		currentOpenId: 0
 	};
 }
 
@@ -76,19 +79,41 @@ export async function openFolderRepository(
 	state: WorkspaceGitState,
 	origin: FileOrigin
 ): Promise<void> {
+	const openId = ++state.currentOpenId;
 	disposePublishedRepository(state);
 	if (state.disposed) return;
 
+	const targetUri = toURI(origin);
 	const repo = new Repository(origin, state.workspace.vcsFactory);
 	const detected = await track(state, repo.adapter.detect(origin.path));
-	if (state.disposed) return;
+
+	if (
+		state.disposed ||
+		state.currentOpenId !== openId ||
+		!state.workspace.rootOrigin ||
+		toURI(state.workspace.rootOrigin) !== targetUri
+	) {
+		return;
+	}
 
 	if (detected) {
 		state.workspace.repository = repo;
 		state.repository = repo;
 		await track(state, repo.refresh());
-		if (state.disposed) {
-			disposePublishedRepository(state);
+
+		if (
+			state.disposed ||
+			state.currentOpenId !== openId ||
+			!state.workspace.rootOrigin ||
+			toURI(state.workspace.rootOrigin) !== targetUri
+		) {
+			if (state.workspace.repository === repo) {
+				state.workspace.repository = null;
+			}
+			if (state.repository === repo) {
+				state.repository = null;
+			}
+			return;
 		}
 	}
 }
