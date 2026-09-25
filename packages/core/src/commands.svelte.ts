@@ -1140,10 +1140,6 @@ export function registerCoreCommands(appState: AppState) {
 	appState.commands.registerCommands(CORE_COMMANDS_OWNER, coreCommands);
 }
 
-// HunkRange now lives with the Git commands that consume it (#202);
-// kept here as a type-only re-export so existing import sites keep working.
-export type { HunkRange } from './plugins/git/commands';
-
 /**
  * Maps a character position in document A (original text) to document B (modified text)
  * using diff chunks. If posA falls inside a changed chunk, it maps to the start of chunk B (fromB).
