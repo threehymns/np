@@ -614,7 +614,13 @@ export class PluginHost implements PluginHostInterface {
 	 * Subscribes an event handler for observation.
 	 * Handlers cannot mutate payload outcome, veto, or fail host operations.
 	 */
-	on<T = any>(event: string, handler: EventHandler<T>, pluginId?: string): () => void {
+	on<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): () => void {
+		if (!pluginId) {
+			throw new Error('Event handlers must declare an owning plugin id.');
+		}
+		if (!this.registrations.has(pluginId)) {
+			throw new Error(`Event handler owner "${pluginId}" is not registered.`);
+		}
 		let list = this.eventHandlers.get(event);
 		if (!list) {
 			list = [];
@@ -623,14 +629,14 @@ export class PluginHost implements PluginHostInterface {
 		const entry: EventHandlerEntry<T> = { pluginId, handler };
 		list.push(entry);
 		return () => {
-			this.off(event, handler);
+			this.removeEventEntry(event, entry);
 		};
 	}
 
-	off<T = any>(event: string, handler: EventHandler<T>): void {
+	off<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): void {
 		const list = this.eventHandlers.get(event);
 		if (!list) return;
-		const index = list.findIndex((e) => e.handler === handler);
+		const index = list.findIndex((e) => e.handler === handler && e.pluginId === pluginId);
 		if (index !== -1) {
 			list.splice(index, 1);
 		}
@@ -639,24 +645,39 @@ export class PluginHost implements PluginHostInterface {
 		}
 	}
 
-	emit<T = any>(event: string, payload?: T): void {
+	private removeEventEntry<T>(event: string, entry: EventHandlerEntry<T>): void {
+		const list = this.eventHandlers.get(event);
+		if (!list) return;
+		const index = list.indexOf(entry as EventHandlerEntry);
+		if (index !== -1) {
+			list.splice(index, 1);
+		}
+		if (list.length === 0) {
+			this.eventHandlers.delete(event);
+		}
+	}
+
+	emit<T = unknown>(event: string, payload?: T): void {
 		const list = this.eventHandlers.get(event);
 		if (!list || list.length === 0) return;
 
 		for (const entry of [...list]) {
+			if (!this.registrations.has(entry.pluginId) || !this.isPluginActive(entry.pluginId)) {
+				continue;
+			}
 			try {
 				const result = entry.handler(payload);
-				if (result && typeof (result as Promise<any>).catch === 'function') {
-					(result as Promise<any>).catch((err) => {
+				if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+					void Promise.resolve(result).catch((err) => {
 						console.error(
-							`[PluginHost] Error in async event handler for "${event}"${entry.pluginId ? ` (plugin "${entry.pluginId}")` : ''}:`,
+							`[PluginHost] Error in async event handler for "${event}" (plugin "${entry.pluginId}"):`,
 							err
 						);
 					});
 				}
 			} catch (err) {
 				console.error(
-					`[PluginHost] Error in event handler for "${event}"${entry.pluginId ? ` (plugin "${entry.pluginId}")` : ''}:`,
+					`[PluginHost] Error in event handler for "${event}" (plugin "${entry.pluginId}"):`,
 					err
 				);
 			}

@@ -4,9 +4,11 @@
  * veto it, or fail the operation, and the host need not await them in any particular order.
  */
 
-export type EventHandler<T = any> = (payload: T) => void | Promise<void>;
+export type EventHandler<T = unknown> = {
+	bivarianceHack(payload: T): void | Promise<void>;
+}['bivarianceHack'];
 
-export interface EventHandlerEntry<T = any> {
-	readonly pluginId?: string;
+export interface EventHandlerEntry<T = unknown> {
+	readonly pluginId: string;
 	readonly handler: EventHandler<T>;
 }

@@ -48,6 +48,16 @@ function createLocalMockStorage(initialFiles: Record<string, string> = {}): Stor
 	};
 }
 
+async function createActiveEventHost(pluginId = 'event-observer') {
+	const host = new PluginHost();
+	host.register({
+		manifest: { id: pluginId, name: pluginId, version: 0 },
+		setup: () => undefined
+	});
+	await host.activate(pluginId);
+	return { host, pluginId };
+}
+
 function createMockVcsFactory(refreshSpy?: () => Promise<boolean>): (root: FileOrigin) => VCSAdapter {
 	return () => ({
 		detect: mock(async () => true),
@@ -63,13 +73,13 @@ function createMockVcsFactory(refreshSpy?: () => Promise<boolean>): (root: FileO
 
 describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 	describe('Event observation (on, off, emit)', () => {
-		it('emits fire-and-forget events to subscribers for observation only', () => {
-			const host = new PluginHost();
+		it('emits fire-and-forget events to subscribers for observation only', async () => {
+			const { host, pluginId } = await createActiveEventHost();
 			const received: any[] = [];
 
 			const unsub = host.on('doc:saved', (payload) => {
 				received.push(payload);
-			});
+			}, pluginId);
 
 			host.emit('doc:saved', { id: 'doc-1', path: '/notes/a.md' });
 			expect(received).toHaveLength(1);
@@ -80,33 +90,73 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(received).toHaveLength(1);
 		});
 
-		it('allows unsubscribing via off() method', () => {
+		it('requires an owning plugin and ignores handlers owned by inactive plugins', () => {
 			const host = new PluginHost();
+			const handler = mock(() => undefined);
+
+			host.register({
+				manifest: { id: 'inactive-listener', name: 'Inactive Listener', version: 0 },
+				setup: () => undefined
+			});
+			host.on('ownership-event', handler, 'inactive-listener');
+			host.emit('ownership-event');
+			expect(handler).not.toHaveBeenCalled();
+			expect(() => host.on('ownership-event', handler)).toThrow(/owning plugin/i);
+		});
+
+		it('unsubscribes only the handler owned by the requesting plugin', async () => {
+			const host = new PluginHost();
+			const sharedHandler = mock(() => undefined);
+			let unsubscribeA!: () => void;
+
+			host.register({
+				manifest: { id: 'plugin-b', name: 'Plugin B', version: 0 },
+				setup: (h) => {
+					h.on('shared-event', sharedHandler, 'plugin-b');
+				}
+			});
+			host.register({
+				manifest: { id: 'plugin-a', name: 'Plugin A', version: 0 },
+				setup: (h) => {
+					unsubscribeA = h.on('shared-event', sharedHandler, 'plugin-a');
+				}
+			});
+			await host.activateAll();
+
+			unsubscribeA();
+			await host.deactivate('plugin-b');
+			host.emit('shared-event');
+
+			expect(sharedHandler).not.toHaveBeenCalled();
+		});
+
+		it('allows unsubscribing via off() method', async () => {
+			const { host, pluginId } = await createActiveEventHost();
 			let count = 0;
 			const handler = () => {
 				count++;
 			};
 
-			host.on('test-event', handler);
+			host.on('test-event', handler, pluginId);
 			host.emit('test-event');
 			expect(count).toBe(1);
 
-			host.off('test-event', handler);
+			host.off('test-event', handler, pluginId);
 			host.emit('test-event');
 			expect(count).toBe(1);
 		});
 
-		it('contains throwing event handlers without interrupting emission or caller', () => {
-			const host = new PluginHost();
+		it('contains throwing event handlers without interrupting emission or caller', async () => {
+			const { host, pluginId } = await createActiveEventHost();
 			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
 			let secondHandlerCalled = false;
 			host.on('ping', () => {
 				throw new Error('Boom in event handler');
-			}, 'plugin-error');
+			}, pluginId);
 			host.on('ping', () => {
 				secondHandlerCalled = true;
-			}, 'plugin-ok');
+			}, pluginId);
 
 			expect(() => host.emit('ping', { foo: 'bar' })).not.toThrow();
 			expect(secondHandlerCalled).toBe(true);
@@ -116,12 +166,12 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		});
 
 		it('handles rejecting async event handlers gracefully', async () => {
-			const host = new PluginHost();
+			const { host, pluginId } = await createActiveEventHost();
 			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
 			host.on('async-event', async () => {
 				throw new Error('Async error');
-			}, 'plugin-async');
+			}, pluginId);
 
 			expect(() => host.emit('async-event')).not.toThrow();
 			// Wait for promise resolution tick
@@ -673,6 +723,11 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 
 		it('emits document:saved event upon successful save', async () => {
 			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'saved-observer', name: 'Saved Observer', version: 0 },
+				setup: () => undefined
+			});
+			await host.activate('saved-observer');
 			const storage = createLocalMockStorage({ '/notes/memo.md': '' });
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
@@ -680,7 +735,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const savedEvents: any[] = [];
 			host.on('document:saved', (payload) => {
 				savedEvents.push(payload);
-			});
+			}, 'saved-observer');
 
 			const origin: FileOrigin = { scheme: 'file', path: '/notes/memo.md', name: 'memo.md' };
 			const doc = new DocumentSession(storage, '', origin);

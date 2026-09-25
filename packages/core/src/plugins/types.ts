@@ -174,9 +174,9 @@ export interface PluginHostInterface {
 	removePluginIcons(pluginId: string): void;
 
 	// Event observation (ADR 0013: Events observe, fire-and-forget)
-	on<T = any>(event: string, handler: EventHandler<T>, pluginId?: string): () => void;
-	off<T = any>(event: string, handler: EventHandler<T>): void;
-	emit<T = any>(event: string, payload?: T): void;
+	on<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): () => void;
+	off<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): void;
+	emit<T = unknown>(event: string, payload?: T): void;
 	removePluginEvents(pluginId: string): void;
 
 	// Operation hooks (ADR 0013: Hooks participate)
