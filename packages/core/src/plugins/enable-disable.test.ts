@@ -485,7 +485,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 		});
 	});
 
-	describe('disable during an active write shows a blocked state (ADR 0009)', () => {
+	describe('disable during an active write shows the in-flight disabling state (ADR 0009)', () => {
 		it('reports deactivating while the write finishes, then drops the stale result', async () => {
 			let releaseInit!: () => void;
 			const initGate = new Promise<void>((resolve) => (releaseInit = resolve));
