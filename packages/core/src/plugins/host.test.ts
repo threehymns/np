@@ -199,6 +199,27 @@ describe('PluginHost Skeleton', () => {
 	});
 
 	describe('Activation, Disablement, and Disposal Lifecycle', () => {
+		it('rolls back contributions when setup fails before a retry', async () => {
+			const host = new PluginHost();
+			let attempt = 0;
+			host.register({
+				manifest: { id: 'retryable', name: 'Retryable', version: 0 },
+				setup: (pluginHost) => {
+					const commandId = attempt++ === 0 ? 'stale-command' : 'fresh-command';
+					pluginHost.registerCommands('retryable', [
+						{ id: commandId, label: commandId, category: 'Test', action: () => true }
+					]);
+					if (attempt === 1) throw new Error('setup failed');
+				}
+			});
+
+			await expect(host.activate('retryable')).rejects.toThrow('setup failed');
+			expect(host.getCommands().some((command) => command.id === 'stale-command')).toBe(false);
+
+			await host.activate('retryable');
+			expect(host.getCommands().map((command) => command.id)).toEqual(['fresh-command']);
+		});
+
 		it('activates and deactivates a plugin running cleanup on disable', async () => {
 			const host = new PluginHost();
 			let cleanedUp = false;

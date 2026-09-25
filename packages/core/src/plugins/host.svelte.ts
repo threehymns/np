@@ -1479,6 +1479,23 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildUIContributions();
 		} catch (error) {
 			this.states.set(id, 'error');
+			this.removePluginCommands(id);
+			this.removePluginHooks(id);
+			this.removePluginWorkspaceHooks(id);
+			this.removePluginEvents(id);
+			this.removePluginSettings(id);
+			this.removePluginUIContributions(id);
+			this.removePluginEditorContributions(id);
+			const cleanup = this.cleanups.get(id);
+			if (cleanup) {
+				try {
+					await cleanup();
+				} catch (cleanupError) {
+					console.error(`[PluginHost] Error rolling back plugin "${id}":`, cleanupError);
+				} finally {
+					this.cleanups.delete(id);
+				}
+			}
 			throw new PluginActivationError(id, error);
 		}
 	}
