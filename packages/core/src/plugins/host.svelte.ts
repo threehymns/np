@@ -710,16 +710,31 @@ export class PluginHost implements PluginHostInterface {
 	// --------------------------------------------------------------------------
 
 	/**
+	 * Every registered handler and hook names the plugin that owns it, and
+	 * removal is by owner id. An unregistered owner would therefore be
+	 * accepted and then retained forever, outliving every deactivate of the
+	 * plugin that actually registered it, so the owner is checked at
+	 * registration instead (ADR 0013, ADR 0009).
+	 */
+	private assertRegistrationOwner(pluginId: string, kind: string): void {
+		if (!pluginId) {
+			throw new Error(`${kind} must declare an owning plugin id.`);
+		}
+		if (!this.registrations.has(pluginId)) {
+			throw new Error(
+				`${kind} owner "${pluginId}" is not registered.\n` +
+					`Action: pass the id from the manifest of the plugin calling this registration ` +
+					`(host.getManifests().map((m) => m.id) lists the registered ids).`
+			);
+		}
+	}
+
+	/**
 	 * Subscribes an event handler for observation.
 	 * Handlers cannot mutate payload outcome, veto, or fail host operations.
 	 */
 	on<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): () => void {
-		if (!pluginId) {
-			throw new Error('Event handlers must declare an owning plugin id.');
-		}
-		if (!this.registrations.has(pluginId)) {
-			throw new Error(`Event handler owner "${pluginId}" is not registered.`);
-		}
+		this.assertRegistrationOwner(pluginId, 'Event handler');
 		let list = this.eventHandlers.get(event);
 		if (!list) {
 			list = [];
@@ -803,6 +818,7 @@ export class PluginHost implements PluginHostInterface {
 	 * Runs sequentially in plugin activation order and is always awaited.
 	 */
 	registerBeforeSaveHook(pluginId: string, hook: BeforeSaveHook): () => void {
+		this.assertRegistrationOwner(pluginId, 'Before-save hook');
 		const entry: BeforeSaveHookEntry = { pluginId, hook };
 		this.beforeSaveHooks.push(entry);
 		return () => {
@@ -818,6 +834,7 @@ export class PluginHost implements PluginHostInterface {
 	 * Runs after save finishes and is awaited.
 	 */
 	registerAfterSaveHook(pluginId: string, hook: AfterSaveHook): () => void {
+		this.assertRegistrationOwner(pluginId, 'After-save hook');
 		const entry: AfterSaveHookEntry = { pluginId, hook };
 		this.afterSaveHooks.push(entry);
 		return () => {
@@ -1077,6 +1094,7 @@ export class PluginHost implements PluginHostInterface {
 	 * per-workspace resources with no hardwired core path.
 	 */
 	registerWorkspaceOpenedHook(pluginId: string, hook: WorkspaceOpenedHook): () => void {
+		this.assertRegistrationOwner(pluginId, 'Workspace-opened hook');
 		const entry: WorkspaceOpenedHookEntry = { pluginId, hook };
 		this.workspaceOpenedHooks.push(entry);
 		return () => {

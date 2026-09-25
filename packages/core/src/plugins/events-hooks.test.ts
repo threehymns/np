@@ -58,6 +58,22 @@ async function createActiveEventHost(pluginId = 'event-observer') {
 	return { host, pluginId };
 }
 
+/**
+ * Registers a stub plugin for a hook owner and activates it, the way a real
+ * plugin reaches the host: the owner is registered before it contributes, and
+ * only an active plugin's hooks run. Returns the id to pass to the hook
+ * registration.
+ */
+async function hookOwner(host: PluginHost, pluginId: string): Promise<string> {
+	if (!host.hasPlugin(pluginId)) {
+		host.register({ manifest: { id: pluginId, name: pluginId, version: 0 }, setup: () => undefined });
+	}
+	if (!host.isPluginActive(pluginId)) {
+		await host.activate(pluginId);
+	}
+	return pluginId;
+}
+
 function createMockVcsFactory(refreshSpy?: () => Promise<boolean>): (root: FileOrigin) => VCSAdapter {
 	return () => ({
 		detect: mock(async () => true),
@@ -212,6 +228,40 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		});
 	});
 
+	describe('Handler and hook ownership (ADR 0013)', () => {
+		it('rejects a save or workspace-opened hook whose owning plugin id is not registered', async () => {
+			const host = new PluginHost();
+			host.register({ manifest: { id: 'real-plugin', name: 'Real', version: 0 }, setup: () => undefined });
+
+			// A mis-typed owner id would otherwise be accepted and then
+			// retained forever: removal is by owner id, so the handler would
+			// outlive every deactivate.
+			const registrations: Array<(id: string) => unknown> = [
+				(id) => host.registerBeforeSaveHook(id, async () => undefined),
+				(id) => host.registerAfterSaveHook(id, async () => undefined),
+				(id) => host.registerWorkspaceOpenedHook(id, async () => undefined),
+				(id) => host.on('some-event', () => undefined, id)
+			];
+
+			for (const register of registrations) {
+				expect(() => register('typo-plugin')).toThrow(/typo-plugin/);
+				expect(() => register('')).toThrow(/owning plugin id/);
+			}
+		});
+
+		it('leaves no hook behind after a mis-typed owner id is rejected', async () => {
+			const { host } = await createActiveEventHost('real-plugin');
+			const doc = new DocumentSession(createLocalMockStorage(), '');
+
+			expect(() => host.registerBeforeSaveHook('git', async () => undefined)).toThrow(/git/);
+
+			// The rejected hook is absent from the list deactivate filters, so
+			// no save reports a hook error against a plugin that never ran.
+			expect(await host.runBeforeSave({ document: doc })).toEqual({ cancel: false });
+			expect(host.lastHookError).toBeNull();
+		});
+	});
+
 	describe('Document Save Hooks on PluginHost', () => {
 		it('executes before-save hooks sequentially in plugin activation order and awaits them', async () => {
 			const host = new PluginHost();
@@ -251,6 +301,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		it('allows a before-save hook to cancel save with a user-visible reason via return object', async () => {
 			const host = new PluginHost();
 
+			await hookOwner(host, 'linter');
 			host.registerBeforeSaveHook('linter', async () => {
 				return { cancel: true, reason: 'Line 5: Unexpected syntax error' };
 			});
@@ -266,6 +317,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		it('allows a before-save hook to cancel save with SaveCancelledError', async () => {
 			const host = new PluginHost();
 
+			await hookOwner(host, 'validator');
 			host.registerBeforeSaveHook('validator', async () => {
 				throw new SaveCancelledError('Document contains uncommitted merge conflict markers');
 			});
@@ -284,11 +336,13 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 
 			const executed: string[] = [];
 
+			await hookOwner(host, 'failing-plugin');
 			host.registerBeforeSaveHook('failing-plugin', async () => {
 				executed.push('failing-plugin');
 				throw new TypeError('Cannot read properties of undefined');
 			});
 
+			await hookOwner(host, 'healthy-plugin');
 			host.registerBeforeSaveHook('healthy-plugin', async () => {
 				executed.push('healthy-plugin');
 			});
@@ -312,6 +366,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 
 			let caughtInHook: unknown = null;
 
+			await hookOwner(host, 'reentrant-plugin');
 			host.registerBeforeSaveHook('reentrant-plugin', async (ctx) => {
 				try {
 					// Attempting to re-enter runBeforeSave
@@ -417,6 +472,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
 
+			await hookOwner(host, 'formatter');
 			host.registerBeforeSaveHook('formatter', async () => {
 				return { cancel: true, reason: 'Formatting failed: missing semicolon' };
 			});
@@ -442,6 +498,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 				host
 			);
 			let hookDocument: unknown;
+			await hookOwner(host, 'reader');
 			host.registerBeforeSaveHook('reader', (context) => {
 				hookDocument = context.document;
 			});
@@ -475,6 +532,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const doc = await app.workspace.openFile(origin);
 			expect(doc).toBeDefined();
 			app.workspace.updateDocumentContent(doc!, 'edited');
+			await hookOwner(host, 'close-formatter');
 			host.registerBeforeSaveHook('close-formatter', () => ({
 				cancel: true,
 				reason: 'Formatting failed before close'
@@ -497,9 +555,11 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
 			let afterHookRan = false;
+			await hookOwner(host, 'faulty-hook');
 			host.registerBeforeSaveHook('faulty-hook', () => {
 				throw new Error('Unexpected crash in hook');
 			});
+			await hookOwner(host, 'after-hook');
 			host.registerAfterSaveHook('after-hook', () => {
 				afterHookRan = true;
 			});
@@ -531,6 +591,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const otherOrigin: FileOrigin = { scheme: 'file', path: '/other.md', name: 'other.md' };
 			const otherDoc = new DocumentSession(storage, '', otherOrigin);
 
+			await hookOwner(host, 'recursive-saver');
 			host.registerBeforeSaveHook('recursive-saver', async () => {
 				try {
 					await workspace.saveDocument(otherDoc);
@@ -572,6 +633,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			let hookRuns = 0;
 			let releaseHook!: () => void;
 			const gate = new Promise<void>((resolve) => (releaseHook = resolve));
+			await hookOwner(host, 'slow-saver');
 			host.registerBeforeSaveHook('slow-saver', async () => {
 				hookRuns++;
 				await gate;
@@ -627,6 +689,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const otherOrigin: FileOrigin = { scheme: 'file', path: '/other.md', name: 'other.md' };
 			const otherDoc = new DocumentSession(storage, '', otherOrigin);
 
+			await hookOwner(host, 'async-recursive-saver');
 			host.registerBeforeSaveHook('async-recursive-saver', async () => {
 				// Yield/await first so synchronous execution window has elapsed
 				await new Promise((resolve) => setTimeout(resolve, 5));
@@ -674,6 +737,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			let hookRuns = 0;
 			let releaseHook!: () => void;
 			const gate = new Promise<void>((resolve) => (releaseHook = resolve));
+			await hookOwner(host, 'slow-saver');
 			host.registerBeforeSaveHook('slow-saver', async () => {
 				hookRuns++;
 				await gate;
@@ -728,6 +792,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 				{ scheme: 'file', path: '/other.md', name: 'other.md' }
 			);
 
+			await hookOwner(host, 'browser-async-saver');
 			host.registerBeforeSaveHook('browser-async-saver', async () => {
 				await Promise.resolve();
 				try {
@@ -847,9 +912,11 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 			const ran: string[] = [];
 
+			await hookOwner(host, 'faulty-plugin');
 			host.registerWorkspaceOpenedHook('faulty-plugin', () => {
 				throw new Error('Detect blew up');
 			});
+			await hookOwner(host, 'steady-plugin');
 			host.registerWorkspaceOpenedHook('steady-plugin', () => {
 				ran.push('steady-plugin');
 			});
