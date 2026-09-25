@@ -3,12 +3,12 @@ import {
 	WORKSPACE_SERVICE_KEY,
 	DIALOGS_SERVICE_KEY,
 	DIFF_NAVIGATOR_SERVICE_KEY,
-	type DiffNavigatorProvider
+	type DiffNavigatorProvider,
+	type WorkspaceLike
 } from '../services';
 import { createPilotComponent } from '../ui-contributions';
 import type { DialogService } from '../../state.svelte';
 import { toURI } from '../../storage';
-import type { Workspace } from '../../workspace.svelte';
 import { manifest } from './manifest';
 import { createGitCommands, type GitCommandContext } from './commands';
 import {
@@ -55,9 +55,9 @@ import {
  * reimplemented here.
  */
 export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
-	const states = new Map<Workspace, WorkspaceGitState>();
+	const states = new Map<WorkspaceLike, WorkspaceGitState>();
 
-	const stateFor = (workspace: Workspace): WorkspaceGitState => {
+	const stateFor = (workspace: WorkspaceLike): WorkspaceGitState => {
 		let state = states.get(workspace);
 		if (!state) {
 			state = createWorkspaceGitState(
@@ -69,8 +69,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 		return state;
 	};
 
-	const getWorkspace = (): Workspace | undefined =>
-		host.getService<Workspace>(WORKSPACE_SERVICE_KEY);
+	const getWorkspace = (): WorkspaceLike | undefined =>
+		host.getService<WorkspaceLike>(WORKSPACE_SERVICE_KEY);
 	const getDialogs = () => host.getService<DialogService>(DIALOGS_SERVICE_KEY);
 
 	// Collaborators resolve lazily at action time, so activation order
@@ -136,7 +136,7 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 		// Refresh every workspace this plugin knows about, plus the
 		// currently published one (which may hold a repository assigned
 		// outside the folder-open lifecycle, e.g. in tests).
-		const candidates = new Set<Workspace>(states.keys());
+		const candidates = new Set<WorkspaceLike>(states.keys());
 		const current = getWorkspace();
 		if (current) candidates.add(current);
 		for (const workspace of candidates) {
@@ -150,7 +150,7 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			// A throw here (e.g. detect failure) is contained by the host
 			// (ADR 0013): logged against this plugin with remaining hooks
 			// still running, folder open proceeding with an empty slot.
-			await openFolderRepository(stateFor(context.workspace as Workspace), context.origin);
+			await openFolderRepository(stateFor(context.workspace as WorkspaceLike), context.origin);
 		}
 	);
 

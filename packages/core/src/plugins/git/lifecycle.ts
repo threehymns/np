@@ -1,6 +1,6 @@
 import { Repository } from '../../project/repository.svelte';
 import { toURI, type FileOrigin } from '../../storage';
-import type { Workspace } from '../../workspace.svelte';
+import type { WorkspaceLike } from '../services';
 
 /**
  * Per-workspace repository ownership for the Git Core Plugin (#202).
@@ -12,7 +12,7 @@ import type { Workspace } from '../../workspace.svelte';
  * here when added; none exist yet).
  */
 export interface WorkspaceGitState {
-	readonly workspace: Workspace;
+	readonly workspace: WorkspaceLike;
 	/** The repository instance this plugin published, if any. */
 	repository: Repository | null;
 	/** Set on disable: new operations stop, in-flight results are dropped. */
@@ -27,7 +27,7 @@ export interface WorkspaceGitState {
 }
 
 export function createWorkspaceGitState(
-	workspace: Workspace,
+	workspace: WorkspaceLike,
 	isActive: () => boolean = () => true
 ): WorkspaceGitState {
 	return {

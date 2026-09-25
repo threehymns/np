@@ -105,13 +105,7 @@ export class Workspace {
 	}
 
 	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
-		const hostWithQueue = this.pluginHost as unknown as {
-			runSaveExclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
-		} & typeof this.pluginHost;
-		if (hostWithQueue && typeof hostWithQueue.runSaveExclusive === 'function') {
-			return hostWithQueue.runSaveExclusive(async () => this.saveDocumentInner(doc, options));
-		}
-		return this.saveDocumentInner(doc, options);
+		return this.pluginHost.runSaveExclusive(async () => this.saveDocumentInner(doc, options));
 	}
 
 	private async saveDocumentInner(

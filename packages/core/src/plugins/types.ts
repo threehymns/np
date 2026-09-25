@@ -185,6 +185,7 @@ export interface PluginHostInterface {
 	isExecutingSaveHook(): boolean;
 	getActiveSaveHook(): ActiveHookContext | null;
 	checkSaveReentry(operation?: string, phase?: string): void;
+	runSaveExclusive<T>(fn: () => Promise<T>): Promise<T>;
 
 	// Generic workspace-lifecycle hooks (#202, ADR 0013 extension).
 	// Awaited participation in folder open: the workspace runs these after

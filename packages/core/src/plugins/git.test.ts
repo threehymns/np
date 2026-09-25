@@ -3,6 +3,7 @@ import { describe, it, expect, mock, spyOn } from 'bun:test';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { PluginHost } from './host.svelte';
+import type { PluginHostInterface } from './types';
 import { gitRegistration } from './git/registration';
 import { checkManifestFile } from './boundary-check';
 import { DIALOGS_SERVICE_KEY } from './services';
@@ -273,6 +274,29 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					.filter((line) => memberPattern.test(line))
 					.filter((line) => /git/i.test(line));
 				expect(offenders).toEqual([]);
+			}
+		});
+	});
+
+	describe('public plugin contracts', () => {
+		it('exposes save coordination through the plugin host interface', async () => {
+			const host = new PluginHost();
+			let setupHost: PluginHostInterface | undefined;
+			host.register({
+				manifest: { id: 'save-contract-probe', name: 'Save Contract Probe', version: 0 },
+				setup: (pluginHost) => {
+					setupHost = pluginHost;
+				}
+			});
+			await host.activate('save-contract-probe');
+
+			expect(typeof Reflect.get(setupHost, 'runSaveExclusive')).toBe('function');
+		});
+
+		it('keeps Git modules independent from the concrete Workspace class', () => {
+			for (const file of ['git/index.ts', 'git/lifecycle.ts', 'git/commands.ts']) {
+				const source = readFileSync(join(import.meta.dir, file), 'utf-8');
+				expect(source).not.toMatch(/from ['"]\.\.\/\.\.\/workspace\.svelte['"]/);
 			}
 		});
 	});

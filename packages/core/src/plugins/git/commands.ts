@@ -1,11 +1,10 @@
 import { Text } from '@codemirror/state';
 import { Chunk } from '@codemirror/merge';
 import type { PluginCommand } from '../commands';
-import type { DiffNavigatorLike } from '../services';
+import type { DiffNavigatorLike, WorkspaceLike } from '../services';
 import { DEFAULT_DIFF_CONFIG, type GitChange, type VCSAdapter } from '../../project/vcs';
 import { runExclusively } from '../../project/repository.svelte';
 import { mapRange } from '../../commands.svelte';
-import type { Workspace } from '../../workspace.svelte';
 import { manifest } from './manifest';
 
 /**
@@ -19,7 +18,7 @@ import { manifest } from './manifest';
  * behavior of repository-less contexts.
  */
 export interface GitCommandContext {
-	getWorkspace(): Workspace | undefined;
+	getWorkspace(): WorkspaceLike | undefined;
 	alert(message: string): Promise<void> | void;
 	confirm(message: string): Promise<boolean> | boolean;
 	getDiffNavigator(): DiffNavigatorLike | undefined;
@@ -31,7 +30,7 @@ export interface GitCommandContext {
  * initialization stays tracked for disable-cleanup (ADR 0009).
  */
 export interface GitRepositoryLifecycle {
-	initializeRepository(workspace: Workspace): Promise<boolean>;
+	initializeRepository(workspace: WorkspaceLike): Promise<boolean>;
 }
 
 export interface HunkRange {
@@ -52,7 +51,7 @@ export interface HunkRange {
 function requireRepositoryWithAdapter<M extends keyof VCSAdapter>(
 	ctx: GitCommandContext,
 	method: M
-): NonNullable<Workspace['repository']> | undefined {
+): NonNullable<WorkspaceLike['repository']> | undefined {
 	const repo = ctx.getWorkspace()?.repository;
 	if (!repo || !repo.adapter[method]) return undefined;
 	return repo;
@@ -122,7 +121,7 @@ export function createGitCommands(
 
 	async function runGitOp(
 		label: string,
-		op: (repo: NonNullable<Workspace['repository']>) => Promise<void>
+		op: (repo: NonNullable<WorkspaceLike['repository']>) => Promise<void>
 	): Promise<boolean> {
 		const repo = ctx.getWorkspace()?.repository;
 		if (!repo) return false;
@@ -333,7 +332,7 @@ export function createGitCommands(
  * the file. Callers must have already verified both adapter methods exist.
  */
 async function updateFileWithIndexRollback(
-	repo: NonNullable<Workspace['repository']>,
+	repo: NonNullable<WorkspaceLike['repository']>,
 	filepath: string,
 	newWorktreeContent: string,
 	stagedText: Text,
@@ -368,7 +367,7 @@ export async function applyHunkAction(
 
 async function performHunkAction(
 	ctx: GitCommandContext,
-	repo: NonNullable<Workspace['repository']>,
+	repo: NonNullable<WorkspaceLike['repository']>,
 	change: GitChange,
 	hunk: HunkRange,
 	action: 'stage' | 'unstage' | 'discard'

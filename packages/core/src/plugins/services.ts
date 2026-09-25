@@ -18,6 +18,28 @@
  *   the currently mounted diff view's hunk navigator, if any.
  */
 
+import type { FileOrigin } from '../storage';
+import type { VCSAdapter } from '../project/vcs';
+import type { Repository } from '../project/repository.svelte';
+
+export interface WorkspaceLike {
+	readonly rootOrigin: FileOrigin | null;
+	readonly hasRootPermission: boolean;
+	repository: Repository | null;
+	tabs: Array<{
+		id: string;
+		type: 'document' | 'diff';
+		pluginId?: string;
+	}>;
+	activeTabId: string;
+	readonly vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
+	readonly projectTree: {
+		scan(origin: FileOrigin): Promise<void>;
+	};
+	closeTab(id: string): void;
+	saveFolderState(folderUri: string): Promise<void>;
+}
+
 export const WORKSPACE_SERVICE_KEY = 'workspace';
 export const DIALOGS_SERVICE_KEY = 'dialogs';
 export const DIFF_NAVIGATOR_SERVICE_KEY = 'diffNavigator';
