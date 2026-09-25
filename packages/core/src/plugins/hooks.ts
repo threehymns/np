@@ -61,6 +61,8 @@ export interface ActiveHookContext {
 	readonly pluginId: string;
 	readonly operation: string;
 	readonly phase: string;
+	readonly saveId?: number;
+	readonly host?: unknown;
 }
 
 /**

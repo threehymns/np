@@ -89,6 +89,20 @@ import {
 	type UIContributionRegistryLike
 } from './ui-contributions';
 
+interface AsyncLocalStorageLike<T> {
+	run<R>(store: T, fn: () => R): R;
+	getStore(): T | undefined;
+}
+
+const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefined =
+	(globalThis as any).AsyncLocalStorage ??
+	(typeof process !== 'undefined' && typeof (process as any).getBuiltinModule === 'function'
+		? (process as any).getBuiltinModule('node:async_hooks')?.AsyncLocalStorage
+		: undefined);
+
+const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
+	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
+
 export class PluginHost implements PluginHostInterface {
 	readonly hostVersion = 0;
 	readonly platform: PluginPlatform;
@@ -123,6 +137,8 @@ export class PluginHost implements PluginHostInterface {
 	// while the hook is suspended) is serialized by saveQueue instead.
 	private hookExecutingSync = false;
 	private saveQueue: Promise<void> = Promise.resolve();
+	private nextSaveId = 0;
+	private currentSaveId = 0;
 	lastHookError: { pluginId: string; error: unknown } | null = null;
 
 	// Generic workspace-lifecycle hooks (#202): awaited participation in
@@ -545,14 +561,27 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	getActiveSaveHook(): ActiveHookContext | null {
+		const store = saveHookStorage?.getStore();
+		if (store && (!store.host || store.host === this)) {
+			return store;
+		}
 		return this.activeSaveHook;
 	}
 
 	checkSaveReentry(operation = 'saveDocument', phase = 'beforeSave hook'): void {
-		// Only reject a call made re-entrantly from the same save's hook,
-		// detected by the hook running synchronously on the current stack. A
-		// concurrent independent save is issued from another task while the
-		// hook is suspended and is serialized by runSaveExclusive instead.
+		const store = saveHookStorage?.getStore();
+		if (store && (!store.host || store.host === this)) {
+			if (this.currentSaveId === 0 || store.saveId === undefined || store.saveId === this.currentSaveId) {
+				throw new HookReentryError(
+					store.pluginId,
+					operation,
+					store.phase ?? phase
+				);
+			}
+			return;
+		}
+
+		// Fallback for environments without AsyncLocalStorage
 		if (!this.activeSaveHook || !this.hookExecutingSync) return;
 		throw new HookReentryError(
 			this.activeSaveHook.pluginId,
@@ -576,9 +605,12 @@ export class PluginHost implements PluginHostInterface {
 		});
 		this.saveQueue = prev.then(() => current);
 		await prev;
+		const prevSaveId = this.currentSaveId;
+		this.currentSaveId = ++this.nextSaveId;
 		try {
 			return await fn();
 		} finally {
+			this.currentSaveId = prevSaveId;
 			release();
 		}
 	}
@@ -587,27 +619,43 @@ export class PluginHost implements PluginHostInterface {
 	 * Invokes a save hook, marking synchronous execution so re-entry from
 	 * within the hook is detectable, and releasing that mark as soon as the
 	 * hook yields so concurrent saves wait rather than being rejected.
+	 * When AsyncLocalStorage is available, async context tracking ensures
+	 * re-entry from within the same save's hook is rejected even after the hook awaits.
 	 */
 	private async invokeSaveHook<T>(
 		pluginId: string,
 		phase: string,
 		invoke: () => T | Promise<T>
 	): Promise<T> {
-		this.activeSaveHook = { pluginId, operation: 'saveDocument', phase };
+		const context: ActiveHookContext = {
+			pluginId,
+			operation: 'saveDocument',
+			phase,
+			saveId: this.currentSaveId,
+			host: this
+		};
+		this.activeSaveHook = context;
 		this.hookExecutingSync = true;
 		let result: T | Promise<T>;
+		const execute = () => {
+			try {
+				result = invoke();
+			} catch (error) {
+				this.hookExecutingSync = false;
+				this.activeSaveHook = null;
+				throw error;
+			}
+			queueMicrotask(() => {
+				this.hookExecutingSync = false;
+			});
+			return result;
+		};
+
 		try {
-			result = invoke();
-		} catch (error) {
-			this.hookExecutingSync = false;
-			this.activeSaveHook = null;
-			throw error;
-		}
-		queueMicrotask(() => {
-			this.hookExecutingSync = false;
-		});
-		try {
-			return await result;
+			if (saveHookStorage) {
+				return await saveHookStorage.run(context, async () => await execute());
+			}
+			return await execute();
 		} finally {
 			this.hookExecutingSync = false;
 			this.activeSaveHook = null;

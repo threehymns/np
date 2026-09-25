@@ -460,6 +460,44 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(docB.content).toBe('B');
 		});
 
+		it('rejects reentrant saveDocument even after the hook awaits, instead of deadlocking on saveQueue', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage({ '/test.md': '', '/other.md': '' });
+			const persistence = new MemorySessionPersistence();
+			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
+
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+			let caughtReentryError: unknown = null;
+			const otherOrigin: FileOrigin = { scheme: 'file', path: '/other.md', name: 'other.md' };
+			const otherDoc = new DocumentSession(storage, '', otherOrigin);
+
+			host.registerBeforeSaveHook('async-recursive-saver', async () => {
+				// Yield/await first so synchronous execution window has elapsed
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				try {
+					await workspace.saveDocument(otherDoc);
+				} catch (err) {
+					caughtReentryError = err;
+					throw err;
+				}
+			});
+
+			const origin: FileOrigin = { scheme: 'file', path: '/test.md', name: 'test.md' };
+			const doc = new DocumentSession(storage, '', origin);
+
+			const saved = await workspace.saveDocument(doc);
+			expect(saved).toBe(true);
+
+			expect(caughtReentryError).toBeInstanceOf(HookReentryError);
+			const err = caughtReentryError as HookReentryError;
+			expect(err.pluginId).toBe('async-recursive-saver');
+			expect(err.message).toContain('async-recursive-saver');
+			expect(err.message).toContain('re-entered saveDocument during beforeSave hook');
+
+			errorSpy.mockRestore();
+		});
+
 		it('flows repository refresh on save through the Git plugin afterSave hook with no behavior change', async () => {
 			const host = new PluginHost();
 			const { gitRegistration } = await import('./git/registration');
