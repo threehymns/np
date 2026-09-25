@@ -616,9 +616,8 @@
 												{/if}
 											</div>
 											<Switch
-												checked={row.enabled}
+												bind:checked={() => row.enabled, (next) => handlePluginToggle(row, next)}
 												disabled={row.busy}
-												onCheckedChange={(next) => handlePluginToggle(row, next)}
 											/>
 										</div>
 										{#if row.state === 'deactivating'}
