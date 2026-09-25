@@ -807,10 +807,21 @@ export class PluginHost implements PluginHostInterface {
 			host: this
 		};
 		this.activeSaveHook = context;
+		// Track per-plugin so deactivate waits for active writes (ADR 0009)
+		// before running cleanup, matching command operation tracking.
+		const execution = this.operationContext.run(context, async () => await invoke());
+		const tracked = Promise.resolve(execution);
+		let operations = this.activePluginOperations.get(pluginId);
+		if (!operations) {
+			operations = new SvelteSet();
+			this.activePluginOperations.set(pluginId, operations);
+		}
+		operations.add(tracked);
 		try {
-			return await this.operationContext.run(context, async () => await invoke());
+			return await tracked as T;
 		} finally {
 			this.activeSaveHook = null;
+			this.finishPluginOperation(pluginId, tracked);
 		}
 	}
 

@@ -371,6 +371,43 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			await host.runBeforeSave({ document: doc });
 			expect(hookRan).toBe(false);
 		});
+
+		it('waits for an active save hook before running cleanup (ADR 0009)', async () => {
+			const host = new PluginHost();
+			let cleanupRan = false;
+			let releaseHook!: () => void;
+			const hookGate = new Promise<void>((resolve) => {
+				releaseHook = resolve;
+			});
+
+			host.register({
+				manifest: { id: 'slow-hook', name: 'Slow Hook', version: 0 },
+				setup: (h) => {
+					h.registerBeforeSaveHook('slow-hook', async () => {
+						await hookGate;
+					});
+					return async () => {
+						cleanupRan = true;
+					};
+				}
+			});
+
+			await host.activate('slow-hook');
+			const storage = createLocalMockStorage();
+			const doc = new DocumentSession(storage, '');
+
+			const savePromise = host.runBeforeSave({ document: doc });
+			await new Promise((r) => setTimeout(r, 10));
+
+			const deactivatePromise = host.deactivate('slow-hook', 'test');
+			await new Promise((r) => setTimeout(r, 10));
+			expect(cleanupRan).toBe(false);
+
+			releaseHook();
+			await savePromise;
+			await deactivatePromise;
+			expect(cleanupRan).toBe(true);
+		});
 	});
 
 	describe('Workspace.saveDocument Integration', () => {
