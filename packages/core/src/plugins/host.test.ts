@@ -306,5 +306,18 @@ describe('PluginHost Skeleton', () => {
 
 			expect(disposalSequence).toEqual(['p2', 'p1']);
 		});
+
+		it('rejects activation after dispose (ADR 0009 shutdown)', async () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'a', name: 'A', version: 0 },
+				setup: () => {}
+			});
+
+			await host.activate('a');
+			await host.dispose();
+
+			await expect(host.activate('a')).rejects.toThrow(/disposed|shutdown/i);
+		});
 	});
 });

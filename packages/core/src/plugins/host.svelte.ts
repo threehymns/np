@@ -177,6 +177,7 @@ export class PluginHost implements PluginHostInterface {
 	private deactivationReasons = new SvelteMap<string, string>();
 	private cleanups = new SvelteMap<string, PluginCleanup>();
 	private activationOrder = $state<string[]>([]);
+	private disposed = false;
 
 	// Shared command registry: replayable transforms + materialized view.
 	// Plugins contribute via registerCommands/registerCommandTransform during
@@ -1527,8 +1528,12 @@ export class PluginHost implements PluginHostInterface {
 
 	/**
 	 * Activates a single plugin and any required dependencies.
+	 * Rejected after dispose (ADR 0009: disabling/enabling only while running normally).
 	 */
 	async activate(id: string): Promise<void> {
+		if (this.disposed) {
+			throw new Error(`Cannot activate plugin "${id}": host is disposed (shutdown).`);
+		}
 		if (!this.registrations.has(id)) {
 			throw new PluginNotFoundError(id);
 		}
@@ -1547,9 +1552,12 @@ export class PluginHost implements PluginHostInterface {
 
 	/**
 	 * Activates all registered plugins that support current platform.
+	 * Rejected after dispose (ADR 0009 shutdown).
 	 */
 	async activateAll(): Promise<void> {
-		const order = this.computeActivationOrder();
+		if (this.disposed) {
+			throw new Error('Cannot activate plugins: host is disposed (shutdown).');
+		}		const order = this.computeActivationOrder();
 		for (const id of order) {
 			const manifest = this.getManifest(id);
 			if (manifest && (!manifest.platforms || manifest.platforms.includes(this.platform))) {
@@ -1652,6 +1660,10 @@ export class PluginHost implements PluginHostInterface {
 
 		if (!this.isPluginActive(id)) {
 			return;
+		}
+
+		if (this.disposed) {
+			throw new Error(`Cannot deactivate plugin "${id}": host is disposed (shutdown).`);
 		}
 
 		// Cascade: unload active dependents first (ADR 0017). Each recursive
@@ -1826,12 +1838,15 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	/**
-	 * Disposes all active plugins in reverse activation order.
+	 * Disposes all active plugins in reverse activation order (ADR 0009 shutdown).
+	 * Sets shutdown state so later activation is rejected.
 	 */
 	async dispose(): Promise<void> {
+		if (this.disposed) return;
 		const reverseOrder = [...this.activationOrder].reverse();
 		for (const id of reverseOrder) {
 			await this.deactivate(id, 'Host disposed');
 		}
+		this.disposed = true;
 	}
 }
