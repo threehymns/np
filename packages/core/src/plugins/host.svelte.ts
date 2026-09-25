@@ -123,6 +123,14 @@ const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefine
  */
 const DEFAULT_CLEANUP_TIMEOUT_MS = 5000;
 
+/**
+ * Default bound on how long a queued save waits for its turn when async
+ * context propagation is unavailable. Long enough that a legitimately slow
+ * hook never makes an unrelated save look like re-entry; short enough that
+ * a hook that re-enters save surfaces as an error instead of a hang.
+ */
+const DEFAULT_SAVE_QUEUE_TIMEOUT_MS = 30000;
+
 const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
@@ -186,6 +194,7 @@ export class PluginHost implements PluginHostInterface {
 	private activationOrder = $state<string[]>([]);
 	private disposed = false;
 	private readonly cleanupTimeoutMs: number;
+	private readonly saveQueueTimeoutMs: number;
 
 	// Shared command registry: replayable transforms + materialized view.
 	// Plugins contribute via registerCommands/registerCommandTransform during
@@ -328,6 +337,7 @@ export class PluginHost implements PluginHostInterface {
 				});
 		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
 		this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
+		this.saveQueueTimeoutMs = options.saveQueueTimeoutMs ?? DEFAULT_SAVE_QUEUE_TIMEOUT_MS;
 		this.pluginInterface = createPluginHostInterface(this);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
@@ -864,14 +874,20 @@ export class PluginHost implements PluginHostInterface {
 	 * avoiding deadlock.
 	 */
 	async runSaveExclusive<T>(fn: () => Promise<T>): Promise<T> {
-		this.checkSaveReentry('saveDocument', 'beforeSave hook');
+		// Precise re-entry detection needs async context. Without it the only
+		// signal is "a hook is running somewhere on this host", which is also
+		// true for an unrelated caller, so the check is deferred to the
+		// bounded queue wait below instead of rejecting it here.
+		if (this.operationContext.propagation === 'async') {
+			this.checkSaveReentry('saveDocument', 'beforeSave hook');
+		}
 		const prev = this.saveQueue;
 		let release!: () => void;
 		const current = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		this.saveQueue = prev.then(() => current);
-		await prev;
+		await this.awaitSaveTurn(prev);
 		const prevSaveId = this.currentSaveId;
 		this.currentSaveId = ++this.nextSaveId;
 		try {
@@ -880,6 +896,46 @@ export class PluginHost implements PluginHostInterface {
 			this.currentSaveId = prevSaveId;
 			release();
 		}
+	}
+
+	/**
+	 * Waits for this save's turn in the save queue.
+	 *
+	 * With async context a re-entrant call never reaches here: it is rejected
+	 * up front by checkSaveReentry. Without async context the host cannot
+	 * separate a caller inside the in-flight save's own hook from an unrelated
+	 * caller, so the queued save waits — an independent save must never be
+	 * refused because some hook happens to be running. A hook that re-enters
+	 * save can never release the turn it is itself waiting on, so a turn that
+	 * stays blocked while a hook is still active is reported as re-entry
+	 * against that hook's plugin instead of deadlocking forever.
+	 */
+	private async awaitSaveTurn(prev: Promise<void>): Promise<void> {
+		if (this.operationContext.propagation === 'async') {
+			await prev;
+			return;
+		}
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const expiry = new Promise<'timedOut'>((resolve) => {
+			timer = setTimeout(() => resolve('timedOut'), this.saveQueueTimeoutMs);
+		});
+		const outcome = await Promise.race([prev.then(() => 'acquired' as const), expiry]);
+		if (timer !== undefined) clearTimeout(timer);
+		if (outcome === 'acquired') return;
+
+		const holder = this.activeSaveHook;
+		if (!holder) {
+			// No hook is holding the turn: the in-flight save is simply slow,
+			// which is not re-entry. Keep waiting.
+			await prev;
+			return;
+		}
+		throw new HookReentryError(
+			holder.pluginId,
+			'saveDocument',
+			holder.phase ?? 'beforeSave hook'
+		);
 	}
 
 	private async invokeSaveHook<T>(

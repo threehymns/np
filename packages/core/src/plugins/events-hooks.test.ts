@@ -517,7 +517,9 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		});
 
 		it('fails reentrant saveDocument calls with actionable HookReentryError naming the plugin', async () => {
-			const host = new PluginHost();
+			// No AsyncLocalStorage in this runtime, so re-entry is detected by
+			// the bounded save-queue wait; keep that bound short for the test.
+			const host = new PluginHost({ saveQueueTimeoutMs: 25 });
 			const storage = createLocalMockStorage({ '/test.md': '', '/other.md': '' });
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
@@ -614,7 +616,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		});
 
 		it('rejects reentrant saveDocument even after the hook awaits, instead of deadlocking on saveQueue', async () => {
-			const host = new PluginHost();
+			const host = new PluginHost({ saveQueueTimeoutMs: 25 });
 			const storage = createLocalMockStorage({ '/test.md': '', '/other.md': '' });
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
@@ -651,6 +653,59 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			errorSpy.mockRestore();
 		});
 
+		it('queues an independent save instead of rejecting it when async context propagation is unavailable', async () => {
+			// The shipped browser and Electron renderer configuration has no
+			// AsyncLocalStorage, so the host cannot tell a caller inside the
+			// in-flight save's hook from an unrelated one. An unrelated save
+			// must still wait its turn rather than be rejected as re-entry
+			// against the wrong plugin.
+			const host = new PluginHost({
+				operationContext: {
+					propagation: 'none',
+					run: <T>(_context: ActiveHookContext, callback: () => T): T => callback(),
+					get: () => undefined
+				},
+				saveQueueTimeoutMs: 1000
+			});
+			const storage = createLocalMockStorage({ '/a.md': '', '/b.md': '' });
+			const persistence = new MemorySessionPersistence();
+			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
+
+			let hookRuns = 0;
+			let releaseHook!: () => void;
+			const gate = new Promise<void>((resolve) => (releaseHook = resolve));
+			host.registerBeforeSaveHook('slow-saver', async () => {
+				hookRuns++;
+				await gate;
+			});
+
+			const docA = new DocumentSession(storage, '', { scheme: 'file', path: '/a.md', name: 'a.md' });
+			docA.content = 'A';
+			const first = workspace.saveDocument(docA);
+			for (let i = 0; i < 50 && hookRuns === 0; i++) await new Promise((r) => setTimeout(r, 1));
+			expect(hookRuns).toBe(1);
+
+			const docB = new DocumentSession(storage, '', { scheme: 'file', path: '/b.md', name: 'b.md' });
+			docB.content = 'B';
+			let secondSettled = false;
+			const second = workspace.saveDocument(docB).then((result) => {
+				secondSettled = true;
+				return result;
+			});
+			second.catch(() => {});
+
+			// Still blocked on the first save's hook: queued, not rejected.
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(host.lastHookError).toBeNull();
+			expect(secondSettled).toBe(false);
+			expect(hookRuns).toBe(1);
+
+			releaseHook();
+			expect(await first).toBe(true);
+			expect(await second).toBe(true);
+			expect(hookRuns).toBe(2);
+		});
+
 		it('rejects delayed save re-entry when async context propagation is unavailable', async () => {
 			let getStoreCalls = 0;
 			const operationContext = {
@@ -661,7 +716,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 				},
 				run: <T>(_context: unknown, callback: () => T): T => callback()
 			};
-			const host = new PluginHost({ operationContext });
+			const host = new PluginHost({ operationContext, saveQueueTimeoutMs: 25 });
 			const storage = createLocalMockStorage({ '/test.md': '', '/other.md': '' });
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);

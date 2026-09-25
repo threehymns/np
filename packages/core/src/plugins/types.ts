@@ -127,6 +127,14 @@ export interface PluginHostOptions {
 	 * awaiting forever. Defaults to DEFAULT_CLEANUP_TIMEOUT_MS.
 	 */
 	cleanupTimeoutMs?: number;
+	/**
+	 * Bound on how long a save waits for its turn in the save queue when
+	 * `operationContext.propagation` is `'none'` and re-entry therefore
+	 * cannot be detected precisely. A turn still blocked after this while a
+	 * hook is active is reported as hook re-entry instead of deadlocking.
+	 * Defaults to DEFAULT_SAVE_QUEUE_TIMEOUT_MS.
+	 */
+	saveQueueTimeoutMs?: number;
 }
 
 export interface PluginHostInterface {
