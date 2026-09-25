@@ -570,8 +570,65 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	/**
+	 * Deterministic owner ordering shared by every replayed registry and
+	 * every ordered hook list (ADR 0012): built-in core owners first, then
+	 * registered active plugins in computed activation order, then
+	 * non-registered owners alphabetically. Registered-but-inactive owners
+	 * are excluded so a missed disposal can never leak a contribution.
+	 *
+	 * The computed order is a pure function of the manifest graph, so a
+	 * rebuild mid-session replays in the same sequence a clean build does.
+	 * Toggle history (`activationOrder`) is deliberately not a sort key: it
+	 * reorders as plugins are disabled and re-enabled, which would make a
+	 * refreshed registry differ from a freshly built one.
+	 */
+	private orderedRegistryOwners(
+		ownerIds: readonly string[],
+		isCoreOwner: (id: string) => boolean
+	): string[] {
+		const present = new SvelteSet(ownerIds);
+		const ordered: string[] = [];
+		const push = (id: string) => {
+			if (present.has(id) && !ordered.includes(id)) ordered.push(id);
+		};
+
+		// Built-in core owners first, in a stable order among themselves.
+		for (const id of ownerIds.filter(isCoreOwner).sort()) {
+			push(id);
+		}
+
+		const registeredActiveIds = ownerIds.filter(
+			(id) => !isCoreOwner(id) && this.registrations.has(id) && this.isPluginActive(id)
+		);
+		if (registeredActiveIds.length > 0) {
+			try {
+				for (const id of this.computeActivationOrder(registeredActiveIds)) {
+					push(id);
+				}
+			} catch {
+				// An inconsistent manifest graph (cycle, missing or
+				// mismatched dependency) is surfaced at activation and
+				// startup; ordering still falls back to registration order
+				// so a replay stays deterministic.
+				for (const id of Array.from(this.registrations.keys())) {
+					push(id);
+				}
+			}
+		}
+
+		// Non-registered owners alphabetically.
+		for (const id of [...ownerIds].sort()) {
+			if (!this.registrations.has(id)) {
+				push(id);
+			}
+		}
+
+		return ordered;
+	}
+
+	/**
 	 * Orders transform owners deterministically: built-in core first, then
-	 * active plugins in activation order, then any remaining owners
+	 * active plugins in computed activation order, then any remaining owners
 	 * alphabetically. Registered-but-inactive owners are excluded so a
 	 * missed disposal can never leak commands.
 	 */
@@ -586,25 +643,11 @@ export class PluginHost implements PluginHostInterface {
 			}
 		}
 
-		const orderedOwners: string[] = [];
-		if (byOwner.has(CORE_COMMANDS_OWNER)) {
-			orderedOwners.push(CORE_COMMANDS_OWNER);
-		}
-		for (const id of this.activationOrder) {
-			if (byOwner.has(id) && !orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-		for (const id of [...byOwner.keys()].sort()) {
-			if (!orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-
-		const included = orderedOwners.filter(
-			(id) => id === CORE_COMMANDS_OWNER || !this.registrations.has(id) || this.isPluginActive(id)
+		const orderedOwners = this.orderedRegistryOwners(
+			Array.from(byOwner.keys()),
+			(id) => id === CORE_COMMANDS_OWNER
 		);
-		return included.flatMap((id) => byOwner.get(id)!);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
 	}
 
 	// --------------------------------------------------------------------------
@@ -900,11 +943,9 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	/**
-	 * Orders hook entries deterministically: built-in core owners first,
-	 * then registered active plugins in activation order, then
-	 * non-registered owners alphabetically. Registered-but-inactive owners
-	 * are excluded so a missed disposal can never leak hook behavior.
-	 * Shared by save hooks and workspace-lifecycle hooks (#202).
+	 * Orders hook entries deterministically via the shared registry owner
+	 * order (ADR 0012). Shared by save hooks and workspace-lifecycle hooks
+	 * (#202).
 	 */
 	private orderOwnedHooks<T extends { pluginId: string }>(hooks: T[]): T[] {
 		const byOwner = new SvelteMap<string, T[]>();
@@ -917,53 +958,11 @@ export class PluginHost implements PluginHostInterface {
 			}
 		}
 
-		const orderedOwners: string[] = [];
-
-		// Core / built-in hooks first
-		for (const id of Array.from(byOwner.keys()).sort()) {
-			if (id === CORE_HOOKS_OWNER || id.startsWith('core:')) {
-				if (!orderedOwners.includes(id)) {
-					orderedOwners.push(id);
-				}
-			}
-		}
-
-		// Registered active plugins in activation order
-		const registeredActiveIds = Array.from(byOwner.keys()).filter(
-			(id) => this.registrations.has(id) && this.isPluginActive(id)
+		const orderedOwners = this.orderedRegistryOwners(
+			Array.from(byOwner.keys()),
+			(id) => id === CORE_HOOKS_OWNER || id.startsWith('core:')
 		);
-
-		let sortedRegisteredIds: string[] = [];
-		if (registeredActiveIds.length > 0) {
-			try {
-				sortedRegisteredIds = this.computeActivationOrder(registeredActiveIds);
-			} catch {
-				sortedRegisteredIds = this.activationOrder.filter((id) => registeredActiveIds.includes(id));
-			}
-		}
-
-		for (const id of sortedRegisteredIds) {
-			if (byOwner.has(id) && !orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-
-		// Non-registered owners in alphabetical order
-		for (const id of Array.from(byOwner.keys()).sort()) {
-			if (!orderedOwners.includes(id) && !this.registrations.has(id)) {
-				orderedOwners.push(id);
-			}
-		}
-
-		const included = orderedOwners.filter(
-			(id) =>
-				id === CORE_HOOKS_OWNER ||
-				id.startsWith('core:') ||
-				!this.registrations.has(id) ||
-				this.isPluginActive(id)
-		);
-
-		return included.flatMap((id) => byOwner.get(id)!);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
 	}
 
 	// --------------------------------------------------------------------------
@@ -1198,25 +1197,11 @@ export class PluginHost implements PluginHostInterface {
 			}
 		}
 
-		const orderedOwners: string[] = [];
-		if (byOwner.has(CORE_UI_OWNER)) {
-			orderedOwners.push(CORE_UI_OWNER);
-		}
-		for (const id of this.activationOrder) {
-			if (byOwner.has(id) && !orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-		for (const id of [...byOwner.keys()].sort()) {
-			if (!orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-
-		const included = orderedOwners.filter(
-			(id) => id === CORE_UI_OWNER || !this.registrations.has(id) || this.isPluginActive(id)
+		const orderedOwners = this.orderedRegistryOwners(
+			Array.from(byOwner.keys()),
+			(id) => id === CORE_UI_OWNER
 		);
-		return included.flatMap((id) => byOwner.get(id)!);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
 	}
 
 	mountContribution(
@@ -1371,25 +1356,11 @@ export class PluginHost implements PluginHostInterface {
 			}
 		}
 
-		const orderedOwners: string[] = [];
-		if (byOwner.has(CORE_SETTINGS_OWNER)) {
-			orderedOwners.push(CORE_SETTINGS_OWNER);
-		}
-		for (const id of this.activationOrder) {
-			if (byOwner.has(id) && !orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-		for (const id of [...byOwner.keys()].sort()) {
-			if (!orderedOwners.includes(id)) {
-				orderedOwners.push(id);
-			}
-		}
-
-		const included = orderedOwners.filter(
-			(id) => id === CORE_SETTINGS_OWNER || !this.registrations.has(id) || this.isPluginActive(id)
+		const orderedOwners = this.orderedRegistryOwners(
+			Array.from(byOwner.keys()),
+			(id) => id === CORE_SETTINGS_OWNER
 		);
-		return included.flatMap((id) => byOwner.get(id)!);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
 	}
 
 	// --------------------------------------------------------------------------

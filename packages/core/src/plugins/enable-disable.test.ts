@@ -690,6 +690,52 @@ describe('toggle off/on round trip restores full function without restart', () =
 		});
 	});
 
+	describe('registry order does not depend on toggle history (ADR 0012)', () => {
+		function contributingPlugin(id: string): PluginRegistration {
+			return {
+				manifest: { id, name: id, version: 0 },
+				setup: (host) => {
+					host.registerCommands(id, [
+						{ id: `${id}.command`, label: id, category: 'Fixtures', action: () => undefined }
+					]);
+					host.registerSettingSchema(id, {
+						namespace: id,
+						title: id,
+						description: `${id} settings`,
+						properties: {
+							flag: { type: 'boolean', default: false, title: 'Flag', control: 'toggle' }
+						}
+					});
+					host.registerEditorContribution(id, {
+						id: `${id}.decoration`,
+						type: 'decoration',
+						extension: []
+					});
+				}
+			};
+		}
+
+		async function registryOrder(afterToggle: boolean) {
+			const host = new PluginHost();
+			host.register(contributingPlugin('alpha'));
+			host.register(contributingPlugin('beta'));
+			await host.activateAll();
+			if (afterToggle) {
+				await host.deactivate('alpha');
+				await host.activate('alpha');
+			}
+			return {
+				commands: host.getCommands().map((command) => command.id),
+				settings: host.getSettingSchemas().map((schema) => schema.namespace),
+				editor: host.getEditorContributions().map((entry) => entry.id)
+			};
+		}
+
+		it('matches a clean build after a deactivate/reactivate cycle', async () => {
+			expect(await registryOrder(true)).toEqual(await registryOrder(false));
+		});
+	});
+
 	describe('startup cycle check surfaces instead of failing silently (ADR 0017)', () => {
 		it('records an actionable pluginStartupError and activates nothing', async () => {
 			const host = new PluginHost();
