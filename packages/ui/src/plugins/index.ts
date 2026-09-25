@@ -1,7 +1,6 @@
 import type { PluginHostInterface } from '@np/core';
 import { gitRegistration } from '@np/core';
 import { provideGitUIComponents } from './git/index';
-import { provideHelloUIComponents } from './hello/index';
 
 /**
  * Generic bundled-plugin UI bridge (#203).
@@ -25,5 +24,4 @@ export function registerBundledPlugins(host: PluginHostInterface): void {
 export function provideAllPluginUIs(host: PluginHostInterface): void {
 	registerBundledPlugins(host);
 	provideGitUIComponents(host);
-	provideHelloUIComponents(host);
 }

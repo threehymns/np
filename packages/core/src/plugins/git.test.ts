@@ -111,7 +111,7 @@ const EXPECTED_GIT_COMMAND_IDS = [
 ];
 
 describe('Git Core Plugin: lifecycle and commands (#202)', () => {
-	describe('manifest and registration (hello pattern)', () => {
+	describe('manifest and registration', () => {
 		it('keeps the manifest module import-clean per the boundary check', () => {
 			const manifestPath = join(import.meta.dir, 'git', 'manifest.ts');
 			const result = checkManifestFile(manifestPath);

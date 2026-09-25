@@ -19,8 +19,6 @@ import {
 	type SidebarPanelTransformEntry,
 	type StatusBarItemTransformEntry
 } from './ui-contributions';
-import { helloRegistration } from './hello/registration';
-import { HELLO_UI_COMPONENTS_KEY } from './hello/ui';
 import { AppState } from '../state.svelte';
 import { createMockStorage } from '../../../../tests/mock-storage';
 
@@ -565,60 +563,6 @@ describe('Additive UI Contributions (ADR 0010, ADR 0012, ADR 0015, #200)', () =>
 
 			// activeSidebarTab automatically reverts to 'explorer' with no dangling residue
 			expect(appState.activeSidebarTab).toBe('explorer');
-		});
-	});
-
-	describe('6. Hello Plugin Integration Proof', () => {
-		it('hello plugin contributes pilot panel and status entry when active and clears on disable', async () => {
-			const host = new PluginHost();
-			host.register(helloRegistration);
-
-			// Inactive before activation
-			expect(host.getSidebarPanels()).toHaveLength(0);
-			expect(host.getStatusBarItems()).toHaveLength(0);
-
-			// Activate hello plugin
-			await host.activate('hello');
-			expect(host.isPluginActive('hello')).toBe(true);
-
-			// Pilot panel and status are visible
-			const panels = host.getSidebarPanels();
-			expect(panels.some((p) => p.id === 'hello-panel')).toBe(true);
-			const helloPanel = host.getSidebarPanel('hello-panel');
-			expect(helloPanel?.title).toBe('Hello');
-			expect(helloPanel?.pluginId).toBe('hello');
-
-			const statusItems = host.getStatusBarItems('left');
-			expect(statusItems.some((s) => s.id === 'hello-status')).toBe(true);
-
-			// Deactivate hello plugin
-			await host.deactivate('hello');
-			expect(host.isPluginActive('hello')).toBe(false);
-
-			// Pilot panel and status are removed with zero residue
-			expect(host.getSidebarPanel('hello-panel')).toBeUndefined();
-			expect(host.getStatusBarItem('hello-status')).toBeUndefined();
-			expect(host.getSidebarPanels()).toHaveLength(0);
-			expect(host.getStatusBarItems()).toHaveLength(0);
-		});
-
-		it('hello plugin uses UI components from the presented UI service when available', async () => {
-			const host = new PluginHost();
-			host.register(helloRegistration);
-
-			const panelComponent = () => {};
-			const statusComponent = () => {};
-			host.provideService(HELLO_UI_COMPONENTS_KEY, {
-				panelComponent,
-				statusComponent
-			});
-
-			await host.activate('hello');
-
-			expect(host.getSidebarPanel('hello-panel')?.component).toBe(panelComponent);
-			expect(host.getStatusBarItem('hello-status')?.component).toBe(statusComponent);
-
-			await host.deactivate('hello');
 		});
 	});
 });

@@ -36,7 +36,7 @@ import type {
  */
 export interface PluginManifest {
 	/**
-	 * Unique identifier for the plugin (e.g. 'hello', 'git').
+	 * Unique identifier for the plugin (e.g. 'git').
 	 */
 	readonly id: string;
 

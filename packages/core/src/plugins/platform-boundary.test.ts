@@ -85,7 +85,7 @@ describe('Platform separation static boundary', () => {
 	});
 
 	it('keeps the bundled manifests platform-neutral on disk', () => {
-		for (const file of ['git/manifest.ts', 'hello/manifest.ts']) {
+		for (const file of ['git/manifest.ts']) {
 			const filePath = join(import.meta.dir, file);
 			const result = checkManifestFile(filePath);
 			expect(result.valid).toBe(true);

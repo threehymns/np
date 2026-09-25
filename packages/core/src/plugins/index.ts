@@ -12,9 +12,6 @@ export * from './host.svelte';
 // typescript + node:fs (dev/test tooling) which Vite externalizes for browser
 // compatibility, crashing client code. Import it directly ('./boundary-check')
 // from node runtimes (tests, scripts) instead.
-export { manifest as helloManifest } from './hello/manifest';
-export { helloRegistration } from './hello/registration';
-export * from './hello/ui';
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
 export * from './git/ui';

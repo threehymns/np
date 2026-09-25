@@ -11,7 +11,7 @@ import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
-import { PluginHost, helloRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginHost, type CommandRegistryLike, type PluginPlatform } from './plugins';
 import { DIALOGS_SERVICE_KEY, DIFF_NAVIGATOR_SERVICE_KEY } from './plugins/services';
 
 export interface DialogService {
@@ -164,11 +164,9 @@ export class AppState {
 		};
 
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
-		this.plugins.register(helloRegistration);
 		// Bundled feature plugins (e.g. version control) register through the
 		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
-		// of feature names. Hello stays registered but inactive until the
-		// user enables it in the Plugins settings page (#204).
+		// of feature names.
 		// Plugin-contributed settings schemas flow into the generated
 		// settings UI (#199) through the shared host registry.
 		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
