@@ -1,5 +1,5 @@
 import '../../../../tests/contract/rune-setup';
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, spyOn } from 'bun:test';
 import {
 	SettingsManager,
 	SettingsResolver,
@@ -342,6 +342,55 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 			const loaded = await adapter.load();
 			expect(loaded).toContain('"enabled": true');
 		});
+
+		it('returns null on missing file but propagates other read errors', async () => {
+			const rootOrigin = { scheme: 'file', path: '/home/user/project', name: 'project' };
+			const missingStorage = {
+				readFile: mock(async () => {
+					const err = new Error('ENOENT: no such file or directory');
+					(err as any).code = 'ENOENT';
+					throw err;
+				})
+			};
+			const missingAdapter = new FileWorkspaceSettingsStorage(missingStorage, rootOrigin);
+			expect(await missingAdapter.load()).toBeNull();
+
+			const permissionError = new Error('EACCES: permission denied');
+			(permissionError as any).code = 'EACCES';
+			const failingStorage = {
+				readFile: mock(async () => {
+					throw permissionError;
+				})
+			};
+			const failingAdapter = new FileWorkspaceSettingsStorage(failingStorage, rootOrigin);
+			await expect(failingAdapter.load()).rejects.toThrow('EACCES');
+		});
+
+		it('registers settings.json with storage via createFile and saves with that origin', async () => {
+			const rootOrigin = { scheme: 'file', path: '/home/user/project', name: 'project' };
+			const registeredOrigin = { scheme: 'file', path: '/home/user/project/.np/settings.json', name: 'settings.json', handle: {} };
+			let savedOrigin: any = null;
+
+			const mockStorageWithRegistration = {
+				createDirectory: mock(async (parent: any, name: string) => ({
+					scheme: 'file',
+					path: `${parent.path}/${name}`,
+					name
+				})),
+				createFile: mock(async (parent: any, name: string) => registeredOrigin),
+				saveFile: mock(async (content: string, origin: any) => {
+					savedOrigin = origin;
+				}),
+				readFile: mock(async () => '{}')
+			};
+
+			const adapter = new FileWorkspaceSettingsStorage(mockStorageWithRegistration, rootOrigin);
+			await adapter.save('{"test": true}');
+
+			expect(mockStorageWithRegistration.createDirectory).toHaveBeenCalledWith(rootOrigin, '.np');
+			expect(mockStorageWithRegistration.createFile).toHaveBeenCalled();
+			expect(savedOrigin).toBe(registeredOrigin);
+		});
 	});
 
 	describe('7. Preferences Integration', () => {
@@ -367,6 +416,59 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 			prefs.clearWorkspace();
 			expect(prefs.tabSize).toBe(4);
 			expect(prefs.hasWorkspaceOverride('editor', 'tab_size')).toBe(false);
+		});
+	});
+
+	describe('SettingsManager Workspace Concurrency & Error Safety', () => {
+		it('discards in-flight load results if clearWorkspace is called before load completes', async () => {
+			let finishLoad!: (val: string) => void;
+			const delayedLoad = new Promise<string>((resolve) => {
+				finishLoad = resolve;
+			});
+
+			const mockStorage: WorkspaceSettingsStorage = {
+				load: mock(async () => delayedLoad),
+				save: mock(async () => {})
+			};
+
+			const manager = new SettingsManager();
+			manager.registerSchema('core', TEST_SCHEMA);
+
+			const loadPromise = manager.attachWorkspaceStorage(mockStorage);
+
+			// Clear workspace while load is still in-flight
+			manager.clearWorkspace();
+
+			// Now complete the delayed load with workspace data
+			finishLoad(JSON.stringify({ linter: { enabled: true } }));
+			await loadPromise;
+
+			// The stale loaded data must NOT have been applied to manager
+			expect(manager.get('linter', 'enabled')).toBe(false);
+			expect(manager.isWorkspaceLoaded()).toBe(false);
+		});
+
+		it('leaves workspace unloaded after read failure and prevents saveWorkspace from overwriting', async () => {
+			const mockStorage: WorkspaceSettingsStorage = {
+				load: mock(async () => {
+					throw new Error('EACCES: permission denied');
+				}),
+				save: mock(async () => {})
+			};
+
+			const manager = new SettingsManager();
+			manager.registerSchema('core', TEST_SCHEMA);
+
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+			await manager.attachWorkspaceStorage(mockStorage);
+			expect(manager.isWorkspaceLoaded()).toBe(false);
+
+			// Attempting saveWorkspace should not call storage.save because it was never loaded
+			await manager.saveWorkspace();
+			expect(mockStorage.save).not.toHaveBeenCalled();
+
+			errorSpy.mockRestore();
 		});
 	});
 });

@@ -18,6 +18,7 @@
  */
 
 import { parse, modify, applyEdits, type ParseError, printParseErrorCode } from 'jsonc-parser';
+import { isNotFoundError } from '../utils';
 
 /** Owner ID for settings registered synchronously by the core application. */
 export const CORE_SETTINGS_OWNER = 'core';
@@ -882,6 +883,8 @@ export class SettingsManager {
 	private currentDiagnostics: SettingDiagnostic[] = [];
 	private explicitlyModifiedKeys = new Set<string>();
 	private explicitlyModifiedWorkspaceKeys = new Set<string>();
+	private workspaceGeneration = 0;
+	private workspaceLoaded = false;
 	private onDiagnosticsChange?: (diagnostics: readonly SettingDiagnostic[]) => void;
 	private onChange?: () => void;
 
@@ -982,21 +985,34 @@ export class SettingsManager {
 		}
 	}
 
+	isWorkspaceLoaded(): boolean {
+		return this.workspaceLoaded;
+	}
+
 	/**
 	 * Reads workspace settings from workspace storage.
 	 */
 	async loadWorkspace(): Promise<void> {
 		if (!this.workspaceStorage) return;
+		const storage = this.workspaceStorage;
+		const token = ++this.workspaceGeneration;
 
 		try {
-			const raw = await this.workspaceStorage.load();
+			const raw = await storage.load();
+			if (this.workspaceGeneration !== token || this.workspaceStorage !== storage) {
+				return;
+			}
 			if (typeof raw === 'string') {
 				this.loadWorkspaceFromText(raw);
 			} else {
 				this.loadWorkspaceFromText('');
 			}
+			this.workspaceLoaded = true;
 		} catch (err) {
-			console.error('Failed to load workspace settings from storage:', err);
+			if (this.workspaceGeneration === token && this.workspaceStorage === storage) {
+				this.workspaceLoaded = false;
+				console.error('Failed to load workspace settings from storage:', err);
+			}
 		}
 	}
 
@@ -1005,6 +1021,7 @@ export class SettingsManager {
 	 */
 	async attachWorkspaceStorage(storage: WorkspaceSettingsStorage): Promise<void> {
 		this.workspaceStorage = storage;
+		this.workspaceLoaded = false;
 		await this.loadWorkspace();
 	}
 
@@ -1012,10 +1029,12 @@ export class SettingsManager {
 	 * Detaches workspace storage and clears workspace-level overrides.
 	 */
 	clearWorkspace(): void {
+		this.workspaceGeneration++;
 		this.storedWorkspaceData = {};
 		this.storedWorkspaceText = '';
 		this.explicitlyModifiedWorkspaceKeys.clear();
 		this.workspaceStorage = undefined;
+		this.workspaceLoaded = false;
 		this.validateAll();
 	}
 
@@ -1420,7 +1439,7 @@ export class SettingsManager {
 	 * Persists workspace settings to workspace storage while preserving comments.
 	 */
 	async saveWorkspace(): Promise<void> {
-		if (!this.workspaceStorage) return;
+		if (!this.workspaceStorage || !this.workspaceLoaded) return;
 
 		try {
 			let updatedText = this.storedWorkspaceText;
@@ -1473,24 +1492,56 @@ export class FileWorkspaceSettingsStorage implements WorkspaceSettingsStorage {
 		try {
 			const origin = this.getSettingsOrigin();
 			return await this.storage.readFile(origin);
-		} catch {
-			return null;
+		} catch (err: any) {
+			if (isNotFoundError(err) || (err instanceof Error && /not\s*found/i.test(err.message))) {
+				return null;
+			}
+			throw err;
 		}
 	}
 
 	async save(content: string): Promise<void> {
-		try {
-			const origin = this.getSettingsOrigin();
-			if (typeof this.storage.createDirectory === 'function') {
-				try {
-					await this.storage.createDirectory(this.rootOrigin, '.np');
-				} catch {
-					// directory might already exist
+		let dirOrigin: any = {
+			scheme: this.rootOrigin?.scheme ?? 'file',
+			path: `${(this.rootOrigin?.path ?? '').replace(/\/+$/, '')}/.np`,
+			name: '.np'
+		};
+		if (typeof this.storage.createDirectory === 'function') {
+			try {
+				const created = await this.storage.createDirectory(this.rootOrigin, '.np');
+				if (created) {
+					dirOrigin = created;
 				}
+			} catch {
+				// directory might already exist
 			}
-			await this.storage.saveFile(content, origin);
+		}
+
+		let fileOrigin: any = null;
+		if (typeof this.storage.createFile === 'function') {
+			try {
+				const created = await this.storage.createFile(dirOrigin, 'settings.json');
+				if (created) {
+					fileOrigin = created;
+				}
+			} catch {
+				// file might already exist or createFile failed
+			}
+		}
+
+		if (!fileOrigin) {
+			fileOrigin = {
+				scheme: dirOrigin?.scheme ?? this.rootOrigin?.scheme ?? 'file',
+				path: `${(dirOrigin?.path ?? '').replace(/\/+$/, '')}/settings.json`,
+				name: 'settings.json'
+			};
+		}
+
+		try {
+			await this.storage.saveFile(content, fileOrigin);
 		} catch (err) {
 			console.error('Failed to save workspace settings to storage:', err);
+			throw err;
 		}
 	}
 }
