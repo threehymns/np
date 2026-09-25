@@ -10,7 +10,7 @@
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
 
-	import { DocumentSession, useAppState } from '@np/core';
+	import { DocumentSession, useAppState, composeEditorContributions, reconfigureEditorContributions } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -78,6 +78,16 @@
 					wrapCompartment,
 					languageCompartment,
 					vimCompartment,
+					editorCompartments: appState.plugins?.editorCompartments,
+					pluginContributions: appState.plugins?.getEditorContributions?.() ?? [],
+					language: untrack(() => doc.language),
+					pluginExtensions: appState.plugins?.editorCompartments
+						? composeEditorContributions(
+								appState.plugins.getEditorContributions?.() ?? [],
+								appState.plugins.editorCompartments,
+								untrack(() => doc.language),
+						  )
+						: undefined,
 					gutterCompartment: appState.plugins?.editorCompartments?.gutterCompartment,
 					decorationsCompartment: appState.plugins?.editorCompartments?.decorationsCompartment,
 					keybindingsCompartment: appState.plugins?.editorCompartments?.keybindingsCompartment,
@@ -198,6 +208,23 @@
 				),
 			});
 		}
+	});
+
+	// Sync plugin editor contributions when contributions or language change
+	$effect(() => {
+		const plugins = appState.plugins;
+		if (!view || !plugins?.editorCompartments) return;
+
+		// Reactively observe editor revision
+		const _rev = plugins.editorRevision;
+		const language = doc.language;
+
+		const effects = reconfigureEditorContributions(
+			plugins.getEditorContributions?.() ?? [],
+			plugins.editorCompartments,
+			language,
+		);
+		view.dispatch({ effects });
 	});
 
 	// Sync keymap context

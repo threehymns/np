@@ -1,4 +1,9 @@
 import {
+	composeEditorContributions,
+	type EditorCompartments,
+	type EditorContributionEntry
+} from "@np/core";
+import {
 	EditorView,
 	highlightSpecialChars,
 	dropCursor,
@@ -212,6 +217,10 @@ export function createEditorExtensions(options: {
 	gutterCompartment?: Compartment;
 	decorationsCompartment?: Compartment;
 	keybindingsCompartment?: Compartment;
+	editorCompartments?: EditorCompartments;
+	pluginContributions?: readonly EditorContributionEntry[];
+	pluginExtensions?: any[];
+	language?: string;
 	wrap: boolean;
 	vimEnabled: boolean;
 	initialLanguageExtensions: any[];
@@ -223,18 +232,30 @@ export function createEditorExtensions(options: {
 		gutterCompartment,
 		decorationsCompartment,
 		keybindingsCompartment,
+		editorCompartments,
+		pluginContributions,
+		pluginExtensions,
+		language,
 		wrap,
 		vimEnabled,
 		initialLanguageExtensions
 	} = options;
 
+	const resolvedPluginExtensions = pluginExtensions ?? (
+		editorCompartments
+			? composeEditorContributions(pluginContributions ?? [], editorCompartments, language)
+			: [
+				...(gutterCompartment ? [gutterCompartment.of([])] : []),
+				...(decorationsCompartment ? [decorationsCompartment.of([])] : []),
+				...(keybindingsCompartment ? [keybindingsCompartment.of([])] : []),
+			]
+	);
+
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
 		languageCompartment.of(initialLanguageExtensions),
 		vimCompartment.of(vimEnabled ? vim() : []),
-		...(gutterCompartment ? [gutterCompartment.of([])] : []),
-		...(decorationsCompartment ? [decorationsCompartment.of([])] : []),
-		...(keybindingsCompartment ? [keybindingsCompartment.of([])] : []),
+		...resolvedPluginExtensions,
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),

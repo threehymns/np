@@ -228,6 +228,8 @@ export interface PluginHostInterface {
 	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void;
 	removePluginEditorContributions(pluginId: string): void;
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[];
+	readonly editorRevision: number;
+	readonly editorContributionsRevision?: number;
 
 	// Document text changes go through a host document-edit operation
 	// applied as one undo transaction with revision checks.

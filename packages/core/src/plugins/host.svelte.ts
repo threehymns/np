@@ -153,6 +153,10 @@ export class PluginHost implements PluginHostInterface {
 
 	// Editor contribution contract (ADR 0016)
 	readonly editorCompartments: EditorCompartments = createEditorContributionCompartments();
+	editorRevision = $state(0);
+	get editorContributionsRevision(): number {
+		return this.editorRevision;
+	}
 	private editorContributions: EditorContributionEntry[] = [];
 	private attachedEditors = new Map<string, AttachedEditor>();
 	private documentSessions = new Map<string, DocumentSession>();
@@ -1513,10 +1517,12 @@ export class PluginHost implements PluginHostInterface {
 			}
 			this.editorContributions.push({ pluginId, contribution: incoming });
 		}
+		this.editorRevision++;
 	}
 
 	removePluginEditorContributions(pluginId: string): void {
 		this.editorContributions = this.editorContributions.filter((e) => e.pluginId !== pluginId);
+		this.editorRevision++;
 	}
 
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[] {
