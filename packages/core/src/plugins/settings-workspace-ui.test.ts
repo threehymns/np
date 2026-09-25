@@ -93,14 +93,14 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 	let wsStorage: MemoryWorkspaceStorage;
 	let manager: SettingsManager;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		userStorage = new MemoryPreferenceStorage();
 		wsStorage = new MemoryWorkspaceStorage();
 		manager = new SettingsManager({
 			storage: userStorage,
-			workspaceStorage: wsStorage,
 			initialSchemas: [TEST_SCHEMA]
 		});
+		await manager.attachWorkspaceStorage(wsStorage);
 	});
 
 	describe('1. Layering Precedence: Default < User < Workspace', () => {
@@ -420,6 +420,56 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 	});
 
 	describe('SettingsManager Workspace Concurrency & Error Safety', () => {
+		it('clears previous workspace values before loading replacement storage', async () => {
+			manager.set('linter', 'enabled', true, 'workspace');
+
+			let finishLoad!: (val: string) => void;
+			const delayedLoad = new Promise<string>((resolve) => {
+				finishLoad = resolve;
+			});
+			const replacementStorage: WorkspaceSettingsStorage = {
+				load: mock(async () => delayedLoad),
+				save: mock(async () => {})
+			};
+
+			const loadPromise = manager.attachWorkspaceStorage(replacementStorage);
+
+			expect(manager.getWorkspaceDocument()).toEqual({});
+			expect(manager.getWorkspaceText()).toBe('');
+			expect(manager.get('linter', 'enabled')).toBe(false);
+
+			finishLoad(JSON.stringify({ linter: { severity: 'error' } }));
+			await loadPromise;
+
+			manager.set('linter', 'severity', 'info', 'workspace');
+			await manager.saveWorkspace();
+
+			const savedText = replacementStorage.save.mock.calls.at(-1)?.[0];
+			expect(JSON.parse(savedText)).toEqual({ linter: { severity: 'info' } });
+		});
+
+		it('rejects workspace writes before replacement storage finishes loading', async () => {
+			const pendingManager = new SettingsManager({ initialSchemas: [TEST_SCHEMA] });
+			let finishLoad!: (val: string | null) => void;
+			const delayedLoad = new Promise<string | null>((resolve) => {
+				finishLoad = resolve;
+			});
+			const pendingStorage: WorkspaceSettingsStorage = {
+				load: mock(async () => delayedLoad),
+				save: mock(async () => {})
+			};
+
+			const loadPromise = pendingManager.attachWorkspaceStorage(pendingStorage);
+
+			expect(() => pendingManager.set('linter', 'enabled', true, 'workspace')).toThrow(
+				'Workspace settings storage is not loaded'
+			);
+			expect(pendingManager.getWorkspaceDocument()).toEqual({});
+
+			finishLoad(null);
+			await loadPromise;
+		});
+
 		it('discards in-flight load results if clearWorkspace is called before load completes', async () => {
 			let finishLoad!: (val: string) => void;
 			const delayedLoad = new Promise<string>((resolve) => {

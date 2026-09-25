@@ -80,7 +80,8 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			const initDeferred = new Promise<void>((r) => (resolveInit = r));
 
 			let initCallCount = 0;
-			mockAppState.commands.execute = mock(async () => {
+			mockAppState.commands.execute = mock(async (id: string) => {
+				expect(id).toBe("git.init");
 				initCallCount++;
 				await initDeferred;
 				mockWorkspace.repository = { currentBranch: "main", changes: [] };

@@ -1022,6 +1022,10 @@ export class SettingsManager {
 	async attachWorkspaceStorage(storage: WorkspaceSettingsStorage): Promise<void> {
 		this.workspaceStorage = storage;
 		this.workspaceLoaded = false;
+		this.storedWorkspaceData = {};
+		this.storedWorkspaceText = '';
+		this.explicitlyModifiedWorkspaceKeys.clear();
+		this.validateAll();
 		await this.loadWorkspace();
 	}
 
@@ -1275,6 +1279,9 @@ export class SettingsManager {
 		}
 
 		if (scope === 'workspace') {
+			if (!this.workspaceStorage || !this.workspaceLoaded) {
+				throw new Error('Workspace settings storage is not loaded');
+			}
 			if (
 				typeof this.storedWorkspaceData[namespace] !== 'object' ||
 				this.storedWorkspaceData[namespace] === null

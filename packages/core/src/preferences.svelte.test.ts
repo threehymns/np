@@ -300,9 +300,18 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(prefs.settingsVersion).toBeGreaterThan(afterSet);
 	});
 
-	it("writes using activeScope and refreshes effective data in finally block", () => {
+	it("writes using activeScope and refreshes effective data in finally block", async () => {
 		const storage = createMockStorage();
 		const prefs = new Preferences(storage);
+		const workspaceStorage = {
+			readFile: mock(async () => null),
+			saveFile: mock(async () => {})
+		};
+		await prefs.attachWorkspace(workspaceStorage, {
+			scheme: "file",
+			path: "/workspace",
+			name: "workspace"
+		});
 
 		// Switch to workspace scope
 		prefs.activeScope = "workspace";

@@ -26,6 +26,9 @@
 
 	const resolved = $derived.by(() => {
 		settingsVersion;
+		if (scope === 'user') {
+			return appState.prefs.settings.resolve(namespace, keyName, 'user');
+		}
 		return appState.prefs.settings.resolve(namespace, keyName);
 	});
 	const hasOverride = $derived.by(() => {

@@ -10,7 +10,7 @@
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
 
-	import { DocumentSession, useAppState, composeEditorContributions, reconfigureEditorContributions } from '@np/core';
+	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -80,14 +80,7 @@
 					vimCompartment,
 					editorCompartments: appState.plugins?.editorCompartments,
 					pluginContributions: appState.plugins?.getEditorContributions?.() ?? [],
-					language: untrack(() => doc.language),
-					pluginExtensions: appState.plugins?.editorCompartments
-						? composeEditorContributions(
-								appState.plugins.getEditorContributions?.() ?? [],
-								appState.plugins.editorCompartments,
-								untrack(() => doc.language),
-						  )
-						: undefined,
+					language: untrack(() => doc.language?.name),
 					gutterCompartment: appState.plugins?.editorCompartments?.gutterCompartment,
 					decorationsCompartment: appState.plugins?.editorCompartments?.decorationsCompartment,
 					keybindingsCompartment: appState.plugins?.editorCompartments?.keybindingsCompartment,
@@ -217,7 +210,7 @@
 
 		// Reactively observe editor revision
 		const _rev = plugins.editorRevision;
-		const language = doc.language;
+		const language = doc.language?.name;
 
 		const effects = reconfigureEditorContributions(
 			plugins.getEditorContributions?.() ?? [],

@@ -53,7 +53,7 @@ import {
  * by the host itself on deactivate/unregister — verified by tests, not
  * reimplemented here.
  */
-export function setup(host: PluginHostInterface): PluginCleanup {
+export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	const states = new Map<Workspace, WorkspaceGitState>();
 
 	const stateFor = (workspace: Workspace): WorkspaceGitState => {
@@ -141,6 +141,11 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 			await openFolderRepository(stateFor(context.workspace as Workspace), context.origin);
 		}
 	);
+
+	const current = getWorkspace();
+	if (current?.rootOrigin && current.hasRootPermission) {
+		await openFolderRepository(stateFor(current), current.rootOrigin);
+	}
 
 	return async () => {
 		removeWorkspaceOpenedHook();

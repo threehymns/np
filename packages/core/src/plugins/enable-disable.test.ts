@@ -276,6 +276,8 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
 			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeDefined();
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(true);
+			expect(app.workspace.repository).not.toBeNull();
+			expect(app.workspace.repository?.currentBranch).toBe('main');
 
 			await app.workspace.openDirectory();
 			expect(app.workspace.repository).not.toBeNull();
