@@ -141,9 +141,9 @@
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>
 						{#if category === 'File'}
-							{#each appState.commands.getByCategory('File') as command (command.id)}
+							{#each appState.commands.getByCategory('File').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
@@ -156,9 +156,9 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('Export') as command (command.id)}
+									{#each appState.commands.getByCategory('Export').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 										<Menubar.Item
-											onclick={() => command.action()}
+											onclick={() => appState.commands.execute(command.id)}
 											disabled={command.isEnabled && !command.isEnabled()}
 										>
 											{command.label}
@@ -170,9 +170,9 @@
 								</Menubar.SubContent>
 							</Menubar.Sub>
 						{:else if category === 'Format'}
-							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap') as command (command.id)}
+							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap' && (!c.isVisible || c.isVisible())) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
@@ -192,8 +192,8 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom')) as command (command.id)}
-										<Menubar.Item onclick={() => command.action()}>
+									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom') && (!c.isVisible || c.isVisible())) as command (command.id)}
+										<Menubar.Item onclick={() => appState.commands.execute(command.id)}>
 											{command.label}
 											{#if appState.keymaps.getShortcutForCommand(command.id)}
 												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
@@ -215,9 +215,9 @@
 								{/if}
 							</Menubar.CheckboxItem>
 						{:else}
-							{#each appState.commands.getByCategory(category) as command (command.id)}
+							{#each appState.commands.getByCategory(category).filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
