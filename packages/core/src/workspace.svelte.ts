@@ -533,38 +533,32 @@ export class Workspace {
 		this.finalizeClose(id);
 	}
 
-	finalizeClose(id: string, saveFirst = false) {
+	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
 		const tab = this.tabs.find(t => t.id === id);
-		if (!tab) return;
+		if (!tab) return false;
 
 		if (tab.type === 'document') {
 			const index = this.documents.findIndex(doc => doc.id === id);
 			if (index !== -1) {
 				const doc = this.documents[index];
 				if (saveFirst) {
-					this.saveDocument(doc).then(
-						(saved) => {
-							if (saved) {
-								this.performClose(id);
-							}
-							this.pendingCloseId = null;
-						},
-						(err) => {
-							console.error('[Workspace] Save before close failed', err);
-							this.pendingCloseId = null;
-						}
-					);
-					return;
-				} else {
-					this.performClose(id);
-					this.pendingCloseId = null;
-					return;
+					try {
+						const saved = await this.saveDocument(doc);
+						if (saved) await this.performClose(id);
+						return saved;
+					} catch (err) {
+						console.error('[Workspace] Save before close failed', err);
+						return false;
+					} finally {
+						this.pendingCloseId = null;
+					}
 				}
 			}
 		}
 
-		this.performClose(id);
+		await this.performClose(id);
 		this.pendingCloseId = null;
+		return true;
 	}
 
 	private async performClose(id: string) {

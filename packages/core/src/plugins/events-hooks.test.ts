@@ -8,6 +8,7 @@ import { MemorySessionPersistence } from '../persistence';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';
+import { AppState } from '../state.svelte';
 
 function createLocalMockStorage(initialFiles: Record<string, string> = {}): Storage {
 	const files = new Map<string, string>(Object.entries(initialFiles));
@@ -342,6 +343,34 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(storage.saveFile).not.toHaveBeenCalled();
 		});
 
+		it('shows a hook cancellation when saving before closing a document', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage({ '/test.md': 'saved' });
+			const alert = mock(async () => {});
+			const app = new AppState({
+				storage,
+				vcsFactory: createMockVcsFactory(),
+				persistence: new MemorySessionPersistence(),
+				pluginHost: host,
+				dialogService: { alert }
+			});
+			const origin: FileOrigin = { scheme: 'file', path: '/test.md', name: 'test.md' };
+			const doc = await app.workspace.openFile(origin);
+			expect(doc).toBeDefined();
+			app.workspace.updateDocumentContent(doc!, 'edited');
+			host.registerBeforeSaveHook('close-formatter', () => ({
+				cancel: true,
+				reason: 'Formatting failed before close'
+			}));
+
+			app.closeDocument(doc!.id);
+			expect(app.workspace.pendingCloseId).toBe(doc!.id);
+			expect(await app.finalizeClose(doc!.id, true)).toBe(false);
+			expect(alert).toHaveBeenCalledWith('Formatting failed before close');
+			expect(app.workspace.tabs.some((tab) => tab.id === doc!.id)).toBe(true);
+			expect(app.workspace.pendingCloseId).toBeNull();
+		});
+
 		it('proceeds with save and remaining hooks when a hook throws an error', async () => {
 			const host = new PluginHost();
 			const storage = createLocalMockStorage({ '/test.md': '' });
@@ -495,6 +524,50 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(err.message).toContain('async-recursive-saver');
 			expect(err.message).toContain('re-entered saveDocument during beforeSave hook');
 
+			errorSpy.mockRestore();
+		});
+
+		it('rejects delayed save re-entry when async context propagation is unavailable', async () => {
+			let getStoreCalls = 0;
+			const operationContext = {
+				propagation: 'none' as const,
+				get: () => {
+					getStoreCalls++;
+					return undefined;
+				},
+				run: <T>(_context: unknown, callback: () => T): T => callback()
+			};
+			const host = new PluginHost({ operationContext });
+			const storage = createLocalMockStorage({ '/test.md': '', '/other.md': '' });
+			const persistence = new MemorySessionPersistence();
+			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+			let caughtReentryError: unknown = null;
+			const otherDoc = new DocumentSession(
+				storage,
+				'',
+				{ scheme: 'file', path: '/other.md', name: 'other.md' }
+			);
+
+			host.registerBeforeSaveHook('browser-async-saver', async () => {
+				await Promise.resolve();
+				try {
+					await workspace.saveDocument(otherDoc);
+				} catch (error) {
+					caughtReentryError = error;
+					throw error;
+				}
+			});
+
+			const doc = new DocumentSession(
+				storage,
+				'',
+				{ scheme: 'file', path: '/test.md', name: 'test.md' }
+			);
+			expect(await workspace.saveDocument(doc)).toBe(true);
+			expect(caughtReentryError).toBeInstanceOf(HookReentryError);
+			expect((caughtReentryError as HookReentryError).pluginId).toBe('browser-async-saver');
+			expect(getStoreCalls).toBeGreaterThan(0);
 			errorSpy.mockRestore();
 		});
 

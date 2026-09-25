@@ -314,7 +314,17 @@ export class AppState {
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string) { this.workspace.closeTab(id); }
-	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
+	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst);
+		if (!closed && this.workspace.lastSaveCancellationReason) {
+			if (this.dialogService?.alert) {
+				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+			} else if (typeof window !== 'undefined' && window.alert) {
+				window.alert(this.workspace.lastSaveCancellationReason);
+			}
+		}
+		return closed;
+	}
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
 }
 

@@ -104,9 +104,16 @@ export interface PluginRegistration {
 	readonly load?: PluginLoader;
 }
 
+export interface PluginOperationContext {
+	readonly propagation: 'async' | 'none';
+	run<T>(context: ActiveHookContext, callback: () => T): T;
+	get(): ActiveHookContext | undefined;
+}
+
 export interface PluginHostOptions {
 	platform?: PluginPlatform;
 	initialPlugins?: readonly PluginRegistration[];
+	operationContext?: PluginOperationContext;
 }
 
 export interface PluginHostInterface {

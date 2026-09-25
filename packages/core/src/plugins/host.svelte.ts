@@ -3,6 +3,7 @@ import type {
 	PluginHostInterface,
 	PluginHostOptions,
 	PluginManifest,
+	PluginOperationContext,
 	PluginPlatform,
 	PluginRegistration,
 	PluginState
@@ -133,11 +134,7 @@ export class PluginHost implements PluginHostInterface {
 	private beforeSaveHooks: BeforeSaveHookEntry[] = [];
 	private afterSaveHooks: AfterSaveHookEntry[] = [];
 	private activeSaveHook: ActiveHookContext | null = null;
-	// True only while a hook is executing synchronously; cleared as soon as
-	// the hook first yields. Re-entry from the same save's hook is detected
-	// here, while an independent concurrent save (issued from another task
-	// while the hook is suspended) is serialized by saveQueue instead.
-	private hookExecutingSync = false;
+	private readonly operationContext: PluginOperationContext;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private nextSaveId = 0;
 	private currentSaveId = 0;
@@ -230,6 +227,17 @@ export class PluginHost implements PluginHostInterface {
 	};
 
 	constructor(options: PluginHostOptions = {}) {
+		this.operationContext = options.operationContext ?? (saveHookStorage
+			? {
+					propagation: 'async' as const,
+					run: <T>(context: ActiveHookContext, callback: () => T) => saveHookStorage.run(context, callback),
+					get: () => saveHookStorage.getStore()
+				}
+			: {
+					propagation: 'none' as const,
+					run: <T>(_context: ActiveHookContext, callback: () => T) => callback(),
+					get: () => undefined
+				});
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
 		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
@@ -604,7 +612,7 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	getActiveSaveHook(): ActiveHookContext | null {
-		const store = saveHookStorage?.getStore();
+		const store = this.operationContext.get();
 		if (store && (!store.host || store.host === this)) {
 			return store;
 		}
@@ -612,7 +620,7 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	checkSaveReentry(operation = 'saveDocument', phase = 'beforeSave hook'): void {
-		const store = saveHookStorage?.getStore();
+		const store = this.operationContext.get();
 		if (store && (!store.host || store.host === this)) {
 			if (this.currentSaveId === 0 || store.saveId === undefined || store.saveId === this.currentSaveId) {
 				throw new HookReentryError(
@@ -625,7 +633,7 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		// Fallback for environments without AsyncLocalStorage
-		if (!this.activeSaveHook || !this.hookExecutingSync) return;
+		if (this.operationContext.propagation !== 'none' || !this.activeSaveHook) return;
 		throw new HookReentryError(
 			this.activeSaveHook.pluginId,
 			operation,
@@ -658,13 +666,6 @@ export class PluginHost implements PluginHostInterface {
 		}
 	}
 
-	/**
-	 * Invokes a save hook, marking synchronous execution so re-entry from
-	 * within the hook is detectable, and releasing that mark as soon as the
-	 * hook yields so concurrent saves wait rather than being rejected.
-	 * When AsyncLocalStorage is available, async context tracking ensures
-	 * re-entry from within the same save's hook is rejected even after the hook awaits.
-	 */
 	private async invokeSaveHook<T>(
 		pluginId: string,
 		phase: string,
@@ -678,29 +679,9 @@ export class PluginHost implements PluginHostInterface {
 			host: this
 		};
 		this.activeSaveHook = context;
-		this.hookExecutingSync = true;
-		let result: T | Promise<T>;
-		const execute = () => {
-			try {
-				result = invoke();
-			} catch (error) {
-				this.hookExecutingSync = false;
-				this.activeSaveHook = null;
-				throw error;
-			}
-			queueMicrotask(() => {
-				this.hookExecutingSync = false;
-			});
-			return result;
-		};
-
 		try {
-			if (saveHookStorage) {
-				return await saveHookStorage.run(context, async () => await execute());
-			}
-			return await execute();
+			return await this.operationContext.run(context, async () => await invoke());
 		} finally {
-			this.hookExecutingSync = false;
 			this.activeSaveHook = null;
 		}
 	}
