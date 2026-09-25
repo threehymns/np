@@ -95,7 +95,10 @@ export function createAddCommandsTransform(commands: readonly PluginCommand[]): 
  * @throws {DuplicateCommandIdError} when a transform overwrites a command
  * ID owned by a different plugin with a different command object.
  */
-export function rebuildCommands(transforms: readonly CommandTransformEntry[]): Map<string, PluginCommand> {
+export function rebuildCommands(
+	transforms: readonly CommandTransformEntry[],
+	ownersOut?: Map<string, string>
+): Map<string, PluginCommand> {
 	let state = new Map<string, PluginCommand>();
 	const owners = new Map<string, string>();
 
@@ -130,6 +133,13 @@ export function rebuildCommands(transforms: readonly CommandTransformEntry[]): M
 		}
 
 		state = next;
+	}
+
+	if (ownersOut) {
+		ownersOut.clear();
+		for (const [id, owner] of owners) {
+			ownersOut.set(id, owner);
+		}
 	}
 
 	return state;

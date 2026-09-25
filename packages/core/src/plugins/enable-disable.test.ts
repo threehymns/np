@@ -534,6 +534,57 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.getPluginState('git')).toBe('inactive');
 			expect(workspace.repository).toBeNull();
 		});
+
+		it('refuses new Git writes and waits for an active write before completing disablement', async () => {
+			let releaseStage!: () => void;
+			const stageGate = new Promise<void>((resolve) => (releaseStage = resolve));
+			const stagedFiles: string[] = [];
+			const adapter: VCSAdapter = {
+				detect: async () => true,
+				stageFile: mock(async (filepath: string) => {
+					stagedFiles.push(filepath);
+					if (filepath === 'first.md') await stageGate;
+				}),
+				getCurrentBranch: async () => 'main',
+				getBranches: async () => ['main'],
+				getChanges: async () => [],
+				getCommits: async () => [],
+				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] })
+			};
+			const host = new PluginHost();
+			host.register(gitRegistration);
+			const { storage } = createHarnessStorage();
+			const workspace = new Workspace(
+				storage,
+				() => adapter,
+				new MemorySessionPersistence(),
+				host
+			);
+			provideDialogs(host);
+			await host.activate('git');
+			await workspace.openDirectory();
+			expect(workspace.repository).not.toBeNull();
+
+			const firstWrite = host.executeCommand('git.stage', 'first.md') as Promise<boolean>;
+			for (let i = 0; i < 50 && stagedFiles.length === 0; i++) await tick(1);
+			expect(stagedFiles).toEqual(['first.md']);
+
+			let deactivateResolved = false;
+			const deactivateTask = host.deactivate('git').then(() => {
+				deactivateResolved = true;
+			});
+			expect(host.getPluginState('git')).toBe('deactivating');
+			await tick();
+			expect(deactivateResolved).toBe(false);
+
+			expect(host.executeCommand('git.stage', 'second.md')).toBeUndefined();
+			releaseStage();
+			await Promise.all([firstWrite, deactivateTask]);
+
+			expect(stagedFiles).toEqual(['first.md']);
+			expect(host.getPluginState('git')).toBe('inactive');
+			expect(workspace.repository).toBeNull();
+		});
 	});
 
 	describe('dependency cascade UX (ADR 0017)', () => {

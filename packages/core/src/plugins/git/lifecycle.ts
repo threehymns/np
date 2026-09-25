@@ -23,16 +23,21 @@ export interface WorkspaceGitState {
 	disposables: Array<() => void>;
 	/** Token identifying the most recently initiated folder-open operation. */
 	currentOpenId: number;
+	isActive(): boolean;
 }
 
-export function createWorkspaceGitState(workspace: Workspace): WorkspaceGitState {
+export function createWorkspaceGitState(
+	workspace: Workspace,
+	isActive: () => boolean = () => true
+): WorkspaceGitState {
 	return {
 		workspace,
 		repository: null,
 		disposed: false,
 		pending: new Set(),
 		disposables: [],
-		currentOpenId: 0
+		currentOpenId: 0,
+		isActive
 	};
 }
 
@@ -81,7 +86,7 @@ export async function openFolderRepository(
 ): Promise<void> {
 	const openId = ++state.currentOpenId;
 	disposePublishedRepository(state);
-	if (state.disposed) return;
+	if (state.disposed || !state.isActive()) return;
 
 	const targetUri = toURI(origin);
 	const repo = new Repository(origin, state.workspace.vcsFactory);
@@ -89,6 +94,7 @@ export async function openFolderRepository(
 
 	if (
 		state.disposed ||
+		!state.isActive() ||
 		state.currentOpenId !== openId ||
 		!state.workspace.rootOrigin ||
 		toURI(state.workspace.rootOrigin) !== targetUri
@@ -103,6 +109,7 @@ export async function openFolderRepository(
 
 		if (
 			state.disposed ||
+			!state.isActive() ||
 			state.currentOpenId !== openId ||
 			!state.workspace.rootOrigin ||
 			toURI(state.workspace.rootOrigin) !== targetUri
@@ -153,7 +160,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// publication.
 	workspace.repository = null;
 	state.repository = null;
-	if (state.disposed) return false;
+	if (state.disposed || !state.isActive()) return false;
 
 	const repo = new Repository(targetOrigin, workspace.vcsFactory);
 	const adapter = repo.adapter;
@@ -168,7 +175,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// publish results for an outdated folder. Likewise, never clobber a
 	// foreign repository another contributor published while init was in
 	// flight (ADR 0009): drop the stale result instead.
-	if (state.disposed || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
 		return false;
 	}
 	if (workspace.repository !== null && workspace.repository !== state.repository) {
@@ -182,7 +189,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 		disposePublishedRepository(state);
 		return false;
 	}
-	if (!workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
 		disposePublishedRepository(state);
 		return false;
 	}
@@ -192,7 +199,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 		disposePublishedRepository(state);
 		throw e;
 	}
-	if (!workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
 		disposePublishedRepository(state);
 		return false;
 	}
@@ -205,7 +212,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
  * repository refreshes exactly as the old hardwired hook did).
  */
 export async function refreshWorkspaceRepository(state: WorkspaceGitState): Promise<void> {
-	if (state.disposed) return;
+	if (state.disposed || !state.isActive()) return;
 	const repo = state.workspace.repository;
 	if (!repo) return;
 	try {

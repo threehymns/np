@@ -123,6 +123,8 @@ export class PluginHost implements PluginHostInterface {
 	// rebuild (ADR 0012). Palette and menus are views over this state.
 	private commandTransforms: CommandTransformEntry[] = [];
 	private commandMap = $state<Map<string, PluginCommand>>(new Map());
+	private commandOwners = new Map<string, string>();
+	private activePluginOperations = new Map<string, Set<Promise<unknown>>>();
 
 	// Event handlers (ADR 0013: events observe, fire-and-forget)
 	private eventHandlers = new Map<string, EventHandlerEntry[]>();
@@ -388,7 +390,9 @@ export class PluginHost implements PluginHostInterface {
 	 * Idempotent: same transforms always yield the same registry.
 	 */
 	rebuildCommands(): void {
-		this.commandMap = rebuildCommands(this.orderedCommandTransforms());
+		const owners = new Map<string, string>();
+		this.commandMap = rebuildCommands(this.orderedCommandTransforms(), owners);
+		this.commandOwners = owners;
 	}
 
 	/** Reload alias for rebuild (Reload terminology). */
@@ -410,8 +414,43 @@ export class PluginHost implements PluginHostInterface {
 
 	executeCommand(id: string, ...args: any[]): any {
 		const command = this.getCommand(id);
-		if (command && (!command.isEnabled || command.isEnabled())) {
-			return command.action(...args);
+		if (!command || (command.isEnabled && !command.isEnabled())) return;
+
+		const owner = this.commandOwners.get(id);
+		const pluginId = owner && this.registrations.has(owner) ? owner : undefined;
+		if (pluginId && !this.isPluginActive(pluginId)) return;
+
+		if (!pluginId) return command.action(...args);
+
+		const result = command.action(...args);
+		if (!result || typeof result.then !== 'function') return result;
+
+		const operation = Promise.resolve(result);
+		let operations = this.activePluginOperations.get(pluginId);
+		if (!operations) {
+			operations = new Set();
+			this.activePluginOperations.set(pluginId, operations);
+		}
+		operations.add(operation);
+		void operation.then(
+			() => this.finishPluginOperation(pluginId, operation),
+			() => this.finishPluginOperation(pluginId, operation)
+		);
+		return operation;
+	}
+
+	private finishPluginOperation(pluginId: string, operation: Promise<unknown>): void {
+		const operations = this.activePluginOperations.get(pluginId);
+		if (!operations) return;
+		operations.delete(operation);
+		if (operations.size === 0) this.activePluginOperations.delete(pluginId);
+	}
+
+	private async waitForPluginOperations(pluginId: string): Promise<void> {
+		while (this.activePluginOperations.has(pluginId)) {
+			const operations = this.activePluginOperations.get(pluginId);
+			if (!operations) break;
+			await Promise.allSettled([...operations]);
 		}
 	}
 
@@ -1432,7 +1471,10 @@ export class PluginHost implements PluginHostInterface {
 		// call handles its own transitive dependents, so already-unloaded
 		// plugins are skipped.
 		const manifest = this.getManifest(id)!;
-		for (const dependentId of this.getActiveDependents(id)) {
+		const dependentIds = this.getActiveDependents(id);
+		this.states.set(id, 'deactivating');
+
+		for (const dependentId of dependentIds) {
 			if (!this.isPluginActive(dependentId)) continue;
 			const dependentManifest = this.getManifest(dependentId)!;
 			await this.deactivate(
@@ -1441,7 +1483,7 @@ export class PluginHost implements PluginHostInterface {
 			);
 		}
 
-		this.states.set(id, 'deactivating');
+		await this.waitForPluginOperations(id);
 
 		// Execute cleanup if present
 		const cleanup = this.cleanups.get(id);
