@@ -1,3 +1,4 @@
+import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { EditorState } from '@codemirror/state';
 import { history, undo, undoDepth } from '@codemirror/commands';
@@ -373,6 +374,21 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 	});
 
 	describe('Strict enforcement against direct view access and raw dispatch', () => {
+		it('does not expose attached-editor internals to plugin setup', async () => {
+			let pluginHost: unknown;
+			host.register({
+				manifest: { id: 'restricted-plugin', name: 'Restricted Plugin', version: 0 },
+				setup: (receivedHost) => {
+					pluginHost = receivedHost;
+				}
+			});
+
+			await host.activate('restricted-plugin');
+			expect(() => (pluginHost as any).getAttachedEditorInternal('document')).toThrow(
+				DirectEditorViewAccessError
+			);
+		});
+
 		it('direct view access from plugin code fails loudly in tests', () => {
 			// host accessors
 			expect(() => (host as any).view).toThrow(DirectEditorViewAccessError);

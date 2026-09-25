@@ -1,14 +1,24 @@
-import type { DocumentSession } from '../document.svelte';
 import type { FileOrigin } from '../storage';
 
 export const CORE_HOOKS_OWNER = 'core';
+
+export interface HookDocument {
+	readonly id: string;
+	readonly origin: FileOrigin | null;
+	readonly content: string;
+	readonly revision: number;
+	readonly fileName: string;
+	readonly isModified: boolean;
+	readonly permissionState: 'granted' | 'prompt' | 'denied';
+	readonly deletedOnDisk: boolean;
+}
 
 /**
  * Context passed to before-save hooks.
  * Context is mutable by reference if a hook needs to modify inputs (e.g. options).
  */
 export interface BeforeSaveContext {
-	document: DocumentSession;
+	document: HookDocument;
 	options?: { forceNewOrigin?: boolean; [key: string]: any };
 }
 
@@ -40,7 +50,7 @@ export interface BeforeSaveHookEntry {
  * Context passed to after-save hooks.
  */
 export interface AfterSaveContext {
-	document: DocumentSession;
+	document: HookDocument;
 	options?: { forceNewOrigin?: boolean; [key: string]: any };
 	success: boolean;
 }

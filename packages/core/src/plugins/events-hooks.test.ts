@@ -343,6 +343,34 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			expect(storage.saveFile).not.toHaveBeenCalled();
 		});
 
+		it('passes a read-only document view to save hooks', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage({ '/test.md': '' });
+			const workspace = new Workspace(
+				storage,
+				createMockVcsFactory(),
+				new MemorySessionPersistence(),
+				host
+			);
+			let hookDocument: unknown;
+			host.registerBeforeSaveHook('reader', (context) => {
+				hookDocument = context.document;
+			});
+			const doc = new DocumentSession(
+				storage,
+				'',
+				{ scheme: 'file', path: '/test.md', name: 'test.md' }
+			);
+			doc.content = 'original';
+
+			expect(await workspace.saveDocument(doc)).toBe(true);
+			expect((hookDocument as any).content).toBe('original');
+			expect(() => {
+				(hookDocument as any).content = 'bypassed';
+			}).toThrow(TypeError);
+			expect(doc.content).toBe('original');
+		});
+
 		it('shows a hook cancellation when saving before closing a document', async () => {
 			const host = new PluginHost();
 			const storage = createLocalMockStorage({ '/test.md': 'saved' });

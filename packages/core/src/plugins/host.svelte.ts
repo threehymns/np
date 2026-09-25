@@ -56,6 +56,7 @@ import {
 	type BeforeSaveHook,
 	type BeforeSaveHookEntry,
 	type BeforeSaveResult,
+	type HookDocument,
 	type WorkspaceOpenedContext,
 	type WorkspaceOpenedHook,
 	type WorkspaceOpenedHookEntry
@@ -104,6 +105,51 @@ const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefine
 const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
+const PLUGIN_HOST_INTERFACE_KEYS = new Set(
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
+);
+
+function createPluginHostInterface(host: PluginHost): PluginHostInterface {
+	return new Proxy(Object.create(null), {
+		get(_target, property) {
+			if (typeof property !== 'string' || !PLUGIN_HOST_INTERFACE_KEYS.has(property)) {
+				throw new DirectEditorViewAccessError(`host.${String(property)}`);
+			}
+			const value = Reflect.get(host, property, host);
+			return typeof value === 'function' ? value.bind(host) : value;
+		}
+	});
+}
+
+function createHookDocumentView(document: HookDocument): HookDocument {
+	return Object.freeze({
+		get id() {
+			return document.id;
+		},
+		get origin() {
+			return document.origin;
+		},
+		get content() {
+			return document.content;
+		},
+		get revision() {
+			return document.revision;
+		},
+		get fileName() {
+			return document.fileName;
+		},
+		get isModified() {
+			return document.isModified;
+		},
+		get permissionState() {
+			return document.permissionState;
+		},
+		get deletedOnDisk() {
+			return document.deletedOnDisk;
+		}
+	});
+}
+
 export class PluginHost implements PluginHostInterface {
 	readonly hostVersion = 0;
 	readonly platform: PluginPlatform;
@@ -135,6 +181,7 @@ export class PluginHost implements PluginHostInterface {
 	private afterSaveHooks: AfterSaveHookEntry[] = [];
 	private activeSaveHook: ActiveHookContext | null = null;
 	private readonly operationContext: PluginOperationContext;
+	private readonly pluginInterface: PluginHostInterface;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private nextSaveId = 0;
 	private currentSaveId = 0;
@@ -238,9 +285,10 @@ export class PluginHost implements PluginHostInterface {
 					run: <T>(_context: ActiveHookContext, callback: () => T) => callback(),
 					get: () => undefined
 				});
+		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
+		this.pluginInterface = createPluginHostInterface(this);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
-		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
 		if (options.initialPlugins) {
 			this.registerAll(options.initialPlugins);
 		}
@@ -701,7 +749,7 @@ export class PluginHost implements PluginHostInterface {
 				const result = await this.invokeSaveHook(
 					entry.pluginId,
 					'beforeSave hook',
-					() => entry.hook(context)
+					() => entry.hook({ ...context, document: createHookDocumentView(context.document) })
 				);
 				if (result && typeof result === 'object' && result.cancel) {
 					return {
@@ -739,7 +787,7 @@ export class PluginHost implements PluginHostInterface {
 				await this.invokeSaveHook(
 					entry.pluginId,
 					'afterSave hook',
-					() => entry.hook(context)
+					() => entry.hook({ ...context, document: createHookDocumentView(context.document) })
 				);
 			} catch (error) {
 				this.lastHookError = { pluginId: entry.pluginId, error };
@@ -1405,7 +1453,7 @@ export class PluginHost implements PluginHostInterface {
 			}
 
 			if (setupFn) {
-				const cleanupResult: unknown = await setupFn(this);
+				const cleanupResult: unknown = await setupFn(this.pluginInterface);
 				if (typeof cleanupResult === 'function') {
 					this.cleanups.set(id, cleanupResult as PluginCleanup);
 				} else if (
