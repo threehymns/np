@@ -242,6 +242,7 @@ export class PluginHost implements PluginHostInterface {
 	private editorContributions: EditorContributionEntry[] = [];
 	private attachedEditors = new SvelteMap<string, AttachedEditor>();
 	private documentSessions = new SvelteMap<string, DocumentSession>();
+	private documentResolver?: (docId: string) => DocumentSession | undefined;
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -1896,6 +1897,17 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	/**
+	 * Internal host shell hook to resolve a document id to the session the app
+	 * has open, so a plugin can address a document by the id it read from a
+	 * tab instead of being handed a session. Attached by the app composer,
+	 * which owns both the host and the workspace. NEVER exposed to plugin
+	 * manifests or public plugin APIs (ADR 0016).
+	 */
+	attachDocumentResolverInternal(resolve: (docId: string) => DocumentSession | undefined): void {
+		this.documentResolver = resolve;
+	}
+
+	/**
 	 * Internal host shell hook to bind an active editor view to a document session.
 	 * NEVER exposed to plugin manifests or public plugin APIs.
 	 */
@@ -1930,7 +1942,11 @@ export class PluginHost implements PluginHostInterface {
 	applyDocumentEdit(options: ApplyDocumentEditOptions): DocumentEditResult {
 		let targetDoc = options.doc;
 		if (!targetDoc && options.documentId) {
-			targetDoc = this.documentSessions.get(options.documentId);
+			// An explicitly registered session wins; otherwise resolve the id
+			// against the documents the app currently has open.
+			targetDoc =
+				this.documentSessions.get(options.documentId) ??
+				this.documentResolver?.(options.documentId);
 		}
 		if (!targetDoc) {
 			throw new Error("Target document must be specified in ApplyDocumentEditOptions (doc or documentId).");

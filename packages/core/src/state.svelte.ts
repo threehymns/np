@@ -172,6 +172,12 @@ export class AppState {
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
 		this.plugins.attachKeymapRegistryInternal(this.keymaps);
 		this.plugins.attachIconRegistryInternal(this.icons);
+		// The document-edit operation addresses a document by the id a plugin
+		// read from a tab, so the host resolves ids against the open documents
+		// the workspace owns (ADR 0016).
+		this.plugins.attachDocumentResolverInternal(
+			(docId) => this.workspace.documents.find((doc) => doc.id === docId)
+		);
 		// Bundled feature plugins (e.g. version control) register through the
 		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
 		// of feature names.

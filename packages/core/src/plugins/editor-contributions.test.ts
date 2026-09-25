@@ -6,6 +6,8 @@ import { syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { PluginHost } from './host.svelte';
 import { DocumentSession } from '../document.svelte';
+import { AppState } from '../state.svelte';
+import { createMockStorage } from '../../../../tests/mock-storage';
 import type { Storage } from '../storage';
 import {
 	DirectEditorViewAccessError,
@@ -225,6 +227,28 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 	});
 
 	describe('Document edit host operation & undo transaction semantics', () => {
+		it('addresses an open document by id, with no session handed in by the caller', async () => {
+			const appState = new AppState({
+				storage: createMockStorage(),
+				prefsStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} }
+			});
+
+			const doc = await appState.workspace.newFile();
+			doc.content = 'Hello world';
+
+			// The plugin-facing form of the document-edit operation carries only
+			// the id it read from a tab, so the host has to resolve it against
+			// the documents the app actually has open.
+			const result = appState.plugins.applyDocumentEdit({
+				documentId: doc.id,
+				expectedRevision: doc.revision,
+				changes: [{ from: 0, to: 5, insert: 'Greetings' }]
+			});
+
+			expect(result.success).toBe(true);
+			expect(doc.content).toBe('Greetings world');
+		});
+
 		it('a document edit through the host operation forms one undo transaction', () => {
 			const initialText = 'The quick brown fox jumps over the lazy dog';
 			const doc = new DocumentSession(storage, initialText);
