@@ -125,15 +125,27 @@ export class Workspace {
 		this.lastSaveCancellationReason = null;
 		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
 		const needsPicker = !doc.origin || options.forceNewOrigin;
-		const ok = await doc.save({
-			...options,
-			coveredByRoot: covered,
-			// Untitled (or Save As) opens the picker: root it at the workspace
-			// folder and prefill the draft title. Falls back to a safe
-			// filename with no directory when no folder is open.
-			suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
-			startDirectory: needsPicker ? this.rootOrigin : undefined
-		});
+
+		// A save that throws still has to reach the after-save consumers: they
+		// are the ones holding state derived from the write (Git's save-driven
+		// refresh, for one), and skipping them would leave that state silently
+		// stale. The failure is reported to them as an unsuccessful save and
+		// then rethrown, so the caller still sees it (ADR 0013).
+		let ok: boolean;
+		try {
+			ok = await doc.save({
+				...options,
+				coveredByRoot: covered,
+				// Untitled (or Save As) opens the picker: root it at the workspace
+				// folder and prefill the draft title. Falls back to a safe
+				// filename with no directory when no folder is open.
+				suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
+				startDirectory: needsPicker ? this.rootOrigin : undefined
+			});
+		} catch (error) {
+			await this.pluginHost?.runAfterSave({ document: doc, options, success: false });
+			throw error;
+		}
 
 		if (this.pluginHost) {
 			await this.pluginHost.runAfterSave({ document: doc, options, success: ok });

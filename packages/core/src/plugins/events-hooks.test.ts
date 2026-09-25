@@ -466,6 +466,31 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 	});
 
 	describe('Workspace.saveDocument Integration', () => {
+		it('notifies after-save consumers that a throwing save did not succeed', async () => {
+			const host = new PluginHost();
+			const storage = createLocalMockStorage();
+			storage.saveFile = async () => {
+				throw new Error('disk full');
+			};
+			const persistence = new MemorySessionPersistence();
+			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
+
+			const observed: Array<{ documentId: string; success: boolean }> = [];
+			await hookOwner(host, 'after-save-observer');
+			host.registerAfterSaveHook('after-save-observer', async (context) => {
+				observed.push({ documentId: context.document.id, success: context.success });
+			});
+
+			const origin: FileOrigin = { scheme: 'file', path: '/test.md', name: 'test.md' };
+			const doc = new DocumentSession(storage, 'content', origin);
+
+			// The write failed, so the caller still sees the failure...
+			await expect(workspace.saveDocument(doc)).rejects.toThrow('disk full');
+			// ...and every after-save consumer is still told the save did not
+			// succeed, so a save-triggered refresh does not go stale silently.
+			expect(observed).toEqual([{ documentId: doc.id, success: false }]);
+		});
+
 		it('cancels save when a before-save hook cancels with a reason the user sees', async () => {
 			const host = new PluginHost();
 			const storage = createLocalMockStorage();
