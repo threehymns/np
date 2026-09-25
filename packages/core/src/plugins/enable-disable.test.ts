@@ -1,5 +1,5 @@
 import '../../../../tests/contract/rune-setup';
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, spyOn } from 'bun:test';
 import { PluginHost } from './host.svelte';
 import { gitRegistration } from './git/registration';
 import { GIT_PANEL_ID, GIT_STATUS_ID } from './git/ui';
@@ -587,7 +587,32 @@ describe('toggle off/on round trip restores full function without restart', () =
 		});
 	});
 
-	describe('dependency cascade UX (ADR 0017)', () => {
+		it('completes disablement when a plugin cleanup never settles', async () => {
+			// A cleanup that never resolves must not wedge the toggle: the
+			// host bounds it, reports it against the owning plugin, and
+			// finishes the disablement (ADR 0009).
+			const host = new PluginHost({ cleanupTimeoutMs: 20 });
+			host.register({
+				manifest: { id: 'stuck-cleanup', name: 'Stuck Cleanup', version: 0 },
+				setup: () => () => new Promise<void>(() => {})
+			});
+			await host.activate('stuck-cleanup');
+			expect(host.getPluginState('stuck-cleanup')).toBe('active');
+
+			const logged: string[] = [];
+			const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+				logged.push(args.map((arg) => String(arg)).join(' '));
+			});
+
+			await host.deactivate('stuck-cleanup');
+
+			expect(host.getPluginState('stuck-cleanup')).toBe('inactive');
+			expect(logged.join('\n')).toContain('stuck-cleanup');
+			expect(logged.join('\n')).toContain('Action:');
+			errorSpy.mockRestore();
+		});
+
+		describe('dependency cascade UX (ADR 0017)', () => {
 		function cascadeRegistrations(): PluginRegistration[] {
 			const base: PluginManifest = {
 				id: 'base',

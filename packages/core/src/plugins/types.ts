@@ -120,6 +120,13 @@ export interface PluginHostOptions {
 	platform?: PluginPlatform;
 	initialPlugins?: readonly PluginRegistration[];
 	operationContext?: PluginOperationContext;
+	/**
+	 * Bound on a single plugin cleanup during disablement or activation
+	 * rollback. Cleanup runs last, so a cleanup that never settles would
+	 * otherwise leave the plugin stuck in `deactivating` and the caller
+	 * awaiting forever. Defaults to DEFAULT_CLEANUP_TIMEOUT_MS.
+	 */
+	cleanupTimeoutMs?: number;
 }
 
 export interface PluginHostInterface {

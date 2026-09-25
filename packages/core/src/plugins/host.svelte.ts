@@ -116,6 +116,13 @@ interface AsyncLocalStorageLike<T> {
 const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefined =
 	(globalThis as any).AsyncLocalStorage;
 
+/**
+ * Default bound on one plugin cleanup (ADR 0009). Cleanup is the last step
+ * of disablement, so an unsettled cleanup must not be able to wedge the
+ * plugin in `deactivating` or hang the caller forever.
+ */
+const DEFAULT_CLEANUP_TIMEOUT_MS = 5000;
+
 const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
@@ -178,6 +185,7 @@ export class PluginHost implements PluginHostInterface {
 	private cleanups = new SvelteMap<string, PluginCleanup>();
 	private activationOrder = $state<string[]>([]);
 	private disposed = false;
+	private readonly cleanupTimeoutMs: number;
 
 	// Shared command registry: replayable transforms + materialized view.
 	// Plugins contribute via registerCommands/registerCommandTransform during
@@ -319,6 +327,7 @@ export class PluginHost implements PluginHostInterface {
 					get: () => undefined
 				});
 		this.platform = options.platform ?? (typeof window !== 'undefined' && (window as any).electronAPI ? 'desktop' : 'web');
+		this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
 		this.pluginInterface = createPluginHostInterface(this);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
@@ -566,6 +575,42 @@ export class PluginHost implements PluginHostInterface {
 			const operations = this.activePluginOperations.get(pluginId);
 			if (!operations) break;
 			await Promise.allSettled([...operations]);
+		}
+	}
+
+	/**
+	 * Runs one plugin's cleanup under a time bound. Cleanup is the final step
+	 * of disablement (and of activation rollback), so an unsettled cleanup
+	 * must not be able to hold the plugin in `deactivating` or hang the
+	 * caller: it is reported against the owning plugin and the caller
+	 * continues (ADR 0009). The plugin's own promise is left running, so a
+	 * late rejection is absorbed rather than surfacing as an unhandled one.
+	 */
+	private async runPluginCleanup(
+		pluginId: string,
+		cleanup: PluginCleanup,
+		phase: 'disablement' | 'activation rollback'
+	): Promise<void> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const settled = Promise.resolve(cleanup()).then(() => 'settled' as const);
+		const expiry = new Promise<'timedOut'>((resolve) => {
+			timer = setTimeout(() => resolve('timedOut'), this.cleanupTimeoutMs);
+		});
+
+		try {
+			const outcome = await Promise.race([settled, expiry]);
+			if (outcome === 'timedOut') {
+				settled.catch(() => {});
+				console.error(
+					`[PluginHost] Cleanup for plugin "${pluginId}" did not finish within ${this.cleanupTimeoutMs}ms; ` +
+						`continuing ${phase} without it.\nAction: Inspect the "${pluginId}" plugin's cleanup function: it must settle ` +
+						`within ${this.cleanupTimeoutMs}ms and must not await a promise that never resolves.`
+				);
+			}
+		} catch (error) {
+			console.error(`[PluginHost] Error during cleanup of plugin "${pluginId}":`, error);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
 		}
 	}
 
@@ -1620,9 +1665,7 @@ export class PluginHost implements PluginHostInterface {
 			const cleanup = this.cleanups.get(id);
 			if (cleanup) {
 				try {
-					await cleanup();
-				} catch (cleanupError) {
-					console.error(`[PluginHost] Error rolling back plugin "${id}":`, cleanupError);
+					await this.runPluginCleanup(id, cleanup, 'activation rollback');
 				} finally {
 					this.cleanups.delete(id);
 				}
@@ -1680,9 +1723,7 @@ export class PluginHost implements PluginHostInterface {
 		const cleanup = this.cleanups.get(id);
 		if (cleanup) {
 			try {
-				await cleanup();
-			} catch (error) {
-				console.error(`[PluginHost] Error during cleanup of plugin "${id}":`, error);
+				await this.runPluginCleanup(id, cleanup, 'disablement');
 			} finally {
 				this.cleanups.delete(id);
 			}
