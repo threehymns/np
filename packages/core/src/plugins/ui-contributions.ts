@@ -10,6 +10,26 @@
  * and the registry rebuilds without them, leaving no residue.
  */
 
+import type { Component } from 'svelte';
+
+export type UIContributionProps = Record<string, unknown>;
+export type UIContributionTarget = Element | Document | ShadowRoot | Record<string, unknown>;
+
+export interface UIContributionInstance {
+	[key: string]: unknown;
+	update?(newProps: UIContributionProps): void;
+	unmount?(): void;
+	destroy?(): void;
+	$destroy?(): void;
+}
+
+export type UIContributionComponent = Component<
+	Record<string, unknown>,
+	Record<string, unknown>,
+	''
+>;
+export type UIContributionIcon = UIContributionComponent;
+
 /** Owner ID for UI contributions registered synchronously by the host app itself. */
 export const CORE_UI_OWNER = 'core';
 
@@ -18,12 +38,14 @@ export type StatusBarAlignment = 'left' | 'right';
 /**
  * Sidebar panel contribution declaration (ADR 0010, ADR 0015).
  */
-export interface SidebarPanelContribution<Props extends Record<string, any> = Record<string, any>> {
+export interface SidebarPanelContribution<
+	Props extends UIContributionProps = UIContributionProps
+> {
 	readonly id: string;
 	readonly title: string;
-	readonly icon?: any;
+	readonly icon?: UIContributionIcon;
 	readonly order: number;
-	readonly component: any;
+	readonly component: UIContributionComponent;
 	readonly props?: Props;
 	readonly pluginId?: string;
 }
@@ -31,20 +53,24 @@ export interface SidebarPanelContribution<Props extends Record<string, any> = Re
 /**
  * Status bar item contribution declaration (ADR 0010, ADR 0015).
  */
-export interface StatusBarItemContribution<Props extends Record<string, any> = Record<string, any>> {
+export interface StatusBarItemContribution<
+	Props extends UIContributionProps = UIContributionProps
+> {
 	readonly id: string;
 	readonly alignment: StatusBarAlignment;
 	readonly order: number;
-	readonly component: any;
+	readonly component: UIContributionComponent;
 	readonly props?: Props;
 	readonly pluginId?: string;
 }
 
-export interface TabContentContribution<Props extends Record<string, any> = Record<string, any>> {
+export interface TabContentContribution<
+	Props extends UIContributionProps = UIContributionProps
+> {
 	readonly id: string;
 	readonly title: string;
-	readonly icon?: any;
-	readonly component: any;
+	readonly icon?: UIContributionIcon;
+	readonly component: UIContributionComponent;
 	readonly props?: Props;
 	readonly pluginId?: string;
 }
@@ -393,13 +419,15 @@ export function rebuildTabContents(
 /**
  * Host-managed mounted contribution instance tracking (ADR 0010).
  */
-export interface MountedContribution<Props extends Record<string, any> = Record<string, any>> {
+export interface MountedContribution<
+	Props extends UIContributionProps = UIContributionProps
+> {
 	readonly instanceId: string;
 	readonly contributionId: string;
 	readonly pluginId: string;
 	readonly kind: 'sidebar-panel' | 'status-bar-item' | 'tab-content';
-	readonly target: any;
-	readonly instance: any;
+	readonly target: UIContributionTarget;
+	readonly instance: UIContributionInstance;
 	props: Props;
 	update(newProps: Partial<Props>): void;
 	unmount(): void;
@@ -430,8 +458,8 @@ export interface UIContributionRegistryLike {
 	mountContribution(
 		pluginId: string,
 		contributionId: string,
-		target: any,
-		props?: Record<string, any>
+		target: UIContributionTarget,
+		props?: UIContributionProps
 	): MountedContribution;
 	unmountContribution(instanceId: string): void;
 	unmountAllPluginContributions(pluginId: string): void;
@@ -571,8 +599,8 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 	mountContribution(
 		pluginId: string,
 		contributionId: string,
-		target: any,
-		props?: Record<string, any>
+		target: UIContributionTarget,
+		props?: UIContributionProps
 	): MountedContribution {
 		const panel = this.panelMap.get(contributionId);
 		const statusItem = this.statusMap.get(contributionId);
@@ -594,18 +622,27 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 				? 'status-bar-item'
 				: 'tab-content';
 		const mergedProps = { ...(contribution.props ?? {}), ...(props ?? {}) };
-		let instance: any = null;
+		const mountable = contribution.component as unknown as {
+			mount?: (target: UIContributionTarget, props: UIContributionProps) => UIContributionInstance;
+		};
+		let instance: UIContributionInstance = {
+			component: contribution.component,
+			target,
+			props: mergedProps
+		};
 
 		if (typeof contribution.component === 'function') {
 			try {
-				instance = contribution.component(target, mergedProps);
+				const render = contribution.component as unknown as (
+					target: UIContributionTarget,
+					props: UIContributionProps
+				) => UIContributionInstance;
+				instance = render(target, mergedProps);
 			} catch (err) {
 				instance = { component: contribution.component, target, props: mergedProps, error: err };
 			}
-		} else if (contribution.component && typeof contribution.component.mount === 'function') {
-			instance = contribution.component.mount(target, mergedProps);
-		} else {
-			instance = { component: contribution.component, target, props: mergedProps };
+		} else if (typeof mountable === 'object' && typeof mountable.mount === 'function') {
+			instance = mountable.mount(target, mergedProps);
 		}
 
 		const instanceId = `inst-${this.nextInstanceSeq++}`;
@@ -617,7 +654,7 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 			target,
 			instance,
 			props: mergedProps,
-			update: (newProps: Record<string, any>) => {
+			update: (newProps: UIContributionProps) => {
 				Object.assign(mounted.props, newProps);
 				if (instance && typeof instance.update === 'function') {
 					instance.update(newProps);
@@ -666,8 +703,11 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
  * Creates a pilot component for testing and contract verification.
  * Supports rendering into a target node, updating props, and unmounting with no residue.
  */
-export function createPilotComponent(name = 'pilot-panel') {
-	return function PilotComponent(targetOrAnchor: any, props: Record<string, any> = {}) {
+export function createPilotComponent(name = 'pilot-panel'): UIContributionComponent {
+	return function PilotComponent(
+		targetOrAnchor: UIContributionTarget,
+		props: UIContributionProps = {}
+	) {
 		let currentProps = { ...props };
 		let rendered = true;
 		let updated = false;
@@ -681,7 +721,7 @@ export function createPilotComponent(name = 'pilot-panel') {
 						dataset: {} as Record<string, string>,
 						attributes: {} as Record<string, string>,
 						textContent: '',
-						parentNode: null as any,
+						parentNode: null as { removeChild?: (child: unknown) => void } | null,
 						setAttribute(attr: string, val: string) {
 							this.attributes[attr] = val;
 						},
@@ -689,25 +729,33 @@ export function createPilotComponent(name = 'pilot-panel') {
 							return this.attributes[attr];
 						},
 						remove() {
-							if (this.parentNode && typeof this.parentNode.removeChild === 'function') {
+							if (this.parentNode?.removeChild) {
 								this.parentNode.removeChild(this);
 							}
 						}
 				  };
+		const target = targetOrAnchor as unknown as {
+			appendChild?: (child: unknown) => void;
+			parentNode?: {
+				insertBefore?: (newNode: unknown, referenceNode: unknown) => void;
+			} | null;
+		};
+		const messageFor = (value: UIContributionProps) =>
+			typeof value.message === 'string' ? value.message : `Component: ${name}`;
 
 		if ('setAttribute' in element) {
 			element.setAttribute('data-testid', name);
-			element.setAttribute('data-order', String(props.order ?? 0));
+			element.setAttribute('data-order', String(typeof props.order === 'number' ? props.order : 0));
 		}
-		element.textContent = props.message ?? `Component: ${name}`;
+		element.textContent = messageFor(props);
 
-		if (targetOrAnchor) {
-			if (typeof targetOrAnchor.appendChild === 'function') {
-				targetOrAnchor.appendChild(element);
-				(element as any).parentNode = targetOrAnchor;
-			} else if (targetOrAnchor.parentNode && typeof targetOrAnchor.parentNode.insertBefore === 'function') {
-				targetOrAnchor.parentNode.insertBefore(element, targetOrAnchor);
-				(element as any).parentNode = targetOrAnchor.parentNode;
+		if (target) {
+			if (typeof target.appendChild === 'function') {
+				target.appendChild(element);
+				Object.assign(element, { parentNode: target });
+			} else if (target.parentNode && typeof target.parentNode.insertBefore === 'function') {
+				target.parentNode.insertBefore(element, target);
+				Object.assign(element, { parentNode: target.parentNode });
 			}
 		}
 
@@ -725,10 +773,10 @@ export function createPilotComponent(name = 'pilot-panel') {
 			get unmounted() {
 				return unmounted;
 			},
-			update(newProps: Record<string, any>) {
+			update(newProps: UIContributionProps) {
 				currentProps = { ...currentProps, ...newProps };
 				updated = true;
-				element.textContent = currentProps.message ?? `Component: ${name}`;
+				element.textContent = messageFor(currentProps);
 				if (newProps.order !== undefined && 'setAttribute' in element) {
 					element.setAttribute('data-order', String(newProps.order));
 				}
@@ -747,5 +795,5 @@ export function createPilotComponent(name = 'pilot-panel') {
 		};
 
 		return instance;
-	};
+	} as unknown as UIContributionComponent;
 }

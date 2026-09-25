@@ -111,6 +111,20 @@ describe('Platform separation static boundary', () => {
 		expect(source).not.toMatch(/getBuiltinModule|node:async_hooks|process/);
 	});
 
+	it('keeps public UI contribution contracts free of any types', () => {
+		const coreSource = readFileSync(join(import.meta.dir, 'ui-contributions.ts'), 'utf-8');
+		const publicTypes = coreSource
+			.slice(0, coreSource.indexOf('export interface MountedContribution'))
+			.replace(/\/\*[\s\S]*?\*\//g, '')
+			.replace(/(^|\s)\/\/.*$/gm, '$1');
+		const gitSource = readFileSync(join(import.meta.dir, 'git', 'ui.ts'), 'utf-8');
+		const editorSource = readFileSync(join(import.meta.dir, '../../../../packages/ui/src/editor/index.ts'), 'utf-8');
+
+		expect(publicTypes).not.toMatch(/\bany\b/);
+		expect(gitSource).not.toMatch(/\bany\b/);
+		expect(editorSource).not.toMatch(/pluginExtensions\?: any\[\]|initialLanguageExtensions: any\[\]/);
+	});
+
 	it('keeps the generic host path free of platform-only runtime imports', () => {
 		const neutralModules = [
 			'host.svelte.ts',

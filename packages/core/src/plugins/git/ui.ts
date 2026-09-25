@@ -1,4 +1,5 @@
 import type { PluginHostInterface } from '../types';
+import type { UIContributionComponent, UIContributionIcon } from '../ui-contributions';
 
 /**
  * Git UI contribution metadata and service bridge (#203).
@@ -32,16 +33,16 @@ export const GIT_UI_COMPONENTS_KEY = 'git:ui-components';
 
 /**
  * Real UI components provided by the UI layer (`packages/ui/src/plugins/git`).
- * All fields are `any` to keep this module headless (no Svelte imports):
- * panel/status components are Svelte components in the browser, pilot
- * function components in headless tests.
+ * The module stays headless (no Svelte imports): panel/status components are
+ * Svelte components in the browser, pilot function components in headless
+ * tests.
  */
 export interface GitUIComponents {
-	readonly panelComponent: any;
-	readonly panelIcon?: any;
-	readonly statusComponent: any;
-	readonly diffComponent: any;
-	readonly diffIcon?: any;
+	readonly panelComponent: UIContributionComponent;
+	readonly panelIcon?: UIContributionIcon;
+	readonly statusComponent: UIContributionComponent;
+	readonly diffComponent?: UIContributionComponent;
+	readonly diffIcon?: UIContributionIcon;
 }
 
 export function getGitUIComponents(

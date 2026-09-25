@@ -13,8 +13,13 @@
   import type FileExplorerComponent from './FileExplorer.svelte';
   import * as Tooltip from './ui/tooltip';
   import { cn } from '@np/core';
+  import type { UIContributionIcon } from '@np/core';
 
   const appState = useAppState();
+
+  function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof XIcon {
+    return (icon ?? XIcon) as unknown as typeof XIcon;
+  }
 
   let Editor = $state<typeof EditorComponent | null>(null);
   let FileExplorer = $state<typeof FileExplorerComponent | null>(null);
@@ -170,7 +175,7 @@
                     class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
                   >
                     {#if tabContent?.icon}
-                      {@const TabIcon = tabContent.icon}
+                      {@const TabIcon = toPhosphorIcon(tabContent.icon)}
                       <TabIcon class="size-3.5 opacity-90 text-primary shrink-0" />
                     {:else}
                       <Icon

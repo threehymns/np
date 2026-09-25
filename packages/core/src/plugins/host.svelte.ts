@@ -12,7 +12,6 @@ import {
 	DirectEditorViewAccessError,
 	RawTransactionDispatchError,
 	DocumentRevisionMismatchError,
-	DuplicateEditorContributionIdError,
 	DependencyCycleError,
 	DuplicatePluginIdError,
 	HookReentryError,
@@ -33,9 +32,13 @@ import type {
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
 	createEditorContributionCompartments,
+	createAddEditorContributionsTransform,
+	rebuildEditorContributions,
 	applyDocumentEditOperation,
 	type EditorContribution,
 	type EditorContributionEntry,
+	type EditorContributionTransform,
+	type EditorContributionTransformEntry,
 	type EditorContributionType,
 	type ApplyDocumentEditOptions,
 	type DocumentEditResult,
@@ -99,6 +102,9 @@ import {
 	type StatusBarItemTransformEntry,
 	type TabContentTransformEntry,
 	type MountedContribution,
+	type UIContributionProps,
+	type UIContributionTarget,
+	type UIContributionInstance,
 	type UIContributionRegistryLike
 } from './ui-contributions';
 
@@ -114,7 +120,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
 );
 
 function createPluginHostInterface(host: PluginHost): PluginHostInterface {
@@ -213,6 +219,7 @@ export class PluginHost implements PluginHostInterface {
 	get editorContributionsRevision(): number {
 		return this.editorRevision;
 	}
+	private editorContributionTransforms: EditorContributionTransformEntry[] = [];
 	private editorContributions: EditorContributionEntry[] = [];
 	private attachedEditors = new SvelteMap<string, AttachedEditor>();
 	private documentSessions = new SvelteMap<string, DocumentSession>();
@@ -1182,8 +1189,8 @@ export class PluginHost implements PluginHostInterface {
 	mountContribution(
 		pluginId: string,
 		contributionId: string,
-		target: any,
-		props?: Record<string, any>
+		target: UIContributionTarget,
+		props?: UIContributionProps
 	): MountedContribution {
 		const panel = this.sidebarPanelsMap.get(contributionId);
 		const statusItem = this.statusBarItemsMap.get(contributionId);
@@ -1205,18 +1212,27 @@ export class PluginHost implements PluginHostInterface {
 				? 'status-bar-item'
 				: 'tab-content';
 		const mergedProps = { ...(contribution.props ?? {}), ...(props ?? {}) };
-		let instance: any = null;
+		const mountable = contribution.component as unknown as {
+			mount?: (target: UIContributionTarget, props: UIContributionProps) => UIContributionInstance;
+		};
+		let instance: UIContributionInstance = {
+			component: contribution.component,
+			target,
+			props: mergedProps
+		};
 
 		if (typeof contribution.component === 'function') {
 			try {
-				instance = contribution.component(target, mergedProps);
+				const render = contribution.component as unknown as (
+					target: UIContributionTarget,
+					props: UIContributionProps
+				) => UIContributionInstance;
+				instance = render(target, mergedProps);
 			} catch (err) {
 				instance = { component: contribution.component, target, props: mergedProps, error: err };
 			}
-		} else if (contribution.component && typeof contribution.component.mount === 'function') {
-			instance = contribution.component.mount(target, mergedProps);
-		} else {
-			instance = { component: contribution.component, target, props: mergedProps };
+		} else if (typeof mountable === 'object' && typeof mountable.mount === 'function') {
+			instance = mountable.mount(target, mergedProps);
 		}
 
 		const instanceId = `inst-${this.nextMountedInstanceId++}`;
@@ -1228,7 +1244,7 @@ export class PluginHost implements PluginHostInterface {
 			target,
 			instance,
 			props: mergedProps,
-			update: (newProps: Record<string, any>) => {
+			update: (newProps: UIContributionProps) => {
 				Object.assign(mounted.props, newProps);
 				if (instance && typeof instance.update === 'function') {
 					instance.update(newProps);
@@ -1578,6 +1594,7 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildCommands();
 			this.rebuildSettings();
 			this.rebuildUIContributions();
+			this.rebuildEditorContributions();
 		} catch (error) {
 			this.states.set(id, 'error');
 			this.removePluginCommands(id);
@@ -1698,23 +1715,34 @@ export class PluginHost implements PluginHostInterface {
 		this.registerEditorContributions(pluginId, [contribution]);
 	}
 
-	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void {
-		for (const incoming of contributions) {
-			const existing = this.editorContributions.find((e) => e.contribution.id === incoming.id);
-			if (existing) {
-				if (existing.pluginId !== pluginId) {
-					throw new DuplicateEditorContributionIdError(incoming.id, existing.pluginId, pluginId);
-				}
-				// Same plugin re-registering: replace with fresh contribution
-				this.editorContributions = this.editorContributions.filter((e) => e.contribution.id !== incoming.id);
-			}
-			this.editorContributions.push({ pluginId, contribution: incoming });
-		}
+	registerEditorContributionTransform(pluginId: string, transform: EditorContributionTransform): void {
+		const nextTransforms = [...this.editorContributionTransforms, { pluginId, transform }];
+		const nextContributions = rebuildEditorContributions(this.orderTransformsByOwner(nextTransforms));
+		this.editorContributionTransforms = nextTransforms;
+		this.editorContributions = nextContributions;
 		this.editorRevision++;
 	}
 
+	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void {
+		this.registerEditorContributionTransform(
+			pluginId,
+			createAddEditorContributionsTransform(contributions, pluginId)
+		);
+	}
+
 	removePluginEditorContributions(pluginId: string): void {
-		this.editorContributions = this.editorContributions.filter((e) => e.pluginId !== pluginId);
+		const kept = this.editorContributionTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length === this.editorContributionTransforms.length) return;
+		const nextContributions = rebuildEditorContributions(this.orderTransformsByOwner(kept));
+		this.editorContributionTransforms = kept;
+		this.editorContributions = nextContributions;
+		this.editorRevision++;
+	}
+
+	rebuildEditorContributions(): void {
+		this.editorContributions = rebuildEditorContributions(
+			this.orderTransformsByOwner(this.editorContributionTransforms)
+		);
 		this.editorRevision++;
 	}
 

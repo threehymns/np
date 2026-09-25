@@ -2,6 +2,7 @@ import type {
 	EditorContribution,
 	EditorContributionEntry,
 	EditorContributionType,
+	EditorContributionTransform,
 	ApplyDocumentEditOptions,
 	DocumentEditResult
 } from "./editor";
@@ -30,6 +31,8 @@ import type {
 	StatusBarAlignment,
 	TabContentContribution,
 	MountedContribution,
+	UIContributionProps,
+	UIContributionTarget,
 	UIContributionRegistryLike
 } from './ui-contributions';
 
@@ -239,8 +242,8 @@ export interface PluginHostInterface {
 	mountContribution(
 		pluginId: string,
 		contributionId: string,
-		target: any,
-		props?: Record<string, any>
+		target: UIContributionTarget,
+		props?: UIContributionProps
 	): MountedContribution;
 	unmountContribution(instanceId: string): void;
 	rebuildUIContributions(): void;
@@ -249,8 +252,10 @@ export interface PluginHostInterface {
 	// Plugins declare CodeMirror extensions as contributions that the host
 	// places into the correct compartments of its single composed configuration.
 	registerEditorContribution(pluginId: string, contribution: EditorContribution): void;
+	registerEditorContributionTransform(pluginId: string, transform: EditorContributionTransform): void;
 	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void;
 	removePluginEditorContributions(pluginId: string): void;
+	rebuildEditorContributions(): void;
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[];
 	readonly editorRevision: number;
 	readonly editorContributionsRevision?: number;

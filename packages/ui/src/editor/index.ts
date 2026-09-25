@@ -14,7 +14,7 @@ import {
 	drawSelection,
 } from "@codemirror/view";
 import { lineNumbers } from "./extensions/line-numbers";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import {
 	indentOnInput,
 	bracketMatching,
@@ -107,7 +107,7 @@ const markdownFeatureConfigs: MarkdownExtension[] = [
 	FadedExtension,
 ];
 
-export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
+export async function getLanguageExtensions(langDesc: LanguageDescription | null): Promise<Extension[]> {
 	if (!langDesc) return [];
 
 	const lang = await langDesc.load();
@@ -219,12 +219,11 @@ export function createEditorExtensions(options: {
 	keybindingsCompartment?: Compartment;
 	editorCompartments?: EditorCompartments;
 	pluginContributions?: readonly EditorContributionEntry[];
-	pluginExtensions?: any[];
 	language?: string;
 	wrap: boolean;
 	vimEnabled: boolean;
-	initialLanguageExtensions: any[];
-}) {
+	initialLanguageExtensions: readonly Extension[];
+}): Extension[] {
 	const {
 		wrapCompartment,
 		languageCompartment,
@@ -234,22 +233,19 @@ export function createEditorExtensions(options: {
 		keybindingsCompartment,
 		editorCompartments,
 		pluginContributions,
-		pluginExtensions,
 		language,
 		wrap,
 		vimEnabled,
 		initialLanguageExtensions
 	} = options;
 
-	const resolvedPluginExtensions = pluginExtensions ?? (
-		editorCompartments
-			? composeEditorContributions(pluginContributions ?? [], editorCompartments, language)
-			: [
+	const resolvedPluginExtensions = editorCompartments
+		? composeEditorContributions(pluginContributions ?? [], editorCompartments, language)
+		: [
 				...(gutterCompartment ? [gutterCompartment.of([])] : []),
 				...(decorationsCompartment ? [decorationsCompartment.of([])] : []),
 				...(keybindingsCompartment ? [keybindingsCompartment.of([])] : []),
-			]
-	);
+			];
 
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),

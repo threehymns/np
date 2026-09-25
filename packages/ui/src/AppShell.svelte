@@ -13,6 +13,7 @@
 	import { onMount, type Snippet } from "svelte";
 	import { registerBundledPlugins, registerPluginUiLoader } from "./plugins/index";
 
+	import type { UIContributionIcon } from "@np/core";
 	import type SettingsModalComponent from "./components/SettingsModal.svelte";
 	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
 	import type WhichKeyComponent from "./components/WhichKey.svelte";
@@ -24,6 +25,10 @@
 	let { children } = $props<{ children: Snippet }>();
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
+
+	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof SidebarIcon {
+		return (icon ?? SidebarIcon) as unknown as typeof SidebarIcon;
+	}
 
 	onMount(() => {
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
@@ -313,9 +318,9 @@
 
 					<!-- Contributed Sidebar Panels (including version-control panel when its plugin is active) -->
 					{#each appState.plugins.getSidebarPanels() as panel (panel.id)}
-						{@const PanelIcon = panel.icon}
+						{@const PanelIcon = toPhosphorIcon(panel.icon)}
 						{@render statusButton({
-							icon: PanelIcon ?? SidebarIcon,
+							icon: PanelIcon,
 							class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === panel.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
 							title: panel.title,
 							shortcut: null,

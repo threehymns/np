@@ -22,6 +22,8 @@ import {
 	getContributionsForType,
 	composeEditorContributions,
 	reconfigureEditorContributions,
+	createAddEditorContributionsTransform,
+	rebuildEditorContributions,
 	type EditorContribution,
 	type EditorContributionEntry
 } from './editor';
@@ -152,12 +154,43 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 			expect(mdContributions.map((e) => e.contribution.id)).toEqual(['all-gutter', 'md-gutter']);
 		});
 
+		it('replays editor contribution transforms from an empty state and drops removed owners', () => {
+			const alpha: EditorContribution = {
+				id: 'alpha-gutter',
+				type: 'gutter',
+				extension: []
+			};
+			const beta: EditorContribution = {
+				id: 'beta-gutter',
+				type: 'gutter',
+				extension: []
+			};
+
+			const transforms = [
+				{ pluginId: 'alpha', transform: createAddEditorContributionsTransform([alpha], 'alpha') },
+				{ pluginId: 'beta', transform: createAddEditorContributionsTransform([beta], 'beta') }
+			];
+			const all = rebuildEditorContributions(transforms);
+			const afterRemove = rebuildEditorContributions(
+				transforms.filter((entry) => entry.pluginId !== 'alpha')
+			);
+			const clean = rebuildEditorContributions([
+				{ pluginId: 'beta', transform: createAddEditorContributionsTransform([beta], 'beta') }
+			]);
+
+			expect(all.map((entry) => entry.contribution.id)).toEqual(['alpha-gutter', 'beta-gutter']);
+			expect(all.map((entry) => entry.pluginId)).toEqual(['alpha', 'beta']);
+			expect(afterRemove).toEqual(clean);
+		});
+
 		it('rejects duplicate contribution IDs across different plugins with an actionable error', () => {
 			host.registerEditorContribution('plugin-a', {
 				id: 'shared-id',
 				type: 'gutter',
 				extension: []
 			});
+			const before = host.getEditorContributions();
+			const revision = host.editorRevision;
 
 			expect(() => {
 				host.registerEditorContribution('plugin-b', {
@@ -166,6 +199,8 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 					extension: []
 				});
 			}).toThrow(DuplicateEditorContributionIdError);
+			expect(host.getEditorContributions()).toEqual(before);
+			expect(host.editorRevision).toBe(revision);
 		});
 
 		it('allows same-plugin re-registration with fresh closures (refresh)', () => {

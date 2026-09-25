@@ -7,7 +7,6 @@ import {
 } from "../editor/index";
 import {
 	PluginHost,
-	composeEditorContributions,
 	reconfigureEditorContributions,
 	type EditorContributionEntry,
 } from "@np/core";
@@ -54,17 +53,13 @@ describe("Editor plugin contribution composition and reconfiguration", () => {
 			},
 		];
 
-		const pluginExtensions = composeEditorContributions(
-			entries,
-			host.editorCompartments,
-			"markdown",
-		);
-
 		const extensions = createEditorExtensions({
 			wrapCompartment,
 			languageCompartment,
 			vimCompartment,
-			pluginExtensions,
+			editorCompartments: host.editorCompartments,
+			pluginContributions: entries,
+			language: "markdown",
 			gutterCompartment: host.editorCompartments.gutterCompartment,
 			decorationsCompartment: host.editorCompartments.decorationsCompartment,
 			keybindingsCompartment: host.editorCompartments.keybindingsCompartment,

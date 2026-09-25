@@ -59,6 +59,65 @@ export interface EditorContributionEntry {
 	readonly contribution: EditorContribution;
 }
 
+export type EditorContributionTransform = (
+	previous: ReadonlyMap<string, EditorContribution>
+) => ReadonlyMap<string, EditorContribution>;
+
+export interface EditorContributionTransformEntry {
+	readonly pluginId: string;
+	readonly transform: EditorContributionTransform;
+}
+
+export function createAddEditorContributionsTransform(
+	contributions: readonly EditorContribution[],
+	_pluginId: string
+): EditorContributionTransform {
+	const snapshot = [...contributions];
+	return (previous) => {
+		const next = new Map(previous);
+		for (const contribution of snapshot) {
+			next.set(contribution.id, contribution);
+		}
+		return next;
+	};
+}
+
+export function rebuildEditorContributions(
+	transforms: readonly EditorContributionTransformEntry[]
+): EditorContributionEntry[] {
+	let state = new Map<string, EditorContribution>();
+	const owners = new Map<string, string>();
+
+	for (const entry of transforms) {
+		const input = new Map(state);
+		const next = new Map(entry.transform(input));
+
+		for (const [id, contribution] of next) {
+			const previous = state.get(id);
+			if (previous === undefined || previous !== contribution) {
+				const owner = owners.get(id);
+				if (owner !== undefined && owner !== entry.pluginId) {
+					throw new DuplicateEditorContributionIdError(id, owner, entry.pluginId);
+				}
+				owners.set(id, entry.pluginId);
+			}
+		}
+
+		for (const id of state.keys()) {
+			if (!next.has(id)) {
+				owners.delete(id);
+			}
+		}
+
+		state = next;
+	}
+
+	return Array.from(state, ([id, contribution]) => ({
+		pluginId: owners.get(id) ?? '',
+		contribution
+	}));
+}
+
 /**
  * Host-managed compartments for editor contributions.
  */
