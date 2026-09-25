@@ -235,9 +235,14 @@ export class KeymapRegistry {
 	}
 
 	rebuild(): void {
-		let keymap: ReadonlyArray<KeymapBinding> = this.baseKeymap;
+		// Defensive copy per replay step (ADR 0012): transforms must be pure
+		// and repeatable, so an impure transform that mutates the array it was
+		// handed cannot corrupt the base keymap or any later replay. Mirrors
+		// rebuildCommands in plugins/commands.ts.
+		let keymap: ReadonlyArray<KeymapBinding> = [...this.baseKeymap];
 		for (const entry of this.keymapTransforms) {
-			keymap = entry.transform(keymap);
+			const result = entry.transform([...keymap]);
+			keymap = Array.isArray(result) ? [...result] : [];
 		}
 		this.bindings = this.parseBindings(keymap);
 	}

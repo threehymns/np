@@ -58,6 +58,25 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		);
 	});
 
+	it("keeps the base keymap intact when a transform mutates its input", () => {
+		const appState = { commands: { execute: () => undefined } } as any;
+		const reference = new KeymapRegistry(appState);
+		const baseCount = reference.bindings.length;
+
+		const registry = new KeymapRegistry(appState);
+		// An impure transform that appends to the array it was handed.
+		registry.registerKeymapTransform("impure", (previous) => {
+			(previous as any[]).push({ bindings: { "ctrl+alt+leak": "leak.command" } });
+			return previous;
+		});
+
+		// A registry built afterwards must see the untouched base keymap.
+		const later = new KeymapRegistry(appState);
+		expect(later.bindings.length).toBe(baseCount);
+		expect(later.bindings.some((binding) => binding.commandId === "leak.command")).toBe(false);
+		expect(registry.bindings.some((binding) => binding.commandId === "leak.command")).toBe(true);
+	});
+
 	it("rebuilds icon providers after removing one owner and matches a clean build", () => {
 		const provider = (id: string) => ({
 			id,
