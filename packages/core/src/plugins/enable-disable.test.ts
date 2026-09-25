@@ -200,10 +200,39 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(host2.isPluginActive('git')).toBe(false);
 			expect(app2.isPluginEnabled('git')).toBe(false);
 			expect(host2.getCommand('git.init')).toBeUndefined();
+		it('does not restore a persisted Git diff view while disabled', async () => {
+			const prefsBacking = createPrefsBacking();
+			const host = new PluginHost();
+			host.register(gitRegistration);
+			const { storage } = createHarnessStorage();
+			const persistence = new MemorySessionPersistence();
+			const app = new AppState({
+				storage,
+				vcsFactory: createCountingVcsFactory({ factory: 0, detect: 0, init: 0, getChanges: 0 }),
+				persistence,
+				prefsStorage: prefsBacking,
+				pluginHost: host
+			});
+			await app.setPluginEnabled('git', false);
+
+			const folderUri = toURI(rootOrigin);
+			await persistence.saveRootFolder(rootOrigin);
+			await persistence.saveOpenFiles(
+				[{ id: '__project_diff__', origin: null, isModified: false, virtualTabType: 'diff' }],
+				folderUri
+			);
+			await persistence.saveActiveDocumentId('__project_diff__', folderUri);
+
+			await app.init();
+
+			expect(host.isPluginActive('git')).toBe(false);
+			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
+			expect(app.activeTabId).not.toBe('__project_diff__');
 		});
 	});
+});
 
-	describe('toggle off/on round trip restores full function without restart', () => {
+describe('toggle off/on round trip restores full function without restart', () => {
 		async function makeApp() {
 			const prefsBacking = createPrefsBacking();
 			const host = new PluginHost();
@@ -282,6 +311,20 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			await app.workspace.openDirectory();
 			expect(app.workspace.repository).not.toBeNull();
 			expect(app.workspace.repository?.currentBranch).toBe('main');
+		});
+
+		it('closes Git-owned diff views on disable and keeps them closed on re-enable', async () => {
+			const { app } = await makeApp();
+			await app.workspace.openDirectory();
+			await app.commands.execute('git.openDiff');
+			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(true);
+
+			await app.setPluginEnabled('git', false);
+			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
+			expect(app.activeTabId).not.toBe('__project_diff__');
+
+			await app.setPluginEnabled('git', true);
+			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
 		});
 
 		it('preserves unsaved drafts across the round trip', async () => {

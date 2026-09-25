@@ -148,11 +148,20 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	}
 
 	return async () => {
+		const workspaces = Array.from(states.keys());
+		console.log(
+			'[DEBUG-193] before cleanup',
+			workspaces.map((workspace) => workspace.tabs.filter((tab) => tab.type === 'diff').length)
+		);
 		removeWorkspaceOpenedHook();
 		for (const state of states.values()) {
 			await disposeWorkspaceGitState(state);
 		}
 		states.clear();
+		console.log(
+			'[DEBUG-193] after cleanup',
+			workspaces.map((workspace) => workspace.tabs.filter((tab) => tab.type === 'diff').length)
+		);
 	};
 }
 
