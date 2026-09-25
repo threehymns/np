@@ -13,6 +13,7 @@ import type { SwitchResult, VCSAdapter } from './project/vcs';
 export interface WorkspaceTab {
 	id: string;
 	type: 'document' | 'diff';
+	pluginId?: string;
 }
 
 export class Workspace {
@@ -205,7 +206,8 @@ export class Workspace {
 				const serialized: SerializedDocument = {
 					id: tab.id,
 					origin: null,
-					virtualTabType: 'diff'
+					virtualTabType: 'diff',
+					...(tab.pluginId ? { pluginId: tab.pluginId } : {})
 				};
 				const active = this.repository?.activeDiffFile;
 				if (active) {
@@ -739,9 +741,13 @@ export class Workspace {
 					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
 						if (serialized.virtualTabType === 'diff') {
+							if (serialized.pluginId && !this.pluginHost.isPluginActive(serialized.pluginId)) {
+								continue;
+							}
 							restoredTabs.push({
 								id: serialized.id,
-								type: 'diff'
+								type: 'diff',
+								...(serialized.pluginId ? { pluginId: serialized.pluginId } : {})
 							});
 							if (serialized.diffFilepath) {
 								this.pendingDiffRestore.set(serialized.id, {
@@ -786,7 +792,9 @@ export class Workspace {
 
 				this.documents = restoredDocs;
 				this.tabs = restoredTabs;
-				if (activeId && restoredTabs.some(t => t.id === activeId)) {
+				if (restoredTabs.length === 0) {
+					await this.newFile();
+				} else if (activeId && restoredTabs.some(t => t.id === activeId)) {
 					this.activeTabId = activeId;
 				} else {
 					this.activeTabId = restoredTabs[0]?.id || '';

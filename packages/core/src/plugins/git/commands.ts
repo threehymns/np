@@ -6,6 +6,7 @@ import { DEFAULT_DIFF_CONFIG, type GitChange, type VCSAdapter } from '../../proj
 import { runExclusively } from '../../project/repository.svelte';
 import { mapRange } from '../../commands.svelte';
 import type { Workspace } from '../../workspace.svelte';
+import { manifest } from './manifest';
 
 /**
  * Collaborators for Git command actions (#202).
@@ -286,7 +287,7 @@ export function createGitCommands(
 			const id = '__project_diff__';
 			const existing = ws.tabs.find((t) => t.id === id);
 			if (!existing) {
-				ws.tabs.push({ id, type: 'diff' });
+				ws.tabs.push({ id, type: 'diff', pluginId: manifest.id });
 			}
 			ws.activeTabId = id;
 			if (ws.repository) {

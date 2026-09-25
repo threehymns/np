@@ -7,6 +7,7 @@ import {
 } from '../services';
 import { createPilotComponent } from '../ui-contributions';
 import type { DialogService } from '../../state.svelte';
+import { toURI } from '../../storage';
 import type { Workspace } from '../../workspace.svelte';
 import { manifest } from './manifest';
 import { createGitCommands, type GitCommandContext } from './commands';
@@ -148,20 +149,21 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	}
 
 	return async () => {
-		const workspaces = Array.from(states.keys());
-		console.log(
-			'[DEBUG-193] before cleanup',
-			workspaces.map((workspace) => workspace.tabs.filter((tab) => tab.type === 'diff').length)
-		);
 		removeWorkspaceOpenedHook();
-		for (const state of states.values()) {
-			await disposeWorkspaceGitState(state);
+		const workspaces = new Set(states.keys());
+		const current = getWorkspace();
+		if (current) workspaces.add(current);
+		for (const workspace of workspaces) {
+			const state = states.get(workspace);
+			if (state) await disposeWorkspaceGitState(state);
+			for (const tab of workspace.tabs.filter(
+				(tab) => tab.type === 'diff' && (!tab.pluginId || tab.pluginId === manifest.id)
+			)) {
+				workspace.closeTab(tab.id);
+			}
+			await workspace.saveFolderState(workspace.rootOrigin ? toURI(workspace.rootOrigin) : '');
 		}
 		states.clear();
-		console.log(
-			'[DEBUG-193] after cleanup',
-			workspaces.map((workspace) => workspace.tabs.filter((tab) => tab.type === 'diff').length)
-		);
 	};
 }
 

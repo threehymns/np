@@ -200,6 +200,8 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(host2.isPluginActive('git')).toBe(false);
 			expect(app2.isPluginEnabled('git')).toBe(false);
 			expect(host2.getCommand('git.init')).toBeUndefined();
+		});
+
 		it('does not restore a persisted Git diff view while disabled', async () => {
 			const prefsBacking = createPrefsBacking();
 			const host = new PluginHost();
@@ -218,7 +220,7 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			const folderUri = toURI(rootOrigin);
 			await persistence.saveRootFolder(rootOrigin);
 			await persistence.saveOpenFiles(
-				[{ id: '__project_diff__', origin: null, isModified: false, virtualTabType: 'diff' }],
+				[{ id: '__project_diff__', origin: null, isModified: false, virtualTabType: 'diff', pluginId: 'git' }],
 				folderUri
 			);
 			await persistence.saveActiveDocumentId('__project_diff__', folderUri);
@@ -230,7 +232,6 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(app.activeTabId).not.toBe('__project_diff__');
 		});
 	});
-});
 
 describe('toggle off/on round trip restores full function without restart', () => {
 		async function makeApp() {
@@ -318,10 +319,13 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.workspace.openDirectory();
 			await app.commands.execute('git.openDiff');
 			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(true);
+			expect(app.workspace.tabs.find((tab) => tab.id === '__project_diff__')?.pluginId).toBe('git');
 
 			await app.setPluginEnabled('git', false);
 			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
 			expect(app.activeTabId).not.toBe('__project_diff__');
+			const saved = await app.workspace.persistence.loadOpenFiles(toURI(app.workspace.rootOrigin!));
+			expect(saved.some((entry) => entry.pluginId === 'git')).toBe(false);
 
 			await app.setPluginEnabled('git', true);
 			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
