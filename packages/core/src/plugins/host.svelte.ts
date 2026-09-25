@@ -108,10 +108,7 @@ interface AsyncLocalStorageLike<T> {
 }
 
 const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefined =
-	(globalThis as any).AsyncLocalStorage ??
-	(typeof process !== 'undefined' && typeof (process as any).getBuiltinModule === 'function'
-		? (process as any).getBuiltinModule('node:async_hooks')?.AsyncLocalStorage
-		: undefined);
+	(globalThis as any).AsyncLocalStorage;
 
 const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;

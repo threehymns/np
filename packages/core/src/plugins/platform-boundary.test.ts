@@ -106,6 +106,11 @@ describe('Platform separation static boundary', () => {
 		expect(uiBridge).toMatch(/import\(['"]\.\/git['"]\)/);
 	});
 
+	it('keeps async context detection platform-neutral in the host', () => {
+		const source = readFileSync(join(import.meta.dir, 'host.svelte.ts'), 'utf-8');
+		expect(source).not.toMatch(/getBuiltinModule|node:async_hooks|process/);
+	});
+
 	it('keeps the generic host path free of platform-only runtime imports', () => {
 		const neutralModules = [
 			'host.svelte.ts',

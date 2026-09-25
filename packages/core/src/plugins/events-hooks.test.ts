@@ -9,6 +9,8 @@ import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';
 import { AppState } from '../state.svelte';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { ActiveHookContext } from './hooks';
 
 function createLocalMockStorage(initialFiles: Record<string, string> = {}): Storage {
 	const files = new Map<string, string>(Object.entries(initialFiles));
@@ -466,7 +468,14 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 		});
 
 		it('serializes concurrent independent saves instead of rejecting them as hook re-entry', async () => {
-			const host = new PluginHost();
+			const asyncStorage = new AsyncLocalStorage<ActiveHookContext>();
+			const host = new PluginHost({
+				operationContext: {
+					propagation: 'async',
+					run: (context, callback) => asyncStorage.run(context, callback),
+					get: () => asyncStorage.getStore()
+				}
+			});
 			const storage = createLocalMockStorage({ '/a.md': '', '/b.md': '' });
 			const persistence = new MemorySessionPersistence();
 			const workspace = new Workspace(storage, createMockVcsFactory(), persistence, host);
