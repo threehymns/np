@@ -10,6 +10,7 @@ import { CommandPaletteState } from './components/commandPalette.svelte';
 import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 import { PluginHost, type CommandRegistryLike, type PluginPlatform } from './plugins';
 import {
@@ -169,6 +170,8 @@ export class AppState {
 		};
 
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
+		this.plugins.attachKeymapRegistryInternal(this.keymaps);
+		this.plugins.attachIconRegistryInternal(this.icons);
 		// Bundled feature plugins (e.g. version control) register through the
 		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
 		// of feature names.
@@ -271,7 +274,7 @@ export class AppState {
 			this.prefs.setPluginEnabled(id, true);
 			return;
 		}
-		const activeBefore = new Set(
+		const activeBefore = new SvelteSet(
 			this.plugins.getManifests().map((m) => m.id).filter((pid) => this.plugins.isPluginActive(pid))
 		);
 		const manifest = this.plugins.getManifest(id);

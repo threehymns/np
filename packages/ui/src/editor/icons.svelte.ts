@@ -27,10 +27,15 @@ import type {
 	ResolvedIcon,
 	FileIconProvider,
 	ProductIconProvider,
+	FileIconTransform,
+	FileIconTransformEntry,
+	ProductIconTransform,
+	ProductIconTransformEntry,
 	IconRegistryInterface,
 	ThemeInfo
 } from "@np/core";
-import { ManifestIconProvider, builtinFileThemes, fetchZedTheme } from "@np/core";
+import { CORE_ICONS_OWNER, ManifestIconProvider, builtinFileThemes, fetchZedTheme } from "@np/core";
+import { SvelteMap } from "svelte/reactivity";
 
 export class PhosphorIconProvider implements FileIconProvider, ProductIconProvider {
 	readonly id = 'phosphor';
@@ -139,17 +144,23 @@ const BUILTIN_FILE_THEME_IDS = new Set<string>([
 	...builtinFileThemes.map((config) => config.id)
 ]);
 
+type FileIconTransformRegistration = FileIconTransformEntry & { themeId?: string };
+type ProductIconTransformRegistration = ProductIconTransformEntry & { themeId?: string };
+
 export class IconRegistry implements IconRegistryInterface {
 	activeFileThemeId = $state<string>('phosphor');
 	activeProductThemeId = $state<string>('phosphor');
 	currentAppearance = $state<'light' | 'dark'>('dark');
 
-	private fileThemes = $state<Record<string, FileIconProvider>>({
-		'phosphor': new PhosphorIconProvider()
-	});
-	private productThemes = $state<Record<string, ProductIconProvider>>({
-		'phosphor': new PhosphorIconProvider()
-	});
+	private fileThemes = $state<Record<string, FileIconProvider>>({});
+	private productThemes = $state<Record<string, ProductIconProvider>>({});
+	private fileIconTransforms: FileIconTransformRegistration[] = [];
+	private productIconTransforms: ProductIconTransformRegistration[] = [];
+
+	constructor() {
+		this.registerFileTheme('phosphor', new PhosphorIconProvider());
+		this.registerProductTheme('phosphor', new PhosphorIconProvider());
+	}
 
 	async initialize(): Promise<void> {
 		await Promise.all(
@@ -216,11 +227,113 @@ export class IconRegistry implements IconRegistryInterface {
 	}
 
 	registerFileTheme(id: string, provider: FileIconProvider) {
-		this.fileThemes[id] = provider;
+		this.registerCoreFileTheme(id, provider);
 	}
 
 	registerProductTheme(id: string, provider: ProductIconProvider) {
-		this.productThemes[id] = provider;
+		this.registerCoreProductTheme(id, provider);
+	}
+
+	registerFileIconTransform(pluginId: string, transform: FileIconTransform): void {
+		this.fileIconTransforms.push({ pluginId, transform });
+		this.rebuild();
+	}
+
+	registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void {
+		this.productIconTransforms.push({ pluginId, transform });
+		this.rebuild();
+	}
+
+	removePluginIcons(pluginId: string): void {
+		const keptFileTransforms = this.fileIconTransforms.filter((entry) => entry.pluginId !== pluginId);
+		const keptProductTransforms = this.productIconTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (
+			keptFileTransforms.length !== this.fileIconTransforms.length ||
+			keptProductTransforms.length !== this.productIconTransforms.length
+		) {
+			this.fileIconTransforms = keptFileTransforms;
+			this.productIconTransforms = keptProductTransforms;
+			this.rebuild();
+		}
+	}
+
+	rebuild(): void {
+		this.fileThemes = this.replayFileTransforms();
+		this.productThemes = this.replayProductTransforms();
+		this.applyAppearance();
+	}
+
+	refresh(): void {
+		this.rebuild();
+	}
+
+	private registerCoreFileTheme(id: string, provider: FileIconProvider): void {
+		const entry: FileIconTransformRegistration = {
+			pluginId: CORE_ICONS_OWNER,
+			themeId: id,
+			transform: (previous) => {
+				const next = new SvelteMap(previous);
+				next.set(id, provider);
+				return next;
+			}
+		};
+		const index = this.fileIconTransforms.findIndex(
+			(candidate) => candidate.pluginId === CORE_ICONS_OWNER && candidate.themeId === id
+		);
+		if (index === -1) {
+			this.fileIconTransforms.push(entry);
+		} else {
+			this.fileIconTransforms[index] = entry;
+		}
+		this.rebuild();
+	}
+
+	private registerCoreProductTheme(id: string, provider: ProductIconProvider): void {
+		const entry: ProductIconTransformRegistration = {
+			pluginId: CORE_ICONS_OWNER,
+			themeId: id,
+			transform: (previous) => {
+				const next = new SvelteMap(previous);
+				next.set(id, provider);
+				return next;
+			}
+		};
+		const index = this.productIconTransforms.findIndex(
+			(candidate) => candidate.pluginId === CORE_ICONS_OWNER && candidate.themeId === id
+		);
+		if (index === -1) {
+			this.productIconTransforms.push(entry);
+		} else {
+			this.productIconTransforms[index] = entry;
+		}
+		this.rebuild();
+	}
+
+	private replayFileTransforms(): Record<string, FileIconProvider> {
+		let state = new SvelteMap<string, FileIconProvider>();
+		for (const entry of this.fileIconTransforms) {
+			const next = entry.transform(new SvelteMap(state));
+			state = new SvelteMap(next);
+		}
+		return Object.fromEntries(state);
+	}
+
+	private replayProductTransforms(): Record<string, ProductIconProvider> {
+		let state = new SvelteMap<string, ProductIconProvider>();
+		for (const entry of this.productIconTransforms) {
+			const next = entry.transform(new SvelteMap(state));
+			state = new SvelteMap(next);
+		}
+		return Object.fromEntries(state);
+	}
+
+	private applyAppearance(): void {
+		for (const provider of Object.values(this.fileThemes)) {
+			provider.setAppearance?.(this.currentAppearance);
+		}
+		for (const provider of Object.values(this.productThemes)) {
+			provider.setAppearance?.(this.currentAppearance);
+		}
 	}
 
 	getFileThemes(): ThemeInfo[] {
@@ -241,16 +354,7 @@ export class IconRegistry implements IconRegistryInterface {
 
 	setAppearance(appearance: 'light' | 'dark') {
 		this.currentAppearance = appearance;
-		for (const provider of Object.values(this.fileThemes)) {
-			if (provider.setAppearance) {
-				provider.setAppearance(appearance);
-			}
-		}
-		for (const provider of Object.values(this.productThemes)) {
-			if (provider.setAppearance) {
-				provider.setAppearance(appearance);
-			}
-		}
+		this.applyAppearance();
 	}
 
 	resolveFileIconChain(filename: string, context?: { language?: string }): ResolvedIcon[] {
@@ -463,7 +567,13 @@ export class IconRegistry implements IconRegistryInterface {
 	async uninstallTheme(id: string) {
 		if (BUILTIN_FILE_THEME_IDS.has(id)) return;
 
-		delete this.fileThemes[id];
+		const keptFileTransforms = this.fileIconTransforms.filter(
+			(entry) => !(entry.pluginId === CORE_ICONS_OWNER && entry.themeId === id)
+		);
+		if (keptFileTransforms.length !== this.fileIconTransforms.length) {
+			this.fileIconTransforms = keptFileTransforms;
+			this.rebuild();
+		}
 
 		if (this.activeFileThemeId === id) {
 			this.activeFileThemeId = 'phosphor';

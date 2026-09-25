@@ -5,6 +5,8 @@ import type {
 	ApplyDocumentEditOptions,
 	DocumentEditResult
 } from "./editor";
+import type { KeymapBinding, KeymapTransform } from '../keymap.svelte';
+import type { FileIconTransform, ProductIconTransform } from '../editor/icons-types';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -160,6 +162,13 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void;
+	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void;
+	removePluginKeymaps(pluginId: string): void;
+	registerFileIconTransform(pluginId: string, transform: FileIconTransform): void;
+	registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void;
+	removePluginIcons(pluginId: string): void;
 
 	// Event observation (ADR 0013: Events observe, fire-and-forget)
 	on<T = any>(event: string, handler: EventHandler<T>, pluginId?: string): () => void;

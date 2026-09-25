@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ManifestIconProvider } from "./editor/icons/manifest-provider";
 import { HeadlessIconRegistry } from "./editor/icons/headless-registry.svelte";
+import { KeymapRegistry } from "./keymap.svelte";
 import { transformer } from "./transformer";
 import { createMockStorage } from "../../../tests/mock-storage";
 
@@ -35,6 +36,81 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		expect(appState.workspace).toBeDefined();
 		expect(appState.commands).toBeDefined();
 		expect(appState.icons).toBeDefined();
+	});
+
+	it("rebuilds keymaps after removing one owner and matches a clean build", () => {
+		const appState = { commands: { execute: () => undefined } } as any;
+		const registry = new KeymapRegistry(appState);
+		const clean = new KeymapRegistry(appState);
+		const add = (commandId: string) => (previous: readonly any[]) => [
+			...previous,
+			{ bindings: { [`ctrl+alt+${commandId}`]: commandId } }
+		];
+
+		registry.registerKeymapTransform("alpha", add("alpha"));
+		registry.registerKeymapTransform("beta", add("beta"));
+		clean.registerKeymapTransform("beta", add("beta"));
+		registry.removePluginKeymaps("alpha");
+		registry.refresh();
+
+		expect(registry.bindings.map((binding) => binding.commandId)).toEqual(
+			clean.bindings.map((binding) => binding.commandId)
+		);
+	});
+
+	it("rebuilds icon providers after removing one owner and matches a clean build", () => {
+		const provider = (id: string) => ({
+			id,
+			name: id,
+			resolveFileIcon: () => null,
+			resolveFolderIcon: () => null,
+			getDefaultFileIcon: () => null,
+			getDefaultFolderIcon: () => null
+		});
+		const registry = new HeadlessIconRegistry();
+		const clean = new HeadlessIconRegistry();
+		const add = (id: string) => (previous: ReadonlyMap<string, any>) =>
+			new Map(previous).set(id, provider(id));
+
+		registry.registerFileIconTransform("alpha", add("alpha"));
+		registry.registerFileIconTransform("beta", add("beta"));
+		clean.registerFileIconTransform("beta", add("beta"));
+		registry.removePluginIcons("alpha");
+		registry.refresh();
+
+		expect(registry.getFileThemes()).toEqual(clean.getFileThemes());
+	});
+
+	it("removes plugin keymap and icon transforms through host lifecycle", async () => {
+		const app = new AppState({
+			storage: createMockStorage(),
+			vcsFactory: () => ({} as any)
+		});
+		const provider = {
+			id: "plugin-theme",
+			name: "Plugin Theme",
+			resolveFileIcon: () => null,
+			resolveFolderIcon: () => null,
+			getDefaultFileIcon: () => null,
+			getDefaultFolderIcon: () => null
+		};
+		app.plugins.register({
+			manifest: { id: "registry-plugin", name: "Registry Plugin", version: 0 },
+			setup: (host) => {
+				host.registerKeymapBindings("registry-plugin", [{ bindings: { "ctrl+alt+r": "registry.plugin" } }]);
+				host.registerFileIconTransform("registry-plugin", (previous) =>
+					new Map(previous).set(provider.id, provider)
+				);
+			}
+		});
+
+		await app.plugins.activate("registry-plugin");
+		expect(app.keymaps.bindings.some((binding) => binding.commandId === "registry.plugin")).toBe(true);
+		expect(app.icons.getFileThemes().some((theme) => theme.id === provider.id)).toBe(true);
+
+		await app.plugins.deactivate("registry-plugin");
+		expect(app.keymaps.bindings.some((binding) => binding.commandId === "registry.plugin")).toBe(false);
+		expect(app.icons.getFileThemes().some((theme) => theme.id === provider.id)).toBe(false);
 	});
 
 	it("transforms markdown to HTML without DOM or window globals", async () => {

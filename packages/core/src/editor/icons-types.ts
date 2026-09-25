@@ -24,12 +24,32 @@ export interface FileIconProvider {
   setAppearance?(appearance: 'light' | 'dark'): void;
 }
 
+export const CORE_ICONS_OWNER = 'core';
+
 export interface ProductIconProvider {
   readonly id: string;
   readonly name: string;
   
   resolveProductIcon(iconName: string): ResolvedIcon | null;
   setAppearance?(appearance: 'light' | 'dark'): void;
+}
+
+export type FileIconTransform = (
+  previous: ReadonlyMap<string, FileIconProvider>
+) => ReadonlyMap<string, FileIconProvider>;
+
+export interface FileIconTransformEntry {
+  readonly pluginId: string;
+  readonly transform: FileIconTransform;
+}
+
+export type ProductIconTransform = (
+  previous: ReadonlyMap<string, ProductIconProvider>
+) => ReadonlyMap<string, ProductIconProvider>;
+
+export interface ProductIconTransformEntry {
+  readonly pluginId: string;
+  readonly transform: ProductIconTransform;
 }
 
 export interface ThemeInfo {
@@ -44,6 +64,11 @@ export interface IconRegistryInterface {
   currentAppearance: 'light' | 'dark';
   registerFileTheme(id: string, provider: FileIconProvider): void;
   registerProductTheme(id: string, provider: ProductIconProvider): void;
+  registerFileIconTransform(pluginId: string, transform: FileIconTransform): void;
+  registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void;
+  removePluginIcons(pluginId: string): void;
+  rebuild(): void;
+  refresh(): void;
   getFileThemes(): ThemeInfo[];
   getProductThemes(): ThemeInfo[];
   setAppearance(appearance: 'light' | 'dark'): void;

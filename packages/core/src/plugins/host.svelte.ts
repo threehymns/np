@@ -24,7 +24,13 @@ import {
 	UnsupportedPlatformError
 } from './errors';
 import type { DocumentSession } from "../document.svelte";
-import { SvelteMap } from 'svelte/reactivity';
+import type { KeymapBinding, KeymapRegistry, KeymapTransform } from '../keymap.svelte';
+import type {
+	FileIconTransform,
+	ProductIconTransform,
+	IconRegistryInterface
+} from '../editor/icons-types';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
 	createEditorContributionCompartments,
 	applyDocumentEditOperation,
@@ -110,8 +116,8 @@ const AsyncLocalStorageClass: (new <T>() => AsyncLocalStorageLike<T>) | undefine
 const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
-const PLUGIN_HOST_INTERFACE_KEYS = new Set(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
+const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
 );
 
 function createPluginHostInterface(host: PluginHost): PluginHostInterface {
@@ -160,13 +166,13 @@ export class PluginHost implements PluginHostInterface {
 	readonly platform: PluginPlatform;
 
 	// Internal state tracking
-	private registrations = new Map<string, PluginRegistration>();
+	private registrations = new SvelteMap<string, PluginRegistration>();
 	// SvelteMap so UI derived state (e.g. SettingsModal plugin rows)
 	// recomputes after activate/deactivate; a $state-wrapped plain Map does
 	// not track .set/.delete mutations.
 	private states = new SvelteMap<string, PluginState>();
 	private deactivationReasons = new SvelteMap<string, string>();
-	private cleanups = new Map<string, PluginCleanup>();
+	private cleanups = new SvelteMap<string, PluginCleanup>();
 	private activationOrder = $state<string[]>([]);
 
 	// Shared command registry: replayable transforms + materialized view.
@@ -174,12 +180,14 @@ export class PluginHost implements PluginHostInterface {
 	// setup; the host replays in order from an empty initial value on every
 	// rebuild (ADR 0012). Palette and menus are views over this state.
 	private commandTransforms: CommandTransformEntry[] = [];
-	private commandMap = $state<Map<string, PluginCommand>>(new Map());
-	private commandOwners = new Map<string, string>();
-	private activePluginOperations = new Map<string, Set<Promise<unknown>>>();
+	private commandMap = $state<Map<string, PluginCommand>>(new SvelteMap());
+	private commandOwners = new SvelteMap<string, string>();
+	private activePluginOperations = new SvelteMap<string, Set<Promise<unknown>>>();
+	private attachedKeymapRegistry?: KeymapRegistry;
+	private attachedIconRegistry?: IconRegistryInterface;
 
 	// Event handlers (ADR 0013: events observe, fire-and-forget)
-	private eventHandlers = new Map<string, EventHandlerEntry[]>();
+	private eventHandlers = new SvelteMap<string, EventHandlerEntry[]>();
 
 	// Operation hooks (ADR 0013: hooks participate)
 	private beforeSaveHooks: BeforeSaveHookEntry[] = [];
@@ -200,7 +208,7 @@ export class PluginHost implements PluginHostInterface {
 	// key-value publication. Keys are conventions owned by
 	// provider/consumer pairs (see './services'); values are untyped here
 	// so the host never names features.
-	private services = new Map<string, unknown>();
+	private services = new SvelteMap<string, unknown>();
 
 	// Editor contribution contract (ADR 0016)
 	readonly editorCompartments: EditorCompartments = createEditorContributionCompartments();
@@ -209,8 +217,8 @@ export class PluginHost implements PluginHostInterface {
 		return this.editorRevision;
 	}
 	private editorContributions: EditorContributionEntry[] = [];
-	private attachedEditors = new Map<string, AttachedEditor>();
-	private documentSessions = new Map<string, DocumentSession>();
+	private attachedEditors = new SvelteMap<string, AttachedEditor>();
+	private documentSessions = new SvelteMap<string, DocumentSession>();
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -218,8 +226,8 @@ export class PluginHost implements PluginHostInterface {
 	 */
 	// Shared settings schema registry: replayable transforms + materialized view (ADR 0012, ADR 0014).
 	private settingSchemaTransforms: SettingSchemaTransformEntry[] = [];
-	private settingSchemaMap = $state<Map<string, SettingNamespaceSchema>>(new Map());
-	private settingsListeners = new Set<() => void>();
+	private settingSchemaMap = $state<Map<string, SettingNamespaceSchema>>(new SvelteMap());
+	private settingsListeners = new SvelteSet<() => void>();
 
 	readonly settings: SettingsRegistryLike = {
 		registerTransform: (pluginId, transform) => this.registerSettingTransform(pluginId, transform),
@@ -253,10 +261,10 @@ export class PluginHost implements PluginHostInterface {
 	private sidebarPanelTransforms: SidebarPanelTransformEntry[] = [];
 	private statusBarItemTransforms: StatusBarItemTransformEntry[] = [];
 	private tabContentTransforms: TabContentTransformEntry[] = [];
-	private sidebarPanelsMap = $state<Map<string, SidebarPanelContribution>>(new Map());
-	private statusBarItemsMap = $state<Map<string, StatusBarItemContribution>>(new Map());
-	private tabContentsMap = $state<Map<string, TabContentContribution>>(new Map());
-	private mountedContributions = new Map<string, MountedContribution>();
+	private sidebarPanelsMap = $state<Map<string, SidebarPanelContribution>>(new SvelteMap());
+	private statusBarItemsMap = $state<Map<string, StatusBarItemContribution>>(new SvelteMap());
+	private tabContentsMap = $state<Map<string, TabContentContribution>>(new SvelteMap());
+	private mountedContributions = new SvelteMap<string, MountedContribution>();
 	private nextMountedInstanceId = 1;
 
 	/**
@@ -354,6 +362,8 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);
 		this.removePluginEditorContributions(id);
+		this.removePluginKeymaps(id);
+		this.removePluginIcons(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -391,7 +401,7 @@ export class PluginHost implements PluginHostInterface {
 	 */
 	getActiveDependents(id: string): string[] {
 		const result: string[] = [];
-		const visited = new Set<string>([id]);
+		const visited = new SvelteSet<string>([id]);
 		const queue: string[] = [id];
 		while (queue.length > 0) {
 			const current = queue.shift()!;
@@ -466,7 +476,7 @@ export class PluginHost implements PluginHostInterface {
 	 * Idempotent: same transforms always yield the same registry.
 	 */
 	rebuildCommands(): void {
-		const owners = new Map<string, string>();
+		const owners = new SvelteMap<string, string>();
 		this.commandMap = rebuildCommands(this.orderedCommandTransforms(), owners);
 		this.commandOwners = owners;
 	}
@@ -504,7 +514,7 @@ export class PluginHost implements PluginHostInterface {
 		const operation = Promise.resolve(result);
 		let operations = this.activePluginOperations.get(pluginId);
 		if (!operations) {
-			operations = new Set();
+			operations = new SvelteSet();
 			this.activePluginOperations.set(pluginId, operations);
 		}
 		operations.add(operation);
@@ -513,6 +523,30 @@ export class PluginHost implements PluginHostInterface {
 			() => this.finishPluginOperation(pluginId, operation)
 		);
 		return operation;
+	}
+
+	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void {
+		this.attachedKeymapRegistry?.registerKeymapTransform(pluginId, transform);
+	}
+
+	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void {
+		this.attachedKeymapRegistry?.registerKeymapBindings(pluginId, bindings);
+	}
+
+	removePluginKeymaps(pluginId: string): void {
+		this.attachedKeymapRegistry?.removePluginKeymaps(pluginId);
+	}
+
+	registerFileIconTransform(pluginId: string, transform: FileIconTransform): void {
+		this.attachedIconRegistry?.registerFileIconTransform(pluginId, transform);
+	}
+
+	registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void {
+		this.attachedIconRegistry?.registerProductIconTransform(pluginId, transform);
+	}
+
+	removePluginIcons(pluginId: string): void {
+		this.attachedIconRegistry?.removePluginIcons(pluginId);
 	}
 
 	private finishPluginOperation(pluginId: string, operation: Promise<unknown>): void {
@@ -537,7 +571,7 @@ export class PluginHost implements PluginHostInterface {
 	 * missed disposal can never leak commands.
 	 */
 	private orderedCommandTransforms(): CommandTransformEntry[] {
-		const byOwner = new Map<string, CommandTransformEntry[]>();
+		const byOwner = new SvelteMap<string, CommandTransformEntry[]>();
 		for (const entry of this.commandTransforms) {
 			const list = byOwner.get(entry.pluginId);
 			if (list) {
@@ -836,7 +870,7 @@ export class PluginHost implements PluginHostInterface {
 	 * Shared by save hooks and workspace-lifecycle hooks (#202).
 	 */
 	private orderOwnedHooks<T extends { pluginId: string }>(hooks: T[]): T[] {
-		const byOwner = new Map<string, T[]>();
+		const byOwner = new SvelteMap<string, T[]>();
 		for (const hook of hooks) {
 			const list = byOwner.get(hook.pluginId);
 			if (list) {
@@ -1117,7 +1151,7 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	private orderTransformsByOwner<T extends { pluginId: string }>(transforms: T[]): T[] {
-		const byOwner = new Map<string, T[]>();
+		const byOwner = new SvelteMap<string, T[]>();
 		for (const entry of transforms) {
 			const list = byOwner.get(entry.pluginId);
 			if (list) {
@@ -1281,7 +1315,7 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	private orderedSettingTransforms(): SettingSchemaTransformEntry[] {
-		const byOwner = new Map<string, SettingSchemaTransformEntry[]>();
+		const byOwner = new SvelteMap<string, SettingSchemaTransformEntry[]>();
 		for (const entry of this.settingSchemaTransforms) {
 			const list = byOwner.get(entry.pluginId);
 			if (list) {
@@ -1322,7 +1356,7 @@ export class PluginHost implements PluginHostInterface {
 	 */
 	computeActivationOrder(pluginIds?: string[]): string[] {
 		const targetIds = pluginIds
-			? Array.from(new Set(pluginIds))
+			? Array.from(new SvelteSet(pluginIds))
 			: Array.from(this.registrations.keys());
 
 		// Verify existence
@@ -1333,7 +1367,7 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		// Map interface name to providing plugin ID
-		const interfaceProviders = new Map<string, { pluginId: string; version: number }>();
+		const interfaceProviders = new SvelteMap<string, { pluginId: string; version: number }>();
 		for (const [id, reg] of this.registrations.entries()) {
 			if (reg.manifest.provides) {
 				for (const [iface, ver] of Object.entries(reg.manifest.provides)) {
@@ -1343,8 +1377,8 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		// Build dependency adjacency list: id -> list of plugin IDs it depends on
-		const adj = new Map<string, Set<string>>();
-		const visitedForGraph = new Set<string>();
+		const adj = new SvelteMap<string, Set<string>>();
+		const visitedForGraph = new SvelteSet<string>();
 
 		const collectDeps = (id: string, path: string[]) => {
 			if (visitedForGraph.has(id)) return;
@@ -1353,7 +1387,7 @@ export class PluginHost implements PluginHostInterface {
 			const reg = this.registrations.get(id);
 			if (!reg) return;
 
-			const deps = new Set<string>();
+			const deps = new SvelteSet<string>();
 			adj.set(id, deps);
 
 			if (reg.manifest.dependsOn) {
@@ -1404,8 +1438,8 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		// Kahn's algorithm for topological sorting
-		const inDegree = new Map<string, number>();
-		const reverseAdj = new Map<string, string[]>(); // dependency -> dependents
+		const inDegree = new SvelteMap<string, number>();
+		const reverseAdj = new SvelteMap<string, string[]>(); // dependency -> dependents
 
 		for (const node of visitedForGraph) {
 			inDegree.set(node, 0);
@@ -1556,6 +1590,8 @@ export class PluginHost implements PluginHostInterface {
 			this.removePluginSettings(id);
 			this.removePluginUIContributions(id);
 			this.removePluginEditorContributions(id);
+			this.removePluginKeymaps(id);
+			this.removePluginIcons(id);
 			const cleanup = this.cleanups.get(id);
 			if (cleanup) {
 				try {
@@ -1623,6 +1659,8 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginSettings(id);
 		this.removePluginUIContributions(id);
 		this.removePluginEditorContributions(id);
+		this.removePluginKeymaps(id);
+		this.removePluginIcons(id);
 	}
 
 	// -------------------------------------------------------------------------
@@ -1686,6 +1724,14 @@ export class PluginHost implements PluginHostInterface {
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[] {
 		if (!type) return [...this.editorContributions];
 		return this.editorContributions.filter((e) => e.contribution.type === type);
+	}
+
+	attachKeymapRegistryInternal(registry: KeymapRegistry): void {
+		this.attachedKeymapRegistry = registry;
+	}
+
+	attachIconRegistryInternal(registry: IconRegistryInterface): void {
+		this.attachedIconRegistry = registry;
 	}
 
 	/**

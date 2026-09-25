@@ -15,6 +15,20 @@ export interface KeymapBinding {
 	bindings: Record<string, string>; // e.g., "space f n" -> "file.new"
 }
 
+export type KeymapTransform = (
+	previous: ReadonlyArray<KeymapBinding>
+) => ReadonlyArray<KeymapBinding>;
+
+export interface KeymapTransformEntry {
+	readonly pluginId: string;
+	readonly transform: KeymapTransform;
+}
+
+export function createAddKeymapTransform(bindings: readonly KeymapBinding[]): KeymapTransform {
+	const snapshot = [...bindings];
+	return (previous) => [...previous, ...snapshot];
+}
+
 export interface ParsedBinding {
 	contextExpr?: string;
 	parsedContext?: Predicate;
@@ -175,10 +189,12 @@ export class KeymapRegistry {
 	
 	// Loaded bindings list
 	bindings = $state<ParsedBinding[]>([]);
+	private baseKeymap: KeymapBinding[] = defaultKeymap;
+	private keymapTransforms: KeymapTransformEntry[] = [];
 	
 	constructor(appState: AppState) {
 		this.appState = appState;
-		this.loadBindings(defaultKeymap);
+		this.rebuild();
 		
 		// Load user keymap asynchronously on startup
 		this.readUserKeymap().then(content => {
@@ -197,6 +213,40 @@ export class KeymapRegistry {
 	}
 	
 	loadBindings(keymap: KeymapBinding[]) {
+		this.baseKeymap = [...keymap];
+		this.rebuild();
+	}
+
+	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void {
+		this.keymapTransforms.push({ pluginId, transform });
+		this.rebuild();
+	}
+
+	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void {
+		this.registerKeymapTransform(pluginId, createAddKeymapTransform(bindings));
+	}
+
+	removePluginKeymaps(pluginId: string): void {
+		const kept = this.keymapTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.keymapTransforms.length) {
+			this.keymapTransforms = kept;
+			this.rebuild();
+		}
+	}
+
+	rebuild(): void {
+		let keymap: ReadonlyArray<KeymapBinding> = this.baseKeymap;
+		for (const entry of this.keymapTransforms) {
+			keymap = entry.transform(keymap);
+		}
+		this.bindings = this.parseBindings(keymap);
+	}
+
+	refresh(): void {
+		this.rebuild();
+	}
+
+	private parseBindings(keymap: ReadonlyArray<KeymapBinding>): ParsedBinding[] {
 		const parsed: ParsedBinding[] = [];
 		for (const binding of keymap) {
 			const parsedContext = binding.context ? ContextPredicate.parse(binding.context) : undefined;
@@ -210,7 +260,7 @@ export class KeymapRegistry {
 				});
 			}
 		}
-		this.bindings = parsed;
+		return parsed;
 	}
 	
 	// Get all bindings that match the current context
