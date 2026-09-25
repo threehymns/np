@@ -26,6 +26,7 @@ import type {
 	SidebarPanelContribution,
 	StatusBarItemContribution,
 	StatusBarAlignment,
+	TabContentContribution,
 	MountedContribution,
 	UIContributionRegistryLike
 } from './ui-contributions';
@@ -218,6 +219,12 @@ export interface PluginHostInterface {
 	removePluginStatusBarItems(pluginId: string): void;
 	getStatusBarItem(id: string): StatusBarItemContribution | undefined;
 	getStatusBarItems(alignment?: StatusBarAlignment): StatusBarItemContribution[];
+
+	registerTabContent(pluginId: string, content: TabContentContribution): void;
+	registerTabContents(pluginId: string, contents: readonly TabContentContribution[]): void;
+	removePluginTabContents(pluginId: string): void;
+	getTabContent(id: string): TabContentContribution | undefined;
+	getTabContents(): TabContentContribution[];
 
 	mountContribution(
 		pluginId: string,

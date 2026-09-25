@@ -14,5 +14,3 @@ export * from './host.svelte';
 // from node runtimes (tests, scripts) instead.
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
-export * from './git/ui';
-export * from './git/gutter';

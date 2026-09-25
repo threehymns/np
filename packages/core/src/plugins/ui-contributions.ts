@@ -40,6 +40,15 @@ export interface StatusBarItemContribution<Props extends Record<string, any> = R
 	readonly pluginId?: string;
 }
 
+export interface TabContentContribution<Props extends Record<string, any> = Record<string, any>> {
+	readonly id: string;
+	readonly title: string;
+	readonly icon?: any;
+	readonly component: any;
+	readonly props?: Props;
+	readonly pluginId?: string;
+}
+
 /**
  * Actionable diagnostic thrown when two owners contribute the same sidebar panel ID (ADR 0007, ADR 0015).
  */
@@ -77,6 +86,26 @@ export class DuplicateStatusBarItemIdError extends Error {
 		);
 		this.name = 'DuplicateStatusBarItemIdError';
 		this.itemId = itemId;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
+	}
+}
+
+export class DuplicateTabContentIdError extends Error {
+	readonly contentId: string;
+	readonly tabContentId: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(contentId: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Duplicate tab content ID "${contentId}" contributed by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every tab content contribution must declare a unique "id". Rename the incoming ID or ` +
+				`remove the conflicting contribution before rebuilding the registry.`
+		);
+		this.name = 'DuplicateTabContentIdError';
+		this.contentId = contentId;
+		this.tabContentId = contentId;
 		this.existingPluginId = existingPluginId;
 		this.incomingPluginId = incomingPluginId;
 	}
@@ -124,6 +153,21 @@ export function validateStatusBarItemContribution(item: StatusBarItemContributio
 	}
 }
 
+export function validateTabContentContribution(content: TabContentContribution): void {
+	if (!content || typeof content !== 'object') {
+		throw new Error('Tab content contribution must be an object.');
+	}
+	if (!content.id || typeof content.id !== 'string') {
+		throw new Error('Tab content contribution must declare a non-empty string "id".');
+	}
+	if (typeof content.title !== 'string') {
+		throw new Error(`Tab content "${content.id}" must declare a string "title".`);
+	}
+	if (!content.component) {
+		throw new Error(`Tab content "${content.id}" must declare a "component".`);
+	}
+}
+
 /**
  * Deterministic comparison for sidebar panels:
  * 1. Ascending by explicit `order`
@@ -152,6 +196,10 @@ export function compareStatusBarItems(a: StatusBarItemContribution, b: StatusBar
 	return a.id.localeCompare(b.id);
 }
 
+export function compareTabContents(a: TabContentContribution, b: TabContentContribution): number {
+	return a.id.localeCompare(b.id);
+}
+
 export type SidebarPanelTransform = (
 	prev: ReadonlyMap<string, SidebarPanelContribution>
 ) => ReadonlyMap<string, SidebarPanelContribution>;
@@ -168,6 +216,15 @@ export type StatusBarItemTransform = (
 export interface StatusBarItemTransformEntry {
 	readonly pluginId: string;
 	readonly transform: StatusBarItemTransform;
+}
+
+export type TabContentTransform = (
+	prev: ReadonlyMap<string, TabContentContribution>
+) => ReadonlyMap<string, TabContentContribution>;
+
+export interface TabContentTransformEntry {
+	readonly pluginId: string;
+	readonly transform: TabContentTransform;
 }
 
 export function createAddSidebarPanelsTransform(
@@ -199,6 +256,23 @@ export function createAddStatusBarItemsTransform(
 		const next = new Map(prev);
 		for (const item of snapshot) {
 			next.set(item.id, item);
+		}
+		return next;
+	};
+}
+
+export function createAddTabContentsTransform(
+	contents: readonly TabContentContribution[],
+	pluginId: string
+): TabContentTransform {
+	const snapshot = contents.map((content) => {
+		validateTabContentContribution(content);
+		return { ...content, pluginId };
+	});
+	return (prev) => {
+		const next = new Map(prev);
+		for (const content of snapshot) {
+			next.set(content.id, content);
 		}
 		return next;
 	};
@@ -282,6 +356,40 @@ export function rebuildStatusBarItems(
 	return state;
 }
 
+export function rebuildTabContents(
+	transforms: readonly TabContentTransformEntry[]
+): Map<string, TabContentContribution> {
+	let state = new Map<string, TabContentContribution>();
+	const owners = new Map<string, string>();
+
+	for (const entry of transforms) {
+		const input = new Map(state);
+		const result = entry.transform(input);
+		const next = result instanceof Map ? new Map(result) : new Map<string, TabContentContribution>();
+
+		for (const [id, content] of next) {
+			const prev = state.get(id);
+			if (prev === undefined || prev !== content) {
+				const owner = owners.get(id);
+				if (owner !== undefined && owner !== entry.pluginId) {
+					throw new DuplicateTabContentIdError(id, owner, entry.pluginId);
+				}
+				owners.set(id, entry.pluginId);
+			}
+		}
+
+		for (const id of state.keys()) {
+			if (!next.has(id)) {
+				owners.delete(id);
+			}
+		}
+
+		state = next;
+	}
+
+	return state;
+}
+
 /**
  * Host-managed mounted contribution instance tracking (ADR 0010).
  */
@@ -289,7 +397,7 @@ export interface MountedContribution<Props extends Record<string, any> = Record<
 	readonly instanceId: string;
 	readonly contributionId: string;
 	readonly pluginId: string;
-	readonly kind: 'sidebar-panel' | 'status-bar-item';
+	readonly kind: 'sidebar-panel' | 'status-bar-item' | 'tab-content';
 	readonly target: any;
 	readonly instance: any;
 	props: Props;
@@ -313,6 +421,12 @@ export interface UIContributionRegistryLike {
 	getStatusBarItem(id: string): StatusBarItemContribution | undefined;
 	getStatusBarItems(alignment?: StatusBarAlignment): StatusBarItemContribution[];
 
+	registerTabContent(pluginId: string, content: TabContentContribution): void;
+	registerTabContents(pluginId: string, contents: readonly TabContentContribution[]): void;
+	removePluginTabContents(pluginId: string): void;
+	getTabContent(id: string): TabContentContribution | undefined;
+	getTabContents(): TabContentContribution[];
+
 	mountContribution(
 		pluginId: string,
 		contributionId: string,
@@ -333,9 +447,11 @@ export interface UIContributionRegistryLike {
 export class UIContributionRegistry implements UIContributionRegistryLike {
 	private panelTransforms: SidebarPanelTransformEntry[] = [];
 	private statusTransforms: StatusBarItemTransformEntry[] = [];
+	private tabContentTransforms: TabContentTransformEntry[] = [];
 
 	private panelMap = new Map<string, SidebarPanelContribution>();
 	private statusMap = new Map<string, StatusBarItemContribution>();
+	private tabContentMap = new Map<string, TabContentContribution>();
 	private mountedMap = new Map<string, MountedContribution>();
 	private nextInstanceSeq = 1;
 
@@ -403,17 +519,53 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 		return filtered.sort(compareStatusBarItems);
 	}
 
+	registerTabContent(pluginId: string, content: TabContentContribution): void {
+		this.registerTabContents(pluginId, [content]);
+	}
+
+	registerTabContents(pluginId: string, contents: readonly TabContentContribution[]): void {
+		const entry = {
+			pluginId,
+			transform: createAddTabContentsTransform(contents, pluginId)
+		};
+		const nextTransforms = [...this.tabContentTransforms, entry];
+		const nextMap = rebuildTabContents(nextTransforms);
+		this.tabContentTransforms = nextTransforms;
+		this.tabContentMap = nextMap;
+	}
+
+	removePluginTabContents(pluginId: string): void {
+		const kept = this.tabContentTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.tabContentTransforms.length) {
+			this.tabContentTransforms = kept;
+			this.rebuild();
+		}
+	}
+
+	getTabContent(id: string): TabContentContribution | undefined {
+		const direct = this.tabContentMap.get(id);
+		if (direct) return direct;
+		return this.getTabContents().find((content) => content.pluginId === id);
+	}
+
+	getTabContents(): TabContentContribution[] {
+		return Array.from(this.tabContentMap.values()).sort(compareTabContents);
+	}
+
 	rebuild(): void {
 		const nextPanelMap = rebuildSidebarPanels(this.panelTransforms);
 		const nextStatusMap = rebuildStatusBarItems(this.statusTransforms);
+		const nextTabContentMap = rebuildTabContents(this.tabContentTransforms);
 		this.panelMap = nextPanelMap;
 		this.statusMap = nextStatusMap;
+		this.tabContentMap = nextTabContentMap;
 	}
 
 	removePlugin(pluginId: string): void {
 		this.unmountAllPluginContributions(pluginId);
 		this.removePluginSidebarPanels(pluginId);
 		this.removePluginStatusBarItems(pluginId);
+		this.removePluginTabContents(pluginId);
 	}
 
 	mountContribution(
@@ -424,7 +576,8 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 	): MountedContribution {
 		const panel = this.panelMap.get(contributionId);
 		const statusItem = this.statusMap.get(contributionId);
-		const contribution = panel ?? statusItem;
+		const tabContent = this.tabContentMap.get(contributionId) ?? this.getTabContent(contributionId);
+		const contribution = panel ?? statusItem ?? tabContent;
 
 		if (!contribution) {
 			throw new Error(`UI contribution "${contributionId}" not found in registry.`);
@@ -435,7 +588,11 @@ export class UIContributionRegistry implements UIContributionRegistryLike {
 			);
 		}
 
-		const kind: 'sidebar-panel' | 'status-bar-item' = panel ? 'sidebar-panel' : 'status-bar-item';
+		const kind: 'sidebar-panel' | 'status-bar-item' | 'tab-content' = panel
+			? 'sidebar-panel'
+			: statusItem
+				? 'status-bar-item'
+				: 'tab-content';
 		const mergedProps = { ...(contribution.props ?? {}), ...(props ?? {}) };
 		let instance: any = null;
 

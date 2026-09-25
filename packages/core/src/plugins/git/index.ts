@@ -108,6 +108,14 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			order: GIT_STATUS_ORDER,
 			component: uiComponents.statusComponent
 		});
+		if (uiComponents.diffComponent) {
+			host.registerTabContent(manifest.id, {
+				id: manifest.id,
+				title: 'Uncommitted Changes',
+				icon: uiComponents.diffIcon,
+				component: uiComponents.diffComponent
+			});
+		}
 	} else {
 		host.registerSidebarPanel(manifest.id, {
 			id: GIT_PANEL_ID,
@@ -160,7 +168,7 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			const state = states.get(workspace);
 			if (state) await disposeWorkspaceGitState(state);
 			for (const tab of workspace.tabs.filter(
-				(tab) => tab.type === 'diff' && (!tab.pluginId || tab.pluginId === manifest.id)
+				(tab) => tab.type === 'diff' && tab.pluginId === manifest.id
 			)) {
 				workspace.closeTab(tab.id);
 			}

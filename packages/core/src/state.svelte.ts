@@ -12,7 +12,12 @@ import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 import { PluginHost, type CommandRegistryLike, type PluginPlatform } from './plugins';
-import { DIALOGS_SERVICE_KEY, DIFF_NAVIGATOR_SERVICE_KEY } from './plugins/services';
+import {
+	DIALOGS_SERVICE_KEY,
+	DIFF_NAVIGATOR_SERVICE_KEY,
+	PLUGIN_UI_LOADER_SERVICE_KEY,
+	type PluginUILoader
+} from './plugins/services';
 
 export interface DialogService {
 	alert?(message: string): Promise<void> | void;
@@ -193,6 +198,11 @@ export class AppState {
 		registerCoreCommands(this);
 	}
 
+	private async loadPluginUI(pluginId: string): Promise<void> {
+		const loader = this.plugins.getService<PluginUILoader>(PLUGIN_UI_LOADER_SERVICE_KEY);
+		if (loader) await loader.load(pluginId);
+	}
+
 	async init() {
 		// Cycle/interface check first (ADR 0017): a broken dependency graph
 		// surfaces as one actionable error in the Plugins settings page
@@ -214,6 +224,7 @@ export class AppState {
 				for (const manifest of this.plugins.getManifests()) {
 					if (this.isPluginEnabled(manifest.id) && !this.plugins.isPluginActive(manifest.id)) {
 						try {
+							await this.loadPluginUI(manifest.id);
 							await this.plugins.activate(manifest.id);
 						} catch (e) {
 							console.error(`[AppState] Failed to activate plugin "${manifest.id}":`, e);
@@ -255,6 +266,7 @@ export class AppState {
 	 */
 	async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
 		if (enabled) {
+			await this.loadPluginUI(id);
 			await this.plugins.activate(id);
 			this.prefs.setPluginEnabled(id, true);
 			return;

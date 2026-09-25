@@ -94,6 +94,18 @@ describe('Platform separation static boundary', () => {
 		}
 	});
 
+	it('keeps bundled implementations behind dynamic imports', () => {
+		const coreEntry = readFileSync(join(import.meta.dir, 'index.ts'), 'utf-8');
+		const uiBridge = readFileSync(
+			join(import.meta.dir, '../../../../packages/ui/src/plugins/index.ts'),
+			'utf-8'
+		);
+
+		expect(coreEntry).not.toMatch(/from ['"]\.\/git\/(?:index|gutter|ui)['"]/);
+		expect(uiBridge).not.toMatch(/from ['"]\.\/git(?:\/index)?['"]/);
+		expect(uiBridge).toMatch(/import\(['"]\.\/git['"]\)/);
+	});
+
 	it('keeps the generic host path free of platform-only runtime imports', () => {
 		const neutralModules = [
 			'host.svelte.ts',

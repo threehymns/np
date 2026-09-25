@@ -12,11 +12,8 @@ export { IconRegistry, iconRegistry, PhosphorIconProvider } from './editor/icons
 export * as Tabs from './components/ui/tabs/index';
 export * as ScrollArea from './components/ui/scroll-area/index';
 
-// Diff Viewer (tab content; pending generic tab-content contributions)
-export { default as DiffViewer } from './components/DiffViewer.svelte';
-
 // Generic bundled-plugin UI bridge (no feature names here)
-export { provideAllPluginUIs, registerBundledPlugins } from './plugins/index';
+export { registerBundledPlugins, registerPluginUiLoader } from './plugins/index';
 
 // Settings UI
 export { default as GeneratedSettingControl } from './components/settings/GeneratedSettingControl.svelte';

@@ -147,10 +147,14 @@ describe('Git UI migration (#203)', () => {
 			const mockPanel = (_target: any, _props: any) => ({ mock: 'panel' });
 			const mockIcon = { mock: 'icon' };
 			const mockStatus = (_target: any, _props: any) => ({ mock: 'status' });
+			const mockDiff = (_target: any, _props: any) => ({ mock: 'diff' });
+			const mockDiffIcon = { mock: 'diff-icon' };
 			host.provideService(GIT_UI_COMPONENTS_KEY, {
 				panelComponent: mockPanel,
 				panelIcon: mockIcon,
-				statusComponent: mockStatus
+				statusComponent: mockStatus,
+				diffComponent: mockDiff,
+				diffIcon: mockDiffIcon
 			});
 			host.provideService(DIALOGS_SERVICE_KEY, {
 				alert: mock(async () => {}),
@@ -162,6 +166,11 @@ describe('Git UI migration (#203)', () => {
 			expect(host.getSidebarPanel(GIT_PANEL_ID)?.component).toBe(mockPanel);
 			expect(host.getSidebarPanel(GIT_PANEL_ID)?.icon).toBe(mockIcon);
 			expect(host.getStatusBarItem(GIT_STATUS_ID)?.component).toBe(mockStatus);
+			expect(host.getTabContent('git')?.component).toBe(mockDiff);
+			expect(host.getTabContent('git')?.icon).toBe(mockDiffIcon);
+
+			await host.deactivate('git');
+			expect(host.getTabContent('git')).toBeUndefined();
 		});
 
 		it('activates default-enabled plugins generically via AppState.init (no feature names)', async () => {
@@ -223,27 +232,16 @@ describe('Git UI migration (#203)', () => {
 			expect(offenders).toEqual([]);
 		});
 
-		it('keeps MainLayout free of panel/status feature references (diff-tab icon allowlisted pending tab interface)', () => {
+		it('keeps MainLayout free of Git-specific presentation', () => {
 			const source = readFileSync(
 				join(import.meta.dir, '../../../../packages/ui/src/components/MainLayout.svelte'),
 				'utf-8'
 			);
 			const code = stripComments(source);
-			const lines = code.split('\n');
-			const offenders = lines.filter((line, idx) => {
-				if (!/git/i.test(line)) return false;
-				// Allowlist: diff-tab icon + its explanatory comment (stripped already,
-				// so only the import and usage lines remain). Diff tabs
-				// (`tab.type === 'diff'`) predate panel/status/editor contributions
-				// and need a generic tab-content interface (proposed follow-up).
-				if (/GitDiffIcon/.test(line)) return false;
-				return true;
-			});
+			const offenders = code.split('\n').filter((line) => /git/i.test(line));
 			expect(offenders).toEqual([]);
-			// Panel flows purely through the registry: no hardcoded tab branch.
-			expect(code).not.toMatch(/activeSidebarTab\s*===\s*['"]git['"]/);
-			expect(code).not.toMatch(/GitPanel/);
-			expect(code).not.toMatch(/showGit/);
+			expect(code).not.toMatch(/DiffViewer/);
+			expect(code).not.toMatch(/tab\.type\s*===\s*['"]diff['"]/);
 		});
 
 		it('registers no feature-specific host members (generic interfaces only)', () => {

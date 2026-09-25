@@ -40,6 +40,8 @@ export interface GitUIComponents {
 	readonly panelComponent: any;
 	readonly panelIcon?: any;
 	readonly statusComponent: any;
+	readonly diffComponent: any;
+	readonly diffIcon?: any;
 }
 
 export function getGitUIComponents(

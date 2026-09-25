@@ -735,7 +735,7 @@ export class Workspace {
 					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
 						if (serialized.virtualTabType === 'diff') {
-							if (serialized.pluginId && !this.pluginHost.isPluginActive(serialized.pluginId)) {
+							if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
 								continue;
 							}
 							restoredTabs.push({

@@ -11,7 +11,7 @@
 	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
-	import { provideAllPluginUIs } from "./plugins/index";
+	import { registerBundledPlugins, registerPluginUiLoader } from "./plugins/index";
 
 	import type SettingsModalComponent from "./components/SettingsModal.svelte";
 	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
@@ -77,10 +77,8 @@
 
 	onMount(async () => {
 		try {
-			// Generic bundled-plugin UI bridge (#203): registers feature
-			// plugins and provides their UI components before default-enabled
-			// activation. No feature names here; see `./plugins/index`.
-			provideAllPluginUIs(appState.plugins);
+			registerBundledPlugins(appState.plugins);
+			registerPluginUiLoader(appState.plugins);
 			await appState.init();
 		} catch (err) {
 			console.error("[AppShell] Failed to initialize app state:", err);
@@ -107,16 +105,16 @@
 
 		// Set theme data attribute
 		if (theme === 'default') {
-			body.removeAttribute('data-theme');
+			delete body.dataset.theme;
 		} else {
-			body.setAttribute('data-theme', theme);
+			body.dataset.theme = theme;
 		}
 
 		// Set accent data attribute
 		if (accent === 'default') {
-			body.removeAttribute('data-accent');
+			delete body.dataset.accent;
 		} else {
-			body.setAttribute('data-accent', accent);
+			body.dataset.accent = accent;
 		}
 	});
 </script>

@@ -78,15 +78,20 @@ import {
 	CORE_UI_OWNER,
 	createAddSidebarPanelsTransform,
 	createAddStatusBarItemsTransform,
+	createAddTabContentsTransform,
 	rebuildSidebarPanels,
 	rebuildStatusBarItems,
+	rebuildTabContents,
 	compareSidebarPanels,
 	compareStatusBarItems,
+	compareTabContents,
 	type SidebarPanelContribution,
 	type StatusBarItemContribution,
+	type TabContentContribution,
 	type StatusBarAlignment,
 	type SidebarPanelTransformEntry,
 	type StatusBarItemTransformEntry,
+	type TabContentTransformEntry,
 	type MountedContribution,
 	type UIContributionRegistryLike
 } from './ui-contributions';
@@ -106,7 +111,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new Set(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributions removePluginEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
 );
 
 function createPluginHostInterface(host: PluginHost): PluginHostInterface {
@@ -240,8 +245,10 @@ export class PluginHost implements PluginHostInterface {
 	// Additive UI contribution registry: replayable transforms + materialized views (ADR 0010, ADR 0015).
 	private sidebarPanelTransforms: SidebarPanelTransformEntry[] = [];
 	private statusBarItemTransforms: StatusBarItemTransformEntry[] = [];
+	private tabContentTransforms: TabContentTransformEntry[] = [];
 	private sidebarPanelsMap = $state<Map<string, SidebarPanelContribution>>(new Map());
 	private statusBarItemsMap = $state<Map<string, StatusBarItemContribution>>(new Map());
+	private tabContentsMap = $state<Map<string, TabContentContribution>>(new Map());
 	private mountedContributions = new Map<string, MountedContribution>();
 	private nextMountedInstanceId = 1;
 
@@ -260,6 +267,12 @@ export class PluginHost implements PluginHostInterface {
 		removePluginStatusBarItems: (pluginId) => this.removePluginStatusBarItems(pluginId),
 		getStatusBarItem: (id) => this.getStatusBarItem(id),
 		getStatusBarItems: (alignment) => this.getStatusBarItems(alignment),
+
+		registerTabContent: (pluginId, content) => this.registerTabContent(pluginId, content),
+		registerTabContents: (pluginId, contents) => this.registerTabContents(pluginId, contents),
+		removePluginTabContents: (pluginId) => this.removePluginTabContents(pluginId),
+		getTabContent: (id) => this.getTabContent(id),
+		getTabContents: () => this.getTabContents(),
 
 		mountContribution: (pluginId, contributionId, target, props) =>
 			this.mountContribution(pluginId, contributionId, target, props),
@@ -1024,15 +1037,51 @@ export class PluginHost implements PluginHostInterface {
 		return filtered.sort(compareStatusBarItems);
 	}
 
+	registerTabContent(pluginId: string, content: TabContentContribution): void {
+		this.registerTabContents(pluginId, [content]);
+	}
+
+	registerTabContents(pluginId: string, contents: readonly TabContentContribution[]): void {
+		const entry = {
+			pluginId,
+			transform: createAddTabContentsTransform(contents, pluginId)
+		};
+		const nextTransforms = [...this.tabContentTransforms, entry];
+		const nextTabContentMap = rebuildTabContents(this.orderedTabContentTransforms(nextTransforms));
+		this.tabContentTransforms = nextTransforms;
+		this.tabContentsMap = nextTabContentMap;
+	}
+
+	removePluginTabContents(pluginId: string): void {
+		const kept = this.tabContentTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.tabContentTransforms.length) {
+			this.tabContentTransforms = kept;
+			this.rebuildUIContributions();
+		}
+	}
+
+	getTabContent(id: string): TabContentContribution | undefined {
+		const direct = this.tabContentsMap.get(id);
+		if (direct) return direct;
+		return this.getTabContents().find((content) => content.pluginId === id);
+	}
+
+	getTabContents(): TabContentContribution[] {
+		return Array.from(this.tabContentsMap.values()).sort(compareTabContents);
+	}
+
 	removePluginUIContributions(pluginId: string): void {
 		this.unmountAllPluginContributions(pluginId);
 		const keptPanels = this.sidebarPanelTransforms.filter((entry) => entry.pluginId !== pluginId);
 		const keptStatus = this.statusBarItemTransforms.filter((entry) => entry.pluginId !== pluginId);
+		const keptTabs = this.tabContentTransforms.filter((entry) => entry.pluginId !== pluginId);
 		const panelsChanged = keptPanels.length !== this.sidebarPanelTransforms.length;
 		const statusChanged = keptStatus.length !== this.statusBarItemTransforms.length;
-		if (panelsChanged || statusChanged) {
+		const tabsChanged = keptTabs.length !== this.tabContentTransforms.length;
+		if (panelsChanged || statusChanged || tabsChanged) {
 			this.sidebarPanelTransforms = keptPanels;
 			this.statusBarItemTransforms = keptStatus;
+			this.tabContentTransforms = keptTabs;
 			this.rebuildUIContributions();
 		}
 	}
@@ -1040,8 +1089,10 @@ export class PluginHost implements PluginHostInterface {
 	rebuildUIContributions(): void {
 		const nextPanelMap = rebuildSidebarPanels(this.orderedSidebarPanelTransforms());
 		const nextStatusMap = rebuildStatusBarItems(this.orderedStatusBarItemTransforms());
+		const nextTabContentMap = rebuildTabContents(this.orderedTabContentTransforms());
 		this.sidebarPanelsMap = nextPanelMap;
 		this.statusBarItemsMap = nextStatusMap;
+		this.tabContentsMap = nextTabContentMap;
 	}
 
 	private orderedSidebarPanelTransforms(): SidebarPanelTransformEntry[] {
@@ -1050,6 +1101,12 @@ export class PluginHost implements PluginHostInterface {
 
 	private orderedStatusBarItemTransforms(): StatusBarItemTransformEntry[] {
 		return this.orderTransformsByOwner(this.statusBarItemTransforms);
+	}
+
+	private orderedTabContentTransforms(
+		transforms: TabContentTransformEntry[] = this.tabContentTransforms
+	): TabContentTransformEntry[] {
+		return this.orderTransformsByOwner(transforms);
 	}
 
 	private orderTransformsByOwner<T extends { pluginId: string }>(transforms: T[]): T[] {
@@ -1092,7 +1149,8 @@ export class PluginHost implements PluginHostInterface {
 	): MountedContribution {
 		const panel = this.sidebarPanelsMap.get(contributionId);
 		const statusItem = this.statusBarItemsMap.get(contributionId);
-		const contribution = panel ?? statusItem;
+		const tabContent = this.tabContentsMap.get(contributionId) ?? this.getTabContent(contributionId);
+		const contribution = panel ?? statusItem ?? tabContent;
 
 		if (!contribution) {
 			throw new Error(`UI contribution "${contributionId}" not found in registry.`);
@@ -1103,7 +1161,11 @@ export class PluginHost implements PluginHostInterface {
 			);
 		}
 
-		const kind: 'sidebar-panel' | 'status-bar-item' = panel ? 'sidebar-panel' : 'status-bar-item';
+		const kind: 'sidebar-panel' | 'status-bar-item' | 'tab-content' = panel
+			? 'sidebar-panel'
+			: statusItem
+				? 'status-bar-item'
+				: 'tab-content';
 		const mergedProps = { ...(contribution.props ?? {}), ...(props ?? {}) };
 		let instance: any = null;
 

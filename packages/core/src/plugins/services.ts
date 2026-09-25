@@ -21,6 +21,11 @@
 export const WORKSPACE_SERVICE_KEY = 'workspace';
 export const DIALOGS_SERVICE_KEY = 'dialogs';
 export const DIFF_NAVIGATOR_SERVICE_KEY = 'diffNavigator';
+export const PLUGIN_UI_LOADER_SERVICE_KEY = 'plugin-ui-loader';
+
+export interface PluginUILoader {
+	load(pluginId: string): Promise<void>;
+}
 
 /**
  * Minimal hunk-navigation surface published by the mounted diff view.
