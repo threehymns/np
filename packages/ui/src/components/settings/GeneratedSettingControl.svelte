@@ -5,6 +5,7 @@
 	import { Label } from '../ui/label/index.js';
 	import { ArrowCounterClockwise, Warning, Check } from 'phosphor-svelte';
 	import { cn } from '@np/core';
+	import { describeScopeRestriction } from './scope-restriction';
 
 	let {
 		namespace,
@@ -39,6 +40,7 @@
 	});
 
 	const isScopeAllowed = $derived(!schema.scope || schema.scope.includes(scope));
+	const scopeRestriction = $derived(describeScopeRestriction(schema.scope, scope));
 
 	const diagnostics = $derived.by(() => {
 		settingsVersion;
@@ -126,9 +128,9 @@
 					{/if}
 				</span>
 
-				{#if !isScopeAllowed}
+				{#if scopeRestriction}
 					<span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-						User scope only
+						{scopeRestriction.badge}
 					</span>
 				{/if}
 			</div>
@@ -163,9 +165,9 @@
 
 	<!-- Control Input Elements -->
 	<div class="pt-1">
-		{#if !isScopeAllowed}
+		{#if scopeRestriction}
 			<div class="text-xs text-muted-foreground italic py-1">
-				This setting cannot be overridden at workspace level. Edit in User settings.
+				{scopeRestriction.guidance}
 			</div>
 		{:else if schema.type === 'boolean' || schema.control === 'toggle' || schema.control === 'checkbox'}
 			<div class="flex items-center justify-between">
