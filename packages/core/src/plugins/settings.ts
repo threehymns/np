@@ -641,17 +641,28 @@ export class SettingsResolver {
 				}
 			}
 
-			// Validate user value
+			// Validate user value (check scope restriction & validity)
 			let userValid = false;
 			if (userFound && userRawValue !== undefined) {
-				const userValidation = validateSettingValue(namespace, key, userRawValue, propSchema);
-				if (userValidation.valid) {
-					userValid = true;
-				} else {
+				if (propSchema.scope && !propSchema.scope.includes('user')) {
 					diagnostics.push({
-						...userValidation.diagnostic,
-						scope: 'user'
+						namespace,
+						key,
+						message: `Setting "${namespace}.${key}" cannot be configured in user scope`,
+						severity: 'warning',
+						scope: 'user',
+						receivedValue: userRawValue
 					});
+				} else {
+					const userValidation = validateSettingValue(namespace, key, userRawValue, propSchema);
+					if (userValidation.valid) {
+						userValid = true;
+					} else {
+						diagnostics.push({
+							...userValidation.diagnostic,
+							scope: 'user'
+						});
+					}
 				}
 			}
 
@@ -1225,9 +1236,20 @@ export class SettingsManager {
 				}
 
 				if (userFound && userRawValue !== undefined) {
-					const res = validateSettingValue(namespace, key, userRawValue, propSchema);
-					if (!res.valid) {
-						diagnostics.push({ ...res.diagnostic, scope: 'user' });
+					if (propSchema.scope && !propSchema.scope.includes('user')) {
+						diagnostics.push({
+							namespace,
+							key,
+							message: `Setting "${namespace}.${key}" cannot be configured in user scope`,
+							severity: 'warning',
+							scope: 'user',
+							receivedValue: userRawValue
+						});
+					} else {
+						const res = validateSettingValue(namespace, key, userRawValue, propSchema);
+						if (!res.valid) {
+							diagnostics.push({ ...res.diagnostic, scope: 'user' });
+						}
 					}
 				}
 
@@ -1320,6 +1342,9 @@ export class SettingsManager {
 		if (propSchema) {
 			if (scope === 'workspace' && propSchema.scope && !propSchema.scope.includes('workspace')) {
 				throw new Error(`Setting "${namespace}.${key}" cannot be configured in workspace scope`);
+			}
+			if (scope === 'user' && propSchema.scope && !propSchema.scope.includes('user')) {
+				throw new Error(`Setting "${namespace}.${key}" cannot be configured in user scope`);
 			}
 			const validation = validateSettingValue(namespace, key, value, propSchema);
 			if (!validation.valid) {

@@ -85,6 +85,12 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 				default: 'default-secret',
 				scope: ['user'],
 				title: 'User API Token'
+			},
+			workspace_only_token: {
+				type: 'string',
+				default: 'default-workspace',
+				scope: ['workspace'],
+				title: 'Workspace Token'
 			}
 		}
 	};
@@ -250,6 +256,29 @@ describe('Workspace Settings Layering and Scope (#199, ADR 0014)', () => {
 			// Effective value does not adopt the forbidden workspace value
 			const resolved = manager.resolve('linter', 'user_only_token');
 			expect(resolved.value).toBe('default-secret');
+			expect(resolved.provenance).toBe('default');
+		});
+
+		it('rejects setting a workspace-only setting in user scope with an actionable error', () => {
+			expect(() => {
+				manager.set('linter', 'workspace_only_token', 'user-illegal-token', 'user');
+			}).toThrow('Setting "linter.workspace_only_token" cannot be configured in user scope');
+		});
+
+		it('emits diagnostic and falls back when user storage contains workspace-only setting', () => {
+			manager.loadFromText(
+				JSON.stringify({ linter: { workspace_only_token: 'user-illegal-token' } })
+			);
+
+			const diagnostics = manager.getDiagnostics('user');
+			const restrictedDiag = diagnostics.find(
+				(d) => d.namespace === 'linter' && d.key === 'workspace_only_token'
+			);
+			expect(restrictedDiag).toBeDefined();
+			expect(restrictedDiag?.message).toContain('cannot be configured in user scope');
+
+			const resolved = manager.resolve('linter', 'workspace_only_token');
+			expect(resolved.value).toBe('default-workspace');
 			expect(resolved.provenance).toBe('default');
 		});
 	});
