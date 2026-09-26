@@ -15,6 +15,19 @@
 
 	let { open = $bindable(false) } = $props();
 
+	/**
+	 * The scope switcher owns `appState.prefs.activeScope`, and the ordinary
+	 * preference setters (zoom, theme, ...) write to whichever scope is
+	 * active. This dialog stays mounted after it closes, so a closed dialog
+	 * must never leave the workspace scope active: the reset hangs off the
+	 * `open` binding every close path funnels through (escape, outside click,
+	 * Done, the settings command) instead of a close handler that could miss
+	 * one.
+	 */
+	$effect(() => {
+		if (!open) appState.prefs.activeScope = 'user';
+	});
+
 	let activeCategory = $state('appearance');
 
 	/**
