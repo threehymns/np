@@ -55,6 +55,17 @@ const CONTRACT_DIR = new URL('.', import.meta.url).pathname;
 const REPO_ROOT = join(CONTRACT_DIR, '..', '..');
 
 /**
+ * This file, by its own path.
+ *
+ * `walk()` reports the paths it constructed, so the comparison is against the
+ * gate's own URL resolved to a path rather than against a basename. A
+ * `endsWith('skip-policy.test.ts')` match would exempt every file of that name
+ * anywhere in the repository, which is the same blind spot the gate exists to
+ * close.
+ */
+const THIS_FILE = new URL(import.meta.url).pathname;
+
+/**
  * Directories never descended into while scanning. `node_modules` is
  * impractical, `.git` is binary, and the vendored agent skill directory is not
  * this project's test surface — a skip in a vendored doc is not a coverage
@@ -541,8 +552,9 @@ function collect(detect: (source: string) => SkipSite[]): string[] {
 	for (const root of SCAN_ROOTS) {
 		for (const file of walk(root)) {
 			// This file necessarily talks about the pattern it forbids, so it is not
-			// evidence about anything.
-			if (file.endsWith('skip-policy.test.ts')) continue;
+			// evidence about anything. Matched by full path: a basename match would
+			// exempt any other file of the same name, anywhere.
+			if (file === THIS_FILE) continue;
 			const rel = relative(REPO_ROOT, file);
 			for (const site of detect(readFileSync(file, 'utf8'))) {
 				const at = `${rel}:${site.line}`;
@@ -571,13 +583,14 @@ function collect(detect: (source: string) => SkipSite[]): string[] {
 
 /**
  * A real unconditional skip, in the shape the gate exists to catch.
+ *
+ * The test name shares a line with the `)(` that names it, because that is
+ * where `skipNameAt` looks for it. A wrapped call is still detected, but is
+ * reported as an unnamed skip.
  */
 const PLANTED_SKIP = [
 	`import { test } from 'bun:test';`,
-	`test.skipIf(true, 'planted by the gate's own end-to-end test')(`,
-	`	'escaped the gate's scan roots',`,
-	`	() => {},`,
-	`);`,
+	`test.skipIf(true, 'planted by the skip-policy end-to-end test')('escaped the scan roots', () => {});`,
 	'',
 ].join('\n');
 
@@ -997,7 +1010,7 @@ bunDescribe('contract suite skip policy', () => {
 		// of blind spot the gate exists to close.
 		withPlantedFile('packages/core/src/skip-policy.test.ts', PLANTED_SKIP, offenders => {
 			expect(offenders).toEqual([
-				"packages/core/src/skip-policy.test.ts:2  escaped the gate's scan roots",
+				'packages/core/src/skip-policy.test.ts:2  escaped the scan roots',
 			]);
 		});
 	});
