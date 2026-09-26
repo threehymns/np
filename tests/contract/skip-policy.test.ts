@@ -1,7 +1,7 @@
 import { describe as bunDescribe, expect, it as bunTest } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { createTrackedRepo } from './harness';
 
 /**
@@ -21,22 +21,45 @@ import { createTrackedRepo } from './harness';
  * The rule is enforced on the source, not on test output, so it holds even when
  * the suite is run with a filter that skips whole files.
  *
- * Scope: the gate scans `tests/contract/**.ts`, which is the directory the
- * criterion in `docs/vcs-contract-gate.md` is about. `docs/vcs-contract-gate.md`
- * says so too. That is a real limit and worth stating plainly: at the time this
- * was written the scan covered 12 files against 81 test files in the repository,
- * so a skip written in `src/` or in the other test directories is not this gate's
- * business — it is a coverage gap, not a silent pass, and it belongs with the
- * change that widens the scan root rather than smuggled in here.
+ * Scope: the whole repository, not just this folder. The gate's first version
+ * scanned only `tests/contract` (12 of 81 test files), because the scan root was
+ * derived from the gate's own location. `docs/vcs-contract-gate.md` states the
+ * check is run as a bare `bun test` from the repository root, and every test
+ * file `bun test` collects is a place a skip can hide. Verified: an
+ * unconditional `test.skipIf(true, ...)` planted in `tests/e2e/vcs.spec.ts`
+ * left the gate reporting 12 pass / 0 fail.
  *
  * The pattern matchers below are deliberately independent of that scope. They key
  * on the call's shape rather than on which test registration functions a file
- * imports, so widening the root needs no change here, and a skip written against a
+ * imports, so widening the root needed no change there, and a skip written against a
  * locally-aliased `it` is recognised the same way a skip written against the
  * `bun:test` import is.
  */
 
 const CONTRACT_DIR = new URL('.', import.meta.url).pathname;
+
+/**
+ * Repository root, derived from this file's location
+ * (`<root>/tests/contract/skip-policy.test.ts`).
+ */
+const REPO_ROOT = join(CONTRACT_DIR, '..', '..');
+
+/**
+ * Directories never descended into while scanning. `node_modules` is
+ * impractical, `.git` is binary, and the vendored agent skill directory is not
+ * this project's test surface — a skip in a vendored doc is not a coverage
+ * decision made here.
+ */
+const SCAN_EXCLUDES = new Set(['node_modules', '.git', '.agents', 'dist', 'build']);
+
+/**
+ * Test-file roots the scan covers. This is deliberately the whole repository
+ * rather than a hand-maintained list of directories: a new test added under a
+ * package's src folder would otherwise be silently uncovered, which is the
+ * failure mode this gate exists to prevent. The exclusions above are the only
+ * filter.
+ */
+const SCAN_ROOTS: string[] = [REPO_ROOT];
 
 /**
  * The version-floor guard, and the only thing the allowlist covers.
@@ -77,7 +100,16 @@ const SANCTIONED_SITES = new Set(['harness.ts:232', 'harness.ts:235', 'harness.t
 function walk(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir)) {
 		const full = join(dir, entry);
-		if (statSync(full).isDirectory()) walk(full, out);
+		if (SCAN_EXCLUDES.has(entry)) continue;
+		// A broken or circular symlink must not take the whole gate down. A skip
+		// hidden behind one is not worth failing the merge gate over.
+		let isDir: boolean;
+		try {
+			isDir = statSync(full).isDirectory();
+		} catch {
+			continue;
+		}
+		if (isDir) walk(full, out);
 		else if (entry.endsWith('.ts')) out.push(full);
 	}
 	return out;
@@ -496,20 +528,31 @@ function collectFocusOnly(): string[] {
  */
 function collect(detect: (source: string) => SkipSite[]): string[] {
 	const offenders: string[] = [];
-	for (const file of walk(CONTRACT_DIR)) {
-		// This file necessarily talks about the pattern it forbids, so it is not
-		// evidence about anything.
-		if (file.endsWith('skip-policy.test.ts')) continue;
-		const rel = relative(CONTRACT_DIR, file);
-		for (const site of detect(readFileSync(file, 'utf8'))) {
-			const at = `${rel}:${site.line}`;
-			if (detect === findUnconditionalSkips && !site.name && SANCTIONED_SITES.has(at)) continue;
-			// The allowlist is matched against THIS skip's own test name, never
-			// against the whole file. Scoping it to the file would let a single
-			// legitimate skip whitelist every other skip in the same file, which
-			// is exactly the hole the gate exists to close.
-			if (!site.name || !ALLOWED_SKIPS.includes(site.name)) {
-				offenders.push(`${at}  ${site.name ?? '(no test name)'}`);
+	for (const root of SCAN_ROOTS) {
+		for (const file of walk(root)) {
+			// This file necessarily talks about the pattern it forbids, so it is not
+			// evidence about anything.
+			if (file.endsWith('skip-policy.test.ts')) continue;
+			const rel = relative(REPO_ROOT, file);
+			for (const site of detect(readFileSync(file, 'utf8'))) {
+				const at = `${rel}:${site.line}`;
+				// SANCTIONED_SITES was written against a scan rooted at CONTRACT_DIR,
+				// so its keys are the harness's paths relative to tests/contract. The
+				// scan is repo-wide now, so the key is rebuilt in that same basis
+				// rather than re-rooting the exemption list: a sanctioned site stays
+				// sanctioned, and an offender is reported by the path a reader would
+				// look up from the repository root.
+				const sanctioned = relative(CONTRACT_DIR, file) + ':' + site.line;
+				if (detect === findUnconditionalSkips && !site.name && SANCTIONED_SITES.has(sanctioned)) {
+					continue;
+				}
+				// The allowlist is matched against THIS skip's own test name, never
+				// against the whole file. Scoping it to the file would let a single
+				// legitimate skip whitelist every other skip in the same file, which
+				// is exactly the hole the gate exists to close.
+				if (!site.name || !ALLOWED_SKIPS.includes(site.name)) {
+					offenders.push(`${at}  ${site.name ?? '(unnamed skip)'}`);
+				}
 			}
 		}
 	}
@@ -869,6 +912,49 @@ bunDescribe('contract suite skip policy', () => {
 		// because a `.only` is not a skip: its test runs, while every other test in
 		// the file silently does not. See ONLY_SHAPES.
 		expect(collectFocusOnly()).toEqual([]);
+	});
+
+	bunTest('the scan covers the whole repository, not just tests/contract', () => {
+		// The gate's first version derived its scan root from its own location, so
+		// it saw 12 of the repository's 81 test files. A skip planted in
+		// `tests/e2e` or in any `packages/*/src` test passed the gate silently.
+		// This pins the scope: a real, live test file outside `tests/contract`
+		// must be inside the scan set.
+		const scanned = walk(REPO_ROOT);
+		expect(scanned.length).toBeGreaterThan(walk(CONTRACT_DIR).length);
+		for (const mustScan of [
+			'tests/e2e/vcs.spec.ts',
+			'packages/core/src/project/vcs.test.ts',
+			'tests/manifest-boundary.test.ts',
+		]) {
+			expect(scanned.map(f => relative(REPO_ROOT, f))).toContain(mustScan);
+		}
+	});
+
+	bunTest('the scan excludes vendored and generated directories', () => {
+		// A repo-wide scan must not wander into node_modules, the git object
+		// store, or the vendored agent skills, or it becomes slow and noisy.
+		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
+		expect(scanned.some(f => f.startsWith(`node_modules${sep}`))).toBe(false);
+		expect(scanned.some(f => f.startsWith(`.agents${sep}`))).toBe(false);
+		expect(scanned.some(f => f.startsWith(`.git${sep}`))).toBe(false);
+	});
+
+	bunTest('a skip outside tests/contract is still reported', () => {
+		// The end-to-end shape of the bug: `collectOffenders` must consider files
+		// beyond the gate's own folder. Proven by planting a real skip in
+		// `tests/e2e` and observing the gate report 12 pass / 0 fail.
+		const planted = join(
+			mkdtempSync(join(tmpdir(), 'skip-scope-')),
+			'planted.spec.ts',
+		);
+		writeFileSync(
+			planted,
+			[`test.skipIf(true, 'unconditional')('escaped the gate', () => {});`, ''].join('\n'),
+		);
+		const sites = findUnconditionalSkips(readFileSync(planted, 'utf8'));
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('escaped the gate');
 	});
 
 	bunTest('contract tests still run against a real repository', () => {
