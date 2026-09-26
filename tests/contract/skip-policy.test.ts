@@ -77,15 +77,166 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Strips comments and template/string noise so the scan sees code, not prose.
- * The gate's own documentation mentions the pattern it forbids, and a comment in
- * any test could too; neither is a skip.
+ * Blanks everything the scan must not read: comment bodies, string and template
+ * literal bodies, and regex literal bodies. The gate's own documentation quotes
+ * the pattern it forbids, and so does any test that explains the rule, names the
+ * forbidden shape in a constant, or searches for it with a regex. None of those
+ * is a skip, and reporting them sends the developer to edit prose.
+ *
+ * Blanking replaces each body with spaces of the same length and leaves every
+ * newline in place, so the blanked text occupies exactly the original grid: an
+ * offset taken from it is an offset into the file a developer is looking at, and
+ * `file:line` stays exact.
+ *
+ * This is a scanner rather than a parse because the gate only needs to know where
+ * code begins and ends, not what it means.
  */
-function stripComments(source: string): string {
-	return source
-		.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
-		.replace(/(^|[^:])\/\/[^\n]*/g, (m, lead) => lead + ' '.repeat(m.length - lead.length));
+function stripComments(text: string): string {
+	const out: string[] = [];
+	let i = 0;
+	while (i < text.length) {
+		const c = text[i];
+		if (c === '/' && text[i + 1] === '/') {
+			i = blank(out, text, i, lineEnd(text, i), '');
+		} else if (c === '/' && text[i + 1] === '*') {
+			const close = text.indexOf('*/', i + 2);
+			const end = close === -1 ? text.length : Math.min(close + 2, text.length);
+			i = blank(out, text, i, end, '');
+		} else if (c === '/' && startsRegex(text, i)) {
+			// A `(` inside a regex has to be escaped or spelled in a character class,
+			// so the bare byte the gate looks for is hard to write by accident — but a
+			// test that searches test sources for the forbidden shape is exactly the
+			// kind of test that would spell it, and it is not a skip.
+			i = blank(out, text, i, regexEnd(text, i), '');
+		} else if (c === "'" || c === '"') {
+			// Quotes are kept, because a name read off the blanked text is delimited
+			// by them. The body is not kept.
+			i = blank(out, text, i, quoteEnd(text, i, c), c);
+		} else if (c === '`') {
+			i = blankTemplate(out, text, i);
+		} else {
+			out.push(c);
+			i++;
+		}
+	}
+	return out.join('');
 }
+
+/**
+ * Copies `text[from, to)` to `out` as spaces, keeping newlines, and returns `to`.
+ * `keep` is written verbatim at both ends when set — the quotes around a string
+ * body, or the `${` and `}` of an interpolation.
+ */
+function blank(out: string[], text: string, from: number, to: number, keep: string): number {
+	if (keep) out.push(keep[0]);
+	for (let i = from + keep.length; i < to - keep.length; i++) {
+		out.push(text[i] === '\n' ? '\n' : ' ');
+	}
+	if (keep) out.push(keep[keep.length - 1]);
+	return to;
+}
+
+/**
+ * Copies a whole template literal, blanking its text but keeping the interpolation
+ * expressions verbatim: an expression is code, so a skip written inside one is a
+ * real skip and has to survive.
+ */
+function blankTemplate(out: string[], text: string, from: number): number {
+	out.push('`');
+	const end = quoteEnd(text, from, '`');
+	const close = end - 1;
+	let i = from + 1;
+	while (i < close) {
+		if (text[i] === '\\') {
+			out.push(' ', ' ');
+			i += 2;
+		} else if (text[i] === '$' && text[i + 1] === '{') {
+			const next = copyInterpolation(out, text, i + 2, close);
+			// An interpolation that never closes means the backtick we took for the
+			// literal's end was itself inside it, so the literal does not close here.
+			if (next === close) return end;
+			i = next;
+		} else {
+			out.push(text[i] === '\n' ? '\n' : ' ');
+			i++;
+		}
+	}
+	out.push('`');
+	return end;
+}
+
+/** Copies an interpolation's expression verbatim and returns the index past its `}`. */
+function copyInterpolation(out: string[], text: string, from: number, to: number): number {
+	out.push(' ', ' ');
+	let depth = 1;
+	for (let i = from; i < to; i++) {
+		if (text[i] === '{') depth++;
+		else if (text[i] === '}') {
+			depth--;
+			if (depth === 0) {
+				out.push('}');
+				return i + 1;
+			}
+		}
+		out.push(text[i]);
+	}
+	return to;
+}
+
+/**
+ * Whether a regex literal opens at `at`, decided from the last significant token:
+ * a regex cannot follow an operand or a closing bracket, which are exactly the
+ * cases where a `/` is division. Getting this backwards is harmless in the
+ * direction that matters — a division read as a regex ends at the next `/` on the
+ * same line — because the body it blanks holds no pattern the gate looks for.
+ */
+function startsRegex(text: string, at: number): boolean {
+	let i = at - 1;
+	while (i >= 0 && /\s/.test(text[i])) i--;
+	if (i < 0) return true;
+	if (/[)\]}]/.test(text[i])) return false;
+	if (/[A-Za-z0-9_$]/.test(text[i])) {
+		// A keyword is an operand boundary; a plain identifier ends one.
+		const word = /[A-Za-z0-9_$]+$/.exec(text.slice(0, i + 1))?.[0];
+		return !word || ['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void'].includes(word);
+	}
+	return true;
+}
+
+/** Index just past the closing quote of the `'…'`, `"…"` or `` `…` `` starting at `at`. */
+function quoteEnd(text: string, at: number, quote: string): number {
+	for (let i = at + 1; i < text.length; i++) {
+		if (text[i] === '\\') {
+			i++;
+			continue;
+		}
+		if (text[i] === quote) return i + 1;
+	}
+	return text.length;
+}
+
+/** Index just past the `/` that ends the regex literal opened at `at`. */
+function regexEnd(text: string, at: number): number {
+	let inClass = false;
+	for (let i = at + 1; i < text.length; i++) {
+		if (text[i] === '\n') return i + 1;
+		if (text[i] === '\\') {
+			i++;
+			continue;
+		}
+		if (text[i] === '[') inClass = true;
+		else if (text[i] === ']') inClass = false;
+		else if (text[i] === '/' && !inClass) return i + 1;
+	}
+	return text.length;
+}
+
+/** Index of the newline ending the line `at` is on, or the end of the text. */
+function lineEnd(text: string, at: number): number {
+	const newline = text.indexOf('\n', at);
+	return newline === -1 ? text.length : newline;
+}
+
 
 /**
  * Records the call that a pattern match opened on: its 1-based line and its first
@@ -142,12 +293,15 @@ const MAX_NAME_SEARCH = 2000;
 
 /**
  * Returns the source text of the arguments passed to a call whose `(` sits at
- * `open`, by matching parentheses. Comments are blanked to spaces beforehand, so
- * a paren inside a comment cannot unbalance the count.
+ * `open`, by matching parentheses. Blanked and original text are both accepted
+ * because the two callers want different things: a condition has to be read
+ * blanked, so that a `true,` inside a literal is not mistaken for the condition,
+ * while a test name has to be read from the original, since the whole point of
+ * blanking is that the name is no longer there.
  */
-function argsAt(code: string, open: number): string {
-	const end = afterCall(code, open);
-	return end > open ? code.slice(open + 1, end) : code.slice(open + 1);
+function argsAt(source: string, blanked: string, open: number): string {
+	const end = afterCall(blanked, open);
+	return end > open ? source.slice(open + 1, end) : source.slice(open + 1);
 }
 
 /**
@@ -185,14 +339,14 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 		// Only a literal `true` is unconditional; a predicate can lift itself when
 		// the environment changes, which is the whole point of `skipIf`. A plain
 		// `skip`/`todo`/`only` has no condition to inspect, so it always qualifies.
-		if (isConditional && !isUnconditionalCondition(argsAt(code, open))) continue;
+		if (isConditional && !isUnconditionalCondition(argsAt(code, code, open))) continue;
 
 		// A plain `skip`/`todo`/`only` names its test in its own first argument. A
 		// conditional one names it in the call that the result of `skipIf(...)` is
 		// immediately invoked with, so the read has to start past the condition.
 		const name = isConditional
-			? invocationNameAt(code, match.index + match[0].length)
-			: firstArgumentName(argsAt(code, open));
+			? invocationNameAt(source, match.index + match[0].length)
+			: firstArgumentName(argsAt(source, code, open));
 		const lineIndex = code.slice(0, match.index).split('\n').length - 1;
 		sites.push({ line: lineIndex + 1, name });
 	}
@@ -229,7 +383,6 @@ function afterCall(code: string, open: number): number {
 	}
 	return code.length;
 }
-
 /**
  * The test name a plain `skip`/`todo`/`only` gives itself, read from the first
  * argument of `args`. Stops at the end of that argument rather than reading on:
@@ -447,6 +600,78 @@ bunDescribe('contract suite skip policy', () => {
 			`it('a real test', () => {});`,
 		].join('\n');
 		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('ignores the pattern when it appears in a string literal', () => {
+		// A policy constant, a copy-pasted snippet, or a URL quoting the rule is
+		// prose, not a skip. Reporting it sends the developer to edit a string.
+		const source = [
+			`const POLICY = "contract tests must not use it.skipIf(true, 'reason')('name', fn)";`,
+			`const LINK = "see https://example.com/it.skipIf(true, 'reason')('name', fn)";`,
+			`it('a real test', () => { expect(POLICY).toBeString(); });`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('ignores the pattern when it appears in a template literal', () => {
+		// Multi-line snippets in template literals are the most natural way to write
+		// a policy example, and the shape of the example is a skip.
+		const source = [
+			'const snippet = `',
+			`it.skipIf(true, 'reason')('name', fn)`,
+			'`;',
+			`it('a real test', () => { expect(snippet).toBeString(); });`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('ignores the pattern when it appears in a regex literal', () => {
+		// A test that searches test sources for the forbidden spelling has to name
+		// it, and a regex is how you would. Here the body spells the `(` in full
+		// inside a character class, which is the only way a regex can contain a bare
+		// one, so the shape does match the gate's opener.
+		const source = [
+			`const FORBIDDEN = /it\\.skipIf[(]true,/;`,
+			`it('a real test', () => { expect(FORBIDDEN).toBeInstanceOf(RegExp); });`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('still detects a real skip that follows quoted prose', () => {
+		// The control for the three above: blanking a literal must not reach past it
+		// and disarm the scan. Both shapes live in one file on purpose.
+		const source = [
+			`const POLICY = "never write it.skipIf(true, 'reason')('name', fn)";`,
+			`const snippet = \`it.skip('another', () => {});\`;`,
+			`it.skipIf(true, 'hardcoded')('a real skip', () => {});`,
+		].join('\n');
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('a real skip');
+		expect(sites[0].line).toBe(3);
+	});
+
+	bunTest('blanking preserves every line length and the line count', () => {
+		// The gate reports `file:line` to a developer who will go read that line, so
+		// the blanked text has to occupy exactly the same grid as the original. A
+		// line that is deleted or padded moves the report off the offender, which is
+		// worse than a missing detection because it looks authoritative.
+		const source = [
+			`import { it } from 'bun:test';`,
+			`const url = "https://example.com/it.skipIf(true, 'quoted', 2)";`,
+			`/* a block comment`,
+			`   spanning two lines */`,
+			'const snippet = `line one',
+			"line two it.skipIf(true, 'r')('n', fn)`;",
+			`it.skipIf(true, 'hardcoded')('a real skip', () => {});`,
+		].join('\n');
+		const blanked = stripComments(source);
+		expect(blanked.split('\n')).toHaveLength(source.split('\n').length);
+		blanked.split('\n').forEach((line, i) => {
+			expect(line).toHaveLength(source.split('\n')[i].length);
+		});
+		// And the offender is still reported at the line a developer would read.
+		expect(findUnconditionalSkips(source).map(site => site.line)).toEqual([7]);
 	});
 
 	bunTest('reports a skip that is not on the allowlist, by name and line', () => {
