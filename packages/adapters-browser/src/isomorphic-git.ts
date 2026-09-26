@@ -18,6 +18,17 @@ function parentDirectory(p: string): string {
 	return trimmed.slice(0, idx);
 }
 
+/**
+ * The index mode to keep when re-staging a path's current content: a recorded
+ * regular-file mode, else the 100644 default. Any other mode describes a
+ * different kind of object — `120000` is a symlink, whose blob must hold the
+ * link target rather than the file's body — and the bytes being staged are
+ * always a regular file's, so such a mode is not inheritable.
+ */
+function stageMode(recorded: number | undefined): number {
+	return recorded === 0o100755 || recorded === 0o100644 ? recorded : 0o100644;
+}
+
 class BrowserStats {
 	ctime: Date;
 	mtime: Date;
@@ -1011,7 +1022,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				return;
 			}
 		}
-		await git.add({ fs: this.fs!, dir: this.dir, filepath });
+		await this.stageWorktreeFile(filepath);
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
@@ -1086,6 +1097,44 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	private async readWorktreeText(filepath: string): Promise<string | null> {
 		const bytes = await this.readWorktreeBytes(filepath);
 		return bytes === null ? null : new TextDecoder().decode(bytes);
+	}
+
+	/**
+	 * Whether `.gitignore` rules match a path. A repository with no ignore files
+	 * answers false without walking any of them.
+	 */
+	private async isIgnored(filepath: string): Promise<boolean> {
+		try {
+			return await git.isIgnored({ fs: this.fs!, dir: this.dir, filepath });
+		} catch (e) {
+			// An absent or unreadable ignore configuration means nothing matches.
+			// Failing closed here would skip a file the user asked to stage, which is
+			// the worse error; real git treats an unreadable .gitignore as empty.
+			return false;
+		}
+	}
+
+	/**
+	 * CRLF to LF for the staged blob, but only where `core.autocrlf` asks for it
+	 * and only for a file that is valid UTF-8 to begin with: a binary file is
+	 * committed byte-for-byte, as on the desktop engine.
+	 */
+	private async normalizeLineEndings(bytes: Uint8Array): Promise<Uint8Array> {
+		let autocrlf: unknown;
+		try {
+			autocrlf = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'core.autocrlf' });
+		} catch (e) {
+			return bytes;
+		}
+		if (autocrlf !== true && autocrlf !== 'true') return bytes;
+		try {
+			return new TextEncoder().encode(
+				new TextDecoder('utf8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n')
+			);
+		} catch (e) {
+			// Not UTF-8, so there are no line endings to normalise.
+			return bytes;
+		}
 	}
 
 	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
@@ -1275,9 +1324,66 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					await this.removeFromIndex(filepath as string);
 				}
 			} else {
-				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+				await this.stageWorktreeFile(filepath as string);
 			}
 		}
+	}
+
+	/**
+	 * Stages a worktree file's current content into the index.
+	 *
+	 * `git.add` derives the index mode from `stat().mode`, and `BrowserStats`
+	 * reports a hardcoded `0o100644` for every file because the File System Access
+	 * API exposes no POSIX mode. Staging that way silently rewrote an executable
+	 * entry to 100644 the first time a script was edited, so simply opening a
+	 * `.sh`, changing it and hitting "Stage All" stripped the exec bit from the
+	 * commit.
+	 *
+	 * The fix is to pass the mode explicitly, keeping whatever the index already
+	 * recorded. That is the same approach `updateIndexContent` already takes
+	 * (`mode: destEntry?.mode ?? 0o100644`), and it is the only correct answer for
+	 * this platform: a browser cannot learn or set a POSIX mode, so the index is
+	 * the sole source of truth for one. A file with no index entry yet is genuinely
+	 * new, and 100644 is the honest default.
+	 *
+	 * The recorded mode is only inheritable while the new content is the same kind
+	 * of object. A `120000` entry's blob holds a link *target*, not a file body, so
+	 * keeping that mode over a regular file's bytes writes an entry git cannot
+	 * represent. `readWorktreeBytes` never returns a link — this platform cannot
+	 * read one — so anything other than a regular-file mode is dropped, exactly as
+	 * `git.add` did.
+	 *
+	 * Writing the blob by hand also means the work `git.add` did has to be
+	 * reproduced, or the two engines diverge on the same repository: `.gitignore`
+	 * still governs an untracked path, and `core.autocrlf` still normalises CRLF on
+	 * the way in. The blob is otherwise the file's raw bytes, which is what
+	 * `git.add` wrote too: a decode/re-encode round trip would be lossy for any
+	 * file that is not valid UTF-8 (a PNG, a .so, a latin-1 source file), and a
+	 * blob that differs from the file on disk leaves the file permanently
+	 * staged-modified.
+	 */
+	private async stageWorktreeFile(filepath: string): Promise<void> {
+		const [staged, bytes] = await Promise.all([
+			this.readStageEntry(filepath),
+			this.readWorktreeBytes(filepath)
+		]);
+		// `.gitignore` governs untracked paths only: once a path is in the index, a
+		// later matching rule does not stop further changes from being staged, which
+		// is real git's rule and `git.add`'s. `statusMatrix` never lists an ignored
+		// file, so this only bites a caller that names the path directly.
+		if (!staged && await this.isIgnored(filepath)) return;
+		await git.updateIndex({
+			fs: this.fs!,
+			dir: this.dir,
+			filepath,
+			oid: await git.writeBlob({
+				fs: this.fs!,
+				dir: this.dir,
+				blob: await this.normalizeLineEndings(bytes ?? new Uint8Array())
+			}),
+			add: true,
+			mode: stageMode(staged?.mode)
+		});
 	}
 
 	async unstageAll(): Promise<void> {
