@@ -23,10 +23,17 @@ import { createTrackedRepo } from './harness';
  *
  * Scope: the gate scans `tests/contract/**.ts`, which is the directory the
  * criterion in `docs/vcs-contract-gate.md` is about. `docs/vcs-contract-gate.md`
- * says so too. The pattern matchers below do not depend on that scope: they key
- * on the call's shape, not on which test registration functions a file imports,
- * so a skip written against a locally-aliased `it` is recognised the same way a
- * skip written against the `bun:test` import is.
+ * says so too. That is a real limit and worth stating plainly: at the time this
+ * was written the scan covered 12 files against 81 test files in the repository,
+ * so a skip written in `src/` or in the other test directories is not this gate's
+ * business — it is a coverage gap, not a silent pass, and it belongs with the
+ * change that widens the scan root rather than smuggled in here.
+ *
+ * The pattern matchers below are deliberately independent of that scope. They key
+ * on the call's shape rather than on which test registration functions a file
+ * imports, so widening the root needs no change here, and a skip written against a
+ * locally-aliased `it` is recognised the same way a skip written against the
+ * `bun:test` import is.
  */
 
 const CONTRACT_DIR = new URL('.', import.meta.url).pathname;
@@ -326,6 +333,7 @@ function argsAt(source: string, blanked: string, open: number): string {
 function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	const code = stripComments(source);
 	const members = shapes.map(shape => shape.member).join('|');
+	const constants = readConstants(code);
 
 	const sites: SkipSite[] = [];
 	const opener = new RegExp(`\\b\\w+\\.(?:${members})${CALL_OPENERS}`, 'g');
@@ -336,10 +344,11 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 		const open = match.index + match[0].length - 1;
 		const isConditional = /\.skipIf\b/.test(match[0]);
 
-		// Only a literal `true` is unconditional; a predicate can lift itself when
-		// the environment changes, which is the whole point of `skipIf`. A plain
-		// `skip`/`todo`/`only` has no condition to inspect, so it always qualifies.
-		if (isConditional && !isUnconditionalCondition(argsAt(code, code, open))) continue;
+		// Only a condition that is constant-true is unconditional; a predicate can
+		// lift itself when the environment changes, which is the whole point of
+		// `skipIf`. A plain `skip`/`todo`/`only` has no condition to inspect, so it
+		// always qualifies.
+		if (isConditional && !isUnconditionalCondition(argsAt(code, code, open), constants)) continue;
 
 		// A plain `skip`/`todo`/`only` names its test in its own first argument. A
 		// conditional one names it in the call that the result of `skipIf(...)` is
@@ -353,6 +362,64 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	return sites;
 }
 
+/** One `const` binding: the name and the text its initialiser holds. */
+const CONST_DECLARATION = /\bconst\s+([\w$]+)\s*=\s*([^;]*);/g;
+
+/** How many links of a name-to-name chain the gate will follow. */
+const CONSTANT_CHAIN_LIMIT = 10;
+
+/**
+ * Every `const` in `code` bound to a single initialiser, keyed by name and mapped
+ * to the text of that initialiser. Read off the blanked text, so a `const` inside
+ * a literal or a comment is not a binding, and a name's value is the value a reader
+ * can see.
+ *
+ * Only the first binding of `const a = 1, b = 2;` is picked up, and that is the
+ * right trade: a second name in the same declaration is never the reason a suite
+ * is skipped, and a pattern loose enough to reach it also reaches object literals
+ * and class fields.
+ *
+ * The pattern is rebuilt on every call rather than shared: a `/g` regex carries
+ * `lastIndex` between `exec` calls, and a file scanned twice would find nothing
+ * the second time.
+ */
+function readConstants(code: string): Map<string, string> {
+	const declaration = new RegExp(CONST_DECLARATION.source, 'g');
+	const constants = new Map<string, string>();
+	let found: RegExpExecArray | null;
+	while ((found = declaration.exec(code)) !== null) {
+		const name = found[1].trim();
+		if (name) constants.set(name, found[2].trim());
+	}
+	return constants;
+}
+
+/**
+ * Whether a conditional shape's condition can never lift. `args` is the text of the
+ * call's arguments and `constants` the file's `const` bindings; a condition that
+ * names one is read off its value instead, because the historical escape was a
+ * variable rather than a literal.
+ *
+ * Only a condition made purely of constants and operators counts, and only when
+ * every operand in it is constant-true. A call anywhere in the expression is a
+ * predicate by definition — that is the case `skipIf` exists for — so the walk
+ * stops there and reports liftable.
+ */
+function isUnconditionalCondition(args: string, constants: Map<string, string>): boolean {
+	const expression = args.split(',')[0];
+	const operands = expression.match(/[\w$]+/g) ?? [];
+	return operands.length > 0 && operands.every(operand => isConstantTrue(operand, constants, CONSTANT_CHAIN_LIMIT));
+}
+
+/** Whether one token of a condition is `true` once `const` names are followed. */
+function isConstantTrue(token: string, constants: Map<string, string>, hops: number): boolean {
+	if (/^true$/i.test(token)) return true;
+	const value = constants.get(token);
+	if (value === undefined || hops <= 0) return false;
+	const nested = value.match(/[\w$]+/g) ?? [];
+	return nested.length > 0 && nested.every(operand => isConstantTrue(operand, constants, hops - 1));
+}
+
 /** Every unconditional skip in a file: the spellings that drop a test with no condition. */
 function findUnconditionalSkips(source: string): SkipSite[] {
 	return findSites(source, SKIP_SHAPES);
@@ -361,11 +428,6 @@ function findUnconditionalSkips(source: string): SkipSite[] {
 /** Every stray `.only` in a file. See ONLY_SHAPES for why it is reported separately. */
 function findFocusOnly(source: string): SkipSite[] {
 	return findSites(source, ONLY_SHAPES);
-}
-
-/** Whether a conditional shape's first argument is a condition that can never lift. */
-function isUnconditionalCondition(args: string): boolean {
-	return /^\s*true\s*,/.test(args);
 }
 
 /**
@@ -509,6 +571,73 @@ bunDescribe('contract suite skip policy', () => {
 		expect(sites).toHaveLength(1);
 		expect(sites[0].name).toBe('copy detection');
 		expect(sites[0].line).toBe(1);
+	});
+
+	bunTest('detects a condition that is true however it is written', () => {
+		// Parens are how a reader parenthesises a condition before passing it on,
+		// and the all-caps spelling is how CI configs and issue text spell it. Both
+		// are `true` to a JavaScript engine and both are `true` to this gate.
+		for (const condition of [
+			'true',
+			'(true)',
+			'((true))',
+			'TRUE',
+			'true && true',
+		]) {
+			const sites = findUnconditionalSkips(`it.skipIf(${condition}, 'why')('name', () => {});`);
+			expect(sites.map(site => site.name)).toEqual(['name']);
+		}
+	});
+
+	bunTest('detects a condition bound to a const that is true', () => {
+		// The historical escape was a variable, not a literal: naming the reason once
+		// and gating on it reads better than repeating the literal, and it is the
+		// shape the version floor actually uses. Reading only the condition argument
+		// cannot see it, so the gate follows `const` names back to their value.
+		const source = [
+			`const unavailable = true;`,
+			`it.skipIf(unavailable, 'needs a newer git')('restores the source', () => {});`,
+		].join('\n');
+		const sites = findUnconditionalSkips(source);
+		expect(sites.map(site => site.name)).toEqual(['restores the source']);
+		expect(sites[0].line).toBe(2);
+	});
+
+	bunTest('detects a condition that a const is bound to, and follows it through', () => {
+		const source = [
+			`const belowFloor = true;`,
+			`const unavailable = belowFloor;`,
+			`it.skipIf(unavailable, 'needs a newer git')('restores the source', () => {});`,
+		].join('\n');
+		expect(findUnconditionalSkips(source).map(site => site.name)).toEqual(['restores the source']);
+	});
+
+	bunTest('does not follow a condition into a function the environment could change', () => {
+		// The point of following a name is to catch one bound to `true`. A name bound
+		// to a predicate is precisely the case `skipIf` exists for, and following it
+		// would make every environment-gated suite an offence.
+		const source = [
+			`const belowFloor = gitVersion().atLeast(FLOOR) === false;`,
+			`it.skipIf(belowFloor, 'needs a newer git')('restores the source', () => {});`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('does not follow a condition that a template or string is bound to', () => {
+		const source = [
+			`const reason = 'needs a newer git';`,
+			`const label = \`${'${reason}'} or something\`;`,
+			`it.skipIf(label, 'x')('restores the source', () => {});`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('reads a condition off the same call as the shape it was written in', () => {
+		// `it.skipIf(true)('name', fn)` and `it.skipIf(true, 'why')('name', fn)` are
+		// both unconditional and both take the condition first. The second argument is
+		// the reason, so a gate that read argument two would see prose and pass it.
+		const withReason = findUnconditionalSkips(`it.skipIf(true, 'a reason')('name', () => {});`);
+		expect(withReason.map(site => site.name)).toEqual(['name']);
 	});
 
 	bunTest('detects a test.skip under the alias the contract suite itself uses', () => {
