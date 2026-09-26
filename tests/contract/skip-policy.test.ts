@@ -1286,6 +1286,25 @@ bunDescribe('contract suite skip policy', () => {
 		expect(findUnconditionalSkips(source)).toEqual([]);
 	});
 
+	bunTest('a skipIf bound to a name and then invoked is a deleted test, not a guard', () => {
+		// The other side of `a skipIf bound to a name is a guard`, and the boundary
+		// the exemption has to be drawn on. Binding alone does not make a `skipIf`
+		// a guard: the repo's three guards are *chosen* at module scope — a
+		// `reason ? registrar : plainIt` ternary — and never invoked here, whereas
+		// this shape pulls an unconditional registrar out under a local alias and
+		// calls it on the next line. Measured against a real runner: the aliased
+		// test is registered, its body is suppressed, a sibling runs, and
+		// `bun test` exits 0. The gate must report it, as it did before the
+		// bound-name exemption existed.
+		const source = [
+			`const reg = it.skipIf(true, 'r');`,
+			`reg('X', () => { expect(1).toBe(2); });`,
+		].join('\n');
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('X');
+	});
+
 	bunTest('a bound guard next to a real skip still reports the real skip', () => {
 		// The guard test above must not become a blanket exemption: an aliased skip
 		// in the same file is still a deleted test.
