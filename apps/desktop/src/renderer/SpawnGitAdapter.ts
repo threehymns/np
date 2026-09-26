@@ -311,6 +311,33 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
+	 * The paths whose deletion is staged but which have since been recreated in the
+	 * worktree, read from an already-parsed porcelain v1 listing.
+	 *
+	 * Git reports that state as two entries for the same path: `D  f.txt` (the
+	 * staged deletion, with an empty worktree column) alongside `?? f.txt` (present
+	 * on disk). Together they mean the user deleted the file, staged the deletion,
+	 * and then wrote a new copy over it. The worktree copy's content is in neither
+	 * the index nor HEAD, so nothing else in the repository can restore it.
+	 *
+	 * Both entries are required, and the deletion must be in the *index* column: a
+	 * plain worktree deletion (` D`) plus an untracked path of the same name has
+	 * the same shape here but is not this state.
+	 */
+	private findResurrectedAfterStagedDelete(entries: Array<{ x: string; y: string; filepath: string }>): string[] {
+		const stagedDeletions = new Set(
+			entries.filter(e => e.x === 'D' && e.y === ' ').map(e => e.filepath)
+		);
+		return entries.filter(e => e.x === '?' && e.y === '?' && stagedDeletions.has(e.filepath)).map(e => e.filepath);
+	}
+
+	private async readResurrectedAfterStagedDelete(): Promise<string[]> {
+		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (res.code !== 0) return [];
+		return this.findResurrectedAfterStagedDelete(this.parseStatusEntries(res.stdout));
+	}
+
+	/**
 	 * Finds the tracked source of an unstaged worktree rename whose destination is
 	 * `filepath`, or undefined when `filepath` is not such a destination.
 	 *
@@ -364,6 +391,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (options?.staged === false) {
+			// A file whose deletion is staged but which has been recreated holds
+			// content in neither the index nor HEAD, and git's own model calls that
+			// worktree copy untracked, so there are no unstaged changes to revert and
+			// the only way to act on it is to delete it. Both entries below would
+			// destroy the only copy: `restore` cannot reach the path (it left the
+			// index), and the resulting "pathspec did not match" error is what leads
+			// to the `cleanIfPresent` fallback that unlinks it. Measured on a real
+			// repository: git 2.55.
+			if ((await this.readResurrectedAfterStagedDelete()).includes(filepath)) {
+				return;
+			}
 			// Unstaged scope: reset only the worktree copy to the index version. If the
 			// destination path is not in the index (e.g. an unstaged worktree rename),
 			// restore the original source path from the index and clean the destination.
@@ -483,11 +521,40 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async discardAll(): Promise<void> {
-		const restoreRes = await this.runGit(['restore', '--staged', '--worktree', '.']);
+		// A path whose deletion is staged but which has been recreated holds content
+		// in neither HEAD nor the index, so a blanket "discard everything" would have
+		// to destroy it: `restore --staged --worktree .` cannot reach the path (it
+		// left the index) and `clean -fd .` unlinks it as an untracked file. Measured
+		// on a real repository, git 2.55 — `clean -fd` also ignores `-e
+		// :(exclude)` pathspecs for untracked files, so an exclusion cannot be used
+		// to shield the path; the removals are enumerated instead.
+		const resurrected = new Set(await this.readResurrectedAfterStagedDelete());
+
+		// Unstage and restore everything except those paths, so a resurrected file
+		// keeps its staged deletion and its worktree copy.
+		const restoreArgs = ['restore', '--staged', '--worktree', '.'];
+		for (const filepath of resurrected) {
+			restoreArgs.push(`:(top,exclude,literal)${filepath}`);
+		}
+		const restoreRes = await this.runGit(restoreArgs);
 		if (restoreRes.code !== 0) {
 			throw new Error(restoreRes.stderr || 'Failed to discard all changes');
 		}
-		const cleanRes = await this.runGit(['clean', '-fd', '.']);
+
+		// Whatever is untracked once the restore has run is what this discard is
+		// allowed to remove. That cannot be predicted from the listing above -- a
+		// resurrected path left the index because of the staged deletion, so it only
+		// becomes untracked at that point -- so it is read here rather than assumed.
+		// The recreated paths are dropped from the list and stay on disk.
+		const remainingRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (remainingRes.code !== 0) {
+			throw new Error(remainingRes.stderr || 'Failed to discard all changes');
+		}
+		const removable = this.parseStatusEntries(remainingRes.stdout)
+			.filter(e => e.x === '?' && e.y === '?' && !resurrected.has(e.filepath))
+			.map(e => e.filepath);
+		if (removable.length === 0) return;
+		const cleanRes = await this.runGit(['clean', '-fd', '--', ...removable]);
 		if (cleanRes.code !== 0) {
 			throw new Error(cleanRes.stderr || 'Failed to discard all changes');
 		}
@@ -691,6 +758,24 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	/**
+	 * Whether a path currently exists in the worktree.
+	 *
+	 * Used to check the premise behind a porcelain `D` status, which describes the
+	 * index rather than the disk. Any failure other than "not found" is reported as
+	 * existing, so an unreadable-but-present file is read (and its read error
+	 * surfaces) instead of being silently reported as empty.
+	 */
+	private async worktreeFileExists(filepath: string): Promise<boolean> {
+		try {
+			await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			return true;
+		} catch (e) {
+			if (isNotFoundError(e)) return false;
+			return true;
+		}
+	}
+
 	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail> {
 		// Optimization: If the file is untracked ('U'), it has no HEAD or index objects.
 		if (options?.status === 'U') {
@@ -706,8 +791,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 
 		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
-		const isDeletedWorktree = options?.status === 'D' && options?.staged !== true;
-		const worktreeContent = options?.staged !== true && !isDeletedWorktree ? await this.readWorktreeContent(filepath) : '';
+		//
+		// A porcelain status of `D` means "the index holds a deletion", NOT "the file
+		// is gone from disk". Delete a file, stage the deletion, then recreate it,
+		// and git reports both `D  f.txt` and `?? f.txt`; the UI combines those into
+		// one entry whose status is `D` (see `combineChangesByFilepath`). Trusting
+		// `D` unconditionally therefore reports the worktree as empty while it holds
+		// real content, and the next "discard" writes HEAD content back over that
+		// file — unrecoverable loss of work that was never staged or committed.
+		//
+		// So the worktree is read unless the status says the index holds a deletion
+		// AND the file is genuinely absent. `readWorktreeContent` returns '' for a
+		// missing file, so a file that vanished between the status listing and this
+		// read still yields '' without a second probe.
+		const deletedInIndex = options?.status === 'D' && options?.staged !== true;
+		const worktreeContent =
+			options?.staged === true ? '' : deletedInIndex && !(await this.worktreeFileExists(filepath)) ? '' : await this.readWorktreeContent(filepath);
 
 		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);

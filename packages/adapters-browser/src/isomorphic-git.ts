@@ -1,4 +1,5 @@
 import git from 'isomorphic-git';
+import type { StatusRow } from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
@@ -27,6 +28,22 @@ function parentDirectory(p: string): string {
  */
 function stageMode(recorded: number | undefined): number {
 	return recorded === 0o100755 || recorded === 0o100644 ? recorded : 0o100644;
+}
+
+/**
+ * Whether a status row is a file whose deletion is staged but which has been
+ * recreated in the worktree: still in HEAD (1), gone from the index (0), and
+ * present on disk (2).
+ *
+ * Real git reports that state as two porcelain entries, `D  f.txt` and `?? f.txt`.
+ * `statusMatrix` folds it into the single row [f.txt, 1, 2, 0] — the worktree
+ * column is 2, "untracked", precisely because the path left the index, so the two
+ * halves that matter are indistinguishable from a file that was never tracked at
+ * all. Measured on a real repository.
+ */
+function isResurrectedAfterStagedDelete(row: StatusRow): boolean {
+	const [, head, workdir, stage] = row;
+	return head === 1 && workdir === 2 && stage === 0;
 }
 
 class BrowserStats {
@@ -1222,6 +1239,22 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (!entry) return;
 
 		if (options?.staged === false) {
+			// Still in HEAD, gone from the index, and present on disk: the user
+			// deleted the file, staged the deletion, and then recreated it.
+			// `statusMatrix` reports that as the single row [path, 1, 2, 0] — the
+			// worktree column is 2 (untracked) precisely because the path left the
+			// index, so the two-entry `D` + `??` pair real git prints is invisible
+			// here. Unlinking it destroyed the only copy of content that is in
+			// neither the index nor HEAD.
+			//
+			// There is also nothing to discard: in git's model that copy is
+			// untracked, so the "unstaged changes" this scope exists to revert do
+			// not exist and the only way to act would be to delete the file. This
+			// scope never touches the index, so the state is left exactly as it
+			// was, with the user's content intact.
+			if (isResurrectedAfterStagedDelete(entry)) {
+				return;
+			}
 			// Unstaged scope: reset only the worktree copy from the index version; the
 			// index is never touched. A path absent from the index (untracked file or
 			// worktree-only rename) has no staged copy to restore from, so its worktree
@@ -1400,9 +1433,15 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await this.readStatusMatrix();
 		const trackedToRestore: string[] = [];
+		// A path whose deletion is staged but which has been recreated holds content
+		// in neither HEAD nor the index, so neither the unlink below nor the HEAD
+		// checkout can be allowed to touch it: that is how a bulk discard destroys a
+		// re-created file outright. Measured on a real repo — [f.txt, 1, 2, 0].
+		const resurrected = new Set(matrix.filter(isResurrectedAfterStagedDelete).map(([filepath]) => filepath));
 		for (const [filepath, head, workdir, stage] of matrix) {
 			const isClean = head === 1 && workdir === 1 && stage === 1;
 			if (isClean) continue;
+			if (resurrected.has(filepath as string)) continue;
 			if (head === 0) {
 				// Absent from HEAD: remove the worktree copy and the index entry. The
 				// unlink tolerates an already-gone file and `removeFromIndex` never
