@@ -277,22 +277,27 @@ function registerIpcHandlers() {
 			console.log(`Running git inside ${workingDir}: git ${args.join(' ')}`);
 			const gitProcess = spawn('git', args, { cwd: workingDir });
 
-			let stdout = '';
-			let stderr = '';
+			// Collect as Buffers and decode once at the end. Decoding each chunk as
+			// it arrives corrupts any multi-byte UTF-8 sequence that straddles a
+			// chunk boundary, turning a path like `café.txt` into U+FFFD. That is
+			// reachable precisely because `git log -z` output is NUL-delimited and
+			// routinely larger than one pipe read.
+			const stdout: Buffer[] = [];
+			const stderr: Buffer[] = [];
 
 			gitProcess.stdout.on('data', (data) => {
-				stdout += data.toString();
+				stdout.push(data);
 			});
 
 			gitProcess.stderr.on('data', (data) => {
-				stderr += data.toString();
+				stderr.push(data);
 			});
 
 			gitProcess.on('close', (code) => {
 				resolve({
 					code: code ?? 0,
-					stdout,
-					stderr
+					stdout: Buffer.concat(stdout).toString('utf8'),
+					stderr: Buffer.concat(stderr).toString('utf8')
 				});
 			});
 

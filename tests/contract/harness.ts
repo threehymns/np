@@ -48,12 +48,18 @@ export interface PorcelainEntry {
 export function runGit(cwd: string, env: Record<string, string>, args: string[]): Promise<GitOutput> {
 	return new Promise((resolve, reject) => {
 		const child = spawn('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-		let stdout = '';
-		let stderr = '';
-		child.stdout.on('data', chunk => (stdout += chunk));
-		child.stderr.on('data', chunk => (stderr += chunk));
+		// Collect as Buffers and decode once at the end. Concatenating strings
+		// per chunk corrupts any multi-byte UTF-8 sequence that straddles a chunk
+		// boundary -- a real risk for `git log -z`, whose output holds NUL bytes
+		// and NUL-delimited pathnames.
+		const stdout: Buffer[] = [];
+		const stderr: Buffer[] = [];
+		child.stdout.on('data', chunk => stdout.push(chunk));
+		child.stderr.on('data', chunk => stderr.push(chunk));
 		child.on('error', err => reject(new Error(`Failed to spawn git: ${err.message}`)));
-		child.on('close', code => resolve({ code: code ?? -1, stdout, stderr }));
+		child.on('close', code =>
+			resolve({ code: code ?? -1, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') })
+		);
 	});
 }
 
