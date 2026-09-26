@@ -1054,6 +1054,27 @@ bunDescribe('contract suite skip policy', () => {
 		expect(harness).toMatch(/defaultSkipReason \? bunTest\.skipIf\(true, defaultSkipReason\) : bunTest/);
 	});
 
+	bunTest('the self-check cannot become a hardcoded skip', () => {
+		// The gate used to allowlist the self-check skip by name. That allowlist was
+		// wrong twice over: the skip is reached through a variable, so the scanner
+		// never actually matched it, and the skip is predicate-driven anyway. Pinning
+		// the mechanism rather than the name is what stops the floor from decaying
+		// into an unconditional skip — the exact shape of the regression in
+		// `discard-operations.test.ts`.
+		//
+		// This reads `harness.test.ts` as well as `harness.ts`, because the two are
+		// separate decay paths: `harness.ts` is the floor itself, while the self-check
+		// inside `harness.test.ts` is the one place a direct `skipIf(true, …)`
+		// spelling could hide without the scanner flagging it. Checking only the
+		// former would leave the latter unpinned.
+		const selfCheck = readFileSync(join(CONTRACT_DIR, 'harness.test.ts'), 'utf8');
+		expect(selfCheck).toContain('gitFloorSkipReason(impossible)');
+		expect(selfCheck).toContain('impossibleDescribe(');
+		// The reason is the predicate's, not a literal: a hardcoded `skipIf(true, …)`
+		// would satisfy the two assertions above while never lifting itself.
+		expect(selfCheck).toMatch(/skipIf\(true, impossibleFloorReason\)|skipIf\(true, reason\)/);
+	});
+
 	bunTest('the version floor is a real predicate, so a guarded skip can lift itself', () => {
 		// `harness.ts` binds the exported `it`/`describe` to the floor. The condition
 		// must be derived from the installed git version so the suite runs
