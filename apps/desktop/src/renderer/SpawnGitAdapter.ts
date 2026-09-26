@@ -691,6 +691,24 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	/**
+	 * Whether a path currently exists in the worktree.
+	 *
+	 * Used to check the premise behind a porcelain `D` status, which describes the
+	 * index rather than the disk. Any failure other than "not found" is reported as
+	 * existing, so an unreadable-but-present file is read (and its read error
+	 * surfaces) instead of being silently reported as empty.
+	 */
+	private async worktreeFileExists(filepath: string): Promise<boolean> {
+		try {
+			await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			return true;
+		} catch (e) {
+			if (isNotFoundError(e)) return false;
+			return true;
+		}
+	}
+
 	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail> {
 		// Optimization: If the file is untracked ('U'), it has no HEAD or index objects.
 		if (options?.status === 'U') {
@@ -706,8 +724,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 
 		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
-		const isDeletedWorktree = options?.status === 'D' && options?.staged !== true;
-		const worktreeContent = options?.staged !== true && !isDeletedWorktree ? await this.readWorktreeContent(filepath) : '';
+		//
+		// A porcelain status of `D` means "the index holds a deletion", NOT "the file
+		// is gone from disk". Delete a file, stage the deletion, then recreate it,
+		// and git reports both `D  f.txt` and `?? f.txt`; the UI combines those into
+		// one entry whose status is `D` (see `combineChangesByFilepath`). Trusting
+		// `D` unconditionally therefore reports the worktree as empty while it holds
+		// real content, and the next "discard" writes HEAD content back over that
+		// file — unrecoverable loss of work that was never staged or committed.
+		//
+		// So the worktree is read unless the status says the index holds a deletion
+		// AND the file is genuinely absent. `readWorktreeContent` returns '' for a
+		// missing file, so a file that vanished between the status listing and this
+		// read still yields '' without a second probe.
+		const deletedInIndex = options?.status === 'D' && options?.staged !== true;
+		const worktreeContent =
+			options?.staged === true ? '' : deletedInIndex && !(await this.worktreeFileExists(filepath)) ? '' : await this.readWorktreeContent(filepath);
 
 		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
