@@ -693,9 +693,12 @@ export class PluginHost implements PluginHostInterface {
 				// An inconsistent manifest graph (cycle, missing or
 				// mismatched dependency) is surfaced at activation and
 				// startup; ordering still falls back to registration order
-				// so a replay stays deterministic.
-				for (const id of Array.from(this.registrations.keys())) {
-					push(id);
+				// so a replay stays deterministic. Only the registered and
+				// active owners are replayed, as above: a registered-but-
+				// inactive owner must not leak a contribution.
+				const active = new SvelteSet(registeredActiveIds);
+				for (const id of this.registrations.keys()) {
+					if (active.has(id)) push(id);
 				}
 			}
 		}

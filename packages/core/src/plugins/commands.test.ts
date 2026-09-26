@@ -207,5 +207,29 @@ describe('Command registry on transforms (#196)', () => {
 			await host.deactivate('alpha');
 			expect(host.getCommand('shared.id')).toBeUndefined();
 		});
+
+		it('an inconsistent manifest graph keeps a registered-but-inactive owner out of the replay', async () => {
+			const host = new PluginHost();
+			host.register(pluginWithCommands('alpha', [makeCommand('alpha.one')]));
+			host.register(pluginWithCommands('omega', [makeCommand('omega.one')]));
+			await host.activateAll();
+
+			// Two registrations now claim the same interface, so every computed
+			// activation order throws and owner ordering takes its fallback.
+			host.register({
+				manifest: { id: 'one', name: 'One', version: 0, provides: { 'shared.iface': 1 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'two', name: 'Two', version: 0, provides: { 'shared.iface': 2 } },
+				setup: () => {}
+			});
+
+			// A transform left behind by an inactive owner (a missed disposal)
+			// must stay out of the replay, in registration order for the rest.
+			host.registerCommands('one', [makeCommand('one.leaked')]);
+
+			expect(idsOf(host.getCommands())).toEqual(['alpha.one', 'omega.one']);
+		});
 	});
 });
