@@ -34,12 +34,14 @@ import { createTrackedRepo } from './harness';
  * the suite is run with a filter that skips whole files.
  *
  * Scope: the whole repository, not just this folder. The gate's first version
- * scanned only `tests/contract` (12 of 81 test files), because the scan root was
- * derived from the gate's own location. `docs/vcs-contract-gate.md` states the
- * check is run as a bare `bun test` from the repository root, and every test
- * file `bun test` collects is a place a skip can hide. Verified: an
- * unconditional `test.skipIf(true, ...)` planted in `tests/e2e/vcs.spec.ts`
- * left the gate reporting 12 pass / 0 fail.
+ * scanned only `tests/contract`, which holds 9 test files — 9 of the
+ * repository's 96, and 9 of the 81 `bun test` collects (it also holds three
+ * non-test files: `harness.ts`, `node-fs-handle.ts` and `rune-setup.ts`). The
+ * scan root was derived from the gate's own location.
+ * `docs/vcs-contract-gate.md` states the check is run as a bare `bun test` from
+ * the repository root, and every test file `bun test` collects is a place a
+ * skip can hide. Verified: an unconditional `test.skipIf(true, ...)` planted in
+ * `tests/e2e/vcs.spec.ts` left the gate reporting 12 pass / 0 fail.
  *
  * The pattern matchers below are deliberately independent of that scope. They key
  * on the call's shape rather than on which test registration functions a file
@@ -1077,8 +1079,8 @@ bunDescribe('contract suite skip policy', () => {
 
 	bunTest('the scan covers the whole repository, not just tests/contract', () => {
 		// The gate's first version derived its scan root from its own location, so
-		// it saw 12 of the repository's 81 test files. A skip planted in
-		// `tests/e2e` or in any `packages/*/src` test passed the gate silently.
+		// it saw 9 of the repository's 96 test files. A skip planted in `tests/e2e`
+		// or in any `packages/*/src` test passed the gate silently.
 		// This pins the scope: a real, live test file outside `tests/contract`
 		// must be inside the scan set.
 		const scanned = walk(REPO_ROOT);
@@ -1143,21 +1145,31 @@ bunDescribe('contract suite skip policy', () => {
 	});
 
 	bunTest('the scan is spared the false positives a source file would raise', () => {
-		// Why the narrowing matters: the detector is string-blind. `stripComments`
-		// blanks comments, not string literals, and it reads text, not call
-		// expressions. So both of these are reported as a skip named
-		// `(unnamed skip)` — which the allowlist cannot absorb, since an allowlist
-		// entry matches a test name.
+		// Why the narrowing matters. The detector reads text, not call expressions,
+		// and it can only tell code from prose as well as the blanker allows.
+		//
+		// The first of the two proven false positives was a *string*: a doc constant
+		// that quotes the pattern. `stripComments` no longer blanks that, because
+		// blanking string bodies costs the test name a skip is reported under, so
+		// the string-blindness has since been closed at the source. It is asserted
+		// as closed rather than assumed, so a regression that reopens it is caught
+		// here instead of turning a doc into a red gate.
 		const docString = `export const SKIP_DOC = 'it.skipIf(true, 1)(2, 3)';`;
-		expect(findUnconditionalSkips(docString)).toHaveLength(1);
+		expect(findUnconditionalSkips(docString)).toEqual([]);
+
+		// The second is a *wrapper* — `c ? it.skipIf(true, 'why') : it` — and this one
+		// the blanker cannot help with: it is code, correctly parsed, and a genuine
+		// `skipIf` whose condition is a literal `true`. It is this repository's own
+		// idiom (`harness.ts` exports exactly that shape), and it was tolerated only
+		// because its condition is an identifier rather than a literal. Move it into
+		// a package's `src` and it turns the gate red on a deliberate design.
 		const wrapper = `export const maybeSkip = (c: boolean) => c ? it.skipIf(true, 'why') : it;`;
 		expect(findUnconditionalSkips(wrapper)).toHaveLength(1);
 
-		// Neither can come from an ordinary source file now, because no source file
-		// is scanned. `harness.ts` is the real one: it holds the conditional wrapper
-		// this repo actually uses, and is skipped today only because its condition
-		// is an identifier. With the pattern narrowed to test files, moving that
-		// wrapper into a package's `src` stops being able to turn the gate red.
+		// So neither can come from an ordinary source file now, because no source
+		// file is scanned. `harness.ts` is the real one, and with the pattern narrowed
+		// to test files, moving that wrapper into a package's `src` stops being able
+		// to turn the gate red.
 		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
 		expect(scanned).not.toContain('tests/contract/harness.ts');
 	});
