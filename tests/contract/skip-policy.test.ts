@@ -220,10 +220,9 @@ const KNOWN_BLIND_SPOTS: string[] = [
  * `bunDescribe`, which a literal `it`/`test`/`describe` receiver never matched —
  * the same hole that let any aliased skip through (see `findUnconditionalSkips`).
  * Second, the registrar is *bound to a name* instead of being called on the spot,
- * which is what `isAppliedAt` now tests. Reading the name out of the source rather
- * than from a list of blessed line numbers is what keeps the exemption honest: the
- * old comment claimed the guard was invisible, which was simply wrong, and a
- * wrong justification is worse than none.
+ * and the binding is a ternary that chooses between the skipping registrar and
+ * the plain one — which is what `guardBindingAt` now tests. Binding alone is not
+ * enough to make a `skipIf` a guard; see that function for why not.
  *
  * The guard is still a predicate that lifts itself on a machine with a newer git
  * than the 2.23 floor, which is exactly what `skipIf` is for and not the failure
@@ -534,25 +533,65 @@ function closeIndexOf(code: string, open: number): number {
 }
 
 /**
- * Whether the call opened at `open` is *immediately applied* — i.e. it is itself
- * the callee of an outer call, as in `it.skipIf(true, 'r')('a', fn)`.
+ * A binding whose value is *chosen* — `cond ? registrar : plainReceiver` — is the
+ * version-floor guard this repository depends on, and a binding to a bare
+ * expression is an alias that goes on to delete tests.
  *
- * This is what separates a skip from a guard. `skipIf` is a factory: it returns a
- * registrar. When that registrar is invoked on the spot, a test is being removed
- * from the run. When the result is *bound to a name* and used later, it is the
- * version-floor mechanism this repository depends on:
+ * All three real guards are this shape:
  *
- *     export const it = defaultSkipReason
- *       ? bunTest.skipIf(true, defaultSkipReason)
- *       : bunTest;
+ *     export const describe = defaultSkipReason
+ *       ? bunDescribe.skipIf(true, defaultSkipReason)
+ *       : bunDescribe;
  *
- * That guard skips the whole contract suite below git 2.23 and lifts itself on any
- * machine with a newer git, which is precisely the "predicate that can lift" case
- * `ALLOWED_SKIPS` documents. Matching on "is the result called here" keeps the
- * distinction semantic rather than a hardcoded list of blessed line numbers.
+ * The guard chooses between the skipping registrar and the plain one, so on a
+ * machine above the floor nothing is skipped at all — the "predicate that can
+ * lift" case `ALLOWED_SKIPS` documents. Only the taken branch calls `skipIf`, and
+ * the *other* branch is the real registrar, so the module-scope `it` is not a
+ * deletion: a test written as `it('…')` runs normally, and the skip is still
+ * there for when the floor bites.
+ *
+ * By contrast:
+ *
+ *     const reg = it.skipIf(true, 'r');
+ *     reg('X', () => { … });
+ *
+ * binds a registrar that is unconditional no matter what, and then calls it. The
+ * test never runs, and nothing anywhere lifts. Verified against a real runner:
+ * the test registers, its body is suppressed, a sibling runs, exit 0.
+ *
+ * So the discriminator is not "is the result called" — it is "is the binding a
+ * choice". `guardBindingAt` matches the ternary, and the applied-elsewhere case
+ * is treated as a deletion, which is the safe direction: a real guard written in
+ * a shape this does not recognise is reported and a human reads the report,
+ * rather than a deletion passing as a guard.
  */
-function isAppliedAt(code: string, open: number): boolean {
-	return /^\s*\(/.test(code.slice(closeIndexOf(code, open) + 1));
+function guardBindingAt(code: string, matchStart: number, open: number): boolean {
+	const close = closeIndexOf(code, open);
+	// The `cond ?` in front of the call, and the `: plainReceiver` after it.
+	return (
+		/\?\s*$/.test(code.slice(0, matchStart)) &&
+		/^\s*:\s*[A-Za-z_$][A-Za-z0-9_$]*\s*(?:[,;)\]}]|$)/.test(code.slice(close + 1))
+	);
+}
+
+/**
+ * Whether the call opened at `open` is *applied*, and if so where.
+ *
+ * Returns `'here'` when the registrar is itself the callee of an outer call, as
+ * in `it.skipIf(true, 'r')('a', fn)` — a test being removed at this line — and
+ * `'bound'` when the call is the whole of a `const`/`let`/`var` initialiser,
+ * where the name it is bound to decides whether it is a guard or an alias.
+ *
+ * `null` is a third case worth naming: the call is neither applied nor bound —
+ * `export const it = it.skipIf(true, 'r');`, say. A binding with no other
+ * registrar to fall back on is a deletion whatever it is called, so `null` is
+ * reported like `'here'`.
+ */
+function applicationAt(code: string, matchStart: number, open: number): 'here' | 'bound' | null {
+	if (/^\s*\(/.test(code.slice(closeIndexOf(code, open) + 1))) return 'here';
+	const before = code.slice(0, matchStart);
+	if (/\b(?:const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=[^=]*$/.test(before)) return 'bound';
+	return null;
 }
 
 /**
@@ -598,6 +637,12 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	const constants = readConstants(code);
 
 	const sites: SkipSite[] = [];
+	// The condition checks below are read from the blanked text, because a condition
+	// that merely *mentions* `true` inside a string is not one. The *name* is read
+	// from the original source, because `stripNonCode` blanks exactly the string
+	// bodies a test name is written in. Both views are kept: the blanked one is
+	// offset-preserving, which is what makes a line number here mean the same line a
+	// reader would count.
 	// The receiver is matched as *any* identifier rather than the literal
 	// `it`/`test`/`describe`. The reason is aliasing: `import { it as bunTest } from
 	// 'bun:test'` is this repository's own idiom — the harness and this gate use it —
@@ -626,18 +671,26 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 		// always qualifies.
 		if (isConditional && !isUnconditionalCondition(argsAt(code, code, open), constants)) continue;
 
-		// A `skipIf` whose result is bound to a name rather than called on the spot
-		// is the version-floor guard, not a test being deleted. See `isAppliedAt`.
-		if (isConditional && !isAppliedAt(code, open)) continue;
+		// A registrar bound to a name is the version-floor guard only when the
+		// binding is a *choice* between the skipping registrar and a plain one.
+		// Bound to a bare expression, it is an alias that deletes every test it is
+		// later called with. See `guardBindingAt` for the boundary — binding alone
+		// is not what makes a guard a guard.
+		//
+		// The guard test is deliberately independent of *how* the value is returned.
+		// The real harness spells it `export const it = c ? … : bunTest;`, but the
+		// same choice is also written as an arrow body — `(c: boolean) => c ?
+		// it.skipIf(true, 'why') : it` — and gating on a `const` alone would report
+		// that one. What earns the exemption is the choice, wherever it is spelled.
+		if (isConditional && applicationAt(code, match.index, open) !== 'here' && guardBindingAt(code, match.index, open)) {
+			continue;
+		}
 
-		// A plain `skip`/`todo`/`only` names its test in its own first argument. A
-		// conditional one names it in the call that the result of `skipIf(...)` is
-		// immediately invoked with, so the read has to start past the condition.
-		const name = isConditional
-			? invocationNameAt(source, match.index + match[0].length)
-			: firstArgumentName(argsAt(source, code, open));
+		// `skipNameAt` covers both the direct form and the bound-registrar form, so
+		// `const reg = it.skipIf(true, 'r'); reg('X', …)` is reported as `X` rather
+		// than as a skip nobody can name.
 		const lineIndex = code.slice(0, match.index).split('\n').length - 1;
-		sites.push({ line: lineIndex + 1, name });
+		sites.push({ line: lineIndex + 1, name: skipNameAt(source, code, open, isConditional) });
 	}
 	return sites;
 }
@@ -675,6 +728,90 @@ function readConstants(code: string): Map<string, string> {
 }
 
 /**
+ * The name of the test a site deletes, or null when the call is too unusual to
+ * attribute one. The caller treats null as a failure, because a skip nobody can
+ * name is a skip nobody can justify.
+ *
+ * The name is read from the matched call's *own* argument list, starting at the `)`
+ * that closes it — not from the line the call opens on, and not from the line the
+ * enclosing group happens to be spelled on. Two earlier versions each got one of
+ * these wrong:
+ *
+ *   - Reading the opening line attributes a nested skip to its enclosing group:
+ *     `describe('outer group', () => { it.skip('inner', …) })` reported `outer
+ *     group`. A misattributed name is a latent allowlist collision, not a cosmetic
+ *     slip.
+ *   - Reading forward from the `)` cannot see a registrar that was bound to a name
+ *     first, which is the shape an alias that deletes tests is written in.
+ *
+ * Both are handled: for a shape whose first argument *is* the name the argument
+ * list is read at the call's own `(`, and if that yields nothing — or if the shape
+ * is a `skipIf`, whose own arguments are the condition and the reason rather than
+ * the name — the call it returns, or the later line that calls a bound registrar,
+ * is tried.
+ *
+ * Three shapes are read, all anchored to a `(` so a string elsewhere on the line
+ * is not mistaken for the test name:
+ *
+ *   - `skip` / `todo` / `only` take the name directly: `it.skip('a', ...)`.
+ *   - `skipIf` is a call that *returns* a callable, so when applied on the spot the
+ *     name sits after a `)(` boundary: `it.skipIf(true, 'r')('a', ...)`. When the
+ *     registrar is bound to a name first, the same call is reached as `reg('a', …)`
+ *     on a later line.
+ *
+ * Reading a `skipIf`'s *own* first argument would yield the condition or the
+ * reason — `true`, or `'because'` — and report the offender under a name it does
+ * not have. That is why `isConditional` is a parameter and not a detail left to
+ * the caller to infer.
+ */
+function skipNameAt(source: string, blanked: string, open: number, isConditional: boolean): string | null {
+	// The call's own arguments: balanced on the blanked text, read from the original.
+	// Both halves matter. A `(` inside a string literal would unbalance a raw walk and
+	// point the read at the wrong call; reading the argument list off the *blanked*
+	// text would find spaces where the name is, because that is precisely what the
+	// blanker does to string bodies.
+	if (!isConditional) {
+		const own = firstLiteralIn(argsAt(source, blanked, open));
+		if (own !== null) return own;
+	}
+
+	// A registrar bound to a name and then invoked — `reg('a', …)` — is the
+	// aliased apply. The callee has to start the line, so a `foo(reg('a', …))`
+	// buried in a body is not read as the test name. Only lines *after* the call
+	// are considered, so this cannot reach back into the condition.
+	const lines = source.split('\n');
+	const startLine = source.slice(0, open).split('\n').length;
+	const aliasedApply = /^\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\(\s*(['"`])((?:[^'"`\\]|\\.)*)\1/;
+	for (let i = startLine; i < Math.min(lines.length, startLine + 40); i++) {
+		const applied = aliasedApply.exec(lines[i]);
+		if (applied) return applied[2];
+	}
+
+	// Applied on the spot instead of bound: the name is the first literal the call
+	// this one *returns* introduces, which sits just past the closing paren. The
+	// read is bounded to the same statement, so a later unrelated literal cannot be
+	// attributed to the skip. The leading `(` is required — a bare literal search
+	// here would find the skip's own *reason* in some other spelling, and a literal
+	// that happens to follow the condition is exactly what must not be reported.
+	const after = source.slice(closeIndexOf(blanked, open) + 1, closeIndexOf(blanked, open) + 1 + MAX_NAME_SEARCH);
+	return firstLiteralIn(after.split(';')[0], true);
+}
+
+/**
+ * The first string literal that is the *entire* leading argument of a call, or null.
+ * `afterOpen` reads text that begins at a `(` — the argument list a returned call
+ * hands over — rather than at the literal itself.
+ *
+ * The trailing lookahead is what stops the read at the end of that argument: an
+ * `it.skip.each(rows)('name', fn)` has a row array first, and a scan that keeps
+ * going would report the offender under an arbitrary later literal.
+ */
+function firstLiteralIn(args: string, afterOpen = false): string | null {
+	const literal = new RegExp(`^\\s*${afterOpen ? '\\(' : ''}\\s*(['"\x60])((?:[^'"\x60\\\\]|\\\\.)*)\\1\\s*(?=[,);]|$)`).exec(args);
+	return literal ? literal[2] : null;
+}
+
+/**
  * Whether a conditional shape's condition can never lift. `args` is the text of the
  * call's arguments and `constants` the file's `const` bindings; a condition that
  * names one is read off its value instead, because the historical escape was a
@@ -708,64 +845,6 @@ function findUnconditionalSkips(source: string): SkipSite[] {
 /** Every stray `.only` in a file. See ONLY_SHAPES for why it is reported separately. */
 function findFocusOnly(source: string): SkipSite[] {
 	return findSites(source, ONLY_SHAPES);
-}
-
-/**
- * Returns the index of the `)` that closes the call opened at `open`, or the end of
- * the text when the call is unbalanced.
- */
-function afterCall(code: string, open: number): number {
-	let depth = 0;
-	for (let i = open; i < code.length; i++) {
-		if (code[i] === '(') depth++;
-		else if (code[i] === ')') {
-			depth--;
-			if (depth === 0) return i;
-		}
-	}
-	return code.length;
-}
-/**
- * The test name a plain `skip`/`todo`/`only` gives itself, read from the first
- * argument of `args`. Stops at the end of that argument rather than reading on:
- * `it.skip.each(rows)('name', fn)` has a row array first, and a scan that keeps
- * going would report the offender under an arbitrary later literal.
- */
-function firstArgumentName(args: string): string | null {
-	// The lookahead is what stops the read at the end of the first argument; `$`
-	// covers the single-argument call, where `args` ends with the name itself
-	// because `argsAt` hands back only what is between the parentheses.
-	const literal = /^\s*(['"`])((?:[^'"`\\]|\\.)*)\1\s*(?=[,);]|$)/.exec(args.slice(0, MAX_NAME_SEARCH));
-	return literal ? literal[2] : null;
-}
-
-/**
- * The test name of the call that a conditional shape is immediately invoked with —
- * the `('name', …)` of `it.skipIf(cond, 'reason')('name', fn)`. Read from the first
- * literal a `(` introduces after the condition, which is the name: the reason has
- * already been passed and sits behind the read.
- */
-function invocationNameAt(code: string, from: number): string | null {
-	const window = code.slice(from, from + MAX_NAME_SEARCH);
-	// Stop at the end of the statement. A naming invocation that is not in the same
-	// statement as the condition is not this skip's name, and reading past it would
-	// attribute an arbitrary later literal to the skip — which for a condition
-	// reached through a variable means inventing a name it never had.
-	const end = window.indexOf(';');
-	const literal = /\(\s*(['"`])((?:[^'"`\\]|\\.)*)\1\s*(?=[,);]|$)/.exec(end === -1 ? window : window.slice(0, end));
-	return literal ? literal[2] : null;
-}
-
-/**
- * The arguments of a call opened at `open`, for reading a name out of text that
- * has *not* been blanked. Where `argsAt` is used to balance parentheses and needs
- * literals blanked so a `(` inside a string cannot unbalance the count, this only
- * reads up to the first argument and so is never more than one literal deep.
- */
-function argsOf(text: string, open: number): string {
-	const body = text.slice(open + 1);
-	const end = body.search(/[,)]/);
-	return end === -1 ? body : body.slice(0, end);
 }
 
 /**
@@ -1307,9 +1386,12 @@ bunDescribe('contract suite skip policy', () => {
 
 	bunTest('a bound guard next to a real skip still reports the real skip', () => {
 		// The guard test above must not become a blanket exemption: an aliased skip
-		// in the same file is still a deleted test.
+		// in the same file is still a deleted test. The guard is written in the
+		// ternary shape the harness uses, so this is a guard next to a real skip —
+		// not the bound-then-invoked alias, which is a deletion in its own right and
+		// is pinned by the test above.
 		const source = [
-			`const guarded = bunTest.skipIf(true, reason);`,
+			`const guarded = reason ? bunTest.skipIf(true, reason) : bunTest;`,
 			`guarded('bound', () => {});`,
 			`aliasedIt.skip('actually deleted', () => {});`,
 		].join('\n');
@@ -1475,9 +1557,10 @@ bunDescribe('contract suite skip policy', () => {
 		// survives a change that invalidates it.
 		//
 		// What is true is narrower and checkable: the guard is in the source, the scan
-		// can see it, and it is not reported — because `isAppliedAt` finds the result
-		// is bound to a name rather than called, which is what makes it a guard that
-		// lifts itself. `ALLOWED_SKIPS` therefore stays empty, and this test is what
+		// can see it, and it is not reported — because `guardBindingAt` finds the
+		// binding is a choice between the skipping registrar and a plain one, which is
+		// what makes it a guard that lifts itself. `ALLOWED_SKIPS` therefore stays
+		// empty, and this test is what
 		// keeps that a decision rather than an accident.
 		const guards = findUnconditionalSkips(readFileSync(join(CONTRACT_DIR, 'harness.ts'), 'utf8'));
 		expect(guards).toEqual([]);
@@ -1629,7 +1712,7 @@ bunDescribe('contract suite skip policy', () => {
 		//
 		// It is no longer reported, and not because the scan was narrowed to dodge it:
 		// the result is never *called* here, so it is a registrar bound to a name and
-		// therefore a guard that lifts itself. `isAppliedAt` is what says so, which is
+		// therefore a guard that lifts itself. `guardBindingAt` is what says so, which is
 		// why the same wrapper moved into a package's `src` stops being able to turn
 		// the gate red on a deliberate design — the decision is semantic, not
 		// file-scoped.
@@ -1637,7 +1720,7 @@ bunDescribe('contract suite skip policy', () => {
 		expect(findUnconditionalSkips(wrapper)).toEqual([]);
 
 		// A skip that *is* applied on the spot is still reported, whichever receiver
-		// it is spelled on. This is the pair that keeps `isAppliedAt` honest in both
+		// it is spelled on. This is the pair that keeps the guard test honest in both
 		// directions rather than a filter that only ever suppresses.
 		const applied = `export const drop = () => it.skipIf(true, 'why')('a real skip', () => {});`;
 		expect(findUnconditionalSkips(applied)).toHaveLength(1);
