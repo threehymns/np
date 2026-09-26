@@ -1,6 +1,6 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded, isNotFoundError } from '@np/core/utils';
+import { mapBounded, isNotFoundError, isDirectoryError } from '@np/core/utils';
 
 export interface GitRunResult {
 	code: number;
@@ -16,6 +16,15 @@ export interface GitFileAccess {
 	readFile(path: string): Promise<Uint8Array | string>;
 	writeFile(path: string, content: string): Promise<void>;
 	deleteEntry(path: string): Promise<void>;
+	/**
+	 * Whether `path` is a symbolic link. A git symlink is a blob whose content
+	 * is the target path (mode 120000), never the text a user edits, so the
+	 * adapter must know before it reads or writes one.
+	 *
+	 * Optional: an access object that cannot answer leaves every path treated as
+	 * a regular file, which is the pre-existing behavior.
+	 */
+	isSymlink?(path: string): Promise<boolean>;
 }
 
 const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
@@ -52,7 +61,8 @@ const ipcFileAccess: GitFileAccess = {
 		return result as Uint8Array;
 	},
 	writeFile: (path, content) => window.electronAPI.writeFile(path, content),
-	deleteEntry: (path) => window.electronAPI.deleteEntry(path)
+	deleteEntry: (path) => window.electronAPI.deleteEntry(path),
+	isSymlink: (path) => window.electronAPI.isSymlink(path)
 };
 
 export class SpawnGitAdapter implements VCSAdapter {
@@ -751,6 +761,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 		} catch (e) {
+			// A directory is not a text file. `git status` lists an untracked
+			// symlink-to-directory as `??`, so the UI can offer it for viewing;
+			// reading it as text is meaningless rather than an error worth
+			// surfacing, and decoding EISDIR verbatim would be a raw syscall
+			// string leaking into a user-facing path.
+			if (isDirectoryError(e)) {
+				return '';
+			}
 			if (!isNotFoundError(e)) {
 				throw e;
 			}
@@ -814,7 +832,37 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
 	}
 
+	/**
+	 * Reject a write that would corrupt a symlink.
+	 *
+	 * A git symlink's blob content is its *target path*, not file text, so both
+	 * write paths would damage it: `updateFileContent` follows the link and
+	 * overwrites the target file, while `updateIndexContent` replaces the blob
+	 * with editor text and leaves mode 120000 in place, yielding a tree whose
+	 * link target is arbitrary text. Declining the write is the only safe answer.
+	 *
+	 * A path that cannot be stat'd is not a symlink. `updateIndexContent`
+	 * legitimately stages files that do not exist on disk yet, so a missing path
+	 * must pass through rather than abort the write.
+	 */
+	private async assertNotSymlink(filepath: string): Promise<void> {
+		if (!this.fileAccess.isSymlink) return;
+		const fullPath = this.rootOrigin.path + '/' + filepath;
+		try {
+			if (await this.fileAccess.isSymlink(fullPath)) {
+				throw new Error(
+					`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+						'target path, not editable text.'
+				);
+			}
+		} catch (e) {
+			if (isNotFoundError(e)) return;
+			throw e;
+		}
+	}
+
 	async updateFileContent(filepath: string, content: string): Promise<void> {
+		await this.assertNotSymlink(filepath);
 		const fullPath = this.rootOrigin.path + '/' + filepath;
 		await this.fileAccess.writeFile(fullPath, content);
 	}
@@ -968,6 +1016,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		await this.assertNotSymlink(filepath);
 		const gitDirRes = await this.runGit(['rev-parse', '--git-dir']);
 		const gitDir = gitDirRes.code === 0 && gitDirRes.stdout.trim() ? gitDirRes.stdout.trim() : '.git';
 		const resolvedGitDir = gitDir.startsWith('/') ? gitDir : `${this.rootOrigin.path}/${gitDir}`;

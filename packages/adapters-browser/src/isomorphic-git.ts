@@ -3,13 +3,16 @@ import type { StatusRow } from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded } from '@np/core/utils';
+import { mapBounded, isDirectoryError } from '@np/core/utils';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
+
+/** The index mode git gives a symlink; its blob content is the target path, not text. */
+const SYMLINK_MODE = 0o120000;
 
 /** Parent of a shim path: '/a/b/c' → '/a/b', '' when there is none. */
 function parentDirectory(p: string): string {
@@ -852,7 +855,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			} catch (e: any) {
 				// Only genuinely absent files yield empty worktree content;
 				// anything else (permissions, I/O failures) must reach the caller.
-				if (!isENOENT(e)) throw e;
+				// A directory is the one other case: `git status` lists an
+				// untracked symlink to a directory as `??`, so the UI can offer it
+				// for viewing, and decoding EISDIR verbatim would be a raw syscall
+				// string leaking into a user-facing path. The shim raises it as
+				// `EISDIR` and the File System Access API as `TypeMismatchError`.
+				if (!isENOENT(e) && !isDirectoryError(e)) throw e;
 			}
 		}
 
@@ -879,6 +887,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		// Same reasoning as `updateIndexContent`, applied to the worktree. A bare
+		// write follows the link and overwrites the target -- a different, tracked
+		// file that the user never opened -- so the refusal is made first.
+		//
+		// The index entry's mode is again the only available signal, and that
+		// makes this slightly stricter than the worktree-based check the desktop
+		// adapter can afford. Here the link is followed on disk, so the entry
+		// describes the pre-write state and a link replaced by a regular file
+		// (mode 100644) is no longer detected. That case is a deliberate trade:
+		// it costs one extra write to a `.git` object, and it buys protection on
+		// every link the repository actually holds, rather than none.
+		const entry = await this.readStageEntry(filepath);
+		if (entry && entry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
+		}
 		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
 	}
 
@@ -930,6 +956,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		const destEntry = await this.readStageEntry(filepath);
 		if (destEntry && (await this.readBlobText(destEntry.oid)) === content) {
 			return;
+		}
+
+		// A git symlink's blob content is its *target path*, not file text. The
+		// entry keeps mode 120000, so replacing the blob would stage editor text
+		// under a symlink's mode: the commit succeeds and produces a tree whose
+		// link target is that text, which git checks out as a dangling link.
+		// Declining the write is the only safe answer.
+		//
+		// The index entry's mode is the only signal available here, and unlike
+		// `lstat` it needs no new filesystem capability -- which is the point,
+		// because the FS shim aliases `lstat` to `stat` and hard-codes
+		// `isSymbolicLink()` false, so a symlink imported from disk is invisible
+		// to it while remaining perfectly visible in the index.
+		if (destEntry && destEntry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
 		}
 
 		const oid = await git.writeBlob({

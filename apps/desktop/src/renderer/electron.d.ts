@@ -5,6 +5,7 @@ export interface ElectronAPI {
 	readFile(filePath: string): Promise<Uint8Array | IpcNotFoundError>;
 
 	writeFile(filePath: string, content: string): Promise<void>;
+	isSymlink(filePath: string): Promise<boolean>;
 	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string }> | IpcNotFoundError>;
 	createDirectory(dirPath: string): Promise<void>;
 	deleteEntry(entryPath: string): Promise<void>;

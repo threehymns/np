@@ -61,3 +61,25 @@ export function isNotFoundError(err: any): boolean {
 	}
 	return false;
 }
+
+/**
+ * Checks whether an error means "this path is a directory", which a text read
+ * cannot satisfy (EISDIR in Node, TypeMismatchError from the File System Access
+ * API). Reached whenever git lists a directory-ish entry as a file — notably an
+ * untracked symlink to a directory, which `git status` reports as `??`.
+ *
+ * Same structured-signal discipline as {@link isNotFoundError}: a code that is
+ * present and says something else wins, so a coded failure is never reclassified.
+ */
+export function isDirectoryError(err: any): boolean {
+	if (!err) return false;
+	if (err.code === 'EISDIR') return true;
+	if (err.name === 'TypeMismatchError') return true;
+	if (typeof err.code === 'string' && err.code !== 'EISDIR') return false;
+	if (typeof err.message === 'string') {
+		return /^(?:Error invoking remote method '[^']+': |Error: )*(?:EISDIR(?::|,|$)|illegal operation on a directory)/.test(
+			err.message
+		);
+	}
+	return false;
+}
