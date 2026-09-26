@@ -252,7 +252,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 		}
 
 		it('toggles Git off and on live with full function restored', async () => {
-			const { app, host } = await makeApp();
+			const { app, host, counters } = await makeApp();
 			expect(host.isPluginActive('git')).toBe(true);
 
 			await app.workspace.openDirectory();
@@ -273,6 +273,15 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeUndefined();
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(false);
 			expect(app.activeSidebarTab).toBe('explorer');
+
+			// No Git activity while off: folder open must not touch the VCS
+			// factory or detection.
+			const detectWhileOff = counters.detect;
+			const factoryWhileOff = counters.factory;
+			await app.workspace.openDirectory();
+			expect(app.workspace.repository).toBeNull();
+			expect(counters.detect).toBe(detectWhileOff);
+			expect(counters.factory).toBe(factoryWhileOff);
 
 			// Ordinary editing still works while off.
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/notes.md', name: 'notes.md' };

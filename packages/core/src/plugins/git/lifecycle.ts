@@ -13,6 +13,7 @@ import type { WorkspaceLike } from '../services';
  */
 export interface WorkspaceGitState {
 	readonly workspace: WorkspaceLike;
+	readonly ownerId: string;
 	/** The repository instance this plugin published, if any. */
 	repository: Repository | null;
 	/** Set on disable: new operations stop, in-flight results are dropped. */
@@ -28,10 +29,12 @@ export interface WorkspaceGitState {
 
 export function createWorkspaceGitState(
 	workspace: WorkspaceLike,
-	isActive: () => boolean = () => true
+	isActive: () => boolean = () => true,
+	ownerId = 'git'
 ): WorkspaceGitState {
 	return {
 		workspace,
+		ownerId,
 		repository: null,
 		disposed: false,
 		pending: new Set(),
@@ -62,6 +65,9 @@ export function disposePublishedRepository(state: WorkspaceGitState): void {
 	const workspace = state.workspace;
 	if (workspace.repository === null || workspace.repository === state.repository) {
 		workspace.repository = null;
+	}
+	if (workspace.repositoryOwnerId === null || workspace.repositoryOwnerId === state.ownerId) {
+		workspace.repositoryOwnerId = null;
 	}
 	state.repository = null;
 }
@@ -104,6 +110,7 @@ export async function openFolderRepository(
 
 	if (detected) {
 		state.workspace.repository = repo;
+		state.workspace.repositoryOwnerId = state.ownerId;
 		state.repository = repo;
 		await track(state, repo.refresh());
 
@@ -116,6 +123,9 @@ export async function openFolderRepository(
 		) {
 			if (state.workspace.repository === repo) {
 				state.workspace.repository = null;
+			}
+			if (state.workspace.repositoryOwnerId === state.ownerId) {
+				state.workspace.repositoryOwnerId = null;
 			}
 			if (state.repository === repo) {
 				state.repository = null;
@@ -159,6 +169,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// staleness guards below still protect newer folders from stale
 	// publication.
 	workspace.repository = null;
+	workspace.repositoryOwnerId = null;
 	state.repository = null;
 	if (state.disposed || !state.isActive()) return false;
 
@@ -183,6 +194,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	}
 
 	workspace.repository = repo;
+	workspace.repositoryOwnerId = state.ownerId;
 	state.repository = repo;
 	const refreshed = await track(state, repo.refresh());
 	if (!refreshed) {

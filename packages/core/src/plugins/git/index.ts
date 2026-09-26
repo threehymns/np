@@ -62,7 +62,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 		if (!state) {
 			state = createWorkspaceGitState(
 				workspace,
-				() => host.getPluginState(manifest.id) === 'activating' || host.isPluginActive(manifest.id)
+				() => host.getPluginState(manifest.id) === 'activating' || host.isPluginActive(manifest.id),
+				manifest.id
 			);
 			states.set(workspace, state);
 		}

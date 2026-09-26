@@ -26,6 +26,14 @@ export interface WorkspaceLike {
 	readonly rootOrigin: FileOrigin | null;
 	readonly hasRootPermission: boolean;
 	repository: Repository | null;
+	/**
+	 * Owning contributor for the published repository slot (generic, no
+	 * feature names). Set alongside `repository` by whichever contributor
+	 * publishes it; the workspace exposes repository state only while the
+	 * owner is active, so a slot left behind by a bounded-cleanup timeout
+	 * stays inert in the UI.
+	 */
+	repositoryOwnerId: string | null;
 	tabs: Array<{
 		id: string;
 		type: 'document' | 'diff';

@@ -39,7 +39,7 @@
 		};
 		const handleFocus = () => {
 			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-			if (appState.workspace.repository) {
+			if (appState.workspace.isRepositoryActive && appState.workspace.repository) {
 				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
 			}
 			// Surface externally deleted open files (#175) with the same

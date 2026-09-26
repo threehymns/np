@@ -23,6 +23,7 @@ export class Workspace {
 	pendingCloseId = $state<string | null>(null);
 	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
+	repositoryOwnerId = $state<string | null>(null);
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
@@ -168,6 +169,7 @@ export class Workspace {
 	private pendingDiffRestore = new Map<string, { filepath: string; staged?: boolean }>();
 
 	private applyPendingDiffRestore() {
+		if (!this.isRepositoryActive) return;
 		const repo = this.repository;
 		if (!repo || this.pendingDiffRestore.size === 0) return;
 
@@ -338,11 +340,30 @@ export class Workspace {
 		this.activeTabId = value;
 	}
 
+	/**
+	 * Generic off-state gate (AC1): the published repository is exposed
+	 * only while its owning contributor is active. A slot left behind by a
+	 * bounded-cleanup timeout (ADR 0009) therefore stays inert: branch UI
+	 * hides and refresh/switch paths no-op instead of driving Git activity.
+	 * No feature names here; the owner id is opaque data set by the
+	 * publisher.
+	 */
+	get isRepositoryActive(): boolean {
+		if (!this.repository || !this.repositoryOwnerId) return false;
+		try {
+			return this.pluginHost?.isPluginActive(this.repositoryOwnerId) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
 	get currentBranch() {
+		if (!this.isRepositoryActive) return null;
 		return this.repository?.currentBranch ?? null;
 	}
 
 	get branches() {
+		if (!this.isRepositoryActive) return [];
 		return this.repository?.branches ?? [];
 	}
 
@@ -464,6 +485,7 @@ export class Workspace {
 			// stays in this safe empty state and open proceeds (tree scan,
 			// session restore) instead of aborting or showing stale state.
 			this.repository = null;
+			this.repositoryOwnerId = null;
 			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 
 			// Add to recent folders
@@ -502,6 +524,7 @@ export class Workspace {
 			// detect and refresh when the owning plugin is enabled. A fresh
 			// adapter is created per open, so no adapter reset is needed.
 			this.repository = null;
+			this.repositoryOwnerId = null;
 			await this.pluginHost.runWorkspaceOpened({ origin: this.rootOrigin, workspace: this });
 			this.applyPendingDiffRestore();
 
@@ -595,7 +618,7 @@ export class Workspace {
 	}
 
 	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
-		if (!this.repository) return null;
+		if (!this.repository || !this.isRepositoryActive) return null;
 		
 		const modifiedFiles = await Promise.all(
 			this.documents
@@ -613,7 +636,7 @@ export class Workspace {
 	}
 
 	async switchBranch(branchName: string): Promise<SwitchResult> {
-		if (!this.repository || !this.rootOrigin) {
+		if (!this.repository || !this.rootOrigin || !this.isRepositoryActive) {
 			return { status: 'error', message: 'No repository' };
 		}
 
@@ -862,6 +885,7 @@ export class Workspace {
 								// state. Detection/refresh run through the generic
 								// workspace-opened hook (#202).
 								this.repository = null;
+								this.repositoryOwnerId = null;
 								await this.pluginHost.runWorkspaceOpened({
 									origin: rootOrigin!,
 									workspace: this
