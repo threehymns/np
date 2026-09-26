@@ -602,23 +602,53 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
-		const res = await this.runGit(['-c', 'core.quotepath=false', 'log', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
+		// `--name-only` without `-z` C-quotes any path holding an unusual byte, so
+		// a name containing a newline arrives as the two characters `\` and `n`
+		// rather than a real newline. The line-oriented parse still works, but it
+		// hands the caller a *display* string that resolves to no file. `-z`
+		// instead emits every path raw and NUL-delimited, so a name can contain
+		// any byte, including the newlines and `|` this format uses to separate
+		// its own fields.
+		const res = await this.runGit(['log', '-z', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
 				return [];
 			}
 			throw new Error(res.stderr || 'Failed to retrieve git commit log');
 		}
-		// Each block starts with a NUL-prefixed metadata line (hash|author|date|subject)
-		// followed by the changed file names, one per line; blocks are separated by
-		// the newline ending the previous block and the next block's NUL prefix
-		// (file-less commits like merges and empty commits emit no name section).
-		return res.stdout.split('\n\0').filter(Boolean).map(block => {
-			const lines = block.split('\n');
-			const [hash, author, date, ...rest] = lines[0].replace(/^\0/, '').split('|');
-			const message = rest.join('|');
-			return { hash, author, date, message, files: lines.slice(1).filter(Boolean) };
-		});
+		// With `-z` git emits a NUL-separated stream shaped like:
+		//
+		//     \0<hash>|<author>|<date>|<subject>\n<path>\0<path>\0\0\0<next header>...
+		//
+		// `%x00` prefixes each header, every path is newline- and NUL-terminated,
+		// and two more NULs separate one commit from the next. Splitting on NUL
+		// consumes those delimiters, so the header is identified structurally --
+		// it is the first record after a blank one -- rather than by the shape of
+		// its fields. That way a filename may contain `|`, a newline, or any other
+		// byte and still be read back as exactly the one path it is.
+		const commits: GitCommit[] = [];
+		let current: GitCommit | undefined;
+		let expectHeader = true;
+		for (const record of res.stdout.split('\0')) {
+			if (record === '') {
+				// A blank record only ever closes one commit's path list.
+				expectHeader = true;
+				continue;
+			}
+			if (expectHeader) {
+				// The subject is followed by a newline, then the first path, so the
+				// header is the first line and the rest of the record is one path.
+				const [headerLine, ...firstPaths] = record.split('\n');
+				const [hash, author, date, ...rest] = headerLine.split('|');
+				current = { hash, author, date, message: rest.join('|'), files: firstPaths.filter(Boolean) };
+				commits.push(current);
+				expectHeader = false;
+			} else if (current) {
+				// The whole record is one path, newline and all.
+				current.files.push(record);
+			}
+		}
+		return commits;
 	}
 
 	private parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
