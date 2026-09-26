@@ -655,35 +655,20 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'src.txt')).toBe('shared\n');
 		});
 
-		it('rejects rather than reporting success when the target file does not exist', async () => {
+		it('creates a missing target as an untracked worktree entry without staging it', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
 
-			// `updateFileContent` is a write, not an upsert: a hunk discard can
-			// only target a file git already reported, so a missing target is a
-			// caller bug. Either engine rejecting or creating it is acceptable
-			// here, but the call must not report success while leaving the
-			// worktree inconsistent with what the caller then commits.
-			let rejected = false;
-			try {
-				await adapter.updateFileContent('does-not-exist.txt', 'orphan\n');
-			} catch {
-				rejected = true;
-			}
+			// A missing target is an upsert, not an error: the call resolves, the
+			// bytes land inside the repository, and `updateFileContent` never
+			// stages, so the porcelain code is `??` and the base files stay clean
+			// (hence absent from `-uall` output).
+			await adapter.updateFileContent('does-not-exist.txt', 'orphan\n');
 
-			if (!rejected) {
-				// If the engine chose to create the file, it must be a real
-				// untracked file inside the repo — not a write that escaped the
-				// repository root. `updateFileContent` never stages, so the
-				// porcelain code is `??`, and the other base files stay clean
-				// (hence absent from `-uall` output).
-				expect(await r.read('does-not-exist.txt')).toBe('orphan\n');
-				expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'does-not-exist.txt' }]);
-				expect(await indexContents(r, 'does-not-exist.txt')).toBe(null);
-			}
-			// Nothing may have been written outside the repository root either way.
-			expect(await r.read('../does-not-exist.txt')).toBe(null);
+			expect(await r.read('does-not-exist.txt')).toBe('orphan\n');
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'does-not-exist.txt' }]);
+			expect(await indexContents(r, 'does-not-exist.txt')).toBe(null);
 		});
 	});
 }
