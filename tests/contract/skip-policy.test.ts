@@ -1317,6 +1317,19 @@ bunDescribe('contract suite skip policy', () => {
 		expect(findFocusOnly(`aliasedIt.only('named thing', () => {});`)).toHaveLength(1);
 	});
 
+	// A member can be spelled as a string, and a one-character slip turns
+	// `it.skip(...)` into something an identifier-member match never sees.
+	// Measured against a real runner: the test registers, its body is suppressed,
+	// its sibling runs, and `bun test` exits 0. A residual gap on the base branch
+	// too, but a residual gap is still a gap in a gate whose job is to have none.
+	for (const quote of ["'", '"'] as const) {
+		bunTest(`detects it[${quote}skip${quote}] as a string-literal member`, () => {
+			const sites = findUnconditionalSkips(`it[${quote}skip${quote}]('named thing', () => {});`);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe('named thing');
+		});
+	}
+
 	bunTest('detects an aliased unconditional skipIf', () => {
 		const sites = findUnconditionalSkips(`bunTest.skipIf(true, 'because')('does a thing', () => {});`);
 		expect(sites).toHaveLength(1);
