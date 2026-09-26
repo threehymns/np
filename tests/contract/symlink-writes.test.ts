@@ -138,8 +138,9 @@ describe('symlinks are not editable text files', () => {
 
 			it('a symlink to a directory cannot have its diff read as text', async () => {
 				// Porcelain lists an untracked symlink-to-directory as `??`, so the UI
-				// offers it as a clickable file. Reading it must fail cleanly rather than
-				// surface a half-decoded EISDIR error to the user.
+				// offers it as a clickable file. A directory is not a text file, so the
+				// read must resolve to empty content rather than surface a
+				// half-decoded EISDIR error to the user.
 				const repo = await createTrackedRepo();
 				try {
 					await repo.write('seed.txt', 's\n');
@@ -151,17 +152,10 @@ describe('symlinks are not editable text files', () => {
 					const entry = (await porcelainStatus(repo)).find(e => e.path === 'dirlink');
 					expect(entry).toBeDefined();
 
-					// Whatever the adapter decides to do, it must not resolve to a
-					// directory's contents pretending to be a file's text.
-					let detail: unknown;
-					try {
-						detail = await engine.adapter(repo).getFileDiff('dirlink', { status: 'U' });
-					} catch (error) {
-						// A rejection is acceptable; surfacing EISDIR verbatim is not.
-						expect((error as Error).message).not.toMatch(/EISDIR/);
-						return;
-					}
-					expect(detail).toEqual({
+					// The exact outcome, not merely "did not surface EISDIR": a
+					// rejection for any other reason would also satisfy a looser
+					// check and let a future regression through.
+					expect(await engine.adapter(repo).getFileDiff('dirlink', { status: 'U' })).toEqual({
 						originalContent: '',
 						modifiedContent: '',
 						stagedContent: ''
