@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PluginHost } from './host.svelte';
 import { gitRegistration } from './git/registration';
-import { GIT_PANEL_ID, GIT_STATUS_ID, GIT_UI_COMPONENTS_KEY } from './git/ui';
+import { GIT_PANEL_ID, GIT_UI_COMPONENTS_KEY } from './git/ui';
 import { GIT_GUTTER_CONTRIBUTION, GIT_DECORATION_CONTRIBUTION } from './git/gutter';
 import { composeEditorContributions } from './editor';
 import { Workspace } from '../workspace.svelte';
@@ -83,11 +83,10 @@ function stripComments(source: string): string {
 }
 
 describe('Git UI migration (#203)', () => {
-	describe('panel, status, and decorations register on enable and vanish on disable', () => {
-		it('registers sidebar panel, status item, and editor contributions on activate (headless pilots)', async () => {
+	describe('panel and decorations register on enable and vanish on disable', () => {
+		it('registers sidebar panel and editor contributions on activate (headless pilots)', async () => {
 			const { host } = await makeHost();
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeUndefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeUndefined();
 			expect(host.getEditorContributions('gutter')).toHaveLength(0);
 			expect(host.getEditorContributions('decoration')).toHaveLength(0);
 
@@ -99,36 +98,27 @@ describe('Git UI migration (#203)', () => {
 			expect(panel?.pluginId).toBe('git');
 			expect(panel?.component).toBeDefined();
 
-			const status = host.getStatusBarItem(GIT_STATUS_ID);
-			expect(status).toBeDefined();
-			expect(status?.alignment).toBe('left');
-			expect(status?.pluginId).toBe('git');
-			expect(status?.component).toBeDefined();
-
 			const gutters = host.getEditorContributions('gutter');
 			expect(gutters.some((e) => e.contribution.id === GIT_GUTTER_CONTRIBUTION.id && e.pluginId === 'git')).toBe(true);
 			const decorations = host.getEditorContributions('decoration');
 			expect(decorations.some((e) => e.contribution.id === GIT_DECORATION_CONTRIBUTION.id && e.pluginId === 'git')).toBe(true);
 		});
 
-		it('removes panel, status, and decorations on deactivate via host removal (no reimplementation)', async () => {
+		it('removes panel and decorations on deactivate via host removal (no reimplementation)', async () => {
 			const { host } = await makeHost();
 			await host.activate('git');
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeDefined();
 			expect(host.getEditorContributions('gutter')).not.toHaveLength(0);
 
 			await host.deactivate('git');
 
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeUndefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeUndefined();
 			expect(host.getSidebarPanels().some((p) => p.pluginId === 'git')).toBe(false);
-			expect(host.getStatusBarItems().some((s) => s.pluginId === 'git')).toBe(false);
 			expect(host.getEditorContributions('gutter').some((e) => e.pluginId === 'git')).toBe(false);
 			expect(host.getEditorContributions('decoration').some((e) => e.pluginId === 'git')).toBe(false);
 		});
 
-		it('restores panel, status, and decorations on re-enable', async () => {
+		it('restores panel and decorations on re-enable', async () => {
 			const { host } = await makeHost();
 			await host.activate('git');
 			await host.deactivate('git');
@@ -137,7 +127,6 @@ describe('Git UI migration (#203)', () => {
 			await host.activate('git');
 
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeDefined();
 			expect(host.getEditorContributions('gutter').some((e) => e.pluginId === 'git')).toBe(true);
 		});
 
@@ -146,13 +135,11 @@ describe('Git UI migration (#203)', () => {
 			host.register(gitRegistration);
 			const mockPanel = (_target: any, _props: any) => ({ mock: 'panel' });
 			const mockIcon = { mock: 'icon' };
-			const mockStatus = (_target: any, _props: any) => ({ mock: 'status' });
 			const mockDiff = (_target: any, _props: any) => ({ mock: 'diff' });
 			const mockDiffIcon = { mock: 'diff-icon' };
 			host.provideService(GIT_UI_COMPONENTS_KEY, {
 				panelComponent: mockPanel,
 				panelIcon: mockIcon,
-				statusComponent: mockStatus,
 				diffComponent: mockDiff,
 				diffIcon: mockDiffIcon
 			});
@@ -165,7 +152,6 @@ describe('Git UI migration (#203)', () => {
 
 			expect(host.getSidebarPanel(GIT_PANEL_ID)?.component).toBe(mockPanel);
 			expect(host.getSidebarPanel(GIT_PANEL_ID)?.icon).toBe(mockIcon);
-			expect(host.getStatusBarItem(GIT_STATUS_ID)?.component).toBe(mockStatus);
 			expect(host.getTabContent('git')?.component).toBe(mockDiff);
 			expect(host.getTabContent('git')?.icon).toBe(mockDiffIcon);
 

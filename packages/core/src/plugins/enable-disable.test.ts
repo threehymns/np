@@ -3,7 +3,7 @@ import { describe, it, expect, mock, spyOn } from 'bun:test';
 import { PluginHost } from './host.svelte';
 import { PluginActivationError, PluginDependencyDisabledError } from './errors';
 import { gitRegistration } from './git/registration';
-import { GIT_PANEL_ID, GIT_STATUS_ID } from './git/ui';
+import { GIT_PANEL_ID } from './git/ui';
 import { DIALOGS_SERVICE_KEY } from './services';
 import { SettingsManager, type SettingNamespaceSchema, type WorkspaceSettingsStorage } from './settings';
 import type { PluginManifest, PluginRegistration } from './types';
@@ -166,8 +166,6 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(host.executeCommand('git.stage', 'x')).toBeUndefined();
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeUndefined();
 			expect(host.getSidebarPanels().some((p) => p.pluginId === 'git')).toBe(false);
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeUndefined();
-			expect(host.getStatusBarItems().some((s) => s.pluginId === 'git')).toBe(false);
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(false);
 			expect(host.getSettingSchema('git')).toBeUndefined();
 		});
@@ -270,7 +268,6 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.getCommand('git.stage')).toBeUndefined();
 			expect(host.getCommandsByCategory('Source Control')).toHaveLength(0);
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeUndefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeUndefined();
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(false);
 			expect(app.activeSidebarTab).toBe('explorer');
 
@@ -314,7 +311,6 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.isPluginActive('git')).toBe(true);
 			expect(host.getCommand('git.stage')).toBeDefined();
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
-			expect(host.getStatusBarItem(GIT_STATUS_ID)).toBeDefined();
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(true);
 			expect(app.workspace.repository).not.toBeNull();
 			expect(app.workspace.repository?.currentBranch).toBe('main');

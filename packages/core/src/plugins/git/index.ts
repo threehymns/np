@@ -24,8 +24,6 @@ import {
 	GIT_PANEL_ID,
 	GIT_PANEL_TITLE,
 	GIT_PANEL_ORDER,
-	GIT_STATUS_ID,
-	GIT_STATUS_ORDER,
 	getGitUIComponents
 } from './ui';
 
@@ -38,9 +36,8 @@ import {
  * save-triggered refresh, the shared command registry for Git commands,
  * and generic services for collaborators. No host interface mentions Git.
  *
- * Presentation is purely contributory (#203): the sidebar panel and status
- * entries register through `host.registerSidebarPanel` /
- * `host.registerStatusBarItem`, and gutter decorations through
+ * Presentation is purely contributory (#203): the sidebar panel registers
+ * through `host.registerSidebarPanel` and gutter decorations through
  * `host.registerEditorContribution`, composed by the host with unchanged
  * precedence. Real Svelte components arrive via the generic UI-components
  * service provided by the UI bridge (`@np/ui`); headless hosts (Bun tests)
@@ -103,12 +100,6 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			icon: uiComponents.panelIcon,
 			component: uiComponents.panelComponent
 		});
-		host.registerStatusBarItem(manifest.id, {
-			id: GIT_STATUS_ID,
-			alignment: 'left',
-			order: GIT_STATUS_ORDER,
-			component: uiComponents.statusComponent
-		});
 		if (uiComponents.diffComponent) {
 			host.registerTabContent(manifest.id, {
 				id: manifest.id,
@@ -123,12 +114,6 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			title: GIT_PANEL_TITLE,
 			order: GIT_PANEL_ORDER,
 			component: createPilotComponent('git-panel')
-		});
-		host.registerStatusBarItem(manifest.id, {
-			id: GIT_STATUS_ID,
-			alignment: 'left',
-			order: GIT_STATUS_ORDER,
-			component: createPilotComponent('git-status')
 		});
 	}
 
