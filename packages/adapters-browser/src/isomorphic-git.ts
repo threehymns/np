@@ -882,6 +882,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		// Same reasoning as `updateIndexContent`, applied to the worktree. A bare
+		// write follows the link and overwrites the target -- a different, tracked
+		// file that the user never opened -- so the refusal is made first.
+		//
+		// The index entry's mode is again the only available signal, and that
+		// makes this slightly stricter than the worktree-based check the desktop
+		// adapter can afford. Here the link is followed on disk, so the entry
+		// describes the pre-write state and a link replaced by a regular file
+		// (mode 100644) is no longer detected. That case is a deliberate trade:
+		// it costs one extra write to a `.git` object, and it buys protection on
+		// every link the repository actually holds, rather than none.
+		const entry = await this.readStageEntry(filepath);
+		if (entry && entry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
+		}
 		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
 	}
 
