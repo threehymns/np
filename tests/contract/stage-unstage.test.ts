@@ -33,6 +33,7 @@ interface StageUnstage {
 	stageAll(): Promise<void>;
 	unstageAll(): Promise<void>;
 	updateIndexContent(filepath: string, content: string): Promise<void>;
+	updateFileContent(filepath: string, content: string): Promise<void>;
 }
 
 interface Engine {
@@ -587,6 +588,92 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'a.txt')).toBe('content of a\n');
 			expect(await indexContents(r, 'b.txt')).toBe('content of b\n');
 			expect(await indexContents(r, 'new.txt')).toBe(null);
+		});
+	});
+
+	/**
+	 * `updateFileContent` is the worktree half of the hunk-action write path, and
+	 * it was the only method on the `VCSAdapter` surface with no contract
+	 * coverage at all — both engines were exercised only through mocks. A mock
+	 * cannot catch a root- or path-joining mistake, which is the whole point of
+	 * the real-engine contract suite (ADR 0004).
+	 */
+	describe(`${engine.name} — updateFileContent`, () => {
+		it('writes a tracked file into the worktree without touching the index', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			await adapter.updateFileContent('hello.ts', HELLO_V1);
+
+			// The worktree holds the new bytes...
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+			// ...the index still holds the committed bytes (this is a worktree
+			// write, not a stage), so the file reads as an unstaged `M`.
+			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
+		});
+
+		it('truncates a file to empty content rather than leaving the old bytes behind', async () => {
+			const r = await createTrackedRepo();
+			await r.write('empty-me.txt', 'previous contents\n');
+			await commitAll(r, 'base');
+			const adapter = engine.adapter(r);
+
+			await adapter.updateFileContent('empty-me.txt', '');
+
+			expect(await worktreeContents(r, 'empty-me.txt')).toBe('');
+			expect(await indexContents(r, 'empty-me.txt')).toBe('previous contents\n');
+			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'empty-me.txt' }]);
+		});
+
+		it('resolves a nested path relative to the repository root, not the process cwd', async () => {
+			const r = await createTrackedRepo();
+			await r.write('nested/deep/file.txt', 'original\n');
+			await commitAll(r, 'base');
+			const adapter = engine.adapter(r);
+
+			await adapter.updateFileContent('nested/deep/file.txt', 'rewritten by adapter\n');
+
+			expect(await worktreeContents(r, 'nested/deep/file.txt')).toBe('rewritten by adapter\n');
+			expect(await indexContents(r, 'nested/deep/file.txt')).toBe('original\n');
+			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'nested/deep/file.txt' }]);
+		});
+
+		it('disturbs neither a sibling file nor the index beyond the one target it wrote', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			await adapter.updateFileContent('hello.ts', HELLO_V1);
+
+			// The siblings' bytes survive, and — the half a content-only
+			// assertion misses — they are still exactly where git left them:
+			// clean in the porcelain and still tracked in the index. A write that
+			// also staged, added, or clobbered a sibling would show up here
+			// even though every sibling file still read back correctly.
+			expect(await worktreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
+			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
+		});
+
+		it('creates a missing target as an untracked worktree entry without staging it', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			// A missing target is an upsert, not an error: the call resolves, the
+			// bytes land inside the repository, and `updateFileContent` never
+			// stages, so the porcelain code is `??` and the base files stay clean
+			// (hence absent from `-uall` output).
+			await adapter.updateFileContent('does-not-exist.txt', 'orphan\n');
+
+			expect(await r.read('does-not-exist.txt')).toBe('orphan\n');
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'does-not-exist.txt' }]);
+			expect(await indexContents(r, 'does-not-exist.txt')).toBe(null);
 		});
 	});
 }
