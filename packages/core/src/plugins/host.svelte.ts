@@ -1697,9 +1697,38 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		if (result.length < visitedForGraph.size) {
-			// Find cycle participants
-			const cycleNodes = Array.from(visitedForGraph).filter((node) => (inDegree.get(node) ?? 0) > 0);
-			throw new DependencyCycleError(cycleNodes);
+			// Report only true cycle participants, not downstream victims
+			// blocked behind the cycle (Kahn leaves both with in-degree > 0).
+			// A depth-first walk over the blocked subgraph finds a back edge
+			// and the stack slice is the actual cycle.
+			const blocked = new SvelteSet(
+				Array.from(visitedForGraph).filter((node) => (inDegree.get(node) ?? 0) > 0)
+			);
+			const visitState = new SvelteMap<string, number>();
+			const stack: string[] = [];
+			let found: string[] | null = null;
+			const visit = (node: string): void => {
+				if (found) return;
+				visitState.set(node, 1);
+				stack.push(node);
+				const deps = [...(adj.get(node) ?? [])].filter((dep) => blocked.has(dep)).sort();
+				for (const dep of deps) {
+					const depState = visitState.get(dep) ?? 0;
+					if (depState === 0) {
+						visit(dep);
+						if (found) return;
+					} else if (depState === 1) {
+						found = stack.slice(stack.indexOf(dep));
+						return;
+					}
+				}
+				stack.pop();
+				visitState.set(node, 2);
+			};
+			for (const node of [...blocked].sort()) {
+				if ((visitState.get(node) ?? 0) === 0 && !found) visit(node);
+			}
+			throw new DependencyCycleError(found ?? [...blocked].sort());
 		}
 
 		return result;

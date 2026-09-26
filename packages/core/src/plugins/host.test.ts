@@ -157,6 +157,34 @@ describe('PluginHost Skeleton', () => {
 			}
 		});
 
+		it('reports only true cycle participants, not downstream victims', () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'a', name: 'A', version: 0, dependsOn: { b: 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'b', name: 'B', version: 0, dependsOn: { a: 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'd', name: 'D', version: 0, dependsOn: { a: 0 } },
+				setup: () => {}
+			});
+
+			let caught: any = null;
+			try {
+				host.computeActivationOrder();
+			} catch (err: any) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(DependencyCycleError);
+			expect([...caught.cycle].sort()).toEqual(['a', 'b']);
+			expect(caught.message).not.toContain('d ->');
+			expect(caught.message).not.toContain('-> d');
+			expect(caught.message).toContain('Action:');
+		});
+
 		it('rejects two plugins providing the same interface instead of picking one silently', () => {
 			const host = new PluginHost();
 			host.register({
