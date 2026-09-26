@@ -8,6 +8,7 @@ import {
 	rmdirSync,
 	statSync,
 	existsSync,
+	symlinkSync,
 	writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1162,6 +1163,46 @@ bunDescribe('contract suite skip policy', () => {
 		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
 		for (const ignoredDir of ['dist-main', '.output', 'scratch', 'test-results']) {
 			expect(scanned.some(f => f.split(sep).includes(ignoredDir))).toBe(false);
+		}
+	});
+
+	bunTest('a symlink loop does not make the scan walk in circles', () => {
+		// `statSync` follows symlinks, so a link pointing at an ancestor is
+		// indistinguishable from a real directory to the walk. With nothing to
+		// stop it, one `loop -> ..` at the repository root took the walk from 224
+		// files to 119,304, to depth 87, and from 14ms to 8.1s. It terminated only
+		// because the OS path-length limit stopped it, which is not a guarantee a
+		// merge gate should rest on.
+		//
+		// The walk must resolve each directory and visit each resolved path once.
+		const withLoop = (): number => {
+			const loopDir = join(REPO_ROOT, 'tests', 'contract', 'zz-loop');
+			mkdirSync(loopDir, { recursive: true });
+			symlinkSync('..', join(loopDir, 'self'));
+			try {
+				return walk(REPO_ROOT).length;
+			} finally {
+				rmSync(loopDir, { recursive: true, force: true });
+			}
+		};
+		const baseline = walk(REPO_ROOT).length;
+		expect(withLoop()).toBe(baseline);
+	});
+
+	bunTest('a broken symlink does not take the gate down', () => {
+		// The `try`/`catch` around the stat exists for this: a dangling link must
+		// not fail the whole gate over a skip nobody can reach through it. The
+		// walk should see the same files with the dangling link present as
+		// without it.
+		const baseline = walk(REPO_ROOT).length;
+		const dir = join(REPO_ROOT, 'tests', 'contract', 'zz-broken');
+		mkdirSync(dir, { recursive: true });
+		symlinkSync(join(dir, 'nowhere'), join(dir, 'dangling.test.ts'));
+		try {
+			expect(walk(REPO_ROOT).length).toBe(baseline);
+			expect(collectOffenders()).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
