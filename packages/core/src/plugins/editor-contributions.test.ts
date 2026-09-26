@@ -499,5 +499,76 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 			await host.unregister('custom-editor-plugin');
 			expect(host.getEditorContributions('gutter').length).toBe(0);
 		});
+
+		it('deactivating one plugin yields the same editor contributions as a clean build without it', async () => {
+			const owner = (id: string) => ({
+				manifest: { id, name: id, version: 0 },
+				setup: (h: PluginHost) => {
+					h.registerEditorContributions(id, [
+						{ id: `${id}-gutter`, type: 'gutter' as const, extension: [] },
+						{ id: `${id}-decoration`, type: 'decoration' as const, extension: [] }
+					]);
+				}
+			});
+			// Ownership attribution matters as much as presence: a residue-free
+			// disable must not just drop beta's entries but also leave alpha's
+			// attributed to alpha, exactly as a host that never held beta.
+			const owned = (h: PluginHost) =>
+				h
+					.getEditorContributions()
+					.map((entry) => `${entry.pluginId}:${entry.contribution.id}`)
+					.sort();
+
+			host.register(owner('alpha'));
+			host.register(owner('beta'));
+			await host.activateAll();
+			expect(owned(host)).toEqual([
+				'alpha:alpha-decoration',
+				'alpha:alpha-gutter',
+				'beta:beta-decoration',
+				'beta:beta-gutter'
+			]);
+
+			await host.deactivate('beta');
+			expect(owned(host)).not.toContain('beta:beta-gutter');
+
+			const clean = new PluginHost({ platform: 'desktop' });
+			clean.register(owner('alpha'));
+			await clean.activateAll();
+			expect(owned(host)).toEqual(owned(clean));
+		});
+
+		it('refresh-mid-session rebuilds editor contributions with no duplicates or losses', async () => {
+			const owner = (id: string) => ({
+				manifest: { id, name: id, version: 0 },
+				setup: (h: PluginHost) => {
+					h.registerEditorContributions(id, [
+						{ id: `${id}-gutter`, type: 'gutter' as const, extension: [] },
+						{ id: `${id}-decoration`, type: 'decoration' as const, extension: [] }
+					]);
+				}
+			});
+			const owned = (h: PluginHost) =>
+				h.getEditorContributions().map((entry) => `${entry.pluginId}:${entry.contribution.id}`);
+
+			host.register(owner('alpha'));
+			host.register(owner('beta'));
+			await host.activateAll();
+
+			const before = owned(host);
+			const revisionBefore = host.editorRevision;
+			host.rebuildEditorContributions();
+			host.rebuildEditorContributions();
+			host.rebuildEditorContributions();
+			expect(owned(host)).toEqual(before);
+			expect(new Set(before).size).toBe(before.length);
+			// A rebuild has to re-announce the revision so open editors reconfigure.
+			expect(host.editorRevision).toBeGreaterThan(revisionBefore);
+
+			// A mid-session deactivate/reactivate must not double up either.
+			await host.deactivate('beta');
+			await host.activate('beta');
+			expect(owned(host).sort()).toEqual(before.sort());
+		});
 	});
 });
