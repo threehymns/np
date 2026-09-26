@@ -190,6 +190,7 @@ export class KeymapRegistry {
 	// Loaded bindings list
 	bindings = $state<ParsedBinding[]>([]);
 	private baseKeymap: KeymapBinding[] = defaultKeymap;
+	private userKeymap: KeymapBinding[] = [];
 	private keymapTransforms: KeymapTransformEntry[] = [];
 	private ownerOrdering?: (ownerIds: readonly string[]) => string[];
 	
@@ -276,7 +277,10 @@ export class KeymapRegistry {
 			const result = entry.transform([...keymap]);
 			keymap = Array.isArray(result) ? [...result] : [];
 		}
-		this.bindings = this.parseBindings(keymap);
+		// The user's keymap is appended after the transforms, never merged into
+		// the base: resolution is last-match-wins (ADR 0003), so a user binding
+		// overrides both the defaults and a plugin that binds the same sequence.
+		this.bindings = this.parseBindings([...keymap, ...this.userKeymap]);
 	}
 
 	refresh(): void {
@@ -486,7 +490,10 @@ export class KeymapRegistry {
 			const cleaned = content.replace(/,[ \t\r\n]*([}\\]])/g, '$1');
 			const userKeymap = JSON.parse(cleaned);
 			if (Array.isArray(userKeymap)) {
-				this.loadBindings([...defaultKeymap, ...userKeymap]);
+				// Stored apart from the defaults, which stay the base keymap that
+				// plugin transforms build on; the rebuild appends these last.
+				this.userKeymap = userKeymap as KeymapBinding[];
+				this.rebuild();
 			}
 		} catch (e) {
 			console.error('Failed to parse user keymap:', e);

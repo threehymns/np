@@ -15,6 +15,20 @@ beforeAll(async () => {
 	AppState = mod.AppState;
 });
 
+/** A keydown carrying only the fields the keymap pipeline reads. */
+function pressed(key: string, modifiers: { ctrl?: boolean; alt?: boolean } = {}): KeyboardEvent {
+	return {
+		key,
+		ctrlKey: modifiers.ctrl ?? false,
+		metaKey: false,
+		altKey: modifiers.alt ?? false,
+		shiftKey: false,
+		target: { tagName: "DIV" },
+		preventDefault() {},
+		stopPropagation() {}
+	} as unknown as KeyboardEvent;
+}
+
 describe("ADR 0002 Headless Core Invariants", () => {
 	it("enforces zero phosphor-svelte dependencies in packages/core/package.json", () => {
 		const pkgPath = resolve(__dirname, "../package.json");
@@ -75,6 +89,42 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		expect(later.bindings.length).toBe(baseCount);
 		expect(later.bindings.some((binding) => binding.commandId === "leak.command")).toBe(false);
 		expect(registry.bindings.some((binding) => binding.commandId === "leak.command")).toBe(true);
+	});
+
+	it("runs the user's command when a plugin binds the same sequence", () => {
+		const executed: string[] = [];
+		const appState = { commands: { execute: (id: string) => executed.push(id) } } as any;
+		const registry = new KeymapRegistry(appState);
+
+		// A plugin rebinds a default shortcut, and the user binds that same
+		// sequence. Last match wins (ADR 0003), so the user must be the winner.
+		registry.registerKeymapBindings("plugin", [{ bindings: { "ctrl+alt+i": "plugin.run" } }]);
+		registry.reloadUserKeymap(JSON.stringify([{ bindings: { "ctrl+alt+i": "user.run" } }]));
+
+		expect(registry.handleKeydown(pressed("i", { ctrl: true, alt: true }))).toBe(true);
+		expect(executed).toEqual(["user.run"]);
+	});
+
+	it("keeps default bindings in the base keymap under user bindings", () => {
+		const executed: string[] = [];
+		const appState = { commands: { execute: (id: string) => executed.push(id) } } as any;
+		const registry = new KeymapRegistry(appState);
+
+		registry.reloadUserKeymap(JSON.stringify([{ bindings: { "ctrl+alt+i": "user.run" } }]));
+
+		// The user keymap is stored apart from the defaults, so an untouched
+		// default still resolves, and a transform registered afterwards still
+		// builds on the defaults.
+		expect(registry.handleKeydown(pressed("n", { ctrl: true }))).toBe(true);
+		expect(executed).toEqual(["file.new"]);
+
+		registry.registerKeymapBindings("plugin", [{ bindings: { "ctrl+alt+p": "plugin.run" } }]);
+		expect(registry.handleKeydown(pressed("p", { ctrl: true, alt: true }))).toBe(true);
+		expect(executed).toEqual(["file.new", "plugin.run"]);
+
+		// A registry that never read the user's keymap is unaffected by it.
+		const clean = new KeymapRegistry({ commands: { execute: () => undefined } } as any);
+		expect(clean.bindings.some((binding) => binding.commandId === "user.run")).toBe(false);
 	});
 
 	it("rebuilds icon providers after removing one owner and matches a clean build", () => {
