@@ -426,6 +426,18 @@ interface SkipSite {
  * Both are matched by the same walk, so one spelling cannot be added without the
  * other. `cond` is only inspected for the conditional shape; a plain `skip`/`todo`
  * has no condition to lift, so it is reported without one.
+ *
+ * The receiver and the modifier are matched with whitespace allowed on either side
+ * of the dot, so a wrapped spelling — `it\n  .skip(` — is caught. Without that a
+ * formatter that breaks a chain across lines is enough to hide an unconditional
+ * skip from the gate entirely, which is the one failure this gate cannot have.
+ * What that does *not* reach is a receiver reached through a variable
+ * (`const s = it.skip; s(...)`): see the header.
+ *
+ * The match may be padded with whitespace, so its last character is not always the
+ * paren: `it\n  .skip(` ends on `(` but `describe .skipIf (` ends on a space. The
+ * `(` is what the argument list is anchored to, so it is located inside the match's
+ * own extent rather than assumed to be its last character.
  */
 interface SiteShape {
 	/** The member being matched after the call target. */
@@ -513,13 +525,18 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	const constants = readConstants(code);
 
 	const sites: SkipSite[] = [];
-	const opener = new RegExp(`\\b\\w+\\.(?:${members})${CALL_OPENERS}`, 'g');
+	// Whitespace is allowed on either side of the dot, so `it\n  .skip(` is caught.
+	// Without that, a formatter that breaks a chain across lines hides an
+	// unconditional skip from the gate completely.
+	const opener = new RegExp(`\\b\\w+\\s*\\.\\s*(?:${members})${CALL_OPENERS}`, 'g');
 	let match: RegExpExecArray | null;
 	while ((match = opener.exec(code)) !== null) {
-		// The match ends at the `(` the member was called with, which for a
-		// conditional shape is the condition's own paren.
-		const open = match.index + match[0].length - 1;
-		const isConditional = /\.skipIf\b/.test(match[0]);
+		// The call's `(` is the last one inside the match, not necessarily its last
+		// character: `describe .skipIf (` ends the match on a space. The `(` is what
+		// the argument list is anchored to, so it is located inside the match's own
+		// extent rather than assumed to be the final character.
+		const open = code.lastIndexOf('(', match.index + match[0].length - 1);
+		const isConditional = /\bskipIf\b/.test(match[0]);
 
 		// Only a condition that is constant-true is unconditional; a predicate can
 		// lift itself when the environment changes, which is the whole point of
@@ -800,6 +817,29 @@ bunDescribe('contract suite skip policy', () => {
 		expect(sites).toHaveLength(1);
 		expect(sites[0].name).toBe('copy detection');
 		expect(sites[0].line).toBe(1);
+	});
+
+	bunTest('detects a wrapped call, because a formatter can break the chain itself', () => {
+		// Whitespace on either side of the dot is legal JavaScript and a formatter
+		// will produce it the moment a line grows. If the gate's pattern required
+		// the dot to touch both names, wrapping an existing skip would be enough to
+		// hide it — the gate would go green on a suite that is still not running.
+		// Proven: this exact spelling produced zero matches before the pattern was
+		// widened to `\s*\.\s*`.
+		const wrapped = [
+			`it('a real test', () => {});`,
+			`it`,
+			`  .skip('wrapped across lines', () => {});`,
+		].join('\n');
+		expect(findUnconditionalSkips(wrapped).map(site => site.name)).toEqual(['wrapped across lines']);
+
+		// The same widening must not break the conditional shape: a wrapped
+		// `skipIf` still has its condition read, and still reads it from the `(` the
+		// match ends on rather than from the end of the match's own text.
+		const guarded = `describe\n  .skipIf (\n\ttrue,\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(guarded).map(site => site.name)).toEqual(['needs git 2.30']);
+		const liftable = `describe\n  .skipIf (\n\tbelowFloor(),\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(liftable)).toEqual([]);
 	});
 
 	bunTest('detects a condition that is true however it is written', () => {
