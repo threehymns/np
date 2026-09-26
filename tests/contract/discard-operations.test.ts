@@ -370,6 +370,72 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
+
+		// Byte-identical content does not identify a source: two tracked files can
+		// hold the same bytes, and a deletion the user made on purpose is
+		// indistinguishable from the source half of a rename. Anything less than a
+		// unique match would resurrect a file nobody renamed.
+
+		it('treats a destination matching two deleted sources as an untracked file, restoring neither', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('dup.txt', SRC_CONTENT);
+			await stageAll(r);
+			const commit = await r.git(['commit', '-m', 'duplicate content']);
+			if (commit.code !== 0) throw new Error(commit.stderr);
+			// The user renames src.txt and separately deletes dup.txt on purpose. Both
+			// candidates hold identical content, so nothing in the repository says
+			// which one moved — and restoring either by guess would resurrect a
+			// deliberate deletion or leave the real rename half-undone.
+			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			await rm(`${r.path}/dup.txt`);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'dup.txt' },
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'moved.txt' }
+			]);
+
+			await adapter.discardChanges('moved.txt', { staged: false });
+
+			// Neither candidate is restored: the destination is an untracked file.
+			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await worktreeContents(r, 'dup.txt')).toBe(null);
+			// Both deletions stand, and the index still records both files.
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'dup.txt' },
+				{ x: ' ', y: 'D', path: 'src.txt' }
+			]);
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await indexContents(r, 'dup.txt')).toBe(SRC_CONTENT);
+		});
+
+		it('restores a unique byte-identical match, which is the whole limit of what a rename can be proven to be', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Exactly one worktree deletion whose index content equals the untracked
+			// destination. The user could equally have deleted src.txt on purpose and
+			// then written a new file that happens to hold the same bytes: no git
+			// invocation separates the two shapes, so the adapter commits to the
+			// recovery. This test pins that boundary deliberately rather than leaving
+			// it implied -- the only thing that makes the pairing decidable is that
+			// the match is unique, and the test above shows what uniqueness buys.
+			await rm(`${r.path}/src.txt`);
+			await r.write('notes.txt', SRC_CONTENT);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'notes.txt' }
+			]);
+
+			await adapter.discardChanges('notes.txt', { staged: false });
+
+			// The single matching candidate is recovered, and the destination goes.
+			expect(await worktreeContents(r, 'notes.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await porcelainStatus(r)).toEqual([]);
+		});
 	});
 
 	describe(`${engine.name} — discard of untracked files`, () => {
