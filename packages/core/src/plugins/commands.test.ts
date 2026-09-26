@@ -189,5 +189,47 @@ describe('Command registry on transforms (#196)', () => {
 			host.refreshCommands();
 			expect(idsOf(host.getCommandsByCategory('File'))).toEqual(['file.new']);
 		});
+
+		it('a rejected duplicate registration leaves no wedged entry behind', async () => {
+			const host = new PluginHost();
+			host.register(pluginWithCommands('alpha', [makeCommand('shared.id')]));
+			await host.activateAll();
+			const before = idsOf(host.getCommands());
+
+			expect(() => host.registerCommands('beta', [makeCommand('shared.id')])).toThrow(
+				DuplicateCommandIdError
+			);
+			// Failed registration is atomic: the bad entry is dropped.
+			expect(idsOf(host.getCommands())).toEqual(before);
+			host.rebuildCommands();
+			expect(idsOf(host.getCommands())).toEqual(before);
+
+			await host.deactivate('alpha');
+			expect(host.getCommand('shared.id')).toBeUndefined();
+		});
+
+		it('an inconsistent manifest graph keeps a registered-but-inactive owner out of the replay', async () => {
+			const host = new PluginHost();
+			host.register(pluginWithCommands('alpha', [makeCommand('alpha.one')]));
+			host.register(pluginWithCommands('omega', [makeCommand('omega.one')]));
+			await host.activateAll();
+
+			// Two registrations now claim the same interface, so every computed
+			// activation order throws and owner ordering takes its fallback.
+			host.register({
+				manifest: { id: 'one', name: 'One', version: 0, provides: { 'shared.iface': 1 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'two', name: 'Two', version: 0, provides: { 'shared.iface': 2 } },
+				setup: () => {}
+			});
+
+			// A transform left behind by an inactive owner (a missed disposal)
+			// must stay out of the replay, in registration order for the rest.
+			host.registerCommands('one', [makeCommand('one.leaked')]);
+
+			expect(idsOf(host.getCommands())).toEqual(['alpha.one', 'omega.one']);
+		});
 	});
 });

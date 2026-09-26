@@ -6,12 +6,14 @@
 	import * as Menubar from "./components/ui/menubar/index";
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
 	import favicon from "./assets/favicon.png";
-	import { SidebarIcon, FolderOpenIcon, GitMergeIcon } from "phosphor-svelte";
+	import { SidebarIcon, FolderOpenIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
 	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
 	import { onMount, type Snippet } from "svelte";
+	import { registerBundledPlugins, registerPluginUiLoader } from "./plugins/index";
 
+	import type { UIContributionIcon } from "@np/core";
 	import type SettingsModalComponent from "./components/SettingsModal.svelte";
 	import type CommandPaletteComponent from "./components/CommandPalette.svelte";
 	import type WhichKeyComponent from "./components/WhichKey.svelte";
@@ -24,6 +26,10 @@
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
 
+	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof SidebarIcon {
+		return (icon ?? SidebarIcon) as unknown as typeof SidebarIcon;
+	}
+
 	onMount(() => {
 		const handleCaptureKeydown = (e: KeyboardEvent) => {
 			if (appState.keymaps.handleKeydown(e)) {
@@ -33,7 +39,7 @@
 		};
 		const handleFocus = () => {
 			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-			if (appState.workspace.repository) {
+			if (appState.workspace.isRepositoryActive && appState.workspace.repository) {
 				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
 			}
 			// Surface externally deleted open files (#175) with the same
@@ -76,6 +82,8 @@
 
 	onMount(async () => {
 		try {
+			registerBundledPlugins(appState.plugins);
+			registerPluginUiLoader(appState.plugins);
 			await appState.init();
 		} catch (err) {
 			console.error("[AppShell] Failed to initialize app state:", err);
@@ -102,16 +110,16 @@
 
 		// Set theme data attribute
 		if (theme === 'default') {
-			body.removeAttribute('data-theme');
+			delete body.dataset.theme;
 		} else {
-			body.setAttribute('data-theme', theme);
+			body.dataset.theme = theme;
 		}
 
 		// Set accent data attribute
 		if (accent === 'default') {
-			body.removeAttribute('data-accent');
+			delete body.dataset.accent;
 		} else {
-			body.setAttribute('data-accent', accent);
+			body.dataset.accent = accent;
 		}
 	});
 </script>
@@ -133,9 +141,9 @@
 					<Menubar.Trigger>{category}</Menubar.Trigger>
 					<Menubar.Content>
 						{#if category === 'File'}
-							{#each appState.commands.getByCategory('File') as command (command.id)}
+							{#each appState.commands.getByCategory('File').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
@@ -148,9 +156,9 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('Export') as command (command.id)}
+									{#each appState.commands.getByCategory('Export').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 										<Menubar.Item
-											onclick={() => command.action()}
+											onclick={() => appState.commands.execute(command.id)}
 											disabled={command.isEnabled && !command.isEnabled()}
 										>
 											{command.label}
@@ -162,9 +170,9 @@
 								</Menubar.SubContent>
 							</Menubar.Sub>
 						{:else if category === 'Format'}
-							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap') as command (command.id)}
+							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap' && (!c.isVisible || c.isVisible())) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
@@ -184,8 +192,8 @@
 							<Menubar.Sub>
 								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
 								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom')) as command (command.id)}
-										<Menubar.Item onclick={() => command.action()}>
+									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom') && (!c.isVisible || c.isVisible())) as command (command.id)}
+										<Menubar.Item onclick={() => appState.commands.execute(command.id)}>
 											{command.label}
 											{#if appState.keymaps.getShortcutForCommand(command.id)}
 												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
@@ -207,9 +215,9 @@
 								{/if}
 							</Menubar.CheckboxItem>
 						{:else}
-							{#each appState.commands.getByCategory(category) as command (command.id)}
+							{#each appState.commands.getByCategory(category).filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
 								<Menubar.Item
-									onclick={() => command.action()}
+									onclick={() => appState.commands.execute(command.id)}
 									disabled={command.isEnabled && !command.isEnabled()}
 								>
 									{command.label}
@@ -308,24 +316,38 @@
 						}
 					})}
 
-					{@render statusButton({
-						icon: GitMergeIcon,
-						class: `flex items-center justify-center relative hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === 'git' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
-						title: 'Source Control',
-						shortcut: appState.keymaps.getShortcutForCommand('view.showGit'),
-						onclick: () => {
-							if (appState.activeSidebarTab === 'git' && appState.prefs.sidebarVisible) {
-								appState.prefs.sidebarVisible = false;
-							} else {
-								appState.activeSidebarTab = 'git';
-								appState.prefs.sidebarVisible = true;
+					<!-- Contributed Sidebar Panels (including version-control panel when its plugin is active) -->
+					{#each appState.plugins.getSidebarPanels() as panel (panel.id)}
+						{@const PanelIcon = toPhosphorIcon(panel.icon)}
+						{@render statusButton({
+							icon: PanelIcon,
+							class: `flex items-center justify-center hover:bg-accent/50 ${appState.prefs.sidebarVisible && appState.activeSidebarTab === panel.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`,
+							title: panel.title,
+							shortcut: null,
+							onclick: () => {
+								if (appState.activeSidebarTab === panel.id && appState.prefs.sidebarVisible) {
+									appState.prefs.sidebarVisible = false;
+								} else {
+									appState.activeSidebarTab = panel.id;
+									appState.prefs.sidebarVisible = true;
+								}
 							}
-						},
-						badge: appState.workspace.repository?.changes?.length
-					})}
+						})}
+					{/each}
+
+					<!-- Contributed Left Status Bar Items -->
+					{#each appState.plugins.getStatusBarItems('left') as item (item.id)}
+						{@const ItemComponent = item.component}
+						<ItemComponent {...(item.props ?? {})} />
+					{/each}
 				</Tooltip.Provider>
 			</div>
 			<div class="flex items-center gap-2">
+				<!-- Contributed Right Status Bar Items -->
+				{#each appState.plugins.getStatusBarItems('right') as item (item.id)}
+					{@const ItemComponent = item.component}
+					<ItemComponent {...(item.props ?? {})} />
+				{/each}
 				<span>
 				  {appState.selection.line}:{appState.selection.column}
   				{#if appState.selection.charCount > 0}

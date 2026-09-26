@@ -5,23 +5,24 @@
   import * as Tabs from "../components/ui/tabs/index";
   import Icon from "./Icon.svelte";
   
-  import { XIcon, GitDiffIcon } from 'phosphor-svelte';
+  import { XIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from '@codemirror/view';
 
-  import DiffViewer from './DiffViewer.svelte';
   import type EditorComponent from './Editor.svelte';
   import type FileExplorerComponent from './FileExplorer.svelte';
-  import type GitPanelComponent from './GitPanel.svelte';
   import * as Tooltip from './ui/tooltip';
   import { cn } from '@np/core';
+  import type { UIContributionIcon } from '@np/core';
 
   const appState = useAppState();
 
-  // Lazy load heavy components
+  function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof XIcon {
+    return (icon ?? XIcon) as unknown as typeof XIcon;
+  }
+
   let Editor = $state<typeof EditorComponent | null>(null);
   let FileExplorer = $state<typeof FileExplorerComponent | null>(null);
-  let GitPanel = $state<typeof GitPanelComponent | null>(null);
 
   let draggedId = $state<string | null>(null);
   let initialTabIds: string[] | null = null;
@@ -76,12 +77,10 @@
     // Load heavy components after the first paint
     Promise.all([
       import("./Editor.svelte"),
-      import("./FileExplorer.svelte"),
-      import("./GitPanel.svelte")
-    ]).then(([editorMod, explorerMod, gitMod]) => {
+      import("./FileExplorer.svelte")
+    ]).then(([editorMod, explorerMod]) => {
       Editor = editorMod.default;
       FileExplorer = explorerMod.default;
-      GitPanel = gitMod.default;
     }).catch(err => {
       console.error("[MainLayout] Failed to load components:", err);
     });
@@ -131,16 +130,10 @@
             <div class="h-4 bg-muted rounded w-2/3"></div>
           </div>
         {/if}
-      {:else if appState.activeSidebarTab === 'git'}
-        {#if GitPanel}
-          <GitPanel />
-        {:else}
-          <div class="p-4 space-y-2 animate-pulse">
-            <div class="h-4 bg-muted rounded w-3/4"></div>
-            <div class="h-4 bg-muted rounded w-1/2"></div>
-            <div class="h-4 bg-muted rounded w-2/3"></div>
-          </div>
-        {/if}
+      {:else if appState.plugins.getSidebarPanel(appState.activeSidebarTab)}
+        {@const panel = appState.plugins.getSidebarPanel(appState.activeSidebarTab)!}
+        {@const PanelComponent = panel.component}
+        <PanelComponent {...(panel.props ?? {})} />
       {/if}
     </div>
     
@@ -155,14 +148,15 @@
   </aside>
 
   <Tabs.Root bind:value={appState.activeTabId} class="flex flex-1 flex-col min-w-0">
-    {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.type === 'diff')}
+    {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.pluginId)}
       <Tabs.List class="bg-accent/50 justify-start rounded-none items-end gap-0 pb-0 w-full overflow-x-auto overflow-y-hidden no-scrollbar">
         <Tooltip.Provider delayDuration={400}>
           {#each appState.workspace.tabs as tab (tab.id)}
-            {@const doc = tab.type === 'document' ? appState.documents.find(d => d.id === tab.id) : null}
-            {@const title = tab.type === 'diff' ? 'Uncommitted Changes' : (doc?.fileName ?? 'Untitled')}
-            {@const isModified = tab.type === 'document' && doc?.isModified}
-            {@const deletedOnDisk = tab.type === 'document' && doc?.deletedOnDisk}
+            {@const tabDocument = appState.documents.find(d => d.id === tab.id)}
+            {@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
+            {@const title = tabContent?.title ?? tabDocument?.fileName ?? 'Untitled'}
+            {@const isModified = tabDocument?.isModified}
+            {@const deletedOnDisk = tabDocument?.deletedOnDisk}
             <div 
               animate:flip={{ duration: 150 }}
               class="group relative flex h-full -bottom-[1px] shrink-0 {draggedId === tab.id ? 'opacity-20' : ''}"
@@ -180,20 +174,21 @@
                     value={tab.id}
                     class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
                   >
-                    {#if tab.type === 'diff'}
-                      <GitDiffIcon class="size-3.5 opacity-90 text-primary shrink-0" />
+                    {#if tabContent?.icon}
+                      {@const TabIcon = toPhosphorIcon(tabContent.icon)}
+                      <TabIcon class="size-3.5 opacity-90 text-primary shrink-0" />
                     {:else}
-                      <Icon 
+                      <Icon
                         resource={title}
                         type="file"
-                        class="size-3.5 opacity-90" 
+                        class="size-3.5 opacity-90"
                       />
                     {/if}
                     {title}
                   </Tabs.Trigger>
                 </Tooltip.Trigger>
                 <Tooltip.Content side="bottom">
-                  {deletedOnDisk ? `${title} (deleted on disk)` : doc?.origin?.path}
+                  {deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path}
                 </Tooltip.Content>
               </Tooltip.Root>
   
@@ -231,19 +226,17 @@
       </div>
     {:else}
       {#each appState.workspace.tabs as tab (tab.id)}
+        {@const tabDocument = appState.documents.find(d => d.id === tab.id)}
+        {@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
         <Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full">
           {#if appState.activeTabId === tab.id}
-            {#if tab.type === 'diff'}
-              <div class="h-full w-full overflow-hidden">
-                <DiffViewer 
-                  changes={appState.workspace.repository?.changes ?? []}
-                />
-              </div>
+            {#if tab.pluginId && tabContent}
+              {@const TabComponent = tabContent.component}
+              <TabComponent {...(tabContent.props ?? {})} />
             {:else if Editor}
-              {@const doc = appState.documents.find(d => d.id === tab.id)}
-              {#if doc}
-                <Editor 
-                  doc={doc} 
+              {#if tabDocument}
+                <Editor
+                  doc={tabDocument}
                   active={true}
                   bind:view={editorViews[tab.id]}
                   style="font-size: {appState.prefs.zoom}%;"

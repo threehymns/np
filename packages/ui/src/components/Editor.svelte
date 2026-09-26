@@ -10,7 +10,7 @@
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
 
-	import { DocumentSession, useAppState } from '@np/core';
+	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -78,6 +78,12 @@
 					wrapCompartment,
 					languageCompartment,
 					vimCompartment,
+					editorCompartments: appState.plugins?.editorCompartments,
+					pluginContributions: appState.plugins?.getEditorContributions?.() ?? [],
+					language: untrack(() => doc.language?.name),
+					gutterCompartment: appState.plugins?.editorCompartments?.gutterCompartment,
+					decorationsCompartment: appState.plugins?.editorCompartments?.decorationsCompartment,
+					keybindingsCompartment: appState.plugins?.editorCompartments?.keybindingsCompartment,
 					wrap,
 					vimEnabled: untrack(() => appState.prefs.vimMode),
 					initialLanguageExtensions: initialExtensions,
@@ -133,6 +139,11 @@
 				parent: editorEl,
 			});
 
+			appState.plugins?.attachEditorInternal(doc.id, {
+				getState: () => view!.state,
+				dispatch: (spec) => view!.dispatch(spec as any)
+			}, untrack(() => doc.language));
+
 			if (doc.scrollPosition) {
 				view.scrollDOM.scrollTop = doc.scrollPosition.top;
 				view.scrollDOM.scrollLeft = doc.scrollPosition.left;
@@ -147,6 +158,7 @@
 
 		return () => {
 			isDestroyed = true;
+			appState.plugins?.detachEditorInternal(doc.id);
 			if (view) {
 				doc.editorState = view.state.toJSON({ history: historyField });
 				doc.scrollPosition = {
@@ -189,6 +201,23 @@
 				),
 			});
 		}
+	});
+
+	// Sync plugin editor contributions when contributions or language change
+	$effect(() => {
+		const plugins = appState.plugins;
+		if (!view || !plugins?.editorCompartments) return;
+
+		// Reactively observe editor revision
+		const _rev = plugins.editorRevision;
+		const language = doc.language?.name;
+
+		const effects = reconfigureEditorContributions(
+			plugins.getEditorContributions?.() ?? [],
+			plugins.editorCompartments,
+			language,
+		);
+		view.dispatch({ effects });
 	});
 
 	// Sync keymap context

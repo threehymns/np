@@ -1,8 +1,40 @@
+import type {
+	EditorContribution,
+	EditorContributionEntry,
+	EditorContributionType,
+	EditorContributionTransform,
+	ApplyDocumentEditOptions,
+	DocumentEditResult
+} from "./editor";
+import type { KeymapBinding, KeymapTransform } from '../keymap.svelte';
+import type { FileIconTransform, ProductIconTransform } from '../editor/icons-types';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
 
 import type { CommandTransform, PluginCommand } from './commands';
+import type { EventHandler } from './events';
+import type {
+	BeforeSaveHook,
+	BeforeSaveContext,
+	BeforeSaveResult,
+	AfterSaveHook,
+	AfterSaveContext,
+	ActiveHookContext,
+	WorkspaceOpenedHook,
+	WorkspaceOpenedContext
+} from './hooks';
+import type { SettingNamespaceSchema, SettingSchemaTransform, SettingsRegistryLike } from './settings';
+import type {
+	SidebarPanelContribution,
+	StatusBarItemContribution,
+	StatusBarAlignment,
+	TabContentContribution,
+	MountedContribution,
+	UIContributionProps,
+	UIContributionTarget,
+	UIContributionRegistryLike
+} from './ui-contributions';
 
 /**
  * Static manifest module metadata for a plugin (ADR 0011, ADR 0017).
@@ -10,7 +42,7 @@ import type { CommandTransform, PluginCommand } from './commands';
  */
 export interface PluginManifest {
 	/**
-	 * Unique identifier for the plugin (e.g. 'hello', 'git').
+	 * Unique identifier for the plugin (e.g. 'git').
 	 */
 	readonly id: string;
 
@@ -45,6 +77,14 @@ export interface PluginManifest {
 	 * e.g. { 'vcs': 0 }
 	 */
 	readonly provides?: Readonly<Record<string, number>>;
+
+	/**
+	 * Whether the app activates this bundled plugin by default on startup.
+	 * Generic opt-in flag (no feature names): the app activates all
+	 * registered plugins with `defaultEnabled: true` without naming them.
+	 * If omitted, defaults to false (inactive until explicitly enabled).
+	 */
+	readonly defaultEnabled?: boolean;
 }
 
 export type PluginCleanup = () => void | Promise<void>;
@@ -70,9 +110,31 @@ export interface PluginRegistration {
 	readonly load?: PluginLoader;
 }
 
+export interface PluginOperationContext {
+	readonly propagation: 'async' | 'none';
+	run<T>(context: ActiveHookContext, callback: () => T): T;
+	get(): ActiveHookContext | undefined;
+}
+
 export interface PluginHostOptions {
 	platform?: PluginPlatform;
 	initialPlugins?: readonly PluginRegistration[];
+	operationContext?: PluginOperationContext;
+	/**
+	 * Bound on a single plugin cleanup during disablement or activation
+	 * rollback. Cleanup runs last, so a cleanup that never settles would
+	 * otherwise leave the plugin stuck in `deactivating` and the caller
+	 * awaiting forever. Defaults to DEFAULT_CLEANUP_TIMEOUT_MS.
+	 */
+	cleanupTimeoutMs?: number;
+	/**
+	 * Bound on how long a save waits for its turn in the save queue when
+	 * `operationContext.propagation` is `'none'` and re-entry therefore
+	 * cannot be detected precisely. A turn still blocked after this while a
+	 * hook is active is reported as hook re-entry instead of deadlocking.
+	 * Defaults to DEFAULT_SAVE_QUEUE_TIMEOUT_MS.
+	 */
+	saveQueueTimeoutMs?: number;
 }
 
 export interface PluginHostInterface {
@@ -90,6 +152,13 @@ export interface PluginHostInterface {
 	getPluginState(id: string): PluginState;
 	isPluginActive(id: string): boolean;
 	getDeactivationReason(id: string): string | undefined;
+
+	/**
+	 * Lists active plugins that depend on the given plugin, directly or
+	 * transitively, in cascade order (dependents before dependencies).
+	 * Used to explain the disable cascade before it happens (ADR 0017).
+	 */
+	getActiveDependents(id: string): string[];
 
 	computeActivationOrder(pluginIds?: string[]): string[];
 
@@ -111,4 +180,102 @@ export interface PluginHostInterface {
 	getCommands(): PluginCommand[];
 	getCommandsByCategory(category: string): PluginCommand[];
 	executeCommand(id: string, ...args: any[]): any;
+
+	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void;
+	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void;
+	removePluginKeymaps(pluginId: string): void;
+	registerFileIconTransform(pluginId: string, transform: FileIconTransform): void;
+	registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void;
+	removePluginIcons(pluginId: string): void;
+
+	// Event observation (ADR 0013: Events observe, fire-and-forget)
+	on<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): () => void;
+	off<T = unknown>(event: string, handler: EventHandler<T>, pluginId: string): void;
+	emit<T = unknown>(event: string, payload?: T): void;
+	removePluginEvents(pluginId: string): void;
+
+	// Operation hooks (ADR 0013: Hooks participate)
+	registerBeforeSaveHook(pluginId: string, hook: BeforeSaveHook): () => void;
+	registerAfterSaveHook(pluginId: string, hook: AfterSaveHook): () => void;
+	removePluginHooks(pluginId: string): void;
+	runBeforeSave(context: BeforeSaveContext): Promise<BeforeSaveResult>;
+	runAfterSave(context: AfterSaveContext): Promise<void>;
+	isExecutingSaveHook(): boolean;
+	getActiveSaveHook(): ActiveHookContext | null;
+	checkSaveReentry(operation?: string, phase?: string): void;
+	runSaveExclusive<T>(fn: () => Promise<T>): Promise<T>;
+
+	// Generic workspace-lifecycle hooks (#202, ADR 0013 extension).
+	// Awaited participation in folder open: the workspace runs these after
+	// the root is set and permission granted, before it proceeds, so
+	// feature plugins can own per-workspace resources (repository
+	// detection, watchers) with no hardwired core path and no
+	// feature-specific host methods.
+	registerWorkspaceOpenedHook(pluginId: string, hook: WorkspaceOpenedHook): () => void;
+	removePluginWorkspaceHooks(pluginId: string): void;
+	runWorkspaceOpened(context: WorkspaceOpenedContext): Promise<void>;
+
+	// Generic application-service sharing (#202, ADR 0008). The host is a
+	// neutral meeting point: the app publishes opaque services (workspace,
+	// dialogs) and plugins consume them by key with their own types.
+	// Well-known keys live in './services'; the host never names features.
+	provideService(key: string, service: unknown): void;
+	getService<T = unknown>(key: string): T | undefined;
+
+	// Shared settings registry (ADR 0012, ADR 0014). Generic contribution
+	// types only: plugins register schemas where they are implemented and
+	// the host replays transforms in order from an empty initial value.
+	readonly settings: SettingsRegistryLike;
+	registerSettingSchema(pluginId: string, schema: SettingNamespaceSchema): void;
+	registerSettingTransform(pluginId: string, transform: SettingSchemaTransform): void;
+	removePluginSettings(pluginId: string): void;
+	rebuildSettings(): void;
+	refreshSettings(): void;
+	getSettingSchema(namespace: string): SettingNamespaceSchema | undefined;
+	getSettingSchemas(): SettingNamespaceSchema[];
+
+	// UI contributions (ADR 0010, ADR 0015)
+	readonly ui: UIContributionRegistryLike;
+	registerSidebarPanel(pluginId: string, panel: SidebarPanelContribution): void;
+	registerSidebarPanels(pluginId: string, panels: readonly SidebarPanelContribution[]): void;
+	removePluginSidebarPanels(pluginId: string): void;
+	getSidebarPanel(id: string): SidebarPanelContribution | undefined;
+	getSidebarPanels(): SidebarPanelContribution[];
+
+	registerStatusBarItem(pluginId: string, item: StatusBarItemContribution): void;
+	registerStatusBarItems(pluginId: string, items: readonly StatusBarItemContribution[]): void;
+	removePluginStatusBarItems(pluginId: string): void;
+	getStatusBarItem(id: string): StatusBarItemContribution | undefined;
+	getStatusBarItems(alignment?: StatusBarAlignment): StatusBarItemContribution[];
+
+	registerTabContent(pluginId: string, content: TabContentContribution): void;
+	registerTabContents(pluginId: string, contents: readonly TabContentContribution[]): void;
+	removePluginTabContents(pluginId: string): void;
+	getTabContent(id: string): TabContentContribution | undefined;
+	getTabContents(): TabContentContribution[];
+
+	mountContribution(
+		pluginId: string,
+		contributionId: string,
+		target: UIContributionTarget,
+		props?: UIContributionProps
+	): MountedContribution;
+	unmountContribution(instanceId: string): void;
+	rebuildUIContributions(): void;
+
+	// Editor contribution contract (ADR 0016).
+	// Plugins declare CodeMirror extensions as contributions that the host
+	// places into the correct compartments of its single composed configuration.
+	registerEditorContribution(pluginId: string, contribution: EditorContribution): void;
+	registerEditorContributionTransform(pluginId: string, transform: EditorContributionTransform): void;
+	registerEditorContributions(pluginId: string, contributions: readonly EditorContribution[]): void;
+	removePluginEditorContributions(pluginId: string): void;
+	rebuildEditorContributions(): void;
+	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[];
+	readonly editorRevision: number;
+	readonly editorContributionsRevision?: number;
+
+	// Document text changes go through a host document-edit operation
+	// applied as one undo transaction with revision checks.
+	applyDocumentEdit(options: ApplyDocumentEditOptions): DocumentEditResult;
 }

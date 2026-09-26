@@ -34,7 +34,7 @@
 
 	async function refresh() {
 		if (appState.workspace.rootOrigin) {
-			if (appState.workspace.repository) {
+			if (appState.workspace.isRepositoryActive && appState.workspace.repository) {
 				await appState.workspace.repository.refresh();
 			}
 			await appState.workspace.projectTree.scan(appState.workspace.rootOrigin);

@@ -1,4 +1,9 @@
 import {
+	composeEditorContributions,
+	type EditorCompartments,
+	type EditorContributionEntry
+} from "@np/core";
+import {
 	EditorView,
 	highlightSpecialChars,
 	dropCursor,
@@ -9,7 +14,7 @@ import {
 	drawSelection,
 } from "@codemirror/view";
 import { lineNumbers } from "./extensions/line-numbers";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import {
 	indentOnInput,
 	bracketMatching,
@@ -102,7 +107,7 @@ const markdownFeatureConfigs: MarkdownExtension[] = [
 	FadedExtension,
 ];
 
-export async function getLanguageExtensions(langDesc: LanguageDescription | null) {
+export async function getLanguageExtensions(langDesc: LanguageDescription | null): Promise<Extension[]> {
 	if (!langDesc) return [];
 
 	const lang = await langDesc.load();
@@ -209,16 +214,44 @@ export function createEditorExtensions(options: {
 	wrapCompartment: Compartment;
 	languageCompartment: Compartment;
 	vimCompartment: Compartment;
+	gutterCompartment?: Compartment;
+	decorationsCompartment?: Compartment;
+	keybindingsCompartment?: Compartment;
+	editorCompartments?: EditorCompartments;
+	pluginContributions?: readonly EditorContributionEntry[];
+	language?: string;
 	wrap: boolean;
 	vimEnabled: boolean;
-	initialLanguageExtensions: any[];
-}) {
-	const { wrapCompartment, languageCompartment, vimCompartment, wrap, vimEnabled, initialLanguageExtensions } = options;
+	initialLanguageExtensions: readonly Extension[];
+}): Extension[] {
+	const {
+		wrapCompartment,
+		languageCompartment,
+		vimCompartment,
+		gutterCompartment,
+		decorationsCompartment,
+		keybindingsCompartment,
+		editorCompartments,
+		pluginContributions,
+		language,
+		wrap,
+		vimEnabled,
+		initialLanguageExtensions
+	} = options;
+
+	const resolvedPluginExtensions = editorCompartments
+		? composeEditorContributions(pluginContributions ?? [], editorCompartments, language)
+		: [
+				...(gutterCompartment ? [gutterCompartment.of([])] : []),
+				...(decorationsCompartment ? [decorationsCompartment.of([])] : []),
+				...(keybindingsCompartment ? [keybindingsCompartment.of([])] : []),
+			];
 
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
 		languageCompartment.of(initialLanguageExtensions),
 		vimCompartment.of(vimEnabled ? vim() : []),
+		...resolvedPluginExtensions,
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),

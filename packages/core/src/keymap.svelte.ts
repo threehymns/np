@@ -15,6 +15,20 @@ export interface KeymapBinding {
 	bindings: Record<string, string>; // e.g., "space f n" -> "file.new"
 }
 
+export type KeymapTransform = (
+	previous: ReadonlyArray<KeymapBinding>
+) => ReadonlyArray<KeymapBinding>;
+
+export interface KeymapTransformEntry {
+	readonly pluginId: string;
+	readonly transform: KeymapTransform;
+}
+
+export function createAddKeymapTransform(bindings: readonly KeymapBinding[]): KeymapTransform {
+	const snapshot = [...bindings];
+	return (previous) => [...previous, ...snapshot];
+}
+
 export interface ParsedBinding {
 	contextExpr?: string;
 	parsedContext?: Predicate;
@@ -40,8 +54,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's vim-mode `]c` / `[c`
-			"] c": "git.nextHunk",
-			"[ c": "git.prevHunk",
+			"] c": "diff.nextHunk",
+			"[ c": "diff.prevHunk",
 			"space v s": "view.toggleSidebar",
 			"space p": "commandPalette.toggle",
 			"space d": "window.toggleDevTools"
@@ -59,8 +73,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+a": "edit.selectAll",
 			"cmd+k m": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
-			"cmd+f8": "git.nextHunk",
-			"cmd+shift+f8": "git.prevHunk"
+			"cmd+f8": "diff.nextHunk",
+			"cmd+shift+f8": "diff.prevHunk"
 		}
 	},
 	{
@@ -79,8 +93,8 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools",
-			"cmd+f8": "git.nextHunk",
-			"cmd+shift+f8": "git.prevHunk"
+			"cmd+f8": "diff.nextHunk",
+			"cmd+shift+f8": "diff.prevHunk"
 		}
 	}
 ];
@@ -175,10 +189,14 @@ export class KeymapRegistry {
 	
 	// Loaded bindings list
 	bindings = $state<ParsedBinding[]>([]);
+	private baseKeymap: KeymapBinding[] = defaultKeymap;
+	private userKeymap: KeymapBinding[] = [];
+	private keymapTransforms: KeymapTransformEntry[] = [];
+	private ownerOrdering?: (ownerIds: readonly string[]) => string[];
 	
 	constructor(appState: AppState) {
 		this.appState = appState;
-		this.loadBindings(defaultKeymap);
+		this.rebuild();
 		
 		// Load user keymap asynchronously on startup
 		this.readUserKeymap().then(content => {
@@ -197,6 +215,79 @@ export class KeymapRegistry {
 	}
 	
 	loadBindings(keymap: KeymapBinding[]) {
+		this.baseKeymap = [...keymap];
+		this.rebuild();
+	}
+
+	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void {
+		const next = [...this.keymapTransforms, { pluginId, transform }];
+		// Atomic like the editor registry: a throwing transform must not
+		// wedge the owner's list.
+		this.rebuildFrom(next);
+		this.keymapTransforms = next;
+	}
+
+	/**
+	 * Deterministic owner ordering shared with the host's replayed
+	 * registries (ADR 0012). Set by the host on attach so a
+	 * disable/enable cycle replays in computed activation order, not raw
+	 * push order. Without a host, first-seen order is preserved.
+	 */
+	setOwnerOrdering(order: (ownerIds: readonly string[]) => string[]): void {
+		this.ownerOrdering = order;
+		this.rebuild();
+	}
+
+	private orderedTransforms(
+		transforms: readonly KeymapTransformEntry[] = this.keymapTransforms
+	): KeymapTransformEntry[] {
+		if (!this.ownerOrdering) return [...transforms];
+		const byOwner = new Map<string, KeymapTransformEntry[]>();
+		for (const entry of transforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) list.push(entry);
+			else byOwner.set(entry.pluginId, [entry]);
+		}
+		return this.ownerOrdering(Array.from(byOwner.keys())).flatMap((id) => byOwner.get(id)!);
+	}
+
+	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void {
+		this.registerKeymapTransform(pluginId, createAddKeymapTransform(bindings));
+	}
+
+	removePluginKeymaps(pluginId: string): void {
+		const kept = this.keymapTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length !== this.keymapTransforms.length) {
+			this.keymapTransforms = kept;
+			this.rebuild();
+		}
+	}
+
+	rebuild(): void {
+		this.rebuildFrom(this.keymapTransforms);
+	}
+
+	private rebuildFrom(transforms: readonly KeymapTransformEntry[]): void {
+		// Defensive copy per replay step (ADR 0012): transforms must be pure
+		// and repeatable, so an impure transform that mutates the array it was
+		// handed cannot corrupt the base keymap or any later replay. Mirrors
+		// rebuildCommands in plugins/commands.ts.
+		let keymap: ReadonlyArray<KeymapBinding> = [...this.baseKeymap];
+		for (const entry of this.orderedTransforms(transforms)) {
+			const result = entry.transform([...keymap]);
+			keymap = Array.isArray(result) ? [...result] : [];
+		}
+		// The user's keymap is appended after the transforms, never merged into
+		// the base: resolution is last-match-wins (ADR 0003), so a user binding
+		// overrides both the defaults and a plugin that binds the same sequence.
+		this.bindings = this.parseBindings([...keymap, ...this.userKeymap]);
+	}
+
+	refresh(): void {
+		this.rebuild();
+	}
+
+	private parseBindings(keymap: ReadonlyArray<KeymapBinding>): ParsedBinding[] {
 		const parsed: ParsedBinding[] = [];
 		for (const binding of keymap) {
 			const parsedContext = binding.context ? ContextPredicate.parse(binding.context) : undefined;
@@ -210,7 +301,7 @@ export class KeymapRegistry {
 				});
 			}
 		}
-		this.bindings = parsed;
+		return parsed;
 	}
 	
 	// Get all bindings that match the current context
@@ -345,7 +436,7 @@ export class KeymapRegistry {
 			} catch (e) {
 				console.error('Failed to read user keymap via IPC:', e);
 			}
-		} else if (typeof window !== 'undefined') {
+		} else if (typeof window !== 'undefined' && window.localStorage) {
 			const content = window.localStorage.getItem('np-keymap');
 			if (content) return content;
 		}
@@ -399,7 +490,10 @@ export class KeymapRegistry {
 			const cleaned = content.replace(/,[ \t\r\n]*([}\\]])/g, '$1');
 			const userKeymap = JSON.parse(cleaned);
 			if (Array.isArray(userKeymap)) {
-				this.loadBindings([...defaultKeymap, ...userKeymap]);
+				// Stored apart from the defaults, which stay the base keymap that
+				// plugin transforms build on; the rebuild appends these last.
+				this.userKeymap = userKeymap as KeymapBinding[];
+				this.rebuild();
 			}
 		} catch (e) {
 			console.error('Failed to parse user keymap:', e);

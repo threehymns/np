@@ -862,9 +862,10 @@
 		};
 	});
 
-	// Publish hunk navigation for the git.nextHunk / git.prevHunk commands
-	// (issue #80). Cleared on unmount so the commands disable outside the
-	// diff view; identity-checked in case another instance mounted after us.
+	// Publish hunk navigation for the core diff.nextHunk / diff.prevHunk
+	// commands (issue #80). Cleared on unmount so the commands disable
+	// outside the diff view; identity-checked in case another instance
+	// mounted after us.
 	$effect(() => {
 		const navigator = {
 			nextHunk: () => jumpToChunk('next'),

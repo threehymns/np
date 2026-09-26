@@ -44,6 +44,35 @@ export class PluginNotFoundError extends Error {
 }
 
 /**
+ * A dependency that is off, as shown in the plugin settings page.
+ */
+export interface DisabledPluginDependency {
+	readonly id: string;
+	readonly name: string;
+}
+
+/**
+ * Error thrown when a plugin cannot be enabled because something it depends
+ * on is off. Activation never turns an off dependency on by itself: the user
+ * enables the dependency first (ADR 0017 cascades only where the user acted).
+ */
+export class PluginDependencyDisabledError extends Error {
+	readonly pluginId: string;
+	readonly disabledDependencies: readonly DisabledPluginDependency[];
+
+	constructor(pluginId: string, disabledDependencies: readonly DisabledPluginDependency[]) {
+		const listed = disabledDependencies.map((dependency) => `"${dependency.name}"`).join(', ');
+		super(
+			`Cannot enable plugin "${pluginId}": ${disabledDependencies.length === 1 ? 'its dependency is' : 'its dependencies are'} off: ${listed}.\n` +
+				`Action: Enable ${listed} first, then enable "${pluginId}". Enabling a plugin never turns an off dependency on by itself.`
+		);
+		this.name = 'PluginDependencyDisabledError';
+		this.pluginId = pluginId;
+		this.disabledDependencies = disabledDependencies;
+	}
+}
+
+/**
  * Error thrown when a dependency cycle is detected (ADR 0017).
  */
 export class DependencyCycleError extends Error {
@@ -108,6 +137,33 @@ export class InterfaceVersionMismatchError extends Error {
 		this.requiredVersion = requiredVersion;
 		this.providerId = providerId;
 		this.providedVersion = providedVersion;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when two plugins declare the same
+ * interface in their manifests (ADR 0008, ADR 0017).
+ *
+ * Interface names are the addressing scheme dependents bind to, so one name
+ * may have exactly one provider. Silently keeping the last registration would
+ * bind consumers to whichever plugin registered last and blame the wrong
+ * plugin in any later version mismatch.
+ */
+export class DuplicateInterfaceProviderError extends Error {
+	readonly interfaceName: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(interfaceName: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Interface "${interfaceName}" is provided by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: An interface name must have exactly one provider. Remove "${interfaceName}" from the ` +
+				`"provides" map of one of the two manifests, or rename the interface so each provider owns a distinct name.`
+		);
+		this.name = 'DuplicateInterfaceProviderError';
+		this.interfaceName = interfaceName;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
 	}
 }
 
@@ -179,5 +235,135 @@ export class PluginDeactivationError extends Error {
 		this.name = 'PluginDeactivationError';
 		this.pluginId = pluginId;
 		this.cause = actualCause;
+	}
+}
+
+/**
+ * Error thrown when a plugin hook re-enters its own operation (ADR 0013).
+ */
+export class HookReentryError extends Error {
+	readonly pluginId: string;
+	readonly operation: string;
+	readonly phase: string;
+
+	constructor(pluginId: string, operation = 'saveDocument', phase = 'beforeSave hook') {
+		super(
+			`Plugin "${pluginId}" re-entered ${operation} during ${phase}.\n` +
+				`Action: Avoid calling save operations from within a save hook. Use events or deferred background operations instead.`
+		);
+		this.name = 'HookReentryError';
+		this.pluginId = pluginId;
+		this.operation = operation;
+		this.phase = phase;
+	}
+}
+
+/**
+ * Error thrown to explicitly cancel an operation with a user-visible reason (ADR 0013).
+ */
+export class SaveCancelledError extends Error {
+	readonly reason: string;
+
+	constructor(reason: string) {
+		super(`Save cancelled: ${reason}`);
+		this.name = 'SaveCancelledError';
+		this.reason = reason;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when plugin code accesses a host
+ * member that is not part of the plugin host interface (typo or removed
+ * method). Kept distinct from DirectEditorViewAccessError so a typo is
+ * never misdiagnosed as editor-view access.
+ */
+export class UnknownPluginHostMethodError extends Error {
+	readonly accessor: string;
+
+	constructor(accessor: string) {
+		super(
+			`Unknown plugin host member "${accessor}".\n` +
+				`Action: Check the host interface for the correct member name (host.getManifests().map((m) => m.id) lists plugins; ` +
+				`host.getCommands().map((c) => c.id) lists commands). ` +
+				`If "${accessor}" was renamed, update the plugin to the current host interface (hostVersion ${0}).`
+		);
+		this.name = 'UnknownPluginHostMethodError';
+		this.accessor = accessor;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when plugin code attempts to access
+ * the CodeMirror EditorView directly (ADR 0016).
+ */
+export class DirectEditorViewAccessError extends Error {
+	readonly accessor: string;
+
+	constructor(accessor = "view") {
+		super(
+			`Direct editor view access via "${accessor}" is strictly rejected (ADR 0016).\n` +
+				`Action: Plugins touch the editor only through host-composed contributions ` +
+				`(gutters, decorations, editor-scoped keybindings) and host document-edit operations.`
+		);
+		this.name = "DirectEditorViewAccessError";
+		this.accessor = accessor;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when plugin code attempts to dispatch
+ * raw transactions directly rather than using host document edit operations (ADR 0016).
+ */
+export class RawTransactionDispatchError extends Error {
+	constructor(details?: string) {
+		const detailStr = details ? `\n  Details: ${details}` : "";
+		super(
+			`Raw transaction dispatch from plugin code is strictly rejected (ADR 0016).${detailStr}\n` +
+				`Action: Plugins must use host document-edit operations (host.applyDocumentEdit) ` +
+				`with structured changes and revision checks.`
+		);
+		this.name = "RawTransactionDispatchError";
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when applying a document edit against
+ * an outdated or mismatched document revision (ADR 0016).
+ */
+export class DocumentRevisionMismatchError extends Error {
+	readonly expectedRevision: number;
+	readonly actualRevision: number;
+	readonly documentId?: string;
+
+	constructor(expectedRevision: number, actualRevision: number, documentId?: string) {
+		const docStr = documentId ? ` for document "${documentId}"` : "";
+		super(
+			`Document revision mismatch${docStr}: expected revision ${expectedRevision}, but document is at revision ${actualRevision}.\n` +
+				`Action: Re-read the document state and revision before applying edits to avoid clobbering concurrent changes.`
+		);
+		this.name = "DocumentRevisionMismatchError";
+		this.expectedRevision = expectedRevision;
+		this.actualRevision = actualRevision;
+		this.documentId = documentId;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when duplicate editor contribution IDs are registered (ADR 0007, ADR 0016).
+ */
+export class DuplicateEditorContributionIdError extends Error {
+	readonly contributionId: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(contributionId: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Duplicate editor contribution ID "${contributionId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every editor contribution must declare a unique "id". Rename the contribution ID or remove the conflicting plugin.`
+		);
+		this.name = "DuplicateEditorContributionIdError";
+		this.contributionId = contributionId;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
 	}
 }

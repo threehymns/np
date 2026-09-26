@@ -89,21 +89,83 @@ export class ElectronConfigStorage implements PreferenceStorage {
 	private writeQueue: Promise<void> = Promise.resolve();
 	private writeGeneration = 0;
 
-	getItem(key: string): string | null {
-		if (this.hasSyntaxError || !this.cachedText) {
+	/**
+	 * Whole-document legacy key: the user settings document lives flat in
+	 * config.json (zoom, theme, editor/ui/git namespaces, ...). Every other
+	 * PreferenceStorage key (e.g. np-plugin-enablement-v1) is isolated under
+	 * its own top-level property so a plugin id can never collide with a
+	 * settings namespace of the same name (F1: "git" boolean vs object).
+	 */
+	private static readonly SETTINGS_DOC_KEY = 'np-prefs-v2';
+
+	/**
+	 * Isolated top-level properties: every PreferenceStorage key that is not
+	 * the settings document. They are owned by a single writer
+	 * (Preferences, `PLUGIN_ENABLEMENT_KEY`), so the settings document neither
+	 * reads them nor writes them back — a settings payload is a snapshot, and
+	 * replaying it would revert whatever the owner wrote since.
+	 */
+	private static readonly ISOLATED_KEYS: ReadonlySet<string> = new Set(['np-plugin-enablement-v1']);
+
+	/**
+	 * The settings document as seen by its owner: the whole config.json minus
+	 * the isolated properties, which stay invisible to the settings payload.
+	 */
+	private settingsDocument(parsed: Record<string, any>): Record<string, any> {
+		const doc: Record<string, any> = {};
+		for (const [key, value] of Object.entries(parsed)) {
+			if (!ElectronConfigStorage.ISOLATED_KEYS.has(key)) {
+				doc[key] = value;
+			}
+		}
+		return doc;
+	}
+
+	private readDoc(): Record<string, any> | null {
+		const text = this.pendingText ?? this.cachedText;
+		if (this.hasSyntaxError || !text) {
 			return null;
 		}
 
 		try {
 			const errors: ParseError[] = [];
-			const parsed = parse(this.cachedText, errors, { allowTrailingComma: true });
+			const parsed = parse(text, errors, { allowTrailingComma: true });
 			if (errors.length > 0 || !parsed || typeof parsed !== 'object') {
 				return null;
 			}
-			return JSON.stringify(parsed);
+			return parsed as Record<string, any>;
 		} catch {
 			return null;
 		}
+	}
+
+	private applySingleKeyEdit(currentText: string, propKey: string, propVal: unknown): string {
+		if (this.shouldInsertBeforeTrailingComment(currentText, propKey)) {
+			return this.insertBeforeTrailingComment(currentText, propKey, propVal);
+		}
+		const edits = modify(currentText, [propKey], propVal, {
+			formattingOptions: {
+				insertSpaces: true,
+				tabSize: 2
+			}
+		});
+		return applyEdits(currentText, edits);
+	}
+
+	getItem(key: string): string | null {
+		const parsed = this.readDoc();
+		if (!parsed) {
+			return null;
+		}
+
+		if (key === ElectronConfigStorage.SETTINGS_DOC_KEY) {
+			return JSON.stringify(this.settingsDocument(parsed));
+		}
+
+		if (!(key in parsed)) {
+			return null;
+		}
+		return JSON.stringify((parsed as Record<string, unknown>)[key]);
 	}
 
 	setItem(key: string, value: string): void {
@@ -116,9 +178,9 @@ export class ElectronConfigStorage implements PreferenceStorage {
 			return;
 		}
 
-		let newPrefs: Record<string, any>;
+		let parsedValue: unknown;
 		try {
-			newPrefs = JSON.parse(value);
+			parsedValue = JSON.parse(value);
 		} catch (e) {
 			console.error('Failed to parse preference payload for writing:', e);
 			return;
@@ -128,18 +190,24 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		let baseText = this.pendingText ?? this.cachedText;
 		let currentText = baseText.trim() ? baseText : '{\n}\n';
 
-		// Apply CST modifications for each key in newPrefs
-		for (const [propKey, propVal] of Object.entries(newPrefs)) {
-			if (this.shouldInsertBeforeTrailingComment(currentText, propKey)) {
-				currentText = this.insertBeforeTrailingComment(currentText, propKey, propVal);
+		if (key !== ElectronConfigStorage.SETTINGS_DOC_KEY) {
+			// Isolated key: store the whole payload under its own top-level
+			// property so it can never collide with a settings namespace.
+			currentText = this.applySingleKeyEdit(currentText, key, parsedValue);
+		} else {
+			let newPrefs: Record<string, any>;
+			if (parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue)) {
+				newPrefs = parsedValue as Record<string, any>;
 			} else {
-				const edits = modify(currentText, [propKey], propVal, {
-					formattingOptions: {
-						insertSpaces: true,
-						tabSize: 2
-					}
-				});
-				currentText = applyEdits(currentText, edits);
+				console.error('Failed to parse preference payload for writing: expected object');
+				return;
+			}
+			// Apply CST modifications for each key in newPrefs, skipping the
+			// isolated properties: the payload is a snapshot, and writing one
+			// back would revert the owner's current value.
+			const settings = this.settingsDocument(newPrefs);
+			for (const [propKey, propVal] of Object.entries(settings)) {
+				currentText = this.applySingleKeyEdit(currentText, propKey, propVal);
 			}
 		}
 

@@ -86,7 +86,7 @@ describe('ElectronConfigStorage', () => {
 		expect(writtenText).toContain('"customPluginSetting"');
 		expect(writtenText).toContain('"apiEndpoint": "https://example.local"');
 		expect(writtenText).toContain('"experimentalFlag": "on"');
-		expect(writtenText).toContain('"wordWrap": false');
+		expect(writtenText).toContain('"word_wrap": false');
 	});
 
 	it('3. Syntax-error fallback: invalid JSONC leaves the file untouched and falls back to defaults', () => {
@@ -274,10 +274,10 @@ describe('ElectronConfigStorage', () => {
 		// The inline comment must stay attached to "theme", not the inserted key.
 		expect(writtenText).toContain('"theme": "default" // This comment belongs to theme');
 		// The new property is present and not carrying the stray comment.
-		expect(writtenText).toContain('"wordWrap": false');
+		expect(writtenText).toMatch(/"word_wrap"\s*:\s*false/);
 		const themeLine = writtenText.split('\n').find((l) => l.includes('"theme"'));
 		expect(themeLine).toContain('// This comment belongs to theme');
-		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"wordWrap"'));
+		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"word_wrap"'));
 		expect(wordWrapLine).not.toContain('// This comment belongs to theme');
 	});
 
@@ -303,7 +303,56 @@ describe('ElectronConfigStorage', () => {
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 		const lastWritten = mockWriteConfigFile.mock.calls[1][0];
 		expect(lastWritten).toContain('"zoom": 120');
-		expect(lastWritten).toContain('"wordWrap": false');
+		expect(lastWritten).toContain('"word_wrap": false');
+	});
+
+	it('13. Plugin enablement and settings namespaces stay isolated on desktop', async () => {
+		mockReadConfigFileSync.mockReturnValue(`{\n  "zoom": 100\n}`);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		prefs.setPluginEnabled('git', false);
+		await flush();
+		prefs.set('git', 'show_blame', true);
+		await flush();
+
+		// Both writes ran; the last write must preserve the enablement flag.
+		expect(mockWriteConfigFile.mock.calls.length).toBeGreaterThanOrEqual(2);
+		const lastWritten = mockWriteConfigFile.mock.calls.at(-1)![0] as string;
+		expect(lastWritten).toContain('"show_blame"');
+
+		// Enablement survives the settings write (read-your-write via pending).
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		// Settings survive the enablement write.
+		expect(prefs.resolve('git', 'show_blame').value).toBe(true);
+	});
+
+	it('14. Stale settings snapshot: a settings write never replays an isolated key it loaded', async () => {
+		mockReadConfigFileSync.mockReturnValue(
+			`{\n  "zoom": 100,\n  "np-plugin-enablement-v1": { "git": false, "search": true }\n}`
+		);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		expect(prefs.isPluginEnabled('search', false)).toBe(true);
+
+		// The user turns the second plugin off; the enablement map is rewritten
+		// under its own top-level key.
+		prefs.setPluginEnabled('search', false);
+		await flush();
+
+		// An ordinary settings write must not replay the enablement map captured
+		// when the settings document was loaded.
+		prefs.zoom = 120;
+		await flush();
+
+		const lastWritten = mockWriteConfigFile.mock.calls.at(-1)![0] as string;
+		expect(lastWritten).toContain('"zoom": 120');
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		expect(prefs.isPluginEnabled('search', false)).toBe(false);
 	});
 
 	it('12. Queued write resolution: the newest write wins the final cached state even when the queue frees one write at a time', async () => {

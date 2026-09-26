@@ -6,6 +6,7 @@ import {
 	DependencyCycleError,
 	MissingDependencyError,
 	InterfaceVersionMismatchError,
+	DuplicateInterfaceProviderError,
 	UnsupportedPlatformError,
 	PluginNotFoundError
 } from './errors';
@@ -156,6 +157,34 @@ describe('PluginHost Skeleton', () => {
 			}
 		});
 
+		it('rejects two plugins providing the same interface instead of picking one silently', () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'vcs-a', name: 'VCS A', version: 0, provides: { 'vcs': 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'vcs-b', name: 'VCS B', version: 0, provides: { 'vcs': 0 } },
+				setup: () => {}
+			});
+			host.register({
+				manifest: { id: 'git', name: 'Git', version: 0, dependsOn: { 'vcs': 0 } },
+				setup: () => {}
+			});
+
+			// Last-write-wins would bind `git` to whichever provider happened to
+			// register last, and a version mismatch would blame the wrong one.
+			expect(() => host.computeActivationOrder()).toThrow(DuplicateInterfaceProviderError);
+			try {
+				host.computeActivationOrder();
+			} catch (err: any) {
+				expect(err.message).toContain('vcs');
+				expect(err.message).toContain('vcs-a');
+				expect(err.message).toContain('vcs-b');
+				expect(err.message).toContain('Action:');
+			}
+		});
+
 		it('rejects activation when a required interface dependency is missing', async () => {
 			const host = new PluginHost();
 			host.register({
@@ -199,6 +228,27 @@ describe('PluginHost Skeleton', () => {
 	});
 
 	describe('Activation, Disablement, and Disposal Lifecycle', () => {
+		it('rolls back contributions when setup fails before a retry', async () => {
+			const host = new PluginHost();
+			let attempt = 0;
+			host.register({
+				manifest: { id: 'retryable', name: 'Retryable', version: 0 },
+				setup: (pluginHost) => {
+					const commandId = attempt++ === 0 ? 'stale-command' : 'fresh-command';
+					pluginHost.registerCommands('retryable', [
+						{ id: commandId, label: commandId, category: 'Test', action: () => true }
+					]);
+					if (attempt === 1) throw new Error('setup failed');
+				}
+			});
+
+			await expect(host.activate('retryable')).rejects.toThrow('setup failed');
+			expect(host.getCommands().some((command) => command.id === 'stale-command')).toBe(false);
+
+			await host.activate('retryable');
+			expect(host.getCommands().map((command) => command.id)).toEqual(['fresh-command']);
+		});
+
 		it('activates and deactivates a plugin running cleanup on disable', async () => {
 			const host = new PluginHost();
 			let cleanedUp = false;
@@ -284,6 +334,19 @@ describe('PluginHost Skeleton', () => {
 			await host.dispose();
 
 			expect(disposalSequence).toEqual(['p2', 'p1']);
+		});
+
+		it('rejects activation after dispose (ADR 0009 shutdown)', async () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'a', name: 'A', version: 0 },
+				setup: () => {}
+			});
+
+			await host.activate('a');
+			await host.dispose();
+
+			await expect(host.activate('a')).rejects.toThrow(/disposed|shutdown/i);
 		});
 	});
 });

@@ -1,15 +1,19 @@
+import { PluginHost } from './plugins/host.svelte';
+import type { PluginHostInterface } from './plugins/types';
+import { WORKSPACE_SERVICE_KEY } from './plugins/services';
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { ProjectTree } from './project/tree.svelte';
-import { Repository, type RepositorySafetyReport } from './project/repository.svelte';
+import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export interface WorkspaceTab {
 	id: string;
 	type: 'document' | 'diff';
+	pluginId?: string;
 }
 
 export class Workspace {
@@ -19,9 +23,13 @@ export class Workspace {
 	pendingCloseId = $state<string | null>(null);
 	rootOrigin = $state<FileOrigin | null>(null);
 	repository = $state<Repository | null>(null);
+	repositoryOwnerId = $state<string | null>(null);
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
 	hasRootPermission = $state(false);
+	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
+	pluginHost: PluginHostInterface;
+	lastSaveCancellationReason = $state<string | null>(null);
 	
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
@@ -89,20 +97,63 @@ export class Workspace {
 	 * this over `doc.save` — a direct save leaves persistence holding a stale
 	 * `draftContent` until some unrelated flush happens to clear it.
 	 */
+	setPluginHost(host: PluginHostInterface) {
+		this.pluginHost = host;
+		// Re-publish under the generic workspace service key so feature
+		// plugins resolving the workspace lazily keep working after a host
+		// swap. The key is generic; the host never names features.
+		this.pluginHost.provideService(WORKSPACE_SERVICE_KEY, this);
+	}
+
 	async saveDocument(doc: DocumentSession, options: { forceNewOrigin?: boolean } = {}): Promise<boolean> {
+		return this.pluginHost.runSaveExclusive(async () => this.saveDocumentInner(doc, options));
+	}
+
+	private async saveDocumentInner(
+		doc: DocumentSession,
+		options: { forceNewOrigin?: boolean } = {}
+	): Promise<boolean> {
+		this.pluginHost?.checkSaveReentry('saveDocument', 'beforeSave hook');
+
+		if (this.pluginHost) {
+			const beforeResult = await this.pluginHost.runBeforeSave({ document: doc, options });
+			if (beforeResult.cancel) {
+				this.lastSaveCancellationReason = beforeResult.reason ?? 'Save cancelled by plugin';
+				return false;
+			}
+		}
+
+		this.lastSaveCancellationReason = null;
 		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
 		const needsPicker = !doc.origin || options.forceNewOrigin;
-		const ok = await doc.save({
-			...options,
-			coveredByRoot: covered,
-			// Untitled (or Save As) opens the picker: root it at the workspace
-			// folder and prefill the draft title. Falls back to a safe
-			// filename with no directory when no folder is open.
-			suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
-			startDirectory: needsPicker ? this.rootOrigin : undefined
-		});
+
+		// A save that throws still has to reach the after-save consumers: they
+		// are the ones holding state derived from the write (Git's save-driven
+		// refresh, for one), and skipping them would leave that state silently
+		// stale. The failure is reported to them as an unsuccessful save and
+		// then rethrown, so the caller still sees it (ADR 0013).
+		let ok: boolean;
+		try {
+			ok = await doc.save({
+				...options,
+				coveredByRoot: covered,
+				// Untitled (or Save As) opens the picker: root it at the workspace
+				// folder and prefill the draft title. Falls back to a safe
+				// filename with no directory when no folder is open.
+				suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
+				startDirectory: needsPicker ? this.rootOrigin : undefined
+			});
+		} catch (error) {
+			await this.pluginHost?.runAfterSave({ document: doc, options, success: false });
+			throw error;
+		}
+
+		if (this.pluginHost) {
+			await this.pluginHost.runAfterSave({ document: doc, options, success: ok });
+		}
+
 		if (ok) {
-			this.repository?.refresh().catch(e => console.error('Auto-refresh after save failed', e));
+			this.pluginHost?.emit('document:saved', { document: doc, origin: doc.origin });
 			this.debouncedSaveOpenFiles();
 		}
 		return ok;
@@ -118,6 +169,7 @@ export class Workspace {
 	private pendingDiffRestore = new Map<string, { filepath: string; staged?: boolean }>();
 
 	private applyPendingDiffRestore() {
+		if (!this.isRepositoryActive) return;
 		const repo = this.repository;
 		if (!repo || this.pendingDiffRestore.size === 0) return;
 
@@ -162,7 +214,8 @@ export class Workspace {
 				const serialized: SerializedDocument = {
 					id: tab.id,
 					origin: null,
-					virtualTabType: 'diff'
+					virtualTabType: 'diff',
+					...(tab.pluginId ? { pluginId: tab.pluginId } : {})
 				};
 				const active = this.repository?.activeDiffFile;
 				if (active) {
@@ -212,11 +265,17 @@ export class Workspace {
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: SessionPersistence
+		persistence: SessionPersistence,
+		pluginHost?: PluginHostInterface
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
+		this.pluginHost = pluginHost ?? new PluginHost();
+		// Publish under the generic workspace service key (#202): feature
+		// plugins (e.g. Git) resolve the workspace lazily through the host
+		// instead of the core hardwiring feature lifecycles.
+		this.pluginHost.provideService(WORKSPACE_SERVICE_KEY, this);
 
 		$effect.root(() => {
 			$effect(() => {
@@ -281,11 +340,30 @@ export class Workspace {
 		this.activeTabId = value;
 	}
 
+	/**
+	 * Generic off-state gate (AC1): the published repository is exposed
+	 * only while its owning contributor is active. A slot left behind by a
+	 * bounded-cleanup timeout (ADR 0009) therefore stays inert: branch UI
+	 * hides and refresh/switch paths no-op instead of driving Git activity.
+	 * No feature names here; the owner id is opaque data set by the
+	 * publisher.
+	 */
+	get isRepositoryActive(): boolean {
+		if (!this.repository || !this.repositoryOwnerId) return false;
+		try {
+			return this.pluginHost?.isPluginActive(this.repositoryOwnerId) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
 	get currentBranch() {
+		if (!this.isRepositoryActive) return null;
 		return this.repository?.currentBranch ?? null;
 	}
 
 	get branches() {
+		if (!this.isRepositoryActive) return [];
 		return this.repository?.branches ?? [];
 	}
 
@@ -395,20 +473,20 @@ export class Workspace {
 		try {
 			this.rootOrigin = origin;
 			this.hasRootPermission = true;
+			await this.onRootOriginChange?.(origin);
 
-			// Drop the previous folder's repository before the async VCS probe so
-			// the UI never shows stale branch/changes for the new folder.
+			// Repository lifecycle is owned by feature plugins (#202) through
+			// the generic workspace-opened hook: with the Git plugin enabled
+			// this detects and refreshes; with it disabled the slot stays
+			// null. The slot is cleared unconditionally so the UI never shows
+			// stale branch/changes for the new folder. Explicit failure
+			// decision (ADR 0013): a throwing hook is contained by the host
+			// with plugin attribution, so when the owning hook fails the slot
+			// stays in this safe empty state and open proceeds (tree scan,
+			// session restore) instead of aborting or showing stale state.
 			this.repository = null;
-			const repo = new Repository(origin, this.vcsFactory);
-			const detected = await repo.adapter.detect(origin.path);
-			if (detected) {
-				this.repository = repo;
-				await repo.refresh();
-			} else {
-				// Not a git repository: keep repository null so the Git panel shows
-				// its "No Git Repository" empty state instead of a dead panel.
-				this.repository = null;
-			}
+			this.repositoryOwnerId = null;
+			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 
 			// Add to recent folders
 			const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
@@ -439,26 +517,16 @@ export class Workspace {
 		const granted = await this.storage.verifyPermission(this.rootOrigin, true);
 		if (granted) {
 			this.hasRootPermission = true;
+			await this.onRootOriginChange?.(this.rootOrigin);
 
-			// Drop any stale repository before the async VCS probe so the UI
-			// never shows the previous folder's state while detecting.
+			// Repository lifecycle is plugin-owned (#202, see openDirectory):
+			// clear unconditionally, then let the workspace-opened hook
+			// detect and refresh when the owning plugin is enabled. A fresh
+			// adapter is created per open, so no adapter reset is needed.
 			this.repository = null;
-			const repo = new Repository(this.rootOrigin, this.vcsFactory);
-
-			// Fresh start for the adapter
-			const adapter = (repo as any).adapter;
-			if (adapter && typeof adapter.reset === 'function') {
-				adapter.reset();
-			}
-
-			const detected = await adapter.detect(this.rootOrigin.path);
-			if (detected) {
-				this.repository = repo;
-				await repo.refresh();
-				this.applyPendingDiffRestore();
-			} else {
-				this.repository = null;
-			}
+			this.repositoryOwnerId = null;
+			await this.pluginHost.runWorkspaceOpened({ origin: this.rootOrigin, workspace: this });
+			this.applyPendingDiffRestore();
 
 			await this.projectTree.scan(this.rootOrigin);
 
@@ -470,64 +538,6 @@ export class Workspace {
 			}
 		}
 		return granted;
-	}
-
-	async initializeRepository(): Promise<boolean> {
-		if (!this.rootOrigin || !this.hasRootPermission) {
-			return false;
-		}
-
-		const targetOrigin = this.rootOrigin;
-		const targetUri = toURI(targetOrigin);
-
-		// Clear stale repository state before async initialization
-		this.repository = null;
-
-		let repo: Repository | null = null;
-		try {
-			repo = new Repository(targetOrigin, this.vcsFactory);
-			const adapter = repo.adapter;
-
-			if (!adapter.init || typeof adapter.init !== 'function') {
-				throw new Error('VCS adapter does not support repository initialization');
-			}
-
-			await adapter.init(targetOrigin.path);
-
-			// The folder may have switched while init was deferred; do not
-			// publish results for an outdated folder.
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				return false;
-			}
-
-			this.repository = repo;
-			const refreshed = await repo.refresh();
-			if (!refreshed) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			await this.projectTree.scan(targetOrigin);
-			if (!this.rootOrigin || toURI(this.rootOrigin) !== targetUri) {
-				if (this.repository === repo) {
-					this.repository = null;
-				}
-				return false;
-			}
-			return true;
-		} catch (e) {
-			if (!repo || this.repository === repo) {
-				this.repository = null;
-			}
-			throw e;
-		}
 	}
 
 	closeDocument(id: string) {
@@ -549,41 +559,40 @@ export class Workspace {
 			}
 		}
 
-		this.finalizeClose(id);
+		// Closing the last tab also creates its replacement, so the close can
+		// still fail after this returns; nothing awaits it, so a rejection has
+		// to be reported here rather than dropped.
+		this.finalizeClose(id).catch((err) => {
+			console.error('[Workspace] Failed to close tab', err);
+		});
 	}
 
-	finalizeClose(id: string, saveFirst = false) {
+	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
 		const tab = this.tabs.find(t => t.id === id);
-		if (!tab) return;
+		if (!tab) return false;
 
 		if (tab.type === 'document') {
 			const index = this.documents.findIndex(doc => doc.id === id);
 			if (index !== -1) {
 				const doc = this.documents[index];
 				if (saveFirst) {
-					this.saveDocument(doc).then(
-						(saved) => {
-							if (saved) {
-								this.performClose(id);
-							}
-							this.pendingCloseId = null;
-						},
-						(err) => {
-							console.error('[Workspace] Save before close failed', err);
-							this.pendingCloseId = null;
-						}
-					);
-					return;
-				} else {
-					this.performClose(id);
-					this.pendingCloseId = null;
-					return;
+					try {
+						const saved = await this.saveDocument(doc);
+						if (saved) await this.performClose(id);
+						return saved;
+					} catch (err) {
+						console.error('[Workspace] Save before close failed', err);
+						return false;
+					} finally {
+						this.pendingCloseId = null;
+					}
 				}
 			}
 		}
 
-		this.performClose(id);
+		await this.performClose(id);
 		this.pendingCloseId = null;
+		return true;
 	}
 
 	private async performClose(id: string) {
@@ -609,7 +618,7 @@ export class Workspace {
 	}
 
 	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
-		if (!this.repository) return null;
+		if (!this.repository || !this.isRepositoryActive) return null;
 		
 		const modifiedFiles = await Promise.all(
 			this.documents
@@ -627,7 +636,7 @@ export class Workspace {
 	}
 
 	async switchBranch(branchName: string): Promise<SwitchResult> {
-		if (!this.repository || !this.rootOrigin) {
+		if (!this.repository || !this.rootOrigin || !this.isRepositoryActive) {
 			return { status: 'error', message: 'No repository' };
 		}
 
@@ -760,9 +769,13 @@ export class Workspace {
 					let doc: DocumentSession | null = null;
 					if (isNewSchema) {
 						if (serialized.virtualTabType === 'diff') {
+							if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
+								continue;
+							}
 							restoredTabs.push({
 								id: serialized.id,
-								type: 'diff'
+								type: 'diff',
+								...(serialized.pluginId ? { pluginId: serialized.pluginId } : {})
 							});
 							if (serialized.diffFilepath) {
 								this.pendingDiffRestore.set(serialized.id, {
@@ -807,7 +820,9 @@ export class Workspace {
 
 				this.documents = restoredDocs;
 				this.tabs = restoredTabs;
-				if (activeId && restoredTabs.some(t => t.id === activeId)) {
+				if (restoredTabs.length === 0) {
+					await this.newFile();
+				} else if (activeId && restoredTabs.some(t => t.id === activeId)) {
 					this.activeTabId = activeId;
 				} else {
 					this.activeTabId = restoredTabs[0]?.id || '';
@@ -861,23 +876,23 @@ export class Workspace {
 					
 					if (permission === 'granted') {
 						this.hasRootPermission = true;
+						await this.onRootOriginChange?.(rootOrigin);
 						// Initialize repo and tree in background
 						(async () => {
 							try {
-								// Drop the previous session's repository before the async
-								// VCS probe so the UI never shows stale state.
+								// Drop the previous session's repository before the
+								// plugin-owned probe so the UI never shows stale
+								// state. Detection/refresh run through the generic
+								// workspace-opened hook (#202).
 								this.repository = null;
-								const repo = new Repository(rootOrigin!, this.vcsFactory);
-								const detected = await repo.adapter.detect(rootOrigin!.path);
-								if (detected) {
-									this.repository = repo;
-									await repo.refresh();
-									// Session restore loads tabs before the repo exists;
-									// re-apply the persisted diff selection once changes are in.
-									this.applyPendingDiffRestore();
-								} else {
-									this.repository = null;
-								}
+								this.repositoryOwnerId = null;
+								await this.pluginHost.runWorkspaceOpened({
+									origin: rootOrigin!,
+									workspace: this
+								});
+								// Session restore loads tabs before the repo exists;
+								// re-apply the persisted diff selection once changes are in.
+								this.applyPendingDiffRestore();
 								await this.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
