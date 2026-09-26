@@ -13,6 +13,7 @@ import { getContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
 import { PluginHost, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginDependencyDisabledError, type DisabledPluginDependency } from './plugins/errors';
 import {
 	DIALOGS_SERVICE_KEY,
 	DIFF_NAVIGATOR_SERVICE_KEY,
@@ -212,6 +213,30 @@ export class AppState {
 		if (loader) await loader.load(pluginId);
 	}
 
+	/**
+	 * Dependencies of `id` (transitively, as activation would run them) whose
+	 * effective enablement is off. Activation activates those dependencies, so
+	 * an off one would be switched back on without the user asking (ADR 0017).
+	 */
+	private offPluginDependencies(id: string): DisabledPluginDependency[] {
+		return this.plugins
+			.computeActivationOrder([id])
+			.filter((pluginId) => pluginId !== id && !this.isPluginEnabled(pluginId))
+			.map((pluginId) => ({
+				id: pluginId,
+				name: this.plugins.getManifest(pluginId)?.name ?? pluginId
+			}));
+	}
+
+	/**
+	 * Activation never flips an off dependency on: it refuses with an
+	 * explanation naming the dependencies, leaving the toggle untouched.
+	 */
+	private assertPluginDependenciesEnabled(id: string): void {
+		const off = this.offPluginDependencies(id);
+		if (off.length > 0) throw new PluginDependencyDisabledError(id, off);
+	}
+
 	async init() {
 		// Cycle/interface check first (ADR 0017): a broken dependency graph
 		// surfaces as one actionable error in the Plugins settings page
@@ -233,6 +258,7 @@ export class AppState {
 				for (const manifest of this.plugins.getManifests()) {
 					if (this.isPluginEnabled(manifest.id) && !this.plugins.isPluginActive(manifest.id)) {
 						try {
+							this.assertPluginDependenciesEnabled(manifest.id);
 							await this.loadPluginUI(manifest.id);
 							await this.plugins.activate(manifest.id);
 						} catch (e) {
@@ -275,6 +301,7 @@ export class AppState {
 	 */
 	async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
 		if (enabled) {
+			this.assertPluginDependenciesEnabled(id);
 			await this.loadPluginUI(id);
 			await this.plugins.activate(id);
 			this.prefs.setPluginEnabled(id, true);

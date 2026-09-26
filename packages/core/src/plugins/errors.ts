@@ -44,6 +44,35 @@ export class PluginNotFoundError extends Error {
 }
 
 /**
+ * A dependency that is off, as shown in the plugin settings page.
+ */
+export interface DisabledPluginDependency {
+	readonly id: string;
+	readonly name: string;
+}
+
+/**
+ * Error thrown when a plugin cannot be enabled because something it depends
+ * on is off. Activation never turns an off dependency on by itself: the user
+ * enables the dependency first (ADR 0017 cascades only where the user acted).
+ */
+export class PluginDependencyDisabledError extends Error {
+	readonly pluginId: string;
+	readonly disabledDependencies: readonly DisabledPluginDependency[];
+
+	constructor(pluginId: string, disabledDependencies: readonly DisabledPluginDependency[]) {
+		const listed = disabledDependencies.map((dependency) => `"${dependency.name}"`).join(', ');
+		super(
+			`Cannot enable plugin "${pluginId}": ${disabledDependencies.length === 1 ? 'its dependency is' : 'its dependencies are'} off: ${listed}.\n` +
+				`Action: Enable ${listed} first, then enable "${pluginId}". Enabling a plugin never turns an off dependency on by itself.`
+		);
+		this.name = 'PluginDependencyDisabledError';
+		this.pluginId = pluginId;
+		this.disabledDependencies = disabledDependencies;
+	}
+}
+
+/**
  * Error thrown when a dependency cycle is detected (ADR 0017).
  */
 export class DependencyCycleError extends Error {

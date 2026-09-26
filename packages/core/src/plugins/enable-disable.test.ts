@@ -1,7 +1,7 @@
 import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, mock, spyOn } from 'bun:test';
 import { PluginHost } from './host.svelte';
-import { PluginActivationError } from './errors';
+import { PluginActivationError, PluginDependencyDisabledError } from './errors';
 import { gitRegistration } from './git/registration';
 import { GIT_PANEL_ID, GIT_STATUS_ID } from './git/ui';
 import { DIALOGS_SERVICE_KEY } from './services';
@@ -715,7 +715,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 		});
 
 		describe('dependency cascade UX (ADR 0017)', () => {
-		function cascadeRegistrations(): PluginRegistration[] {
+		function cascadeRegistrations() {
 			const base: PluginManifest = {
 				id: 'base',
 				name: 'Base',
@@ -814,6 +814,77 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host2.isPluginActive('base')).toBe(false);
 			expect(host2.isPluginActive('mid')).toBe(false);
 			expect(host2.isPluginActive('leaf')).toBe(false);
+		});
+
+		it('refuses to enable a plugin whose dependency is off instead of enabling it behind the user', async () => {
+			const prefsBacking = createPrefsBacking();
+			const host = new PluginHost();
+			host.registerAll(cascadeRegistrations().registrations);
+			const { storage } = createHarnessStorage();
+			const counters: VcsCounters = { factory: 0, detect: 0, init: 0, getChanges: 0 };
+			const app = new AppState({
+				storage,
+				vcsFactory: createCountingVcsFactory(counters),
+				prefsStorage: prefsBacking,
+				pluginHost: host
+			});
+			await app.init();
+			await app.setPluginEnabled('base', true);
+			await app.setPluginEnabled('mid', true);
+			await app.setPluginEnabled('base', false);
+			expect(host.isPluginActive('base')).toBe(false);
+
+			let caught: unknown = null;
+			try {
+				await app.setPluginEnabled('mid', true);
+			} catch (error) {
+				caught = error;
+			}
+
+			// The refusal explains which dependency is off and by what name.
+			expect(caught).toBeInstanceOf(PluginDependencyDisabledError);
+			expect((caught as PluginDependencyDisabledError).disabledDependencies.map((d) => d.id)).toEqual(['base']);
+			expect((caught as Error).message).toContain('Base');
+			// Nothing is enabled behind the user's back, and Mid stays off.
+			expect(host.isPluginActive('base')).toBe(false);
+			expect(host.isPluginActive('mid')).toBe(false);
+			expect(app.isPluginEnabled('mid')).toBe(false);
+		});
+
+		it('activates nothing at startup when an enabled plugin depends on an off plugin', async () => {
+			const prefsBacking = createPrefsBacking();
+			const host = new PluginHost();
+			host.registerAll(cascadeRegistrations().registrations);
+			const { storage } = createHarnessStorage();
+			const counters: VcsCounters = { factory: 0, detect: 0, init: 0, getChanges: 0 };
+			const app = new AppState({
+				storage,
+				vcsFactory: createCountingVcsFactory(counters),
+				prefsStorage: prefsBacking,
+				pluginHost: host
+			});
+			await app.init();
+			await app.setPluginEnabled('base', true);
+			await app.setPluginEnabled('mid', true);
+			await app.setPluginEnabled('base', false);
+			// Persisted state the settings page can leave behind: Mid on, Base off.
+			app.prefs.setPluginEnabled('mid', true);
+
+			const host2 = new PluginHost();
+			host2.registerAll(cascadeRegistrations().registrations);
+			const app2 = new AppState({
+				storage,
+				vcsFactory: createCountingVcsFactory(counters),
+				prefsStorage: prefsBacking,
+				pluginHost: host2
+			});
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+			await app2.init();
+			errorSpy.mockRestore();
+
+			// A user's off toggle is never overridden by a dependent's on toggle.
+			expect(host2.isPluginActive('base')).toBe(false);
+			expect(host2.isPluginActive('mid')).toBe(false);
 		});
 	});
 
