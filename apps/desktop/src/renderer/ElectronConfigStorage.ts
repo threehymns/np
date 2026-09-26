@@ -98,6 +98,29 @@ export class ElectronConfigStorage implements PreferenceStorage {
 	 */
 	private static readonly SETTINGS_DOC_KEY = 'np-prefs-v2';
 
+	/**
+	 * Isolated top-level properties: every PreferenceStorage key that is not
+	 * the settings document. They are owned by a single writer
+	 * (Preferences, `PLUGIN_ENABLEMENT_KEY`), so the settings document neither
+	 * reads them nor writes them back — a settings payload is a snapshot, and
+	 * replaying it would revert whatever the owner wrote since.
+	 */
+	private static readonly ISOLATED_KEYS: ReadonlySet<string> = new Set(['np-plugin-enablement-v1']);
+
+	/**
+	 * The settings document as seen by its owner: the whole config.json minus
+	 * the isolated properties, which stay invisible to the settings payload.
+	 */
+	private settingsDocument(parsed: Record<string, any>): Record<string, any> {
+		const doc: Record<string, any> = {};
+		for (const [key, value] of Object.entries(parsed)) {
+			if (!ElectronConfigStorage.ISOLATED_KEYS.has(key)) {
+				doc[key] = value;
+			}
+		}
+		return doc;
+	}
+
 	private readDoc(): Record<string, any> | null {
 		const text = this.pendingText ?? this.cachedText;
 		if (this.hasSyntaxError || !text) {
@@ -136,7 +159,7 @@ export class ElectronConfigStorage implements PreferenceStorage {
 		}
 
 		if (key === ElectronConfigStorage.SETTINGS_DOC_KEY) {
-			return JSON.stringify(parsed);
+			return JSON.stringify(this.settingsDocument(parsed));
 		}
 
 		if (!(key in parsed)) {
@@ -179,8 +202,11 @@ export class ElectronConfigStorage implements PreferenceStorage {
 				console.error('Failed to parse preference payload for writing: expected object');
 				return;
 			}
-			// Apply CST modifications for each key in newPrefs
-			for (const [propKey, propVal] of Object.entries(newPrefs)) {
+			// Apply CST modifications for each key in newPrefs, skipping the
+			// isolated properties: the payload is a snapshot, and writing one
+			// back would revert the owner's current value.
+			const settings = this.settingsDocument(newPrefs);
+			for (const [propKey, propVal] of Object.entries(settings)) {
 				currentText = this.applySingleKeyEdit(currentText, propKey, propVal);
 			}
 		}

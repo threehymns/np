@@ -328,6 +328,33 @@ describe('ElectronConfigStorage', () => {
 		expect(prefs.resolve('git', 'show_blame').value).toBe(true);
 	});
 
+	it('14. Stale settings snapshot: a settings write never replays an isolated key it loaded', async () => {
+		mockReadConfigFileSync.mockReturnValue(
+			`{\n  "zoom": 100,\n  "np-plugin-enablement-v1": { "git": false, "search": true }\n}`
+		);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		expect(prefs.isPluginEnabled('search', false)).toBe(true);
+
+		// The user turns the second plugin off; the enablement map is rewritten
+		// under its own top-level key.
+		prefs.setPluginEnabled('search', false);
+		await flush();
+
+		// An ordinary settings write must not replay the enablement map captured
+		// when the settings document was loaded.
+		prefs.zoom = 120;
+		await flush();
+
+		const lastWritten = mockWriteConfigFile.mock.calls.at(-1)![0] as string;
+		expect(lastWritten).toContain('"zoom": 120');
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		expect(prefs.isPluginEnabled('search', false)).toBe(false);
+	});
+
 	it('12. Queued write resolution: the newest write wins the final cached state even when the queue frees one write at a time', async () => {
 		const initialJsonc = `{\n  "zoom": 100\n}`;
 		mockReadConfigFileSync.mockReturnValue(initialJsonc);
