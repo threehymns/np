@@ -46,10 +46,18 @@ interface DiscardSurface {
 interface Engine {
 	name: string;
 	adapter(r: TestRepo): DiscardSurface;
+	/**
+	 * Whether a worktree file written through this engine's filesystem can carry
+	 * a POSIX mode at all. `BrowserGitFS` has no `chmod` and reports a fixed
+	 * `100644` from `stat`, so a file it writes can never be executable — an
+	 * engine-capability limit, not a behaviour any restore can work around.
+	 */
+	preservesFileMode?: boolean;
 }
 
 const spawnEngine: Engine = {
 	name: 'SpawnGitAdapter (real git)',
+	preservesFileMode: true,
 	adapter(r) {
 		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args), nodeFileAccess);
 	}
@@ -57,6 +65,7 @@ const spawnEngine: Engine = {
 
 const isomorphicEngine: Engine = {
 	name: 'IsomorphicGitAdapter (isomorphic-git over node fs)',
+	preservesFileMode: false,
 	adapter(r) {
 		const repoOrigin: FileOrigin = { scheme: 'browser', path: r.path, name: 'repo' };
 		browserHandleRegistry.register(toURI(repoOrigin), new NodeDirectoryHandle('repo', r.path));
@@ -85,6 +94,14 @@ const HELLO_V1 = 'const a = 1;\nconst b = 3;\n';
 const SRC_CONTENT = 'shared\n';
 const SRC_EDITED = 'shared\nEDITED SRC\n';
 const DEST_EDITED = 'shared\nDEST EDITS\n';
+const SCRIPT_CONTENT = '#!/bin/sh\necho hi\n';
+
+/** The index mode (`git ls-files -s`) of a path, or null when it has no entry. */
+async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
+	const res = await r.git(['ls-files', '-s', '--', relPath]);
+	if (res.code !== 0 || !res.stdout.trim()) return null;
+	return res.stdout.trim().split(/\s+/)[0] ?? null;
+}
 
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — discard of staged changes`, () => {
@@ -313,17 +330,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
-		it.skipIf(
-			true,
-			'untestable: an unstaged worktree rename is not representable in porcelain v1 ' +
-				'(` D src.txt` + `?? moved.txt`, no rename pair), so both adapters treat the discard ' +
-				'as an untracked-file clean and leave the source deleted. Written per review and ' +
-				'verified failing on both engines (2026-08-18): the source would need to return to ' +
-				'the worktree and the destination be removed; SpawnGitAdapter.resolveOrigPath cannot ' +
-				'find a source for an unstaged rename, so the recovery branch in discardChanges ' +
-				'(staged:false) never triggers — fixing that is a behavior change in both adapters, ' +
-				'out of scope for this layer.'
-		)('restores the source and removes the destination of an unstaged worktree rename', async () => {
+		it('restores the source and removes the destination of an unstaged worktree rename', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			// Unstaged worktree rename: git never pairs these, so the adapter sees a
@@ -339,6 +346,158 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+		});
+
+		// The source is recovered by matching the destination's bytes against the
+		// index content of paths git reports as worktree-deleted. These two tests pin
+		// the cases where that match must NOT fire, so the recovery can never
+		// resurrect a file the user did not rename.
+
+		it('treats an edited destination as an untracked file, never resurrecting a deleted source', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Same shape as a rename, but the user then edited the destination, so its
+			// content no longer matches the source. There is no rename to undo: the
+			// deletion is unrelated and must stay deleted.
+			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			await r.write('moved.txt', DEST_EDITED);
+			const adapter = engine.adapter(r);
+
+			await adapter.discardChanges('moved.txt', { staged: false });
+
+			// The untracked destination is discarded; the unrelated deletion stands.
+			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+		});
+
+		it('never restores a source that is still present in the worktree', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// An untracked copy of a tracked file whose source the user still has.
+			// Content matching alone would pair these, but the source is not deleted,
+			// so there is no rename to undo and the source must not be rewritten.
+			await r.write('copy.txt', SRC_CONTENT);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'copy.txt' }]);
+
+			await adapter.discardChanges('copy.txt', { staged: false });
+
+			expect(await worktreeContents(r, 'copy.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await porcelainStatus(r)).toEqual([]);
+		});
+
+		// Byte-identical content does not identify a source: two tracked files can
+		// hold the same bytes, and a deletion the user made on purpose is
+		// indistinguishable from the source half of a rename. Anything less than a
+		// unique match would resurrect a file nobody renamed.
+
+		it('treats a destination matching two deleted sources as an untracked file, restoring neither', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('dup.txt', SRC_CONTENT);
+			await stageAll(r);
+			const commit = await r.git(['commit', '-m', 'duplicate content']);
+			if (commit.code !== 0) throw new Error(commit.stderr);
+			// The user renames src.txt and separately deletes dup.txt on purpose. Both
+			// candidates hold identical content, so nothing in the repository says
+			// which one moved — and restoring either by guess would resurrect a
+			// deliberate deletion or leave the real rename half-undone.
+			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			await rm(`${r.path}/dup.txt`);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'dup.txt' },
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'moved.txt' }
+			]);
+
+			await adapter.discardChanges('moved.txt', { staged: false });
+
+			// Neither candidate is restored: the destination is an untracked file.
+			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await worktreeContents(r, 'dup.txt')).toBe(null);
+			// Both deletions stand, and the index still records both files.
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'dup.txt' },
+				{ x: ' ', y: 'D', path: 'src.txt' }
+			]);
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await indexContents(r, 'dup.txt')).toBe(SRC_CONTENT);
+		});
+
+		it('restores a unique byte-identical match, which is the whole limit of what a rename can be proven to be', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Exactly one worktree deletion whose index content equals the untracked
+			// destination. The user could equally have deleted src.txt on purpose and
+			// then written a new file that happens to hold the same bytes: no git
+			// invocation separates the two shapes, so the adapter commits to the
+			// recovery. This test pins that boundary deliberately rather than leaving
+			// it implied -- the only thing that makes the pairing decidable is that
+			// the match is unique, and the test above shows what uniqueness buys.
+			await rm(`${r.path}/src.txt`);
+			await r.write('notes.txt', SRC_CONTENT);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'src.txt' },
+				{ x: '?', y: '?', path: 'notes.txt' }
+			]);
+
+			await adapter.discardChanges('notes.txt', { staged: false });
+
+			// The single matching candidate is recovered, and the destination goes.
+			expect(await worktreeContents(r, 'notes.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await porcelainStatus(r)).toEqual([]);
+		});
+
+		// The restored source is written from the index, and the index is the only
+		// place this platform can read a POSIX mode from: a browser exposes none.
+		// So the restore has to carry the index mode across with the bytes, or the
+		// repository is left permanently modified by a discard that restored
+		// exactly what was committed.
+		//
+		// The isomorphic engine cannot honour this however the restore is written.
+		// `BrowserGitFS` has no `chmod`, and its `stat` reports a fixed 100644 for
+		// every file (measured: a 755 file on disk reads back as 100644), so no
+		// restore through it can produce an executable file. Its own `stageAll`
+		// already collapses 100755 to 100644 in the index on the same fixture, so
+		// the mode is not reliably present to copy either. That is the engine's
+		// filesystem, not this recovery, and it is tracked with the exec-bit work
+		// in #214 — so the test is scoped to engines that can express a mode
+		// instead of asserting a capability the engine does not have.
+		it.skipIf(
+			engine.preservesFileMode === false,
+			'BrowserGitFS cannot express a POSIX mode: no chmod, and stat reports 100644 for every file'
+		)('restores the index mode of a renamed executable source, leaving the repository clean', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('run.sh', SCRIPT_CONTENT);
+			chmodSync(path.join(r.path, 'run.sh'), 0o755);
+			await stageAll(r);
+			const commit = await r.git(['commit', '-m', 'executable']);
+			if (commit.code !== 0) throw new Error(commit.stderr);
+			await moveEntry(`${r.path}/run.sh`, `${r.path}/moved.sh`);
+			const adapter = engine.adapter(r);
+			// The index records 100755; the worktree simply lost the file.
+			expect(await indexMode(r, 'run.sh')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'run.sh' },
+				{ x: '?', y: '?', path: 'moved.sh' }
+			]);
+
+			await adapter.discardChanges('moved.sh', { staged: false });
+
+			// The bytes come back, and so must the executable bit. Restoring the
+			// file non-executable is a modification nobody made: porcelain would
+			// report the source as dirty against an index that says otherwise.
+			expect(await worktreeContents(r, 'run.sh')).toBe(SCRIPT_CONTENT);
+			expect(await indexMode(r, 'run.sh')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([]);
+			expect(await worktreeContents(r, 'moved.sh')).toBe(null);
 		});
 	});
 
