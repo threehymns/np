@@ -637,10 +637,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 			}
 			if (expectHeader) {
 				// The subject is followed by a newline, then the first path, so the
-				// header is the first line and the rest of the record is one path.
-				const [headerLine, ...firstPaths] = record.split('\n');
+				// header is everything before the record's *first* newline and the
+				// first path is everything after it -- newline and all. Splitting on
+				// every newline instead would tear a path that itself holds one into
+				// two names, neither of which exists.
+				const sep = record.indexOf('\n');
+				const headerLine = sep === -1 ? record : record.slice(0, sep);
+				const firstPath = sep === -1 ? '' : record.slice(sep + 1);
 				const [hash, author, date, ...rest] = headerLine.split('|');
-				current = { hash, author, date, message: rest.join('|'), files: firstPaths.filter(Boolean) };
+				current = {
+					hash,
+					author,
+					date,
+					message: rest.join('|'),
+					files: firstPath === '' ? [] : [firstPath]
+				};
 				commits.push(current);
 				expectHeader = false;
 			} else if (current) {
