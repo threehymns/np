@@ -536,7 +536,12 @@ export class Workspace {
 			}
 		}
 
-		this.finalizeClose(id);
+		// Closing the last tab also creates its replacement, so the close can
+		// still fail after this returns; nothing awaits it, so a rejection has
+		// to be reported here rather than dropped.
+		this.finalizeClose(id).catch((err) => {
+			console.error('[Workspace] Failed to close tab', err);
+		});
 	}
 
 	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
