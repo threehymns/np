@@ -640,19 +640,24 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'nested/deep/file.txt' }]);
 		});
 
-		it('leaves every sibling file untouched', async () => {
+		it('disturbs neither a sibling file nor the index beyond the one target it wrote', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
 
 			await adapter.updateFileContent('hello.ts', HELLO_V1);
 
-			// Writing one file must not disturb the others; a wrong-root bug
-			// would redirect the write outside the repo entirely.
+			// The siblings' bytes survive, and — the half a content-only
+			// assertion misses — they are still exactly where git left them:
+			// clean in the porcelain and still tracked in the index. A write that
+			// also staged, added, or clobbered a sibling would show up here
+			// even though every sibling file still read back correctly.
 			expect(await worktreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
-			expect(await worktreeContents(r, 'src.txt')).toBe('shared\n');
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
-			expect(await indexContents(r, 'src.txt')).toBe('shared\n');
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
+			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
 		});
 
 		it('creates a missing target as an untracked worktree entry without staging it', async () => {
