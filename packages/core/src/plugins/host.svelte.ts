@@ -1678,6 +1678,8 @@ export class PluginHost implements PluginHostInterface {
 	/**
 	 * Activates a single plugin and any required dependencies.
 	 * Rejected after dispose (ADR 0009: disabling/enabling only while running normally).
+	 * Rejected while the plugin is deactivating, so a re-enable can never run
+	 * a second setup behind the teardown still in flight.
 	 */
 	async activate(id: string): Promise<void> {
 		if (this.disposed) {
@@ -1686,6 +1688,7 @@ export class PluginHost implements PluginHostInterface {
 		if (!this.registrations.has(id)) {
 			throw new PluginNotFoundError(id);
 		}
+		this.assertNotDeactivating(id);
 
 		if (this.isPluginActive(id)) {
 			return;
@@ -1717,11 +1720,24 @@ export class PluginHost implements PluginHostInterface {
 		}
 	}
 
+	private assertNotDeactivating(id: string): void {
+		if (this.getPluginState(id) === 'deactivating') {
+			throw new Error(
+				`Cannot activate plugin "${id}": disablement is still in progress (state: deactivating).\n` +
+				`Action: Wait for the in-flight disablement to finish, then enable "${id}".`
+			);
+		}
+	}
+
 	private async executeActivation(id: string): Promise<void> {
 		const registration = this.registrations.get(id);
 		if (!registration) {
 			throw new PluginNotFoundError(id);
 		}
+
+		// The one gate for every activation path (activate, activateAll, and
+		// the dependency sweep inside activate).
+		this.assertNotDeactivating(id);
 
 		const manifest = registration.manifest;
 
@@ -1800,11 +1816,19 @@ export class PluginHost implements PluginHostInterface {
 
 	/**
 	 * Deactivates a plugin. Unloads active dependents first (ADR 0017 cascade).
-	 * Runs cleanup on disable.
+	 * Runs cleanup on disable. Rejected while the plugin is still activating,
+	 * so a disablement never tears down a half-built plugin.
 	 */
 	async deactivate(id: string, reason = 'Disabled'): Promise<void> {
 		if (!this.registrations.has(id)) {
 			throw new PluginNotFoundError(id);
+		}
+
+		if (this.getPluginState(id) === 'activating') {
+			throw new Error(
+				`Cannot deactivate plugin "${id}": activation is still in progress (state: activating).\n` +
+				`Action: Wait for the in-flight activation to settle, then disable "${id}".`
+			);
 		}
 
 		if (!this.isPluginActive(id)) {

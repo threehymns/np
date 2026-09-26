@@ -588,7 +588,99 @@ describe('toggle off/on round trip restores full function without restart', () =
 		});
 	});
 
-		it('completes disablement when a plugin cleanup never settles', async () => {
+	describe('overlapping lifecycle requests are rejected, never interleaved (ADR 0009)', () => {
+		/**
+		 * A plugin whose command action blocks until released, so disablement
+		 * stays in flight (deactivating) for as long as the test needs.
+		 */
+		function blockingPlugin(id: string, gate: Promise<void>, onSetup: () => void): PluginRegistration {
+			return {
+				manifest: { id, name: id, version: 0 },
+				setup: (h) => {
+					onSetup();
+					h.registerCommands(id, [
+						{ id: `${id}.run`, label: 'Run', category: 'Fixtures', action: () => gate }
+					]);
+				}
+			};
+		}
+
+		it('refuses to activate a plugin that is still deactivating', async () => {
+			let releaseWrite!: () => void;
+			const writeGate = new Promise<void>((resolve) => (releaseWrite = resolve));
+			let setupRuns = 0;
+			const host = new PluginHost();
+			host.register(blockingPlugin('busy', writeGate, () => setupRuns++));
+			await host.activate('busy');
+
+			const writeTask = host.executeCommand('busy.run');
+			const deactivateTask = host.deactivate('busy');
+			expect(host.getPluginState('busy')).toBe('deactivating');
+
+			await expect(host.activate('busy')).rejects.toThrow('deactivating');
+			// The refused activation ran no second setup behind the teardown.
+			expect(setupRuns).toBe(1);
+
+			releaseWrite();
+			await Promise.all([writeTask, deactivateTask]);
+
+			// ...and the disablement finished as if nothing had been requested.
+			expect(host.getPluginState('busy')).toBe('inactive');
+			expect(host.getCommand('busy.run')).toBeUndefined();
+			expect(host.getDeactivationReason('busy')).toContain('Disabled');
+		});
+
+		it('refuses activateAll while a registered plugin is deactivating', async () => {
+			let releaseWrite!: () => void;
+			const writeGate = new Promise<void>((resolve) => (releaseWrite = resolve));
+			let setupRuns = 0;
+			const host = new PluginHost();
+			// 'aaa-busy' sorts first in the deterministic activation order, so the
+			// sweep reaches the deactivating plugin before the other one.
+			host.register(blockingPlugin('aaa-busy', writeGate, () => setupRuns++));
+			host.register({ manifest: { id: 'zzz-other', name: 'zzz-other', version: 0 }, setup: () => {} });
+			await host.activateAll();
+			await host.activate('aaa-busy');
+
+			const writeTask = host.executeCommand('aaa-busy.run');
+			const deactivateTask = host.deactivate('aaa-busy');
+			expect(host.getPluginState('aaa-busy')).toBe('deactivating');
+
+			await expect(host.activateAll()).rejects.toThrow('deactivating');
+			expect(setupRuns).toBe(1);
+
+			releaseWrite();
+			await Promise.all([writeTask, deactivateTask]);
+			expect(host.getPluginState('aaa-busy')).toBe('inactive');
+		});
+
+		it('refuses to deactivate a plugin that is still activating', async () => {
+			let releaseSetup!: () => void;
+			const setupGate = new Promise<void>((resolve) => (releaseSetup = resolve));
+			let setupFinished = false;
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'slow', name: 'slow', version: 0 },
+				setup: async () => {
+					await setupGate;
+					setupFinished = true;
+				}
+			});
+
+			const activateTask = host.activate('slow');
+			expect(host.getPluginState('slow')).toBe('activating');
+
+			await expect(host.deactivate('slow')).rejects.toThrow('activating');
+
+			releaseSetup();
+			await activateTask;
+			// The refused deactivation never tore down the finished activation.
+			expect(setupFinished).toBe(true);
+			expect(host.getPluginState('slow')).toBe('active');
+		});
+	});
+
+	it('completes disablement when a plugin cleanup never settles', async () => {
 			// A cleanup that never resolves must not wedge the toggle: the
 			// host bounds it, reports it against the owning plugin, and
 			// finishes the disablement (ADR 0009).
