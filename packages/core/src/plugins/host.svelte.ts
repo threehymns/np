@@ -590,7 +590,25 @@ export class PluginHost implements PluginHostInterface {
 		while (this.activePluginOperations.has(pluginId)) {
 			const operations = this.activePluginOperations.get(pluginId);
 			if (!operations) break;
-			await Promise.allSettled([...operations]);
+			const snapshot = [...operations];
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				const settled = Promise.allSettled(snapshot).then(() => 'settled' as const);
+				const expiry = new Promise<'timedOut'>((resolve) => {
+					timer = setTimeout(() => resolve('timedOut'), this.cleanupTimeoutMs);
+				});
+				const outcome = await Promise.race([settled, expiry]);
+				if (outcome === 'timedOut') {
+					console.error(
+						`[PluginHost] Active operations for plugin "${pluginId}" did not finish within ${this.cleanupTimeoutMs}ms; ` +
+							`continuing disablement without them.\nAction: Inspect the "${pluginId}" plugin's in-flight commands: each action must settle ` +
+							`within ${this.cleanupTimeoutMs}ms and must not await a promise that never resolves.`
+					);
+					break;
+				}
+			} finally {
+				if (timer !== undefined) clearTimeout(timer);
+			}
 		}
 	}
 

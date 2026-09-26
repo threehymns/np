@@ -612,6 +612,41 @@ describe('toggle off/on round trip restores full function without restart', () =
 			errorSpy.mockRestore();
 		});
 
+		it('completes disablement when an active operation never settles', async () => {
+			// An active write that never resolves must not hold the plugin
+			// in deactivating forever: the host bounds the wait, reports it
+			// against the owning plugin, and finishes disablement (ADR 0009).
+			const host = new PluginHost({ cleanupTimeoutMs: 20 });
+			host.register({
+				manifest: { id: 'stuck-op', name: 'Stuck Op', version: 0 },
+				setup: (h) => {
+					h.registerCommands('stuck-op', [
+						{
+							id: 'stuck-op.run',
+							label: 'Run',
+							category: 'Fixtures',
+							action: () => new Promise<void>(() => {})
+						}
+					]);
+				}
+			});
+			await host.activate('stuck-op');
+			host.executeCommand('stuck-op.run');
+			expect(host.getPluginState('stuck-op')).toBe('active');
+
+			const logged: string[] = [];
+			const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+				logged.push(args.map((arg) => String(arg)).join(' '));
+			});
+
+			await host.deactivate('stuck-op');
+
+			expect(host.getPluginState('stuck-op')).toBe('inactive');
+			expect(logged.join('\n')).toContain('stuck-op');
+			expect(logged.join('\n')).toContain('Action:');
+			errorSpy.mockRestore();
+		});
+
 		describe('dependency cascade UX (ADR 0017)', () => {
 		function cascadeRegistrations(): PluginRegistration[] {
 			const base: PluginManifest = {
