@@ -85,6 +85,14 @@ const HELLO_V1 = 'const a = 1;\nconst b = 3;\n';
 const SRC_CONTENT = 'shared\n';
 const SRC_EDITED = 'shared\nEDITED SRC\n';
 const DEST_EDITED = 'shared\nDEST EDITS\n';
+const SCRIPT_CONTENT = '#!/bin/sh\necho hi\n';
+
+/** The index mode (`git ls-files -s`) of a path, or null when it has no entry. */
+async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
+	const res = await r.git(['ls-files', '-s', '--', relPath]);
+	if (res.code !== 0 || !res.stdout.trim()) return null;
+	return res.stdout.trim().split(/\s+/)[0] ?? null;
+}
 
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — discard of staged changes`, () => {
@@ -435,6 +443,40 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'notes.txt')).toBe(null);
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await porcelainStatus(r)).toEqual([]);
+		});
+
+		// The restored source is written from the index, and the index is the only
+		// place this platform can read a POSIX mode from: a browser exposes none.
+		// So the restore has to carry the index mode across with the bytes, or the
+		// repository is left permanently modified by a discard that restored
+		// exactly what was committed.
+
+		it('restores the index mode of a renamed executable source, leaving the repository clean', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('run.sh', SCRIPT_CONTENT);
+			chmodSync(path.join(r.path, 'run.sh'), 0o755);
+			await stageAll(r);
+			const commit = await r.git(['commit', '-m', 'executable']);
+			if (commit.code !== 0) throw new Error(commit.stderr);
+			await moveEntry(`${r.path}/run.sh`, `${r.path}/moved.sh`);
+			const adapter = engine.adapter(r);
+			// The index records 100755; the worktree simply lost the file.
+			expect(await indexMode(r, 'run.sh')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: ' ', y: 'D', path: 'run.sh' },
+				{ x: '?', y: '?', path: 'moved.sh' }
+			]);
+
+			await adapter.discardChanges('moved.sh', { staged: false });
+
+			// The bytes come back, and so must the executable bit. Restoring the
+			// file non-executable is a modification nobody made: porcelain would
+			// report the source as dirty against an index that says otherwise.
+			expect(await worktreeContents(r, 'run.sh')).toBe(SCRIPT_CONTENT);
+			expect(await indexMode(r, 'run.sh')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([]);
+			expect(await worktreeContents(r, 'moved.sh')).toBe(null);
 		});
 	});
 
