@@ -662,28 +662,59 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return commits;
 	}
 
+	/**
+	 * Parse `diff --numstat -z` into per-path counts.
+	 *
+	 * With `-z`, git never C-quotes a path, so a name may contain newlines,
+	 * tabs, quotes, and `|` freely. The framing has two shapes, both verified
+	 * against real git output:
+	 *
+	 *  - Ordinary change: `<add>\t<del>\t<path>\0`
+	 *  - Rename or copy:  `<add>\t<del>\t\0<source>\0<dest>\0`
+	 *
+	 * A rename puts an *empty* path in the count prefix and follows it with the
+	 * two names as separate NUL-terminated fields, so the record must be read
+	 * positionally: the counts, then the first name, then the second when the
+	 * first was empty.
+	 *
+	 * Because the name is whatever remains after the count prefix, a tab inside
+	 * the path is preserved — splitting the record on tabs would corrupt it.
+	 *
+	 * A binary file reports `-` for both counts. That is not a number, so
+	 * `parseInt` yields NaN and the `|| 0` fallback turns it into the same zero
+	 * the previous implementation produced, keeping a usable count in the badge
+	 * rather than leaking NaN.
+	 */
 	private parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
 		const stats = new Map<string, { additions: number; deletions: number }>();
 		if (!output) return stats;
-		const lines = output.split('\n').filter(Boolean);
-		for (const line of lines) {
-			const parts = line.split('\t');
-			if (parts.length >= 3) {
-				const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
-				const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
-				const rawPath = parts.slice(2).join('\t');
-				let targetPath = rawPath;
-				if (targetPath.includes(' => ')) {
-					if (targetPath.includes('{') && targetPath.includes('}')) {
-						targetPath = targetPath.replace(/\{.*? => (.*?)\}/, '$1');
-					} else {
-						const arrowIdx = targetPath.indexOf(' => ');
-						targetPath = targetPath.substring(arrowIdx + 4);
-					}
-				}
-				stats.set(targetPath, { additions, deletions });
-				stats.set(rawPath, { additions, deletions });
+		// Records are NUL-terminated, so the final field is followed by a NUL and
+		// the split leaves an empty tail that must not become a key.
+		const fields = output.split('\0');
+		for (let i = 0; i < fields.length; i++) {
+			const field = fields[i];
+			if (!field) continue;
+			// The counts and the path are the only tabs in an ordinary record;
+			// the second one introduces the path.
+			const pathStart = field.indexOf('\t', field.indexOf('\t') + 1);
+			if (pathStart === -1) continue;
+			const [addField, delField] = field.slice(0, pathStart).split('\t');
+			if (addField === undefined || delField === undefined) continue;
+			const counts = {
+				additions: parseInt(addField, 10) || 0,
+				deletions: parseInt(delField, 10) || 0
+			};
+			const first = field.slice(pathStart + 1);
+			if (first) {
+				stats.set(first, counts);
+				continue;
 			}
+			// An empty name means a rename or copy: the source and destination are
+			// the next two fields, and the change list asks for the destination.
+			const source = fields[i + 1];
+			const dest = fields[i + 2];
+			if (dest) stats.set(dest, counts);
+			if (source && dest) stats.set(source, counts);
 		}
 		return stats;
 	}
@@ -696,8 +727,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
 			this.runGit(['status', '--porcelain=v1', '-z', '-uall']),
-			this.runGit(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat']),
-			this.runGit(['-c', 'core.quotepath=false', 'diff', '--numstat'])
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat', '-z']),
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--numstat', '-z'])
 		]);
 
 		if (statusRes.code !== 0) {

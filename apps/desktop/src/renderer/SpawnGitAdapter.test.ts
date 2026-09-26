@@ -151,14 +151,15 @@ describe('SpawnGitAdapter', () => {
 			if (cmd.includes('diff --cached --numstat')) {
 				return {
 					code: 0,
-					stdout: '10\t5\tstaged.ts\n3\t1\tboth.ts\n',
+					// `-z` framing: NUL-terminated records with the real path.
+					stdout: ['10\t5\tstaged.ts', '3\t1\tboth.ts', ''].join('\0'),
 					stderr: ''
 				};
 			}
 			if (cmd.includes('diff --numstat')) {
 				return {
 					code: 0,
-					stdout: '20\t2\tunstaged.ts\n4\t0\tboth.ts\n',
+					stdout: ['20\t2\tunstaged.ts', '4\t0\tboth.ts', ''].join('\0'),
 					stderr: ''
 				};
 			}
@@ -174,8 +175,11 @@ describe('SpawnGitAdapter', () => {
 		// Check that numstat commands include core.quotepath=false configuration
 		const numstatCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1].includes('--numstat'));
 		expect(numstatCalls.length).toBe(2);
-		expect(numstatCalls[0][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat']);
-		expect(numstatCalls[1][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--numstat']);
+		// `-z` is required: without it git C-quotes any path holding a newline,
+		// tab, or quote, and the counts would be keyed by a display string that
+		// never matches the raw path from `status --porcelain=v1 -z`.
+		expect(numstatCalls[0][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat', '-z']);
+		expect(numstatCalls[1][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--numstat', '-z']);
 
 		// Check that no per-file diff or show commands were executed
 		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
@@ -220,14 +224,14 @@ describe('SpawnGitAdapter', () => {
 			if (cmd.includes('diff --cached --numstat')) {
 				return {
 					code: 0,
-					stdout: '7\t2\t leading_space.ts\n12\t4\ttrailing_space.ts \n',
+					stdout: ['7\t2\t leading_space.ts', '12\t4\ttrailing_space.ts ', ''].join('\0'),
 					stderr: ''
 				};
 			}
 			if (cmd.includes('diff --numstat')) {
 				return {
 					code: 0,
-					stdout: '5\t1\t leading_space.ts\n',
+					stdout: ['5\t1\t leading_space.ts', ''].join('\0'),
 					stderr: ''
 				};
 			}
