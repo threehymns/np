@@ -141,22 +141,82 @@ describe('getChanges reports line counts for unusual pathnames', () => {
 	});
 
 	it('does not mistake a name containing the rename arrow for a rename', async () => {
-		// The old parser split any path containing " => " into a rename source
-		// and target. That substring is legal inside an ordinary filename, so a
-		// real file could be recorded under a path that does not exist. With -z
-		// the path arrives whole and there is no arrow to find.
+		// The old parser split any path containing " => " into a rename source and
+		// target, in two branches: a brace form
+		//
+		//     targetPath.replace(/\{.*? => (.*?)\}/, '$1')
+		//
+		// for git's `dir/{a => b}/file` output, and a plain substring split for
+		// everything else. Both mangled a path that legitimately contains the
+		// arrow -- `dir{d => d2}/file.txt` collapsed to `dird2/file.txt`, and
+		// `zzz => target.txt` collapsed to `target.txt`.
+		//
+		// A mangled key naming a file that does NOT exist is unobservable:
+		// `getChanges` walks porcelain entries, so a phantom key is never read.
+		// That is why the old version of this test -- which only asserted that no
+		// phantom entry appeared -- could not fail. It passed with the heuristic
+		// and without it, which is worth saying plainly: it was guarding nothing.
+		//
+		// The harm only lands on a *sibling* that really exists, because the two
+		// records then share a key and the later one overwrites the earlier. git
+		// emits numstat records in path order, so each sibling is named as the
+		// exact string the heuristic mangles its arrow file down to, and each sorts
+		// first (`d` 0x64 < `{` 0x7b, and `t` < `z`):
+		//
+		//     "dird2/file.txt"        +4
+		//     "dir{d => d2}/file.txt" +8   -> mangles to "dird2/file.txt"
+		//     "target.txt"            +3
+		//     "zzz => target.txt"     +9   -> mangles to "target.txt"
+		//
+		// The premise assertion pins that emitted order, so a git that reorders
+		// records fails here loudly rather than quietly stripping the teeth from
+		// the two count assertions below.
 		const repo = await createTrackedRepo();
 		try {
-			await repo.write('arrow => name.txt', 'a\n');
+			const SIBLING_BRACE = 'dird2/file.txt';
+			const ARROW_BRACE = 'dir{d => d2}/file.txt';
+			const SIBLING_ARROW = 'target.txt';
+			const ARROW_PLAIN = 'zzz => target.txt';
+			for (const name of [SIBLING_ARROW, SIBLING_BRACE, ARROW_PLAIN, ARROW_BRACE]) {
+				await repo.write(name, 'a\n');
+			}
 			await repo.git(['add', '-A']);
 			await repo.git(['commit', '-m', 'base']);
-			await repo.write('arrow => name.txt', 'b\nb\n');
+
+			// Distinct, non-overlapping line counts, so a clobber is unmistakable
+			// rather than a coincidence: the arrow files carry counts no sibling
+			// has.
+			const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n') + '\n';
+			await repo.write(SIBLING_ARROW, lines(3));
+			await repo.write(SIBLING_BRACE, lines(4));
+			await repo.write(ARROW_PLAIN, lines(9));
+			await repo.write(ARROW_BRACE, lines(8));
 			await repo.git(['add', '-A']);
 
+			// Premise: git really does emit these four names, in this order.
+			// Both arrow files sort after the sibling they mangle onto, so the
+			// heuristic would overwrite both siblings' counts.
+			const NUL = String.fromCharCode(0);
+			const numstat = await repo.git(['diff', '--cached', '--numstat', '-z']);
+			const paths = numstat.stdout
+				.split(NUL)
+				.map((field) => field.slice(field.indexOf('\t', field.indexOf('\t') + 1) + 1))
+				.filter(Boolean);
+			expect(paths).toEqual([SIBLING_BRACE, ARROW_BRACE, SIBLING_ARROW, ARROW_PLAIN]);
+
 			const changes = await adapterFor(repo).getChanges();
-			expect(changeFor(changes, 'arrow => name.txt')).toBeDefined();
-			expect(changeFor(changes, 'arrow => name.txt')!.additions).toBe(2);
-			expect(changeFor(changes, 'name.txt')).toBeUndefined();
+
+			// Each arrow file keeps its own counts, under its own real name.
+			expect(changeFor(changes, ARROW_PLAIN)!.additions).toBe(9);
+			expect(changeFor(changes, ARROW_BRACE)!.additions).toBe(8);
+
+			// The discriminating pair. Under the removed heuristic each sibling
+			// reads the arrow file's count instead of its own: `target.txt` would
+			// report +9 and `dird2/file.txt` would report +8. These two assertions
+			// are what make the removal observable; everything above them passes
+			// either way.
+			expect(changeFor(changes, SIBLING_ARROW)!.additions).toBe(3);
+			expect(changeFor(changes, SIBLING_BRACE)!.additions).toBe(4);
 		} finally {
 			await repo.cleanup();
 		}
