@@ -379,7 +379,7 @@ describe('SpawnGitAdapter', () => {
 		expect(headCalls.length).toBe(0);
 	});
 
-	it('getFileDiff skips worktree disk read for deleted files (status: "D", staged: false)', async () => {
+	it('getFileDiff does not read worktree CONTENT for deleted files (status: "D", staged: false)', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'show' && args[1] === 'HEAD:deleted.txt') {
 				return { code: 0, stdout: 'head content', stderr: '' };
@@ -389,12 +389,19 @@ describe('SpawnGitAdapter', () => {
 			}
 			return { code: 0, stdout: '', stderr: '' };
 		});
+		// A `D` status only says the index holds a deletion, so the adapter must
+		// confirm the file is really gone before reporting an empty worktree.
+		mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const diff = await adapter.getFileDiff('deleted.txt', { status: 'D', staged: false });
 
 		expect(diff.originalContent).toBe('index content');
 		expect(diff.modifiedContent).toBe('');
-		expect(mockReadFile).not.toHaveBeenCalled();
+		// A `D` status only says the index holds a deletion, so the adapter probes
+		// the disk to check its premise. It must not then read the file a second
+		// time to build content — one probe, one ENOENT, nothing decoded.
+		expect(mockReadFile).toHaveBeenCalledTimes(1);
+		expect(diff.modifiedContent).toBe('');
 	});
 
 	it('stageAll issues a single native git add -A command', async () => {
