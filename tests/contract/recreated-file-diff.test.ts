@@ -8,9 +8,16 @@
  * UI combines those into one entry whose status is `D`.
  *
  * The consequence is unrecoverable data loss. Reporting the worktree as empty
- * makes the editor offer "discard", and discarding writes the HEAD content back
- * over the recreated file — destroying work that was never staged, never
- * committed, and exists nowhere else.
+ * arms it: two discard routes resolve the path from the index or from HEAD, and
+ * a recreate's content is in neither. `discardChanges(..., {staged: false})`
+ * cannot resolve the pathspec — the path is out of the index — so it falls
+ * through to its untracked cleanup and `git clean`s the file away. `discardAll`
+ * deletes it the same way, because `git clean -fd .` unlinks the path as an
+ * untracked file. (It is not an overwrite: `git checkout HEAD -- path` would
+ * overwrite here, since the deletion was never committed and the path is still
+ * in HEAD, but neither route takes that path — both remove the file outright.)
+ * Both are pinned in `discard-operations.test.ts`; these tests cover the
+ * reporting half.
  *
  * The `D` short-circuit is still correct for the common case (the optimization
  * avoids a disk read per deleted file), so these tests pin the boundary: the
