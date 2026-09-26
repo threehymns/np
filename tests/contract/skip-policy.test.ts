@@ -1237,6 +1237,41 @@ bunDescribe('contract suite skip policy', () => {
 		}
 	});
 
+	bunTest('a skip planted outside tests/contract is reported', () => {
+		// The end-to-end shape of the bug this gate's scope was widened to fix: a
+		// skip anywhere in the repository, routed through `collectOffenders`
+		// itself, not through the detector in isolation.
+		//
+		// The plant has to live inside the repository and go through
+		// `collectOffenders`, or the test proves nothing about the scan scope. The
+		// version this replaces wrote the file into a `mkdtemp` directory and
+		// called `findUnconditionalSkips` on it — a path outside every scan root,
+		// observed through a function that has no notion of roots — so it passed
+		// with `SCAN_ROOTS` narrowed back to `[CONTRACT_DIR]`, deleted, or empty.
+		//
+		// The plant is named to match the runner's discovery pattern, so it is
+		// genuinely a test file, and it is a unique basename so it can never
+		// collide with this file's self-exclusion.
+		const rel = 'packages/core/src/zz-scope-probe.test.ts';
+		withPlantedFile(rel, PLANTED_SKIP, offenders => {
+			expect(offenders).toEqual([`${rel}:2  escaped the scan roots`]);
+		});
+		// And the plant is gone, so the next run starts from the same tree.
+		expect(existsSync(join(REPO_ROOT, rel))).toBe(false);
+	});
+
+	bunTest('the scan roots sit above tests/contract, not inside it', () => {
+		// A second, independent pin on the same regression, so the scope cannot
+		// quietly narrow even if `collectOffenders` is later refactored. The
+		// original bug was that the root was derived from this file's own
+		// location, so the gate policed 9 of the repository's 96 test files and an
+		// unconditional skip planted anywhere else passed it silently.
+		expect(SCAN_ROOTS).toContain(REPO_ROOT);
+		for (const root of SCAN_ROOTS) {
+			expect(root.startsWith(CONTRACT_DIR)).toBe(false);
+		}
+	});
+
 	bunTest('a file named skip-policy.test.ts outside this one is still scanned', () => {
 		// This file is excluded from its own scan because it necessarily contains
 		// the pattern it forbids. That exclusion has to be this exact file. A
