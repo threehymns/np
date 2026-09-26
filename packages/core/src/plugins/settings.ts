@@ -943,8 +943,11 @@ export class SettingsManager {
 	}
 
 	registerTransform(pluginId: string, transform: SettingSchemaTransform): void {
-		this.schemaTransforms.push({ pluginId, transform });
-		this.rebuild();
+		const next = [...this.schemaTransforms, { pluginId, transform }];
+		const nextSchemas = rebuildSettingSchemas(next);
+		this.schemaTransforms = next;
+		this.schemas = nextSchemas;
+		this.validateAll();
 	}
 
 	registerSchema(pluginId: string, schema: SettingNamespaceSchema): void {

@@ -473,8 +473,12 @@ export class PluginHost implements PluginHostInterface {
 	 * they are implemented).
 	 */
 	registerCommandTransform(pluginId: string, transform: CommandTransform): void {
-		this.commandTransforms.push({ pluginId, transform });
-		this.rebuildCommands();
+		const next = [...this.commandTransforms, { pluginId, transform }];
+		const owners = new SvelteMap<string, string>();
+		const nextMap = rebuildCommands(this.orderedCommandTransforms(next), owners);
+		this.commandTransforms = next;
+		this.commandMap = nextMap;
+		this.commandOwners = owners;
 	}
 
 	/**
@@ -689,9 +693,11 @@ export class PluginHost implements PluginHostInterface {
 	 * alphabetically. Registered-but-inactive owners are excluded so a
 	 * missed disposal can never leak commands.
 	 */
-	private orderedCommandTransforms(): CommandTransformEntry[] {
+	private orderedCommandTransforms(
+		transforms: readonly CommandTransformEntry[] = this.commandTransforms
+	): CommandTransformEntry[] {
 		const byOwner = new SvelteMap<string, CommandTransformEntry[]>();
-		for (const entry of this.commandTransforms) {
+		for (const entry of transforms) {
 			const list = byOwner.get(entry.pluginId);
 			if (list) {
 				list.push(entry);
@@ -1433,8 +1439,11 @@ export class PluginHost implements PluginHostInterface {
 	// --------------------------------------------------------------------------
 
 	registerSettingTransform(pluginId: string, transform: SettingSchemaTransform): void {
-		this.settingSchemaTransforms.push({ pluginId, transform });
-		this.rebuildSettings();
+		const next = [...this.settingSchemaTransforms, { pluginId, transform }];
+		const nextMap = rebuildSettingSchemas(this.orderedSettingTransforms(next));
+		this.settingSchemaTransforms = next;
+		this.settingSchemaMap = nextMap;
+		for (const listener of this.settingsListeners) listener();
 	}
 
 	registerSettingSchema(pluginId: string, schema: SettingNamespaceSchema): void {
@@ -1466,9 +1475,11 @@ export class PluginHost implements PluginHostInterface {
 		return Array.from(this.settingSchemaMap.values());
 	}
 
-	private orderedSettingTransforms(): SettingSchemaTransformEntry[] {
+	private orderedSettingTransforms(
+		transforms: readonly SettingSchemaTransformEntry[] = this.settingSchemaTransforms
+	): SettingSchemaTransformEntry[] {
 		const byOwner = new SvelteMap<string, SettingSchemaTransformEntry[]>();
-		for (const entry of this.settingSchemaTransforms) {
+		for (const entry of transforms) {
 			const list = byOwner.get(entry.pluginId);
 			if (list) {
 				list.push(entry);

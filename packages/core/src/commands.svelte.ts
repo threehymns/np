@@ -65,8 +65,10 @@ export class CommandRegistry {
 	 * (ADR 0012). Transforms must be pure and repeatable.
 	 */
 	registerTransform(pluginId: string, transform: CommandTransform) {
-		this.transforms.push({ pluginId, transform });
-		this.rebuild();
+		const next = [...this.transforms, { pluginId, transform }];
+		const nextMap = rebuildCommands(next);
+		this.transforms = next;
+		this.commandMap = nextMap;
 	}
 
 	/**

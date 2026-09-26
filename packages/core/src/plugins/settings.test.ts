@@ -498,6 +498,23 @@ describe('Settings schema registry lifecycle (host-owned)', () => {
 		expect(new Set(namespacesOf(host)).size).toBe(namespacesOf(host).length);
 		expect(host.getSettingSchema('alpha')?.properties.enabled.default).toBe(false);
 	});
+
+	it('a rejected duplicate namespace leaves no wedged entry behind', async () => {
+		const host = new PluginHost();
+		host.register(pluginWithSchema('alpha'));
+		await host.activateAll();
+		const before = namespacesOf(host);
+
+		expect(() => host.registerSettingSchema('beta', schemaFor('alpha'))).toThrow(
+			DuplicateSettingNamespaceError
+		);
+		expect(namespacesOf(host)).toEqual(before);
+		host.rebuildSettings();
+		expect(namespacesOf(host)).toEqual(before);
+
+		await host.deactivate('alpha');
+		expect(host.getSettingSchema('alpha')).toBeUndefined();
+	});
 });
 
 describe('Settings observability (onChange) for reactive consumers', () => {

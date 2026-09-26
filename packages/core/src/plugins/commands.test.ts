@@ -189,5 +189,23 @@ describe('Command registry on transforms (#196)', () => {
 			host.refreshCommands();
 			expect(idsOf(host.getCommandsByCategory('File'))).toEqual(['file.new']);
 		});
+
+		it('a rejected duplicate registration leaves no wedged entry behind', async () => {
+			const host = new PluginHost();
+			host.register(pluginWithCommands('alpha', [makeCommand('shared.id')]));
+			await host.activateAll();
+			const before = idsOf(host.getCommands());
+
+			expect(() => host.registerCommands('beta', [makeCommand('shared.id')])).toThrow(
+				DuplicateCommandIdError
+			);
+			// Failed registration is atomic: the bad entry is dropped.
+			expect(idsOf(host.getCommands())).toEqual(before);
+			host.rebuildCommands();
+			expect(idsOf(host.getCommands())).toEqual(before);
+
+			await host.deactivate('alpha');
+			expect(host.getCommand('shared.id')).toBeUndefined();
+		});
 	});
 });
