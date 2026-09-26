@@ -1,5 +1,7 @@
 import { expect } from 'bun:test';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { chmodSync } from 'node:fs';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { FileOrigin, SwitchResult } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { IsomorphicGitAdapter, browserHandleRegistry } from '@np/adapters-browser';
@@ -39,10 +41,21 @@ interface BranchSwitching {
 interface Engine {
 	name: string;
 	adapter(r: TestRepo): BranchSwitching;
+	/**
+	 * Whether this engine's worktree can carry a POSIX mode at all.
+	 *
+	 * The browser engine's `GitFileAccess` is a File System Access API handle:
+	 * it exposes a name, a MIME type and bytes, and no permission bits. There is
+	 * no `chmod` to call, so no restore written against it can produce an
+	 * executable file. Tests that would need to create one are scoped to engines
+	 * that can rather than skipped by name.
+	 */
+	preservesFileMode?: boolean;
 }
 
 const spawnEngine: Engine = {
 	name: 'SpawnGitAdapter (real git)',
+	preservesFileMode: true,
 	adapter(r) {
 		return new SpawnGitAdapter(origin(r), (workingDir, args) => runGit(workingDir, r.env, args), nodeFileAccess);
 	}
@@ -50,6 +63,7 @@ const spawnEngine: Engine = {
 
 const isomorphicEngine: Engine = {
 	name: 'IsomorphicGitAdapter (isomorphic-git over node fs)',
+	preservesFileMode: false,
 	adapter(r) {
 		const repoOrigin: FileOrigin = { scheme: 'browser', path: r.path, name: 'repo' };
 		browserHandleRegistry.register(toURI(repoOrigin), new NodeDirectoryHandle('repo', r.path));
@@ -74,6 +88,30 @@ async function commitFiles(r: TestRepo, message: string, files: Record<string, s
 async function createBranch(r: TestRepo, branchName: string): Promise<void> {
 	const res = await r.git(['branch', branchName]);
 	if (res.code !== 0) throw new Error(`git branch ${branchName} failed: ${res.stderr}`);
+}
+
+/** The index mode (`git ls-files -s`) of a path, or null when it has no entry. */
+async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
+	const res = await r.git(['ls-files', '-s', '--', relPath]);
+	if (res.code !== 0) throw new Error(res.stderr);
+	const line = res.stdout.trim();
+	if (line === '') return null;
+	return line.split(/\s+/)[0] ?? null;
+}
+
+/**
+ * The permission bits of a file on disk, or null when it is absent.
+ *
+ * Read straight from the filesystem rather than through either adapter, so it
+ * observes the same surface a user would: the mode of the file they are about
+ * to run, not the mode an engine reports about it.
+ */
+async function worktreeMode(r: TestRepo, relPath: string): Promise<number | null> {
+	try {
+		return (await stat(path.join(r.path, relPath))).mode & 0o7777;
+	} catch {
+		return null;
+	}
 }
 
 for (const engine of ENGINES) {
@@ -568,6 +606,87 @@ for (const engine of ENGINES) {
 				expect(await currentBranch(r)).toBe('main');
 				expect(await worktreeContents(r, 'file.txt')).toBe('dirty work\n');
 				expect(await indexContents(r, 'file.txt')).toBe('base\n');
+			});
+		});
+
+		describe('a staged executable bit', () => {
+			// A branch switch restores dirty paths from snapshots rather than
+			// leaving them to git's own checkout. For a script, the bit a user
+			// set is part of "what I was working on" — restoring the bytes and
+			// dropping the mode leaves a file that looks fine in the app and
+			// fails with `permission denied` when run, with nothing reporting an
+			// error. These cases pin the bit across a switch.
+			//
+			// Both directions matter, and the reason is the restore's own
+			// fallback: it writes `mode: stagedMode ?? 0o100644`, so a LOST mode
+			// reproduces exactly the 100644 expectation and only a 100644 ->
+			// 100755 test can fail. A 100755 -> 100644 test would pass whether the
+			// mode was carried or dropped.
+
+			it.skipIf(
+				engine.preservesFileMode === false,
+				'BrowserGitFS cannot express a POSIX mode: no chmod, and stat reports 100644 for every file'
+			)('carries a staged executable bit through a branch switch', async () => {
+				const r = await createTrackedRepo();
+				await commitFiles(r, 'base', { 'run.sh': '#!/bin/sh\necho hi\n' });
+				await createBranch(r, 'feature');
+				await r.write('other.txt', 'v1\n');
+				await r.git(['add', '-A']);
+				await r.git(['commit', '-m', 'feature']);
+				await r.git(['checkout', 'main']);
+				if ((await r.git(['checkout', 'main'])).code !== 0) throw new Error('checkout main failed');
+
+				// The user marks the script executable and stages that, changing
+				// nothing else. Staging the mode (rather than only chmod-ing the
+				// worktree) is what puts the path into the snapshot at all: a
+				// worktree-only mode never reaches the index, so the case would
+				// never be exercised.
+				chmodSync(path.join(r.path, 'run.sh'), 0o755);
+				const add = await r.git(['add', 'run.sh']);
+				if (add.code !== 0) throw new Error(add.stderr);
+				expect(await indexMode(r, 'run.sh')).toBe('100755');
+				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+
+				const adp = engine.adapter(r);
+				const res = await adp.switchBranch('feature');
+
+				expect(res).toEqual({ status: 'switched' });
+				// Both surfaces must agree after the switch, or the app reports a
+				// clean file that the user cannot run.
+				expect(await indexMode(r, 'run.sh')).toBe('100755');
+				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+			});
+
+			it.skipIf(
+				engine.preservesFileMode === false,
+				'BrowserGitFS cannot express a POSIX mode: no chmod, and stat reports 100644 for every file'
+			)('keeps a script executable when its content is also staged', async () => {
+				const r = await createTrackedRepo();
+				await commitFiles(r, 'base', { 'run.sh': '#!/bin/sh\necho hi\n' });
+				await createBranch(r, 'feature');
+				await r.write('other.txt', 'v1\n');
+				await r.git(['add', '-A']);
+				await r.git(['commit', '-m', 'feature']);
+				if ((await r.git(['checkout', 'main'])).code !== 0) throw new Error('checkout main failed');
+
+				// Content and mode staged together is the common shape, and it
+				// works. Pinning it next to the mode-only case records that the
+				// two are not equivalent: a change to the bytes already puts the
+				// path through the switch, whereas a mode-only change leaves the
+				// bytes identical. Any future engine that handles the first and
+				// regresses the second should be caught here.
+				await r.write('run.sh', '#!/bin/sh\necho changed\n');
+				chmodSync(path.join(r.path, 'run.sh'), 0o755);
+				const add = await r.git(['add', 'run.sh']);
+				if (add.code !== 0) throw new Error(add.stderr);
+
+				const adp = engine.adapter(r);
+				const res = await adp.switchBranch('feature');
+
+				expect(res).toEqual({ status: 'switched' });
+				expect(await worktreeContents(r, 'run.sh')).toBe('#!/bin/sh\necho changed\n');
+				expect(await indexMode(r, 'run.sh')).toBe('100755');
+				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
 			});
 		});
 	});
