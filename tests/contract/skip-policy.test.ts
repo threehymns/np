@@ -1002,6 +1002,66 @@ bunDescribe('contract suite skip policy', () => {
 		expect(scanned.some(f => f.startsWith(`.git${sep}`))).toBe(false);
 	});
 
+	bunTest('the scan reads test files, not every source file', () => {
+		// The walk originally collected all 224 tracked `.ts` files and applied the
+		// detector to each, which flagged legitimate code in ordinary sources: a
+		// string that merely mentions the pattern, and a conditional `skipIf` wrapper
+		// like the one `harness.ts` uses. `stripComments` blanks comments, not string
+		// literals, and both of those read as a skip named `(unnamed skip)`, so the
+		// allowlist could not absorb them either.
+		//
+		// Scoping to files `bun test` would collect closes both at the source, with
+		// no hand-maintained directory list to drift.
+		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
+		expect(scanned).not.toContain('packages/core/src/index.ts');
+		expect(scanned).not.toContain('tests/contract/harness.ts');
+		// A package's own test files are still read, wherever they live.
+		expect(scanned).toContain('packages/core/src/project/vcs.test.ts');
+		expect(scanned).toContain('tests/e2e/vcs.spec.ts');
+	});
+
+	bunTest('the scan follows bun test own file discovery', () => {
+		// A test only reduces coverage if the runner can collect it, so the scan set
+		// and the runner's discovery set have to agree. Verified against `bun test`
+		// v1.4.2: it collects `a.test.ts`, `b.spec.ts`, `c_test.ts` and
+		// `n-test.svelte.test.ts`, and does *not* collect `d-test.ts` or
+		// `e.tests.ts` — so the name must end in `.test.`/`.spec.`, and may be
+		// preceded by a dot, hyphen or underscore.
+		expect(TEST_FILE_PATTERN.test('a.test.ts')).toBe(true);
+		expect(TEST_FILE_PATTERN.test('b.spec.ts')).toBe(true);
+		expect(TEST_FILE_PATTERN.test('c_test.ts')).toBe(true);
+		expect(TEST_FILE_PATTERN.test('h.test.mts')).toBe(true);
+		expect(TEST_FILE_PATTERN.test('g.test.js')).toBe(true);
+
+		// Names `bun test` does not collect, so nothing is lost by matching it.
+		expect(TEST_FILE_PATTERN.test('d-test.ts')).toBe(false);
+		expect(TEST_FILE_PATTERN.test('e.tests.ts')).toBe(false);
+
+		// A source file is not a test file, however test-adjacent its name.
+		expect(TEST_FILE_PATTERN.test('packages/core/src/index.ts')).toBe(false);
+		expect(TEST_FILE_PATTERN.test('harness.ts')).toBe(false);
+	});
+
+	bunTest('the scan is spared the false positives a source file would raise', () => {
+		// Why the narrowing matters: the detector is string-blind. `stripComments`
+		// blanks comments, not string literals, and it reads text, not call
+		// expressions. So both of these are reported as a skip named
+		// `(unnamed skip)` — which the allowlist cannot absorb, since an allowlist
+		// entry matches a test name.
+		const docString = `export const SKIP_DOC = 'it.skipIf(true, 1)(2, 3)';`;
+		expect(findUnconditionalSkips(docString)).toHaveLength(1);
+		const wrapper = `export const maybeSkip = (c: boolean) => c ? it.skipIf(true, 'why') : it;`;
+		expect(findUnconditionalSkips(wrapper)).toHaveLength(1);
+
+		// Neither can come from an ordinary source file now, because no source file
+		// is scanned. `harness.ts` is the real one: it holds the conditional wrapper
+		// this repo actually uses, and is skipped today only because its condition
+		// is an identifier. With the pattern narrowed to test files, moving that
+		// wrapper into a package's `src` stops being able to turn the gate red.
+		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
+		expect(scanned).not.toContain('tests/contract/harness.ts');
+	});
+
 	bunTest('a file named skip-policy.test.ts outside this one is still scanned', () => {
 		// This file is excluded from its own scan because it necessarily contains
 		// the pattern it forbids. That exclusion has to be this exact file. A
