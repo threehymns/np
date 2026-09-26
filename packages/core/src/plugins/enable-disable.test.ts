@@ -879,6 +879,31 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.getDeactivationReason('mid')).toContain('Mid is off because Base is off');
 		});
 
+		it('host.activate refuses to resurrect an explicitly-off dependency', async () => {
+			const host = new PluginHost();
+			host.registerAll(cascadeRegistrations().registrations);
+			await host.activateAll();
+			await host.deactivate('base');
+			expect(host.isPluginActive('base')).toBe(false);
+			expect(host.isPluginActive('mid')).toBe(false);
+
+			let caught: unknown = null;
+			try {
+				await host.activate('mid');
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(caught).toBeInstanceOf(PluginDependencyDisabledError);
+			expect((caught as PluginDependencyDisabledError).disabledDependencies.map((d) => d.id)).toEqual([
+				'base'
+			]);
+			expect((caught as Error).message).toContain('Action:');
+			// Nothing is enabled behind the caller's back.
+			expect(host.isPluginActive('base')).toBe(false);
+			expect(host.isPluginActive('mid')).toBe(false);
+		});
+
 		it('persists cascade victims as off so a restart never auto re-enables them', async () => {
 			const prefsBacking = createPrefsBacking();
 			const host = new PluginHost();

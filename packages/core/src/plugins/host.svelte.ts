@@ -19,6 +19,7 @@ import {
 	InterfaceVersionMismatchError,
 	MissingDependencyError,
 	PluginActivationError,
+	PluginDependencyDisabledError,
 	PluginNotFoundError,
 	SaveCancelledError,
 	UnknownPluginHostMethodError,
@@ -1705,7 +1706,11 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	/**
-	 * Activates a single plugin and any required dependencies.
+	 * Activates a single plugin and any required dependencies that were
+	 * never explicitly turned off. An explicitly-off dependency (one with
+	 * a recorded deactivation reason) is never resurrected behind the
+	 * caller: activation refuses with PluginDependencyDisabledError naming
+	 * it, so the caller enables the dependency first (ADR 0017).
 	 * Rejected after dispose (ADR 0009: disabling/enabling only while running normally).
 	 * Rejected while the plugin is deactivating, so a re-enable can never run
 	 * a second setup behind the teardown still in flight.
@@ -1724,6 +1729,18 @@ export class PluginHost implements PluginHostInterface {
 		}
 
 		const order = this.computeActivationOrder([id]);
+		const off = order
+			.filter(
+				(pluginId) =>
+					pluginId !== id && !this.isPluginActive(pluginId) && this.deactivationReasons.has(pluginId)
+			)
+			.map((pluginId) => ({
+				id: pluginId,
+				name: this.getManifest(pluginId)?.name ?? pluginId
+			}));
+		if (off.length > 0) {
+			throw new PluginDependencyDisabledError(id, off);
+		}
 		for (const pluginId of order) {
 			if (!this.isPluginActive(pluginId)) {
 				await this.executeActivation(pluginId);
