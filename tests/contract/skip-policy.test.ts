@@ -92,12 +92,53 @@ const THIS_FILE = new URL(import.meta.url).pathname;
 const TEST_FILE_PATTERN = /(\.|_|-)(test|spec)\.[cm]?[jt]sx?$/;
 
 /**
+ * Directory names the repository ignores, read from its own `.gitignore`.
+ *
+ * A hand-written exclusion list drifts: it was missing `dist-main`, `.output`,
+ * `.svelte-kit`, `scratch` and `test-results`, all of which this repository
+ * ignores and all of which a build or a Playwright run creates. A transpiled
+ * copy of a test landing in one of them turned the merge gate red with an error
+ * pointing at a file nobody wrote, on machines that had run a build and not on
+ * machines that had not. Under the old `tests/contract`-only scope that was
+ * impossible, because no build output lives there.
+ *
+ * Entries are taken whichever way they are written. `.gitignore` spells a
+ * directory either way — `.svelte-kit/` with a slash or `.output` without — and
+ * reading only the slashed form would have kept `dist-main`'s neighbour
+ * `.output` in the scan, which is the same bug again. `node_modules` is spelled
+ * without a slash too, and is already excluded separately above.
+ *
+ * Entries containing a wildcard are skipped, because a wildcard matches more
+ * than one directory and a basename set cannot express the match. Negations
+ * (`.env.example`, re-included with a leading `!`) are skipped too. What
+ * remains is every literal name, which includes a few file-shaped entries
+ * (`.DS_Store`, `Thumbs.db`, `.env`). Including those is harmless — the walk
+ * consults the set only when deciding whether to descend — and omitting a
+ * directory is not, so the safe direction to err in is to over-include.
+ */
+function ignoredDirectoryNames(): string[] {
+	const gitignore = readFileSync(join(REPO_ROOT, '.gitignore'), 'utf8');
+	const names: string[] = [];
+	for (const raw of gitignore.split('\n')) {
+		const line = raw.trim();
+		if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+		if (line.includes('*')) continue;
+		names.push(line.replace(/\/$/, ''));
+	}
+	return names;
+}
+
+/**
  * Directories never descended into while scanning. `node_modules` is
  * impractical, `.git` is binary, and the vendored agent skill directory is not
  * this project's test surface — a skip in a vendored doc is not a coverage
  * decision made here.
+ *
+ * Derived from the repository's own `.gitignore` by
+ * `ignoredDirectoryNames()`, so a new ignored output directory cannot appear in
+ * the repository without the scan learning to step over it.
  */
-const SCAN_EXCLUDES = new Set(['node_modules', '.git', '.agents', 'dist', 'build']);
+const SCAN_EXCLUDES = new Set(['node_modules', '.git', ...ignoredDirectoryNames()]);
 
 /**
  * Test-file roots the scan covers. This is deliberately the whole repository
@@ -1087,6 +1128,41 @@ bunDescribe('contract suite skip policy', () => {
 		// wrapper into a package's `src` stops being able to turn the gate red.
 		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
 		expect(scanned).not.toContain('tests/contract/harness.ts');
+	});
+
+	bunTest('every ignored directory is one the scan steps over', () => {
+		// The exclusion set used to be hand-written and had already drifted from
+		// `.gitignore`: `dist-main`, `.output`, `.svelte-kit`, `scratch` and
+		// `test-results` were all missing. Each is created by an ordinary `bun run
+		// build` or Playwright run, so the gate's verdict depended on whether the
+		// machine had run one — a transpiled copy of a test in a build directory
+		// turned the merge gate red with an error pointing at a file nobody wrote.
+		//
+		// Deriving the set from `.gitignore` fixes that, and this pins it: every
+		// literal ignored name has to be excluded, whichever way it is spelled.
+		const gitignore = readFileSync(join(REPO_ROOT, '.gitignore'), 'utf8');
+		const ignored: string[] = [];
+		for (const raw of gitignore.split('\n')) {
+			const line = raw.trim();
+			if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+			if (line.includes('*')) continue; // glob, matches more than one name
+			ignored.push(line.replace(/\/$/, ''));
+		}
+		for (const name of ignored) {
+			expect(SCAN_EXCLUDES.has(name)).toBe(true);
+		}
+
+		// The five that drifted, named so the regression is legible rather than
+		// only derivable from `.gitignore`.
+		for (const name of ['dist-main', '.output', '.svelte-kit', 'scratch', 'test-results']) {
+			expect(SCAN_EXCLUDES.has(name)).toBe(true);
+		}
+
+		// And the scan really does step over them, not merely name them.
+		const scanned = walk(REPO_ROOT).map(f => relative(REPO_ROOT, f));
+		for (const ignoredDir of ['dist-main', '.output', 'scratch', 'test-results']) {
+			expect(scanned.some(f => f.split(sep).includes(ignoredDir))).toBe(false);
+		}
 	});
 
 	bunTest('a file named skip-policy.test.ts outside this one is still scanned', () => {
