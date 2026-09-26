@@ -266,4 +266,86 @@ describe('getChanges reports line counts for unusual pathnames', () => {
 			await repo.cleanup();
 		}
 	});
+
+	it('counts an untracked name with a newline, which numstat never reports', async () => {
+		// A different mechanism in the same method: `git diff --numstat` cannot see
+		// untracked files at all, so `getChanges` reads them off disk instead. That
+		// path is joined into the change list through the same quoting-prone
+		// pipeline, so it needs its own proof with an odd name.
+		const repo = await createTrackedRepo();
+		try {
+			await repo.write('base.txt', 'a\n');
+			await repo.git(['add', '-A']);
+			await repo.git(['commit', '-m', 'base']);
+			await repo.write('new\nfile.txt', 'one\ntwo\nthree\n');
+
+			const change = changeFor(await adapterFor(repo).getChanges(), 'new\nfile.txt');
+			expect(change).toBeDefined();
+			expect(change!.status).toBe('U');
+			expect(change!.staged).toBe(false);
+			expect(change!.additions).toBe(3);
+			expect(change!.deletions).toBe(0);
+		} finally {
+			await repo.cleanup();
+		}
+	});
+
+	it('gives a partially staged name both a staged and an unstaged entry', async () => {
+		// Porcelain reports `AM` as one record, and `getChanges` emits TWO changes
+		// from it -- one counted from the staged numstat and one from the unstaged
+		// one. Two independent lookups by the same odd name, which is where a
+		// quoting mismatch would show up twice rather than once.
+		const repo = await createTrackedRepo();
+		try {
+			await repo.write('two\nlines.txt', 'a\n');
+			await repo.git(['add', '-A']);
+			await repo.git(['commit', '-m', 'base']);
+
+			await repo.write('two\nlines.txt', 'b\nb\nb\n');
+			await repo.git(['add', '-A']);
+			await repo.write('two\nlines.txt', 'b\nb\nb\nc\nd\n');
+
+			const changes = await adapterFor(repo).getChanges();
+			const entries = changes.filter((c) => c.filepath === 'two\nlines.txt');
+			expect(entries.length).toBe(2);
+
+			const staged = entries.find((c) => c.staged);
+			const unstaged = entries.find((c) => !c.staged);
+			expect(staged).toBeDefined();
+			expect(unstaged).toBeDefined();
+			// One line became three in the index...
+			expect(staged!.additions).toBe(3);
+			expect(staged!.deletions).toBe(1);
+			// ...and two more lines were added to the worktree after staging.
+			expect(unstaged!.additions).toBe(2);
+			expect(unstaged!.deletions).toBe(0);
+		} finally {
+			await repo.cleanup();
+		}
+	});
+
+	it('returns no changes for a clean tree, where numstat emits zero bytes', async () => {
+		// The empty-output guard in `parseNumstat`. An empty string must not become
+		// a key, and the whole method must return cleanly rather than throwing.
+		const repo = await createTrackedRepo();
+		try {
+			await repo.write('two\nlines.txt', 'a\n');
+			await repo.write('base.txt', 'a\n');
+			await repo.git(['add', '-A']);
+			await repo.git(['commit', '-m', 'base']);
+
+			// Verified empirically: on a clean tree both numstat calls write zero
+			// bytes and exit 0, so this really is the empty-input path.
+			const staged = await repo.git(['diff', '--cached', '--numstat', '-z']);
+			expect(staged.code).toBe(0);
+			expect(staged.stdout).toBe('');
+			const unstaged = await repo.git(['diff', '--numstat', '-z']);
+			expect(unstaged.code).toBe(0);
+			expect(unstaged.stdout).toBe('');
+
+			expect(await adapterFor(repo).getChanges()).toEqual([]);
+		} finally {
+			await repo.cleanup();
+		}
+	});
 });
