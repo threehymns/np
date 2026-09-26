@@ -1121,6 +1121,46 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return false;
 	}
 
+	/**
+	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * `filepath`, or undefined when `filepath` is not such a destination.
+	 *
+	 * An unstaged worktree rename is invisible to git: the statusMatrix reports the
+	 * destination as untracked and the source as a worktree deletion that is still
+	 * in the index. For this case, measured directly, the rows are
+	 * `[["moved.txt",0,2,0],["src.txt",1,0,1]]` — a `[path, head, worktree, stage]`
+	 * tuple where an untracked destination is `worktree === 2` with `stage === 0`,
+	 * and a worktree-deleted source still in the index is `worktree === 0` with
+	 * `stage === 1` (isomorphic-git's stage numbers differ from git's; the
+	 * non-zero, non-worktree value is what marks it as still present in the index).
+	 *
+	 * The pair is recovered by content, exactly as the desktop engine does: a genuine
+	 * rename is a byte-identical move by definition, and a destination the user has
+	 * edited will not match, so it is simply treated as an untracked file.
+	 */
+	private async findUnstagedRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | undefined> {
+		const destination = matrix.find(([p]) => p === filepath);
+		if (!destination) return undefined;
+		const [, destHead, destWorktree, destStage] = destination;
+		// Untracked destination: absent from HEAD and the index, present in the worktree.
+		if (!(destHead === 0 && destStage === 0 && destWorktree !== 0)) return undefined;
+
+		const destinationText = await this.readWorktreeText(filepath);
+		if (destinationText === null) return undefined;
+
+		for (const [candidate, , worktree, stage] of matrix) {
+			// Source candidate: missing from the worktree, still recorded in the index.
+			if (candidate === filepath || worktree !== 0 || stage === 0) continue;
+			const staged = await this.readStageEntry(candidate);
+			if (!staged) continue;
+			const stagedText = await this.readBlobText(staged.oid);
+			if (stagedText !== null && stagedText === destinationText) {
+				return candidate;
+			}
+		}
+		return undefined;
+	}
+
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await this.readStatusMatrix();
@@ -1131,7 +1171,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			// Unstaged scope: reset only the worktree copy from the index version; the
 			// index is never touched. A path absent from the index (untracked file or
 			// worktree-only rename) has no staged copy to restore from, so its worktree
-			// file is cleaned instead.
+			// file is cleaned instead. An unstaged worktree rename is the case where
+			// cleaning the destination would also lose the tracked source, so restore
+			// the source from the index first — the recovery this engine always meant
+			// to perform, but which porcelain v1 / statusMatrix cannot express.
 			const staged = await this.readStageEntry(filepath);
 			if (staged) {
 				const text = await this.readBlobText(staged.oid);
@@ -1139,6 +1182,15 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, text);
 				}
 			} else {
+				const source = await this.findUnstagedRenameSource(matrix, filepath);
+				if (source) {
+					const sourceStaged = await this.readStageEntry(source);
+					const sourceText = sourceStaged ? await this.readBlobText(sourceStaged.oid) : null;
+					if (sourceText === null) {
+						throw new Error(`Failed to restore rename source for ${filepath}`);
+					}
+					await this.fs!.promises.writeFile(`${this.dir}/${source}`, sourceText);
+				}
 				await this.unlinkIfPresent(filepath);
 			}
 			return;

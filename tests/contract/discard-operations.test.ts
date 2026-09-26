@@ -313,17 +313,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
-		it.skipIf(
-			true,
-			'untestable: an unstaged worktree rename is not representable in porcelain v1 ' +
-				'(` D src.txt` + `?? moved.txt`, no rename pair), so both adapters treat the discard ' +
-				'as an untracked-file clean and leave the source deleted. Written per review and ' +
-				'verified failing on both engines (2026-08-18): the source would need to return to ' +
-				'the worktree and the destination be removed; SpawnGitAdapter.resolveOrigPath cannot ' +
-				'find a source for an unstaged rename, so the recovery branch in discardChanges ' +
-				'(staged:false) never triggers — fixing that is a behavior change in both adapters, ' +
-				'out of scope for this layer.'
-		)('restores the source and removes the destination of an unstaged worktree rename', async () => {
+		it('restores the source and removes the destination of an unstaged worktree rename', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			// Unstaged worktree rename: git never pairs these, so the adapter sees a
@@ -339,6 +329,46 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+		});
+
+		// The source is recovered by matching the destination's bytes against the
+		// index content of paths git reports as worktree-deleted. These two tests pin
+		// the cases where that match must NOT fire, so the recovery can never
+		// resurrect a file the user did not rename.
+
+		it('treats an edited destination as an untracked file, never resurrecting a deleted source', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// Same shape as a rename, but the user then edited the destination, so its
+			// content no longer matches the source. There is no rename to undo: the
+			// deletion is unrelated and must stay deleted.
+			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
+			await r.write('moved.txt', DEST_EDITED);
+			const adapter = engine.adapter(r);
+
+			await adapter.discardChanges('moved.txt', { staged: false });
+
+			// The untracked destination is discarded; the unrelated deletion stands.
+			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
+		});
+
+		it('never restores a source that is still present in the worktree', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// An untracked copy of a tracked file whose source the user still has.
+			// Content matching alone would pair these, but the source is not deleted,
+			// so there is no rename to undo and the source must not be rewritten.
+			await r.write('copy.txt', SRC_CONTENT);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'copy.txt' }]);
+
+			await adapter.discardChanges('copy.txt', { staged: false });
+
+			expect(await worktreeContents(r, 'copy.txt')).toBe(null);
+			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await porcelainStatus(r)).toEqual([]);
 		});
 	});
 
