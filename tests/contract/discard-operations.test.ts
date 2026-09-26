@@ -103,6 +103,31 @@ async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
 	return res.stdout.trim().split(/\s+/)[0] ?? null;
 }
 
+const RECREATED_WORKTREE = 'C\nD\nE\n';
+
+/**
+ * A file deleted, with the deletion staged, then recreated on disk.
+ *
+ * git reports this as two entries — `D  src.txt` (in HEAD, gone from the index) and
+ * `?? src.txt` (present again, untracked) — and the deletion was never committed, so
+ * `src.txt` is still in HEAD with its original `SRC_CONTENT`. Anything that treats
+ * the index or HEAD as the answer to "what should this path be" therefore picks
+ * `SRC_CONTENT` over the bytes the user can only lose: this content was never
+ * staged and never committed, so it exists nowhere else.
+ */
+async function recreateAfterStagedDelete(r: TestRepo): Promise<void> {
+	await baseRepo(r);
+	const rm = await r.git(['rm', '-q', '-f', 'src.txt']);
+	if (rm.code !== 0) throw new Error(rm.stderr);
+	await r.write('src.txt', RECREATED_WORKTREE);
+}
+
+/** The `D  ` + `?? ` pair git emits for that state. */
+const RECREATED_STATUS: PorcelainEntry[] = [
+	{ x: 'D', y: ' ', path: 'src.txt' },
+	{ x: '?', y: '?', path: 'src.txt' }
+];
+
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — discard of staged changes`, () => {
 		it('discards a staged modification, returning the index and worktree to HEAD', async () => {
@@ -523,6 +548,22 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
+		it('keeps a recreated file when discarding its unstaged changes', async () => {
+			const r = await createTrackedRepo();
+			await recreateAfterStagedDelete(r);
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual(RECREATED_STATUS);
+
+			await adapter.discardChanges('src.txt', { staged: false });
+
+			// The unstaged copy is the only copy of `C\nD\nE\n`, so discarding
+			// unstaged changes must not remove it. In git's model that copy is
+			// untracked, so there are no unstaged changes to revert, and the state
+			// is left exactly as it was rather than half-acted on.
+			expect(await worktreeContents(r, 'src.txt')).toBe(RECREATED_WORKTREE);
+			expect(await porcelainStatus(r)).toEqual(RECREATED_STATUS);
+		});
+
 		it('cleans an untracked file without a scope, never touching unrelated worktree deletions', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
@@ -597,6 +638,36 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'untracked.txt')).toBe(null);
 			expect(await worktreeContents(r, 'nested/deep.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
+		});
+
+		it('discardAll keeps a recreated file while still restoring everything else', async () => {
+			const r = await createTrackedRepo();
+			await recreateAfterStagedDelete(r);
+			// An ordinary staged edit plus an untracked file, so the discard has real
+			// work to do alongside the path it must leave alone. Only `hello.ts` is
+			// staged: `add -A` would stage the recreated file back into the index and
+			// end the state under test.
+			await r.write('hello.ts', HELLO_V1);
+			const add = await r.git(['add', 'hello.ts']);
+			if (add.code !== 0) throw new Error(add.stderr);
+			await r.write('untracked.txt', 'untracked\n');
+			const adapter = engine.adapter(r);
+			expect(await porcelainStatus(r)).toEqual([
+				{ x: 'M', y: ' ', path: 'hello.ts' },
+				...RECREATED_STATUS,
+				{ x: '?', y: '?', path: 'untracked.txt' }
+			]);
+
+			await adapter.discardAll();
+
+			// Every other change is discarded, and the recreated file survives: its
+			// content is in neither the index nor HEAD, so restoring "everything"
+			// from them is what destroys it. The staged deletion also survives the
+			// restore, which is why the file is left looking deleted-with-a-copy.
+			expect(await worktreeContents(r, 'src.txt')).toBe(RECREATED_WORKTREE);
+			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await worktreeContents(r, 'untracked.txt')).toBe(null);
+			expect(await porcelainStatus(r)).toEqual(RECREATED_STATUS);
 		});
 	});
 
