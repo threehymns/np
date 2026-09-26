@@ -306,6 +306,28 @@ describe('ElectronConfigStorage', () => {
 		expect(lastWritten).toContain('"word_wrap": false');
 	});
 
+	it('13. Plugin enablement and settings namespaces stay isolated on desktop', async () => {
+		mockReadConfigFileSync.mockReturnValue(`{\n  "zoom": 100\n}`);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		prefs.setPluginEnabled('git', false);
+		await flush();
+		prefs.set('git', 'show_blame', true);
+		await flush();
+
+		// Both writes ran; the last write must preserve the enablement flag.
+		expect(mockWriteConfigFile.mock.calls.length).toBeGreaterThanOrEqual(2);
+		const lastWritten = mockWriteConfigFile.mock.calls.at(-1)![0] as string;
+		expect(lastWritten).toContain('"show_blame"');
+
+		// Enablement survives the settings write (read-your-write via pending).
+		expect(prefs.isPluginEnabled('git', true)).toBe(false);
+		// Settings survive the enablement write.
+		expect(prefs.resolve('git', 'show_blame').value).toBe(true);
+	});
+
 	it('12. Queued write resolution: the newest write wins the final cached state even when the queue frees one write at a time', async () => {
 		const initialJsonc = `{\n  "zoom": 100\n}`;
 		mockReadConfigFileSync.mockReturnValue(initialJsonc);
