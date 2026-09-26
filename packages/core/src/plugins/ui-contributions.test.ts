@@ -433,6 +433,37 @@ describe('Additive UI Contributions (ADR 0010, ADR 0012, ADR 0015, #200)', () =>
 			expect(host.ui.getMountedContributions('pilot-plugin')).toHaveLength(0);
 		});
 
+		it('mount ownership and missing-contribution errors carry an Action for AI fixers', async () => {
+			const host = new PluginHost();
+			host.register({
+				manifest: { id: 'p1', name: 'Plugin 1', version: 0 },
+				setup: (h) => {
+					h.registerSidebarPanel('p1', {
+						id: 'panel-1',
+						title: 'Panel 1',
+						order: 1,
+						component: createPilotComponent('panel-1')
+					});
+				}
+			});
+			await host.activate('p1');
+
+			try {
+				host.mountContribution('p2', 'panel-1', {});
+				expect.unreachable('wrong-owner mount must throw');
+			} catch (error) {
+				expect((error as Error).message).toContain('"p1"');
+				expect((error as Error).message).toContain('Action:');
+			}
+			try {
+				host.mountContribution('p1', 'missing-panel', {});
+				expect.unreachable('missing mount must throw');
+			} catch (error) {
+				expect((error as Error).message).toContain('"missing-panel"');
+				expect((error as Error).message).toContain('Action:');
+			}
+		});
+
 		it('removes host contributions and mounted views before running plugin cleanup', async () => {
 			const host = new PluginHost();
 			let panelsDuringCleanup = -1;

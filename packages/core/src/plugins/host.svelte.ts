@@ -1404,11 +1404,17 @@ export class PluginHost implements PluginHostInterface {
 		const contribution = panel ?? statusItem ?? tabContent;
 
 		if (!contribution) {
-			throw new Error(`UI contribution "${contributionId}" not found in registry.`);
+			throw new Error(
+				`UI contribution "${contributionId}" not found in registry.\n` +
+					`Action: Register "${contributionId}" via host.registerSidebarPanel/registerStatusBarItem/registerTabContent before mounting, ` +
+					`or check the id for a typo (host.ui.getSidebarPanels()/getStatusBarItems()/getTabContents() lists registered ids).`
+			);
 		}
 		if (contribution.pluginId !== pluginId) {
 			throw new Error(
-				`UI contribution "${contributionId}" belongs to "${contribution.pluginId}", not "${pluginId}".`
+				`UI contribution "${contributionId}" belongs to "${contribution.pluginId}", not "${pluginId}".\n` +
+					`Action: Mount "${contributionId}" with its owning plugin id "${contribution.pluginId}" (from the manifest that registered it), ` +
+					`or move the registration into "${pluginId}" if it should own the UI.`
 			);
 		}
 
