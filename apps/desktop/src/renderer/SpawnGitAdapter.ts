@@ -726,8 +726,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// the name porcelain reports, so it is the name getChanges looks up.
 			//
 			// The source is keyed too, and that key is currently unobservable.
-			// Mutating it to a deliberately wrong value ({999, 999}) leaves all
-			// 1182 tests passing, because git only emits a paired record when the
+			// Mutating it to a deliberately wrong value ({999, 999}) leaves the
+			// whole suite green, because git only emits a paired record when the
 			// source is itself in the diff, which means git also emits an ordinary
 			// record for it -- and that later record overwrites this one. For a
 			// pure rename the source is reported only inside the `R` record's
