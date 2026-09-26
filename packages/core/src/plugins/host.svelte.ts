@@ -935,7 +935,15 @@ export class PluginHost implements PluginHostInterface {
 			release = resolve;
 		});
 		this.saveQueue = prev.then(() => current);
-		await this.awaitSaveTurn(prev);
+		try {
+			await this.awaitSaveTurn(prev);
+		} catch (error) {
+			// This caller queued a slot but never entered the save turn, so
+			// nothing below will release it. Without this the slot stays
+			// unresolved forever and every later save waits on it.
+			release();
+			throw error;
+		}
 		const prevSaveId = this.currentSaveId;
 		this.currentSaveId = ++this.nextSaveId;
 		try {

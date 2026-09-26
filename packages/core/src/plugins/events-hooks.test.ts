@@ -840,6 +840,48 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			errorSpy.mockRestore();
 		});
 
+		it('releases the save queue slot when a queued re-entry wait is rejected', async () => {
+			// A re-entrant save is refused, but it must not keep the slot it
+			// queued behind: an unrelated later save still gets its turn.
+			const operationContext = {
+				propagation: 'none' as const,
+				get: () => undefined,
+				run: <T>(_context: unknown, callback: () => T): T => callback()
+			};
+			const host = new PluginHost({ operationContext, saveQueueTimeoutMs: 25 });
+			const storage = createLocalMockStorage({ '/first.md': '', '/other.md': '', '/later.md': '' });
+			const workspace = new Workspace(storage, createMockVcsFactory(), new MemorySessionPersistence(), host);
+			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+			await hookOwner(host, 'browser-async-saver');
+			let caughtReentryError: unknown = null;
+			const reentrantDoc = new DocumentSession(storage, '', { scheme: 'file', path: '/other.md', name: 'other.md' });
+			host.registerBeforeSaveHook('browser-async-saver', async () => {
+				await Promise.resolve();
+				try {
+					await workspace.saveDocument(reentrantDoc);
+				} catch (error) {
+					caughtReentryError = error;
+					throw error;
+				}
+			});
+
+			const firstDoc = new DocumentSession(storage, '', { scheme: 'file', path: '/first.md', name: 'first.md' });
+			expect(await workspace.saveDocument(firstDoc)).toBe(true);
+			expect(caughtReentryError).toBeInstanceOf(HookReentryError);
+
+			const laterDoc = new DocumentSession(storage, '', { scheme: 'file', path: '/later.md', name: 'later.md' });
+			laterDoc.content = 'later content';
+			const laterSave = workspace.saveDocument(laterDoc);
+			const outcome = await Promise.race([
+				laterSave.then((saved) => `saved:${saved}` as const),
+				new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 500))
+			]);
+			errorSpy.mockRestore();
+
+			expect(outcome).toBe('saved:true');
+		});
+
 		it('flows repository refresh on save through the Git plugin afterSave hook with no behavior change', async () => {
 			const host = new PluginHost();
 			const { gitRegistration } = await import('./git/registration');
