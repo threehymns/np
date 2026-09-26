@@ -30,8 +30,23 @@ import { createTrackedRepo } from './harness';
  * `discard-operations.test.ts` from 2026-08-18, hiding a real data-loss bug in
  * both engines the whole time. This gate is what would have caught it.
  *
+ * The same exit-0 silence applies to `it.skip`, `it.todo` and — worst of all —
+ * `it.only`, which additionally deletes every sibling test in its file. An
+ * earlier version of this gate claimed to police `describe.skip` in this
+ * comment while its detector only matched `skipIf(true, ...)`, so `.skip`,
+ * `.todo` and `.only` all passed silently. All four families are enforced now.
+ *
  * The rule is enforced on the source, not on test output, so it holds even when
  * the suite is run with a filter that skips whole files.
+ *
+ * This is a lint, not an enforcement mechanism, and the boundary of what it can
+ * see is deliberate: it matches a receiver spelled `it`, `test` or `describe`
+ * followed by a literal call, tolerating whitespace around the dot. A skip
+ * reached through a variable — `const s = it.skip; s('x', fn)` — is not matched.
+ * Resolving that needs an AST parse, which is a different change at a different
+ * altitude, and it is tracked in `KNOWN_BLIND_SPOTS` so a reader cannot infer
+ * more coverage than exists. The version-floor guard in `harness.ts` is written
+ * through a variable, which is why the allowlist below can stay empty.
  *
  * Scope: the whole repository, not just this folder. The gate's first version
  * scanned only `tests/contract`, which holds 9 test files — 9 of the
@@ -87,8 +102,8 @@ const THIS_FILE = new URL(import.meta.url).pathname;
  * collects would be the more dangerous direction.
  *
  * Filtering to test files is what keeps the gate honest rather than merely
- * strict. The detector reads text, not call expressions, and `stripComments`
- * blanks comments but not string literals, so scanning source files raised two
+ * strict. The detector reads text, not call expressions, and `stripNonCode`
+ * blanks comments and literal bodies alike, so scanning source files raised two
  * false positives the allowlist cannot absorb, since it matches test names: a
  * doc string mentioning the pattern, and a conditional `skipIf` wrapper like
  * the one `harness.ts` uses. Both were reported as `(unnamed skip)`.
@@ -152,6 +167,37 @@ const SCAN_EXCLUDES = new Set(['node_modules', '.git', ...ignoredDirectoryNames(
  * filter.
  */
 const SCAN_ROOTS: string[] = [REPO_ROOT];
+
+/**
+ * A skip is found by reading the source, so some shapes are out of reach. Naming
+ * them here is the point: the alternative is a gate whose comment implies a
+ * guarantee it does not make, which is how the previous two versions of this file
+ * shipped.
+ *
+ *   - A receiver reached through a variable: `const s = it.skip; s('x', fn)`, or
+ *     `const { skip } = it; skip('x', fn)`. The regex matches receiver *text*; it
+ *     does not resolve what an identifier was assigned. The version-floor guard
+ *     in `harness.ts` has this shape — deliberately, since it is the predicate
+ *     `ALLOWED_SKIPS` documents — and it is also the shape a maintainer
+ *     generalising `const focused = it.only` would write, which is a real hole.
+ *   - A computed member: `it['skip']('x', fn)`.
+ *   - A receiver that is not a test registrar at all, reached by the same
+ *     mechanism. Widening the match to any identifier would close the first two
+ *     and open this one; `skip`, `todo` and `only` are not general-purpose method
+ *     names, but `anyIdentifier.skipIf(true, …)` on something that is not a
+ *     registrar is a false positive waiting to happen.
+ *
+ * Closing the first shape needs an AST parse rather than a wider pattern, which is
+ * a larger change than a lint should carry on its own.
+ *
+ * One test below asserts that the first shape really is still missed, so this
+ * list cannot quietly go stale.
+ */
+const KNOWN_BLIND_SPOTS: string[] = [
+	'a skip whose receiver is reached through a variable',
+	'a computed member such as it[\'skip\']',
+	'a widened receiver that is not a test registrar',
+];
 
 /**
  * The version-floor guard, and the only thing the allowlist covers.
@@ -237,167 +283,148 @@ function walk(dir: string, out: string[] = [], seen = new Set<string>(), depth =
 	return out;
 }
 
+
 /**
- * Blanks everything the scan must not read: comment bodies, string and template
- * literal bodies, and regex literal bodies. The gate's own documentation quotes
- * the pattern it forbids, and so does any test that explains the rule, names the
- * forbidden shape in a constant, or searches for it with a regex. None of those
- * is a skip, and reporting them sends the developer to edit prose.
+ * Blanks everything in the source that is not code the detector should read:
+ * comments, and the contents of string, template and regex literals.
  *
- * Blanking replaces each body with spaces of the same length and leaves every
- * newline in place, so the blanked text occupies exactly the original grid: an
- * offset taken from it is an offset into the file a developer is looking at, and
- * `file:line` stays exact.
- *
- * This is a scanner rather than a parse because the gate only needs to know where
- * code begins and ends, not what it means.
+ * Literals are blanked, not deleted, and every replacement is the same length as
+ * what it replaces, with newlines left where they were. The detector works on
+ * character offsets into this string, so a shorter output would shift every line
+ * number it reports; a gate that names the wrong line is worse than one that does
+ * not fire. A test pins that invariant directly.
  */
-function stripComments(text: string): string {
-	const out: string[] = [];
-	let i = 0;
-	while (i < text.length) {
-		const c = text[i];
-		if (c === '/' && text[i + 1] === '/') {
-			i = blank(out, text, i, lineEnd(text, i), '');
-		} else if (c === '/' && text[i + 1] === '*') {
-			const close = text.indexOf('*/', i + 2);
-			const end = close === -1 ? text.length : Math.min(close + 2, text.length);
-			i = blank(out, text, i, end, '');
-		} else if (c === '/' && startsRegex(text, i)) {
-			// A `(` inside a regex has to be escaped or spelled in a character class,
-			// so the bare byte the gate looks for is hard to write by accident — but a
-			// test that searches test sources for the forbidden shape is exactly the
-			// kind of test that would spell it, and it is not a skip.
-			i = blank(out, text, i, regexEnd(text, i), '');
-		} else if (c === "'" || c === '"') {
-			// Quotes are kept, because a name read off the blanked text is delimited
-			// by them. The body is not kept.
-			i = blank(out, text, i, quoteEnd(text, i, c), c);
-		} else if (c === '`') {
-			i = blankTemplate(out, text, i);
-		} else {
-			out.push(c);
-			i++;
+function stripNonCode(source: string): string {
+	// Two passes rather than one, because the naive single pass is wrong in both
+	// directions: a `//` inside a string literal is not a comment (taking it for
+	// one hides every real skip after it on that line), and a `/*` inside a
+	// comment is not a block opener (taking it for one swallows the rest of the
+	// file and reports nothing). Comments are removed first, so a comment that
+	// contains a quote cannot be read as an unterminated literal, and the
+	// remaining quotes are all real ones.
+	const out = source
+		.replace(/\/\*[\s\S]*?\*\//g, blankKeepingNewlines)
+		.replace(/(^|[^:])\/\/[^\n]*/g, blankKeepingNewlines);
+	return blankLiterals(out);
+}
+
+/**
+ * Replaces `m` with spaces, keeping its newlines, so offsets and line numbers
+ * survive.
+ */
+function blankKeepingNewlines(m: string): string {
+	return m.replace(/[^\n]/g, ' ');
+}
+
+/**
+ * Blanks the body of every string, template and regex literal, keeping the
+ * delimiters and every offset intact.
+ *
+ * An unterminated literal is left alone rather than blanked to the end of the
+ * file. A lone quote is not proof of a literal — apostrophes appear in comments
+ * already removed, and treating one as an opener would silently hide every skip
+ * below it, which is precisely the failure this gate exists to prevent.
+ */
+function blankLiterals(source: string): string {
+	const out = source.split('');
+	for (let i = 0; i < source.length; i++) {
+		const open = source[i];
+		if (open === '/') {
+			const end = endOfRegex(source, i);
+			if (end !== -1) {
+				blank(i, end);
+				i = end;
+			}
+			continue;
 		}
+		if (!isLiteralOpener(open)) continue;
+		const end = endOfLiteral(source, i);
+		// A literal that never closes is not treated as one: the risk of hiding
+		// real skips outweighs the false positive this leaves behind.
+		if (end === -1) continue;
+		blank(i, end);
+		i = end;
 	}
 	return out.join('');
+
+	/** Blanks the half-open range, keeping the delimiters at each end. */
+	function blank(from: number, to: number): void {
+		for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' ';
+	}
 }
 
 /**
- * Copies `text[from, to)` to `out` as spaces, keeping newlines, and returns `to`.
- * `keep` is written verbatim at both ends when set — the quotes around a string
- * body, or the `${` and `}` of an interpolation.
+ * Whether `c` can open a string, template or regex literal. A quoted literal is
+ * closed by the same character it was opened with.
  */
-function blank(out: string[], text: string, from: number, to: number, keep: string): number {
-	if (keep) out.push(keep[0]);
-	for (let i = from + keep.length; i < to - keep.length; i++) {
-		out.push(text[i] === '\n' ? '\n' : ' ');
-	}
-	if (keep) out.push(keep[keep.length - 1]);
-	return to;
+function isLiteralOpener(c: string): boolean {
+	return c === "'" || c === '"' || c === '`';
 }
 
 /**
- * Copies a whole template literal, blanking its text but keeping the interpolation
- * expressions verbatim: an expression is code, so a skip written inside one is a
- * real skip and has to survive.
+ * Index of the quote closing the literal opened at `open`, or -1 when the literal
+ * runs off the end of the source.
  */
-function blankTemplate(out: string[], text: string, from: number): number {
-	out.push('`');
-	const end = quoteEnd(text, from, '`');
-	const close = end - 1;
-	let i = from + 1;
-	while (i < close) {
-		if (text[i] === '\\') {
-			out.push(' ', ' ');
-			i += 2;
-		} else if (text[i] === '$' && text[i + 1] === '{') {
-			const next = copyInterpolation(out, text, i + 2, close);
-			// An interpolation that never closes means the backtick we took for the
-			// literal's end was itself inside it, so the literal does not close here.
-			if (next === close) return end;
-			i = next;
-		} else {
-			out.push(text[i] === '\n' ? '\n' : ' ');
-			i++;
-		}
-	}
-	out.push('`');
-	return end;
-}
-
-/** Copies an interpolation's expression verbatim and returns the index past its `}`. */
-function copyInterpolation(out: string[], text: string, from: number, to: number): number {
-	out.push(' ', ' ');
-	let depth = 1;
-	for (let i = from; i < to; i++) {
-		if (text[i] === '{') depth++;
-		else if (text[i] === '}') {
-			depth--;
-			if (depth === 0) {
-				out.push('}');
-				return i + 1;
-			}
-		}
-		out.push(text[i]);
-	}
-	return to;
-}
-
-/**
- * Whether a regex literal opens at `at`, decided from the last significant token:
- * a regex cannot follow an operand or a closing bracket, which are exactly the
- * cases where a `/` is division. Getting this backwards is harmless in the
- * direction that matters — a division read as a regex ends at the next `/` on the
- * same line — because the body it blanks holds no pattern the gate looks for.
- */
-function startsRegex(text: string, at: number): boolean {
-	let i = at - 1;
-	while (i >= 0 && /\s/.test(text[i])) i--;
-	if (i < 0) return true;
-	if (/[)\]}]/.test(text[i])) return false;
-	if (/[A-Za-z0-9_$]/.test(text[i])) {
-		// A keyword is an operand boundary; a plain identifier ends one.
-		const word = /[A-Za-z0-9_$]+$/.exec(text.slice(0, i + 1))?.[0];
-		return !word || ['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void'].includes(word);
-	}
-	return true;
-}
-
-/** Index just past the closing quote of the `'…'`, `"…"` or `` `…` `` starting at `at`. */
-function quoteEnd(text: string, at: number, quote: string): number {
-	for (let i = at + 1; i < text.length; i++) {
-		if (text[i] === '\\') {
+function endOfLiteral(source: string, open: number): number {
+	for (let i = open + 1; i < source.length; i++) {
+		if (source[i] === '\\') {
 			i++;
 			continue;
 		}
-		if (text[i] === quote) return i + 1;
+		if (source[i] === source[open]) return i;
+		// An unescaped newline ends a quoted literal; only a template may span
+		// lines.
+		if (source[i] === '\n' && source[open] !== '`') return -1;
 	}
-	return text.length;
+	return -1;
 }
 
-/** Index just past the `/` that ends the regex literal opened at `at`. */
-function regexEnd(text: string, at: number): number {
-	let inClass = false;
-	for (let i = at + 1; i < text.length; i++) {
-		if (text[i] === '\n') return i + 1;
-		if (text[i] === '\\') {
+/**
+ * Index of the `/` closing a regex literal opened at `open`, or -1 when the `/` is
+ * division or a path instead.
+ *
+ * Deciding that needs to know the previous meaningful character: after an
+ * operand a `/` divides, after `(` or `=` or `,` or `return` it opens a literal.
+ */
+function endOfRegex(source: string, open: number): number {
+	if (!source[open + 1]) return -1;
+	// A regex cannot start with `*`, so `/*` is a comment, not an empty literal.
+	if (source[open + 1] === '*') return -1;
+	const before = previousMeaningful(source, open);
+	if (before && /[\w$)\]]/.test(before)) return -1;
+	for (let i = open + 1; i < source.length; i++) {
+		if (source[i] === '\\') {
 			i++;
 			continue;
 		}
-		if (text[i] === '[') inClass = true;
-		else if (text[i] === ']') inClass = false;
-		else if (text[i] === '/' && !inClass) return i + 1;
+		if (source[i] === '[') {
+			// Skip a character class wholesale: `[` and `]` are literal inside it.
+			const end = source.indexOf(']', i);
+			if (end === -1) return -1;
+			i = end;
+			continue;
+		}
+		if (source[i] === '/') {
+			// A modifier follows the closing slash, and is part of the literal.
+			const mod = /^[a-z]*/.exec(source.slice(i + 1))![0];
+			return i + mod.length;
+		}
+		if (source[i] === '\n') return -1;
 	}
-	return text.length;
+	return -1;
 }
 
-/** Index of the newline ending the line `at` is on, or the end of the text. */
-function lineEnd(text: string, at: number): number {
-	const newline = text.indexOf('\n', at);
-	return newline === -1 ? text.length : newline;
+/**
+ * The last non-whitespace, non-comment character before `index`, or '' at the
+ * start of the source. Comments are already blanked, so whitespace alone is
+ * enough to skip past them.
+ */
+function previousMeaningful(source: string, index: number): string {
+	for (let i = index - 1; i >= 0; i--) {
+		if (!/\s/.test(source[i])) return source[i];
+	}
+	return '';
 }
-
 
 /**
  * Records the call that a pattern match opened on: its 1-based line and its first
@@ -420,6 +447,18 @@ interface SkipSite {
  * Both are matched by the same walk, so one spelling cannot be added without the
  * other. `cond` is only inspected for the conditional shape; a plain `skip`/`todo`
  * has no condition to lift, so it is reported without one.
+ *
+ * The receiver and the modifier are matched with whitespace allowed on either side
+ * of the dot, so a wrapped spelling — `it\n  .skip(` — is caught. Without that a
+ * formatter that breaks a chain across lines is enough to hide an unconditional
+ * skip from the gate entirely, which is the one failure this gate cannot have.
+ * What that does *not* reach is a receiver reached through a variable
+ * (`const s = it.skip; s(...)`): see the header.
+ *
+ * The match may be padded with whitespace, so its last character is not always the
+ * paren: `it\n  .skip(` ends on `(` but `describe .skipIf (` ends on a space. The
+ * `(` is what the argument list is anchored to, so it is located inside the match's
+ * own extent rather than assumed to be its last character.
  */
 interface SiteShape {
 	/** The member being matched after the call target. */
@@ -466,14 +505,32 @@ function argsAt(source: string, blanked: string, open: number): string {
 }
 
 /**
- * Finds every test call in `source` whose target is a member in `shapes`, as
- * `{ line, name }` sites.
+ * Finds every way a test can be silently removed from the run.
+ *
+ * Every site this reports removes coverage while `bun test` still exits 0:
+ *
+ *   - `it.skipIf(true, ...)` — unconditional by construction. A `skipIf` with a
+ *     predicate or a `false` literal is a guard that can lift itself, so it is
+ *     deliberately not reported (see `ALLOWED_SKIPS`).
+ *   - `it.skip(...)` / `describe.skip(...)` — always unconditional.
+ *   - `it.todo(...)` — the body is never run.
+ *   - `it.only(...)` — the worst of the four, and the reason the shapes are an
+ *     explicit list rather than a loose pattern match. `only` does not merely
+ *     skip the test it is attached to: it silences every *sibling* test in the
+ *     same file, so a single `it.only` left behind after debugging deletes
+ *     unrelated coverage with no signal at all. Verified against a real runner:
+ *     three tests in a file, one marked `only`, one executed, `bun test` exit 0.
+ *
+ * `shapes` selects which of those are in scope for this call, so one spelling
+ * cannot be added without the others.
+ *
  *
  * A `skipIf` call is routinely wrapped across lines — `it.skipIf(` on one line and
  * `true,` on the next — so the condition cannot be read a line at a time. Arguments
  * are extracted with parenthesis matching and only then trimmed, which handles both
- * the wrapped and the single-line spelling. Comments are stripped first so the gate
- * does not match its own explanation of the rule.
+ * the wrapped and the single-line spelling. Comments and literal bodies are blanked
+ * first so the gate does not match its own explanation of the rule, or a snippet
+ * that quotes it.
  *
  * The call's target is not matched by name. `it`, `test` and `describe` are just
  * the identifiers this repo happens to use, and matching them is what makes a gate
@@ -485,18 +542,23 @@ function argsAt(source: string, blanked: string, open: number): string {
  * `test.only` and does not implement `test.only.each`, so no suite can contain one.
  */
 function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
-	const code = stripComments(source);
+	const code = stripNonCode(source);
 	const members = shapes.map(shape => shape.member).join('|');
 	const constants = readConstants(code);
 
 	const sites: SkipSite[] = [];
-	const opener = new RegExp(`\\b\\w+\\.(?:${members})${CALL_OPENERS}`, 'g');
+	// Whitespace is allowed on either side of the dot, so `it\n  .skip(` is caught.
+	// Without that, a formatter that breaks a chain across lines hides an
+	// unconditional skip from the gate completely.
+	const opener = new RegExp(`\\b\\w+\\s*\\.\\s*(?:${members})${CALL_OPENERS}`, 'g');
 	let match: RegExpExecArray | null;
 	while ((match = opener.exec(code)) !== null) {
-		// The match ends at the `(` the member was called with, which for a
-		// conditional shape is the condition's own paren.
-		const open = match.index + match[0].length - 1;
-		const isConditional = /\.skipIf\b/.test(match[0]);
+		// The call's `(` is the last one inside the match, not necessarily its last
+		// character: `describe .skipIf (` ends the match on a space. The `(` is what
+		// the argument list is anchored to, so it is located inside the match's own
+		// extent rather than assumed to be the final character.
+		const open = code.lastIndexOf('(', match.index + match[0].length - 1);
+		const isConditional = /\bskipIf\b/.test(match[0]);
 
 		// Only a condition that is constant-true is unconditional; a predicate can
 		// lift itself when the environment changes, which is the whole point of
@@ -628,6 +690,18 @@ function invocationNameAt(code: string, from: number): string | null {
 	const end = window.indexOf(';');
 	const literal = /\(\s*(['"`])((?:[^'"`\\]|\\.)*)\1\s*(?=[,);]|$)/.exec(end === -1 ? window : window.slice(0, end));
 	return literal ? literal[2] : null;
+}
+
+/**
+ * The arguments of a call opened at `open`, for reading a name out of text that
+ * has *not* been blanked. Where `argsAt` is used to balance parentheses and needs
+ * literals blanked so a `(` inside a string cannot unbalance the count, this only
+ * reads up to the first argument and so is never more than one literal deep.
+ */
+function argsOf(text: string, open: number): string {
+	const body = text.slice(open + 1);
+	const end = body.search(/[,)]/);
+	return end === -1 ? body : body.slice(0, end);
 }
 
 /**
@@ -919,6 +993,148 @@ bunDescribe('contract suite skip policy', () => {
 		expect(findFocusOnly(only)).toHaveLength(1);
 	});
 
+	// The gate's own header used to claim it policed `describe.skip` while the
+	// detector matched nothing but `skipIf(true, ...)`. A real `describe.skip`
+	// planted in `stage-unstage.test.ts` left the gate at 15 pass / 0 fail. The
+	// spellings above pin the claim per modifier and per scope; these two pin the
+	// two shapes the unit-level assertions cannot reach on their own.
+
+	// A name the gate reports is the name `ALLOWED_SKIPS` is matched against, so a
+	// misattributed one is a latent allowlist collision, not a cosmetic slip. The
+	// `direct` branch this PR added read the name off the line the call *opens* on,
+	// which attributes the enclosing group's name to a nested skip and reports the
+	// wrong test entirely once the call's arguments wrap. The name has to come from
+	// the matched call's own argument list.
+	for (const [label, source, expected] of [
+		[
+			'a one-line nested skip is named for itself, not its enclosing group',
+			`describe('outer group', () => { it.skip('inner', () => {}); });`,
+			'inner',
+		],
+		[
+			'a wrapped skip is named from its own arguments, not the call it returns',
+			['it.skip(', '\t\'the real name\',', '\t() => {}', ')(\'chained name\', () => {});'].join('\n'),
+			'the real name',
+		],
+		[
+			'a wrapped skip with no chained call is still named',
+			['it.skip(', '\t\'the real name\',', '\t() => {}', ');'].join('\n'),
+			'the real name',
+		],
+	] as const) {
+		bunTest(`names a skip from the matched call's own arguments: ${label}`, () => {
+			const sites = findUnconditionalSkips(source);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe(expected);
+		});
+	}
+
+	// Blanking comments is not enough. `it.skip(` is the spelling every tutorial
+	// uses, so a file that *quotes* the pattern — a doc snippet, a fixture, an
+	// error message — reads as an offender even though nothing is skipped. A
+	// string body can contain anything a test can, so the detector has to see
+	// literal contents as non-code rather than as a call.
+	for (const [label, source] of [
+		['a string literal', `const SAMPLE = "it.skip('demo', () => {})";`],
+		['a template literal', "const T = `describe.todo('y')`;"],
+		['a regex literal', `const re = /it\\.only\\('z', fn\\)/;`],
+		['a string across two lines', "const T = `it.skip(\n\t'demo'\n)('x', fn)`;"],
+	] as const) {
+		bunTest(`ignores the pattern inside ${label}`, () => {
+			expect(findUnconditionalSkips(source)).toEqual([]);
+		});
+	}
+
+	bunTest('a real skip on a line that also contains a string is still named', () => {
+		// The failure mode the blanking must not introduce: over-eager masking that
+		// hides a genuine skip, or that reads the name out of the wrong string.
+		const source = `const label = "demo"; it.skip('the real one', () => {});`;
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('the real one');
+	});
+
+	bunTest('blanking literals preserves every offset, so a reported line is exact', () => {
+		// The detector indexes into the blanked source, so a same-length replacement
+		// is the whole reason the reported `file:line` can be trusted. A literal
+		// spanning lines and one spanning quotes on the same line are the cases a
+		// length-changing implementation would get wrong.
+		const source = [
+			`const doc = "it.skip('quoted', () => {})";`,
+			`const tpl = \`describe.todo(\``,
+			`\t'y'\`)\`;`,
+			`it.skip('on line four', () => {});`,
+		].join('\n');
+		const blanked = stripNonCode(source);
+		expect(blanked).toHaveLength(source.length);
+		expect(blanked.split('\n')).toHaveLength(source.split('\n').length);
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].line).toBe(4);
+	});
+
+	// The dangerous direction is not the false positive, it is the false negative:
+	// masking that swallows a real skip. An apostrophe in prose, a `/` that divides
+	// rather than opens a regex, and a quote that never closes are all ordinary
+	// TypeScript, and each could be read as opening a literal that runs to the end of
+	// the file. The detector resolves all three rather than blanking to end-of-file,
+	// because a gate that silently stops reporting is worse than a noisy one.
+	for (const [label, source] of [
+		['an apostrophe in a string', `const m = "don't";`],
+		['a slash that divides', `const n = total / count;`],
+		['a slash inside a character class', `const r = /[/]/;`],
+		['a quote that never closes', `const m = 'oops`],
+	] as const) {
+		bunTest(`a real skip after ${label} is still reported`, () => {
+			const sites = findUnconditionalSkips(`${source}\nit.skip('still found', () => {});`);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].line).toBe(2);
+			expect(sites[0].name).toBe('still found');
+		});
+	}
+
+	bunTest('detects a bare .todo with no body', () => {
+		// `it.todo(name)` has no callback at all, so the name is the only argument
+		// and there is no body to accidentally make the call look conditional.
+		const sites = findUnconditionalSkips(`it.todo('write the assertion');`);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('write the assertion');
+	});
+
+	bunTest('it.only silently deletes its siblings, so the gate must report it', async () => {
+		// Proven against a real runner rather than assumed. `only` is not a skip
+		// of the test it marks: it silences every other test in the same file. A
+		// single `it.only` left behind after debugging therefore removes unrelated
+		// coverage while `bun test` still exits 0, which is the exact failure the
+		// gate exists to stop.
+		const dir = mkdtempSync(join(tmpdir(), 'skip-only-'));
+		const file = join(dir, 'only.test.ts');
+		writeFileSync(
+			file,
+			[
+				`import { expect, it } from 'bun:test';`,
+				`it('first sibling', () => { expect(1).toBe(1); });`,
+				`it.only('the focused one', () => { expect(1).toBe(1); });`,
+				`it('second sibling', () => { expect(1).toBe(1); });`,
+				'',
+			].join('\n'),
+		);
+		const proc = Bun.spawnSync(['bun', 'test', file], { cwd: dir });
+		const out = proc.stdout.toString();
+		// The runner really does drop the siblings and still report success.
+		expect(out).not.toContain('first sibling');
+		expect(out).not.toContain('second sibling');
+		expect(proc.exitCode).toBe(0);
+		// And the gate reports it rather than passing on that silence. It is
+		// reported by the `.only` detector rather than the skip detector, because a
+		// `.only` is not a skip: the test it marks runs, and its *siblings* do not.
+		// Reporting it as an "unconditional skip" would send a developer to fix the
+		// wrong thing. The property pinned here is the one that matters — the
+		// gate sees it at all — and the split between the two detectors is pinned
+		// separately above.
+		expect(findFocusOnly(readFileSync(file, 'utf8'))).toHaveLength(1);
+	});
+
 	bunTest('allows a version-floor guarded skip', () => {
 		// A predicate can lift itself when the environment changes, so it is not an
 		// unconditional skip and must not be reported.
@@ -1000,13 +1216,58 @@ bunDescribe('contract suite skip policy', () => {
 			"line two it.skipIf(true, 'r')('n', fn)`;",
 			`it.skipIf(true, 'hardcoded')('a real skip', () => {});`,
 		].join('\n');
-		const blanked = stripComments(source);
+		const blanked = stripNonCode(source);
 		expect(blanked.split('\n')).toHaveLength(source.split('\n').length);
 		blanked.split('\n').forEach((line, i) => {
 			expect(line).toHaveLength(source.split('\n')[i].length);
 		});
 		// And the offender is still reported at the line a developer would read.
 		expect(findUnconditionalSkips(source).map(site => site.line)).toEqual([7]);
+	});
+
+	// Both regexes tolerate whitespace around the dot, so a receiver wrapped onto
+	// its own line is caught. The bound is the *receiver text*, not the spelling:
+	// `it`/`test`/`describe` spelled out, a literal call. An indirection is not
+	// reached, and `KNOWN_BLIND_SPOTS` below says so where a reader of this file
+	// will see it rather than inferring coverage that does not exist.
+	for (const [label, source, expected] of [
+		['a receiver on its own line', `it\n\t.skip('newline skip', () => {});`, 'newline skip'],
+		['a space before the dot', `it .skip('space skip', () => {});`, 'space skip'],
+		[
+			'a wrapped describe.skip',
+			`describe\n\t.skip\n\t('wrapped newline', () => {});`,
+			'wrapped newline',
+		],
+		[
+			'a wrapped skipIf',
+			`it\n\t.skipIf(true, 'r')('wrapped guarded', () => {});`,
+			'wrapped guarded',
+		],
+	] as const) {
+		bunTest(`detects a skip written with ${label}`, () => {
+			const sites = findUnconditionalSkips(source);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe(expected);
+		});
+	}
+
+	bunTest('a wrapped skipIf still has its condition read', () => {
+		// The widened pattern must not widen what counts as unconditional. A wrapped
+		// call no longer ends on its `(`, so the condition has to be read from the `(`
+		// found inside the match rather than assumed to be its last character.
+		const guarded = `describe\n  .skipIf (\n\ttrue,\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(guarded).map(site => site.name)).toEqual(['needs git 2.30']);
+		// And the liftable version of the same wrapping is still allowed through.
+		const liftable = `describe\n  .skipIf (\n\tbelowFloor(),\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(liftable)).toEqual([]);
+	});
+
+	bunTest('a skip reached through a variable is a documented blind spot, not coverage', () => {
+		// `KNOWN_BLIND_SPOTS` has to name the shape that is actually missed. If this
+		// test starts failing, the gate has closed the hole and the header is
+		// understating what is enforced.
+		expect(findUnconditionalSkips(`const s = it.skip; s('hidden', () => {});`)).toEqual([]);
+		expect(KNOWN_BLIND_SPOTS.some(s => s.includes('variable'))).toBe(true);
 	});
 
 	bunTest('reports a skip that is not on the allowlist, by name and line', () => {
@@ -1128,9 +1389,8 @@ bunDescribe('contract suite skip policy', () => {
 		// The walk originally collected all 224 tracked `.ts` files and applied the
 		// detector to each, which flagged legitimate code in ordinary sources: a
 		// string that merely mentions the pattern, and a conditional `skipIf` wrapper
-		// like the one `harness.ts` uses. `stripComments` blanks comments, not string
-		// literals, and both of those read as a skip named `(unnamed skip)`, so the
-		// allowlist could not absorb them either.
+		// like the one `harness.ts` uses. Both read as a skip named `(unnamed skip)`,
+		// so the allowlist could not absorb them either.
 		//
 		// Scoping to files `bun test` would collect closes both at the source, with
 		// no hand-maintained directory list to drift.
@@ -1170,11 +1430,11 @@ bunDescribe('contract suite skip policy', () => {
 		// and it can only tell code from prose as well as the blanker allows.
 		//
 		// The first of the two proven false positives was a *string*: a doc constant
-		// that quotes the pattern. `stripComments` no longer blanks that, because
-		// blanking string bodies costs the test name a skip is reported under, so
-		// the string-blindness has since been closed at the source. It is asserted
-		// as closed rather than assumed, so a regression that reopens it is caught
-		// here instead of turning a doc into a red gate.
+		// that quotes the pattern. `stripNonCode` blanks string bodies, so this is no
+		// longer a case that needs rescuing at the source at all — the string is not
+		// read as code in the first place. Asserted rather than assumed, so a
+		// regression that reopens it is caught here instead of turning a doc into a
+		// red gate.
 		const docString = `export const SKIP_DOC = 'it.skipIf(true, 1)(2, 3)';`;
 		expect(findUnconditionalSkips(docString)).toEqual([]);
 
