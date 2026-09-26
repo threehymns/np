@@ -1742,6 +1742,8 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildSettings();
 			this.rebuildUIContributions();
 			this.rebuildEditorContributions();
+			this.attachedKeymapRegistry?.rebuild();
+			this.attachedIconRegistry?.rebuild();
 		} catch (error) {
 			this.states.set(id, 'error');
 			this.removePluginCommands(id);
@@ -1901,6 +1903,9 @@ export class PluginHost implements PluginHostInterface {
 
 	attachKeymapRegistryInternal(registry: KeymapRegistry): void {
 		this.attachedKeymapRegistry = registry;
+		registry.setOwnerOrdering((ownerIds) =>
+			this.orderedRegistryOwners(ownerIds, (id) => id === CORE_COMMANDS_OWNER)
+		);
 	}
 
 	attachIconRegistryInternal(registry: IconRegistryInterface): void {

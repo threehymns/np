@@ -736,12 +736,16 @@ describe('toggle off/on round trip restores full function without restart', () =
 						type: 'decoration',
 						extension: []
 					});
+					host.registerKeymapBindings(id, [{ bindings: { [`ctrl+${id}`]: `${id}.command` } }]);
 				}
 			};
 		}
 
 		async function registryOrder(afterToggle: boolean) {
 			const host = new PluginHost();
+			const { KeymapRegistry } = await import('../keymap.svelte');
+			const keymaps = new KeymapRegistry({ commands: { execute: () => undefined } } as any);
+			host.attachKeymapRegistryInternal(keymaps);
 			host.register(contributingPlugin('alpha'));
 			host.register(contributingPlugin('beta'));
 			await host.activateAll();
@@ -752,7 +756,8 @@ describe('toggle off/on round trip restores full function without restart', () =
 			return {
 				commands: host.getCommands().map((command) => command.id),
 				settings: host.getSettingSchemas().map((schema) => schema.namespace),
-				editor: host.getEditorContributions().map((entry) => entry.id)
+				editor: host.getEditorContributions().map((entry) => entry.id),
+				keymap: keymaps.bindings.map((binding) => binding.commandId)
 			};
 		}
 

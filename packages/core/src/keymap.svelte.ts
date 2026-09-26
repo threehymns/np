@@ -191,6 +191,7 @@ export class KeymapRegistry {
 	bindings = $state<ParsedBinding[]>([]);
 	private baseKeymap: KeymapBinding[] = defaultKeymap;
 	private keymapTransforms: KeymapTransformEntry[] = [];
+	private ownerOrdering?: (ownerIds: readonly string[]) => string[];
 	
 	constructor(appState: AppState) {
 		this.appState = appState;
@@ -218,8 +219,35 @@ export class KeymapRegistry {
 	}
 
 	registerKeymapTransform(pluginId: string, transform: KeymapTransform): void {
-		this.keymapTransforms.push({ pluginId, transform });
+		const next = [...this.keymapTransforms, { pluginId, transform }];
+		// Atomic like the editor registry: a throwing transform must not
+		// wedge the owner's list.
+		this.rebuildFrom(next);
+		this.keymapTransforms = next;
+	}
+
+	/**
+	 * Deterministic owner ordering shared with the host's replayed
+	 * registries (ADR 0012). Set by the host on attach so a
+	 * disable/enable cycle replays in computed activation order, not raw
+	 * push order. Without a host, first-seen order is preserved.
+	 */
+	setOwnerOrdering(order: (ownerIds: readonly string[]) => string[]): void {
+		this.ownerOrdering = order;
 		this.rebuild();
+	}
+
+	private orderedTransforms(
+		transforms: readonly KeymapTransformEntry[] = this.keymapTransforms
+	): KeymapTransformEntry[] {
+		if (!this.ownerOrdering) return [...transforms];
+		const byOwner = new Map<string, KeymapTransformEntry[]>();
+		for (const entry of transforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) list.push(entry);
+			else byOwner.set(entry.pluginId, [entry]);
+		}
+		return this.ownerOrdering(Array.from(byOwner.keys())).flatMap((id) => byOwner.get(id)!);
 	}
 
 	registerKeymapBindings(pluginId: string, bindings: readonly KeymapBinding[]): void {
@@ -235,12 +263,16 @@ export class KeymapRegistry {
 	}
 
 	rebuild(): void {
+		this.rebuildFrom(this.keymapTransforms);
+	}
+
+	private rebuildFrom(transforms: readonly KeymapTransformEntry[]): void {
 		// Defensive copy per replay step (ADR 0012): transforms must be pure
 		// and repeatable, so an impure transform that mutates the array it was
 		// handed cannot corrupt the base keymap or any later replay. Mirrors
 		// rebuildCommands in plugins/commands.ts.
 		let keymap: ReadonlyArray<KeymapBinding> = [...this.baseKeymap];
-		for (const entry of this.keymapTransforms) {
+		for (const entry of this.orderedTransforms(transforms)) {
 			const result = entry.transform([...keymap]);
 			keymap = Array.isArray(result) ? [...result] : [];
 		}
