@@ -129,3 +129,23 @@ describe('updateIndexContent: a filename containing a carriage return', () => {
 		expect(await indexContents(repo, 'pre')).toBe('shared\n');
 	});
 });
+
+describe('updateIndexContent: a filename outside ASCII', () => {
+	// A non-ASCII character has to be escaped as the BYTES that name the file, not
+	// as the code point that spells it: git writes `é` (U+00E9) as its two UTF-8
+	// bytes `\303\251`, and a header saying `\351` names a file git does not have.
+	// This one fails loudly rather than silently, but it is the same quoting rule.
+	it('stages a file whose name is not ASCII', async () => {
+		const repo = await createTrackedRepo();
+		const target = 'café.txt';
+		await repo.write(target, 'ORIGINAL\n');
+		const add = await repo.git(['add', '-A']);
+		if (add.code !== 0) throw new Error(add.stderr);
+		const commit = await repo.git(['commit', '-m', 'seed']);
+		if (commit.code !== 0) throw new Error(commit.stderr);
+
+		await adapterFor(repo).updateIndexContent(target, 'EDITED\n');
+
+		expect(await indexContents(repo, target)).toBe('EDITED\n');
+	});
+});
