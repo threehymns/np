@@ -1,5 +1,5 @@
 import { expect } from 'bun:test';
-import { chmodSync } from 'node:fs';
+import { chmodSync, statSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileOrigin } from '@np/core';
@@ -19,6 +19,7 @@ import {
 	nodeFileAccess,
 	porcelainStatus,
 	runGit,
+	TEST_IDENTITY,
 	worktreeContents
 } from './harness';
 
@@ -557,6 +558,48 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexMode(r, 'hello.ts')).toBe('100755');
 			expect(await indexMode(r, 'src.txt')).toBe('100755');
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('a staged-then-committed executable still runs after a fresh checkout', async () => {
+			// The end-to-end consequence, not just the index entry. The harm claimed
+			// for the exec-bit bug was that the script is "broken for everyone who
+			// checks it out", so this drives the whole path a user takes: edit,
+			// stage, commit, then clone and check whether the checked-out file is
+			// actually executable. Asserting the index mode alone would only prove
+			// the intermediate state, not the outcome.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// The isomorphic adapter reads author identity from the repository's git
+			// config, not from the harness env, so it must be set per repo.
+			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await commitAll(r, 'mark executable');
+			const adapter = engine.adapter(r);
+
+			// The ordinary action: open the script, change it, stage, commit.
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+			await adapter.commit('edit script');
+
+			// The committed tree must record the mode, not just the index.
+			const committedMode = (await checkedGit(r, ['ls-tree', 'HEAD', '--', 'hello.ts'])).stdout.trim().split(/\s+/)[0];
+			expect(committedMode).toBe('100755');
+
+			// A fresh checkout is the only way to observe what a collaborator gets.
+			const dest = path.join(r.root, 'fresh-checkout');
+			const clone = await r.git(['clone', '--quiet', r.path, dest]);
+			if (clone.code !== 0) throw new Error(clone.stderr);
+			const checked = await runGit(dest, r.env, ['ls-files', '-s', '--', 'hello.ts']);
+			expect(checked.code).toBe(0);
+			expect(checked.stdout.trim().split(/\s+/)[0]).toBe('100755');
+			// And the file on disk in that checkout must carry the exec bit, which
+			// is what a shell actually reads when deciding whether it can run it.
+			const mode = statSync(path.join(dest, 'hello.ts')).mode & 0o777;
+			expect(mode & 0o111).not.toBe(0);
 		});
 
 		it('stages a binary file byte-for-byte instead of round-tripping it through UTF-8', async () => {
