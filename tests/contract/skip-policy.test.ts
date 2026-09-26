@@ -948,6 +948,36 @@ bunDescribe('contract suite skip policy', () => {
 	// spellings above pin the claim per modifier and per scope; these two pin the
 	// two shapes the unit-level assertions cannot reach on their own.
 
+	// A name the gate reports is the name `ALLOWED_SKIPS` is matched against, so a
+	// misattributed one is a latent allowlist collision, not a cosmetic slip. The
+	// `direct` branch this PR added read the name off the line the call *opens* on,
+	// which attributes the enclosing group's name to a nested skip and reports the
+	// wrong test entirely once the call's arguments wrap. The name has to come from
+	// the matched call's own argument list.
+	for (const [label, source, expected] of [
+		[
+			'a one-line nested skip is named for itself, not its enclosing group',
+			`describe('outer group', () => { it.skip('inner', () => {}); });`,
+			'inner',
+		],
+		[
+			'a wrapped skip is named from its own arguments, not the call it returns',
+			['it.skip(', '\t\'the real name\',', '\t() => {}', ')(\'chained name\', () => {});'].join('\n'),
+			'the real name',
+		],
+		[
+			'a wrapped skip with no chained call is still named',
+			['it.skip(', '\t\'the real name\',', '\t() => {}', ');'].join('\n'),
+			'the real name',
+		],
+	] as const) {
+		bunTest(`names a skip from the matched call's own arguments: ${label}`, () => {
+			const sites = findUnconditionalSkips(source);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe(expected);
+		});
+	}
+
 	bunTest('detects a bare .todo with no body', () => {
 		// `it.todo(name)` has no callback at all, so the name is the only argument
 		// and there is no body to accidentally make the call look conditional.
