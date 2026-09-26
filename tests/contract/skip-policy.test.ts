@@ -1299,12 +1299,33 @@ bunDescribe('contract suite skip policy', () => {
 		// entry would change that. It is reported here deliberately, and
 		// `collectOffenders` filters it, so the exemption is stated in one reviewable
 		// place instead of being a hole hidden inside the scanner.
-		const guards = findUnconditionalSkips(readFileSync(join(CONTRACT_DIR, 'harness.ts'), 'utf8'));
-		expect(guards.map(site => site.line)).toEqual([232, 235]);
+		// Assert what the guards ARE, not the lines they sit on. The line numbers
+		// were hardcoded, so any unrelated edit above them in harness.ts broke this
+		// test on every branch carrying both commits — which is what adding the
+		// C-quoting decoder did. The guards are identified by their source text, and
+		// the reported line is then checked to actually point at that text, so the
+		// detector's line is verified rather than assumed.
+		const harnessSource = readFileSync(join(CONTRACT_DIR, 'harness.ts'), 'utf8');
+		const guards = findUnconditionalSkips(harnessSource);
+		expect(guards).toHaveLength(2);
 		expect(guards.every(site => site.name === null)).toBe(true);
 
-		const selfCheck = findUnconditionalSkips(readFileSync(join(CONTRACT_DIR, 'harness.test.ts'), 'utf8'));
-		expect(selfCheck.map(site => site.line)).toEqual([122]);
+		const harnessLines = harnessSource.split('\n');
+		// One guard binds `describe`, the other `it`; both lift themselves on the
+		// same floor, so the pair is pinned as a set rather than by position.
+		const guardText = guards.map(site => harnessLines[site.line - 1] ?? '').join('\n');
+		expect(guardText).toContain('export const describe =');
+		expect(guardText).toContain('bunDescribe.skipIf(true, defaultSkipReason)');
+		expect(guardText).toContain('export const it =');
+		expect(guardText).toContain('bunTest.skipIf(true, defaultSkipReason)');
+
+		const selfCheckSource = readFileSync(join(CONTRACT_DIR, 'harness.test.ts'), 'utf8');
+		const selfCheck = findUnconditionalSkips(selfCheckSource);
+		expect(selfCheck).toHaveLength(1);
+		const selfCheckLines = selfCheckSource.split('\n');
+		expect(selfCheckLines[selfCheck[0].line - 1] ?? '').toContain(
+			'bunDescribe.skipIf(true, impossibleFloorReason)'
+		);
 	});
 
 	bunTest('every other version-floor call is reached through a variable, and is not a skip', () => {
