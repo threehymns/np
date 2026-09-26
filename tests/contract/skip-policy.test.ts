@@ -1018,6 +1018,31 @@ bunDescribe('contract suite skip policy', () => {
 		});
 	}
 
+	// Blanking comments is not enough. `it.skip(` is the spelling every tutorial
+	// uses, so a file that *quotes* the pattern — a doc snippet, a fixture, an
+	// error message — reads as an offender even though nothing is skipped. A
+	// string body can contain anything a test can, so the detector has to see
+	// literal contents as non-code rather than as a call.
+	for (const [label, source] of [
+		['a string literal', `const SAMPLE = "it.skip('demo', () => {})";`],
+		['a template literal', "const T = `describe.todo('y')`;"],
+		['a regex literal', `const re = /it\\.only\\('z', fn\\)/;`],
+		['a string across two lines', "const T = `it.skip(\n\t'demo'\n)('x', fn)`;"],
+	] as const) {
+		bunTest(`ignores the pattern inside ${label}`, () => {
+			expect(findUnconditionalSkips(source)).toEqual([]);
+		});
+	}
+
+	bunTest('a real skip on a line that also contains a string is still named', () => {
+		// The failure mode the blanking must not introduce: over-eager masking that
+		// hides a genuine skip, or that reads the name out of the wrong string.
+		const source = `const label = "demo"; it.skip('the real one', () => {});`;
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('the real one');
+	});
+
 	bunTest('detects a bare .todo with no body', () => {
 		// `it.todo(name)` has no callback at all, so the name is the only argument
 		// and there is no body to accidentally make the call look conditional.
