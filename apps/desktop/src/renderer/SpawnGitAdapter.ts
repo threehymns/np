@@ -322,11 +322,18 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 * `?? moved.txt`, and `git diff --find-renames` is empty because the index
 	 * equals HEAD.
 	 *
-	 * So the pair is recovered by content instead. Candidates are limited to paths
-	 * git reports as worktree-deleted *and* still present in the index, and the
-	 * match must be byte-identical to the destination. That is conservative: a
-	 * genuine rename is a byte-identical move by definition, and any destination the
-	 * user has edited will not match, so it is simply treated as an untracked file.
+	 * So the pair is recovered by content instead: candidates are paths git reports
+	 * as worktree-deleted *and* still present in the index, and a candidate matches
+	 * only when its index content is byte-identical to the destination.
+	 *
+	 * Byte-identical is necessary but not sufficient to identify a source. Two
+	 * tracked files can hold the same bytes, and a file the user deleted on purpose
+	 * is indistinguishable from the source half of a rename — no git invocation
+	 * separates the two. So a match must be *unique*: when two or more candidates
+	 * match, the pairing is ambiguous and no source is recovered, because
+	 * guessing would resurrect a deliberate deletion while still leaving the real
+	 * source deleted. The destination is then simply treated as an untracked file,
+	 * which is the behaviour that predates this recovery.
 	 */
 	private async findUnstagedRenameSource(filepath: string): Promise<string | undefined> {
 		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
@@ -345,13 +352,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 
 		const deletedSources = entries.filter(e => e.y === 'D' && e.filepath !== filepath);
+		const matches: string[] = [];
 		for (const source of deletedSources) {
 			const indexContent = await this.readGitObject(`:${source.filepath}`);
 			if (indexContent !== null && indexContent === destinationContent) {
-				return source.filepath;
+				matches.push(source.filepath);
 			}
 		}
-		return undefined;
+		return matches.length === 1 ? matches[0] : undefined;
 	}
 
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {

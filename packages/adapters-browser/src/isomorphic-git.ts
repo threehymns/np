@@ -1134,9 +1134,13 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	 * `stage === 1` (isomorphic-git's stage numbers differ from git's; the
 	 * non-zero, non-worktree value is what marks it as still present in the index).
 	 *
-	 * The pair is recovered by content, exactly as the desktop engine does: a genuine
-	 * rename is a byte-identical move by definition, and a destination the user has
-	 * edited will not match, so it is simply treated as an untracked file.
+	 * The pair is recovered by content, exactly as the desktop engine does. A
+	 * candidate matches only when its index content is byte-identical to the
+	 * destination, and the match must be *unique*: two tracked files can hold the
+	 * same bytes, and a file the user deleted on purpose is indistinguishable from
+	 * the source half of a rename, so an ambiguous match recovers nothing and the
+	 * destination is treated as the untracked file it is. A destination the user
+	 * has edited never matches at all, and is likewise treated as untracked.
 	 */
 	private async findUnstagedRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | undefined> {
 		const destination = matrix.find(([p]) => p === filepath);
@@ -1148,6 +1152,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		const destinationText = await this.readWorktreeText(filepath);
 		if (destinationText === null) return undefined;
 
+		const matches: string[] = [];
 		for (const [candidate, , worktree, stage] of matrix) {
 			// Source candidate: missing from the worktree, still recorded in the index.
 			if (candidate === filepath || worktree !== 0 || stage === 0) continue;
@@ -1155,10 +1160,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (!staged) continue;
 			const stagedText = await this.readBlobText(staged.oid);
 			if (stagedText !== null && stagedText === destinationText) {
-				return candidate;
+				matches.push(candidate);
 			}
 		}
-		return undefined;
+		return matches.length === 1 ? matches[0] : undefined;
 	}
 
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
