@@ -565,6 +565,146 @@ describe('Additive UI Contributions (ADR 0010, ADR 0012, ADR 0015, #200)', () =>
 			expect(panelsAfterP1Deactivate).toHaveLength(1);
 			expect(panelsAfterP1Deactivate[0].id).toBe('p2-panel');
 		});
+
+		it('deactivating one plugin yields the same UI registry as a clean build without it', async () => {
+			// Each owner contributes one entry in all three UI surfaces, so a
+			// residue-free disable has to be proven for panels, status bar items
+			// and tab contents alike.
+			const owner = (id: string) => ({
+				manifest: { id, name: id, version: 0 },
+				setup: (h: PluginHost) => {
+					h.registerSidebarPanel(id, {
+						id: `${id}-panel`,
+						title: `${id} Panel`,
+						order: 10,
+						component: createPilotComponent(`${id}-panel`)
+					});
+					h.registerStatusBarItem(id, {
+						id: `${id}-status`,
+						alignment: 'left',
+						order: 10,
+						component: createPilotComponent(`${id}-status`)
+					});
+					h.registerTabContent(id, {
+						id: `${id}-tab`,
+						title: `${id} Tab`,
+						component: createPilotComponent(`${id}-tab`)
+					});
+				}
+			});
+			const surfaceIds = (host: PluginHost) => ({
+				panels: host.getSidebarPanels().map((panel) => panel.id),
+				status: host.getStatusBarItems().map((item) => item.id),
+				tabs: host.getTabContents().map((tab) => tab.id)
+			});
+
+			const host = new PluginHost();
+			host.register(owner('alpha'));
+			host.register(owner('beta'));
+			await host.activateAll();
+			expect(surfaceIds(host)).toEqual({
+				panels: ['alpha-panel', 'beta-panel'],
+				status: ['alpha-status', 'beta-status'],
+				tabs: ['alpha-tab', 'beta-tab']
+			});
+
+			await host.deactivate('beta');
+			expect(host.getSidebarPanel('beta-panel')).toBeUndefined();
+			expect(host.getStatusBarItem('beta-status')).toBeUndefined();
+			expect(host.getTabContent('beta-tab')).toBeUndefined();
+
+			const clean = new PluginHost();
+			clean.register(owner('alpha'));
+			await clean.activateAll();
+			expect(surfaceIds(host)).toEqual(surfaceIds(clean));
+		});
+
+		it('refresh-mid-session rebuilds UI contributions with no duplicates or losses', async () => {
+			const owner = (id: string) => ({
+				manifest: { id, name: id, version: 0 },
+				setup: (h: PluginHost) => {
+					h.registerSidebarPanel(id, {
+						id: `${id}-panel`,
+						title: `${id} Panel`,
+						order: 10,
+						component: createPilotComponent(`${id}-panel`)
+					});
+					h.registerStatusBarItem(id, {
+						id: `${id}-status`,
+						alignment: 'right',
+						order: 10,
+						component: createPilotComponent(`${id}-status`)
+					});
+					h.registerTabContent(id, {
+						id: `${id}-tab`,
+						title: `${id} Tab`,
+						component: createPilotComponent(`${id}-tab`)
+					});
+				}
+			});
+			const surfaceIds = (host: PluginHost) => ({
+				panels: host.getSidebarPanels().map((panel) => panel.id),
+				status: host.getStatusBarItems().map((item) => item.id),
+				tabs: host.getTabContents().map((tab) => tab.id)
+			});
+
+			const host = new PluginHost();
+			host.register(owner('alpha'));
+			host.register(owner('beta'));
+			await host.activateAll();
+
+			const before = surfaceIds(host);
+			host.rebuildUIContributions();
+			host.rebuildUIContributions();
+			host.rebuildUIContributions();
+			expect(surfaceIds(host)).toEqual(before);
+
+			// A mid-session re-activation must not double up either.
+			await host.deactivate('beta');
+			await host.activate('beta');
+			expect(surfaceIds(host)).toEqual(before);
+		});
+
+		it('removing one owner of a status item or tab content leaves the clean-build result', async () => {
+			// The per-surface removers are public host API, so they must rebuild
+			// to the same registry a clean build produces -- not merely drop the
+			// removed owner's own entry while leaving the others stale.
+			const host = new PluginHost();
+			host.registerSidebarPanel('alpha', {
+				id: 'alpha-panel',
+				title: 'Alpha Panel',
+				order: 10,
+				component: createPilotComponent('alpha-panel')
+			});
+			host.registerStatusBarItems('alpha', [
+				{ id: 'alpha-status', alignment: 'left', order: 10, component: createPilotComponent('alpha-status') }
+			]);
+			host.registerStatusBarItems('beta', [
+				{ id: 'beta-status', alignment: 'left', order: 20, component: createPilotComponent('beta-status') }
+			]);
+			host.registerTabContents('alpha', [
+				{ id: 'alpha-tab', title: 'Alpha Tab', component: createPilotComponent('alpha-tab') }
+			]);
+			host.registerTabContents('beta', [
+				{ id: 'beta-tab', title: 'Beta Tab', component: createPilotComponent('beta-tab') }
+			]);
+
+			host.removePluginStatusBarItems('beta');
+			expect(host.getStatusBarItems().map((item) => item.id)).toEqual(['alpha-status']);
+			expect(host.getSidebarPanel('alpha-panel')).toBeDefined();
+			expect(host.getTabContents().map((tab) => tab.id)).toEqual(['alpha-tab', 'beta-tab']);
+
+			host.removePluginTabContents('beta');
+			expect(host.getTabContents().map((tab) => tab.id)).toEqual(['alpha-tab']);
+			expect(host.getStatusBarItems().map((item) => item.id)).toEqual(['alpha-status']);
+
+			// Removing an owner that contributed nothing must not disturb the
+			// remaining contributions.
+			host.removePluginStatusBarItems('alpha');
+			expect(host.getStatusBarItems()).toEqual([]);
+			expect(host.getTabContents().map((tab) => tab.id)).toEqual(['alpha-tab']);
+			expect(host.getSidebarPanels().map((panel) => panel.id)).toEqual(['alpha-panel']);
+		});
 	});
 
 	describe('5. AppState Integration & Active View Teardown (ADR 0009)', () => {
