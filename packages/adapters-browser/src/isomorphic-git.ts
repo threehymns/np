@@ -11,6 +11,9 @@ import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
 
+/** The index mode git gives a symlink; its blob content is the target path, not text. */
+const SYMLINK_MODE = 0o120000;
+
 /** Parent of a shim path: '/a/b/c' → '/a/b', '' when there is none. */
 function parentDirectory(p: string): string {
 	const trimmed = p.replace(/\/+$/, '');
@@ -930,6 +933,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		const destEntry = await this.readStageEntry(filepath);
 		if (destEntry && (await this.readBlobText(destEntry.oid)) === content) {
 			return;
+		}
+
+		// A git symlink's blob content is its *target path*, not file text. The
+		// entry keeps mode 120000, so replacing the blob would stage editor text
+		// under a symlink's mode: the commit succeeds and produces a tree whose
+		// link target is that text, which git checks out as a dangling link.
+		// Declining the write is the only safe answer.
+		//
+		// The index entry's mode is the only signal available here, and unlike
+		// `lstat` it needs no new filesystem capability -- which is the point,
+		// because the FS shim aliases `lstat` to `stat` and hard-codes
+		// `isSymbolicLink()` false, so a symlink imported from disk is invisible
+		// to it while remaining perfectly visible in the index.
+		if (destEntry && destEntry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
 		}
 
 		const oid = await git.writeBlob({
