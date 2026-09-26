@@ -30,6 +30,12 @@ import { createTrackedRepo } from './harness';
  * `discard-operations.test.ts` from 2026-08-18, hiding a real data-loss bug in
  * both engines the whole time. This gate is what would have caught it.
  *
+ * The same exit-0 silence applies to `it.skip`, `it.todo` and — worst of all —
+ * `it.only`, which additionally deletes every sibling test in its file. An
+ * earlier version of this gate claimed to police `describe.skip` in this
+ * comment while its detector only matched `skipIf(true, ...)`, so `.skip`,
+ * `.todo` and `.only` all passed silently. All four families are enforced now.
+ *
  * The rule is enforced on the source, not on test output, so it holds even when
  * the suite is run with a filter that skips whole files.
  *
@@ -466,8 +472,25 @@ function argsAt(source: string, blanked: string, open: number): string {
 }
 
 /**
- * Finds every test call in `source` whose target is a member in `shapes`, as
- * `{ line, name }` sites.
+ * Finds every way a test can be silently removed from the run.
+ *
+ * Every site this reports removes coverage while `bun test` still exits 0:
+ *
+ *   - `it.skipIf(true, ...)` — unconditional by construction. A `skipIf` with a
+ *     predicate or a `false` literal is a guard that can lift itself, so it is
+ *     deliberately not reported (see `ALLOWED_SKIPS`).
+ *   - `it.skip(...)` / `describe.skip(...)` — always unconditional.
+ *   - `it.todo(...)` — the body is never run.
+ *   - `it.only(...)` — the worst of the four, and the reason the shapes are an
+ *     explicit list rather than a loose pattern match. `only` does not merely
+ *     skip the test it is attached to: it silences every *sibling* test in the
+ *     same file, so a single `it.only` left behind after debugging deletes
+ *     unrelated coverage with no signal at all. Verified against a real runner:
+ *     three tests in a file, one marked `only`, one executed, `bun test` exit 0.
+ *
+ * `shapes` selects which of those are in scope for this call, so one spelling
+ * cannot be added without the others.
+ *
  *
  * A `skipIf` call is routinely wrapped across lines — `it.skipIf(` on one line and
  * `true,` on the next — so the condition cannot be read a line at a time. Arguments
@@ -917,6 +940,54 @@ bunDescribe('contract suite skip policy', () => {
 		expect(findFocusOnly(skip)).toEqual([]);
 		expect(findUnconditionalSkips(skip)).toHaveLength(1);
 		expect(findFocusOnly(only)).toHaveLength(1);
+	});
+
+	// The gate's own header used to claim it policed `describe.skip` while the
+	// detector matched nothing but `skipIf(true, ...)`. A real `describe.skip`
+	// planted in `stage-unstage.test.ts` left the gate at 15 pass / 0 fail. The
+	// spellings above pin the claim per modifier and per scope; these two pin the
+	// two shapes the unit-level assertions cannot reach on their own.
+
+	bunTest('detects a bare .todo with no body', () => {
+		// `it.todo(name)` has no callback at all, so the name is the only argument
+		// and there is no body to accidentally make the call look conditional.
+		const sites = findUnconditionalSkips(`it.todo('write the assertion');`);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('write the assertion');
+	});
+
+	bunTest('it.only silently deletes its siblings, so the gate must report it', async () => {
+		// Proven against a real runner rather than assumed. `only` is not a skip
+		// of the test it marks: it silences every other test in the same file. A
+		// single `it.only` left behind after debugging therefore removes unrelated
+		// coverage while `bun test` still exits 0, which is the exact failure the
+		// gate exists to stop.
+		const dir = mkdtempSync(join(tmpdir(), 'skip-only-'));
+		const file = join(dir, 'only.test.ts');
+		writeFileSync(
+			file,
+			[
+				`import { expect, it } from 'bun:test';`,
+				`it('first sibling', () => { expect(1).toBe(1); });`,
+				`it.only('the focused one', () => { expect(1).toBe(1); });`,
+				`it('second sibling', () => { expect(1).toBe(1); });`,
+				'',
+			].join('\n'),
+		);
+		const proc = Bun.spawnSync(['bun', 'test', file], { cwd: dir });
+		const out = proc.stdout.toString();
+		// The runner really does drop the siblings and still report success.
+		expect(out).not.toContain('first sibling');
+		expect(out).not.toContain('second sibling');
+		expect(proc.exitCode).toBe(0);
+		// And the gate reports it rather than passing on that silence. It is
+		// reported by the `.only` detector rather than the skip detector, because a
+		// `.only` is not a skip: the test it marks runs, and its *siblings* do not.
+		// Reporting it as an "unconditional skip" would send a developer to fix the
+		// wrong thing. The property pinned here is the one that matters — the
+		// gate sees it at all — and the split between the two detectors is pinned
+		// separately above.
+		expect(findFocusOnly(readFileSync(file, 'utf8'))).toHaveLength(1);
 	});
 
 	bunTest('allows a version-floor guarded skip', () => {
