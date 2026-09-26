@@ -3,7 +3,7 @@ import type { StatusRow } from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded } from '@np/core/utils';
+import { mapBounded, isDirectoryError } from '@np/core/utils';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
@@ -855,7 +855,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			} catch (e: any) {
 				// Only genuinely absent files yield empty worktree content;
 				// anything else (permissions, I/O failures) must reach the caller.
-				if (!isENOENT(e)) throw e;
+				// A directory is the one other case: `git status` lists an
+				// untracked symlink to a directory as `??`, so the UI can offer it
+				// for viewing, and decoding EISDIR verbatim would be a raw syscall
+				// string leaking into a user-facing path. The shim raises it as
+				// `EISDIR` and the File System Access API as `TypeMismatchError`.
+				if (!isENOENT(e) && !isDirectoryError(e)) throw e;
 			}
 		}
 
