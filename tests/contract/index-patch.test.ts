@@ -98,3 +98,34 @@ describe('updateIndexContent: a filename containing a tab', () => {
 		expect(await indexContents(repo, target)).toBe('added\n');
 	});
 });
+
+describe('updateIndexContent: a filename containing a carriage return', () => {
+	// A raw CR is a line terminator to git's own patch parser, exactly as a tab is
+	// a field terminator, so an unescaped one truncates the `diff --git` header the
+	// same way and the patch applies to the path *before* the CR. Unlike the other
+	// awkward names, this one does not even fail loudly: when the prefix neighbour's
+	// staged content happens to match the hunk's old side, `git apply --cached`
+	// succeeds, reports nothing, and has written the wrong file. Sweeping all 126
+	// characters a filename can hold through the real adapter, CR was the only one
+	// that corrupted the index silently.
+	const CR = '\r';
+
+	it('stages the intended file and leaves the CR-truncated neighbour alone', async () => {
+		const repo = await createTrackedRepo();
+		const target = `pre${CR}fix.txt`;
+		// A second tracked file whose name is the CR-path truncated at the CR, holding
+		// content identical to the hunk's old side — the regime where the mis-applied
+		// patch succeeds instead of reporting "patch does not apply".
+		await repo.write('pre', 'shared\n');
+		await repo.write(target, 'shared\n');
+		const add = await repo.git(['add', '-A']);
+		if (add.code !== 0) throw new Error(add.stderr);
+		const commit = await repo.git(['commit', '-m', 'seed']);
+		if (commit.code !== 0) throw new Error(commit.stderr);
+
+		await adapterFor(repo).updateIndexContent(target, 'EDITED\n');
+
+		expect(await indexContents(repo, target)).toBe('EDITED\n');
+		expect(await indexContents(repo, 'pre')).toBe('shared\n');
+	});
+});
