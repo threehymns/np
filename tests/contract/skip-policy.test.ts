@@ -4,6 +4,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	rmdirSync,
 	statSync,
@@ -186,20 +187,50 @@ const ALLOWED_SKIPS: string[] = [];
  */
 const SANCTIONED_SITES = new Set(['harness.ts:232', 'harness.ts:235', 'harness.test.ts:122']);
 
-function walk(dir: string, out: string[] = []): string[] {
+/**
+ * How deep the walk will descend before giving up.
+ *
+ * A backstop, not the loop defence. The repository nests five levels today
+ * (`packages/core/src/project/...`); twenty leaves room to grow and still
+ * bounds a pathologically deep tree rather than trusting the OS to stop it.
+ */
+const MAX_DEPTH = 20;
+
+/**
+ * Collects every test file under `dir`.
+ *
+ * `statSync` follows symlinks, so a link pointing at an ancestor looks exactly
+ * like a real directory and would otherwise be descended into repeatedly —
+ * `self -> ..` at the repository root expanded this walk from 224 files to
+ * 119,304, to depth 87, before the OS path-length limit ended it. Each
+ * directory is therefore resolved with `realpathSync` and skipped if that
+ * resolved path has already been visited, so a loop is entered once and not
+ * again. A broken link has no resolved path, and is handled by the same
+ * `catch` that skips it: a skip nobody can reach is not worth failing the gate
+ * over.
+ */
+function walk(dir: string, out: string[] = [], seen = new Set<string>(), depth = 1): string[] {
+	if (depth > MAX_DEPTH) return out;
 	for (const entry of readdirSync(dir)) {
 		const full = join(dir, entry);
 		if (SCAN_EXCLUDES.has(entry)) continue;
 		// A broken or circular symlink must not take the whole gate down. A skip
 		// hidden behind one is not worth failing the merge gate over.
+		let resolved: string;
 		let isDir: boolean;
 		try {
+			resolved = realpathSync(full);
 			isDir = statSync(full).isDirectory();
 		} catch {
 			continue;
 		}
-		if (isDir) walk(full, out);
-		else if (TEST_FILE_PATTERN.test(entry)) out.push(full);
+		if (isDir) {
+			if (seen.has(resolved)) continue;
+			seen.add(resolved);
+			walk(full, out, seen, depth + 1);
+		} else if (TEST_FILE_PATTERN.test(entry)) {
+			out.push(full);
+		}
 	}
 	return out;
 }
