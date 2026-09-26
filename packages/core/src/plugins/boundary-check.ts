@@ -206,6 +206,54 @@ export function checkManifestFile(filePath: string): ManifestBoundaryResult {
 }
 
 /**
+ * Collects every runtime module specifier a source imports.
+ *
+ * Covers static imports (excluding `import type`), side-effect imports,
+ * dynamic `import()`, and `require()`, so a rule built on this cannot be
+ * bypassed by switching import syntax. `import type` is excluded because it
+ * emits no runtime import under `verbatimModuleSyntax`.
+ */
+export function runtimeImportSpecifiers(source: string): string[] {
+	const found: string[] = [];
+	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
+	const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
+	const dynamicRe = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+	const requireRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+	for (const re of [staticRe, sideEffectRe, dynamicRe, requireRe]) {
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(source)) !== null) {
+			found.push(m[1]);
+		}
+	}
+	return found;
+}
+
+/**
+ * Modules that only exist on one platform. Platform differences belong behind
+ * the manifest `platforms` field plus a runtime activation gate, never behind
+ * an import, so platform-neutral plugin modules must not import them.
+ */
+function isPlatformOnlyModule(specifier: string): boolean {
+	if (specifier === 'electron' || specifier.startsWith('electron/')) return true;
+	if (specifier.startsWith('node:')) return true;
+	if (['fs', 'child_process', 'path', 'os'].includes(specifier)) return true;
+	return false;
+}
+
+/**
+ * Platform-only runtime imports in a module source (empty when clean).
+ *
+ * Companion to {@link checkManifestSource}: a manifest must be pure metadata,
+ * and the platform-neutral generic host path must stay free of platform-only
+ * runtime imports (`electron`, `node:*`, bare Node builtins). The one
+ * sanctioned platform probe is the guarded `(window as any).electronAPI`
+ * property read in `host.svelte.ts`, which is not a module import.
+ */
+export function platformImportViolations(source: string): string[] {
+	return runtimeImportSpecifiers(source).filter(isPlatformOnlyModule);
+}
+
+/**
  * Asserts that a manifest file or source complies with the import boundary.
  * Throws an actionable error if any violations exist.
  */

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkManifestFile } from './boundary-check';
+import { checkManifestFile, platformImportViolations } from './boundary-check';
 
 /**
  * Platform separation static boundary (spec companion to the manifest
@@ -14,34 +14,10 @@ import { checkManifestFile } from './boundary-check';
  * (`electron`, `node:*`, bare Node builtins); the only sanctioned
  * platform probe is the guarded `(window as any).electronAPI` property
  * read in `host.svelte.ts`, which is not a module import.
+ *
+ * The rule itself lives in `boundary-check` alongside the manifest import
+ * boundary, so every boundary check reads from one place.
  */
-
-function runtimeImportSpecifiers(source: string): string[] {
-	const found: string[] = [];
-	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
-	const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
-	const dynamicRe = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-	const requireRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-	for (const re of [staticRe, sideEffectRe, dynamicRe, requireRe]) {
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(source)) !== null) {
-			found.push(m[1]);
-		}
-	}
-	return found;
-}
-
-function isPlatformOnlyModule(specifier: string): boolean {
-	if (specifier === 'electron' || specifier.startsWith('electron/')) return true;
-	if (specifier.startsWith('node:')) return true;
-	if (['fs', 'child_process', 'path', 'os'].includes(specifier)) return true;
-	return false;
-}
-
-/** Platform-only runtime imports in a module source (empty when clean). */
-export function platformImportViolations(source: string): string[] {
-	return runtimeImportSpecifiers(source).filter(isPlatformOnlyModule);
-}
 
 describe('Platform separation static boundary', () => {
 	it('accepts a universal manifest declaring platforms for web and desktop', () => {

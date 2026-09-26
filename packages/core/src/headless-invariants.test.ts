@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { ManifestIconProvider } from "./editor/icons/manifest-provider";
 import { HeadlessIconRegistry } from "./editor/icons/headless-registry.svelte";
 import { KeymapRegistry } from "./keymap.svelte";
+import { runtimeImportSpecifiers } from "./plugins/boundary-check";
 import { transformer } from "./transformer";
 import { createMockStorage } from "../../../tests/mock-storage";
 
@@ -243,9 +244,11 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		for (const target of targets) {
 			const file = resolve(pluginsDir, `${target.slice(2)}.ts`);
 			const source = readFileSync(file, "utf-8");
-			for (const line of source.split("\n")) {
-				if (/^\s*import\s+(?!type\b)[^;]*from\s+['"](node:[^'"]*|typescript)['"]/.test(line)) {
-					offenders.push(`${target}: ${line.trim()}`);
+			// Same import scanner the plugin boundary checks use, so a `require()`
+			// or dynamic import cannot slip past the line-based form this replaced.
+			for (const spec of runtimeImportSpecifiers(source)) {
+				if (spec === "typescript" || spec.startsWith("node:")) {
+					offenders.push(`${target}: ${spec}`);
 				}
 			}
 		}
