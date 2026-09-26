@@ -1,6 +1,6 @@
 import { expect } from 'bun:test';
-import { chmodSync, statSync } from 'node:fs';
-import { rm, writeFile } from 'node:fs/promises';
+import { chmodSync, statSync, symlinkSync } from 'node:fs';
+import { rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileOrigin } from '@np/core';
 import { toURI } from '@np/core/storage';
@@ -600,6 +600,92 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// is what a shell actually reads when deciding whether it can run it.
 			const mode = statSync(path.join(dest, 'hello.ts')).mode & 0o777;
 			expect(mode & 0o111).not.toBe(0);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX symlinks, git records 100644'
+		)('replaces a symlink with a regular file without carrying the 120000 mode over', async () => {
+			// A 120000 index entry's blob must hold the link *target*, not the
+			// file's body, so keeping the mode while writing a body blob produces
+			// an entry git cannot represent: a fresh clone then materialises a
+			// symlink whose "target" is the file's own content. A browser cannot
+			// read a symlink at all, so the mode is only inheritable while the new
+			// content is the same kind of object — which a regular file never is.
+			const r = await createTrackedRepo();
+			await r.write('target.txt', 'target\n');
+			symlinkSync('target.txt', path.join(r.path, 'link.txt'));
+			await commitAll(r, 'add a symlink');
+			expect(await indexMode(r, 'link.txt')).toBe('120000');
+
+			// The user replaces the symlink with a regular file, the ordinary way.
+			await unlink(path.join(r.path, 'link.txt'));
+			await writeFile(path.join(r.path, 'link.txt'), 'a regular file, not a symlink\n');
+			const adapter = engine.adapter(r);
+
+			await adapter.stageAll();
+
+			// The blob is the file's body, so the mode must be a regular file's.
+			expect(await indexContents(r, 'link.txt')).toBe('a regular file, not a symlink\n');
+			expect(await indexMode(r, 'link.txt')).toBe('100644');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'T', y: ' ', path: 'link.txt' }]);
+		});
+
+		it('leaves an ignored untracked file out of the index when staging it by path', async () => {
+			// `.gitignore` is a promise to the user, and both engines keep it: an
+			// ignored path that is not yet tracked must not enter the index just
+			// because something named it directly (a Hunk Action, a plugin, a
+			// programmatic `stageFile`). Once a path *is* tracked, a later matching
+			// rule does not stop it from being staged — that is real git's rule
+			// too, and the second half of this test pins it.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('.gitignore', 'secret.txt\n');
+			await r.write('secret.txt', 'do not commit\n');
+			await stageAll(r);
+			await commitAll(r, 'add gitignore');
+			const adapter = engine.adapter(r);
+
+			// Both engines must leave the index untouched. They refuse in different
+			// ways — the desktop engine surfaces git's non-zero exit, the browser
+			// engine skips silently — so the assertion is the outcome they share.
+			await adapter.stageFile('secret.txt').catch(() => {});
+
+			expect(await indexContents(r, 'secret.txt')).toBe(null);
+			expect(await lsFiles(r)).toEqual(['.gitignore', 'README.md', 'hello.ts', 'src.txt']);
+			expect(await porcelainStatus(r)).toEqual([]);
+			// A refusal must not touch the worktree either: the file is still there.
+			expect(await worktreeContents(r, 'secret.txt')).toBe('do not commit\n');
+
+			// Once tracked, always staged: force the path in, then match it with a
+			// rule and confirm a later edit still reaches the index.
+			await r.git(['add', '-f', '--', 'secret.txt']);
+			await commitAll(r, 'track the ignored file anyway');
+			await r.write('secret.txt', 'now it may be committed\n');
+			await adapter.stageFile('secret.txt');
+
+			expect(await indexContents(r, 'secret.txt')).toBe('now it may be committed\n');
+		});
+
+		it('normalises CRLF to LF when core.autocrlf is set, like real git', async () => {
+			// Staging must honour the repository's own line-ending configuration.
+			// Committing raw CRLF into a repository configured for autocrlf diverges
+			// the browser engine from the desktop engine on the same repository and
+			// shows a whole-file diff to every collaborator.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+			await r.git(['config', 'core.autocrlf', 'true']);
+			const adapter = engine.adapter(r);
+			await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+
+			await adapter.stageAll();
+
+			expect(await indexContents(r, 'crlf.txt')).toBe('line1\nline2\n');
+			// The worktree copy is untouched: normalisation applies to what is
+			// committed, never to the user's file on disk.
+			expect(await worktreeContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
 		});
 
 		it('stages a binary file byte-for-byte instead of round-tripping it through UTF-8', async () => {
