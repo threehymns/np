@@ -136,7 +136,14 @@ describe('Platform separation static boundary', () => {
 			'ui-contributions.ts',
 			'editor.ts',
 			'events.ts',
-			'errors.ts'
+			'errors.ts',
+			'git/index.ts',
+			'git/commands.ts',
+			'git/lifecycle.ts',
+			'git/gutter.ts',
+			'git/ui.ts',
+			'git/registration.ts',
+			'git/manifest.ts'
 		];
 		const offenders: string[] = [];
 		for (const file of neutralModules) {
