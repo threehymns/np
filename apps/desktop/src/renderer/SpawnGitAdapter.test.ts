@@ -24,7 +24,10 @@ describe('SpawnGitAdapter', () => {
 				gitRun: mockGitRun,
 				readFile: mockReadFile,
 				writeFile: mockWriteFile,
-				deleteEntry: mockDeleteEntry
+				deleteEntry: mockDeleteEntry,
+				// The symlink guard runs before every write; these tests are about
+				// write/apply behavior, so the default answer is "a regular file".
+				isSymlink: async (_path: string) => false
 			}
 		};
 	});

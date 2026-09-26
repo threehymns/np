@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -316,5 +316,8 @@ export async function checkoutBranch(repo: TestRepo, branch: string): Promise<vo
 export const nodeFileAccess: GitFileAccess = {
 	readFile: (filePath) => readFile(filePath),
 	writeFile: (filePath, content) => writeFile(filePath, content),
-	deleteEntry: (filePath) => rm(filePath, { force: true })
+	deleteEntry: (filePath) => rm(filePath, { force: true }),
+	// `lstat` rather than `stat`: a symlink's own type is what must be detected,
+	// not the type of whatever it points at.
+	isSymlink: async (filePath) => (await lstat(filePath)).isSymbolicLink()
 };
