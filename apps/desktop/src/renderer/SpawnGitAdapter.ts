@@ -751,13 +751,43 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
+	 * C-quotes one side of a diff path for use in a patch header line.
+	 *
+	 * Git's own diff format quotes a path the same way: wrapped in double quotes
+	 * with the C escapes `\t`, `\n` and `\\`. This is not cosmetic. The `diff --git`
+	 * header is TAB-delimited, so a raw tab inside a filename splits the line and
+	 * the patch addresses the truncated prefix — staging a hunk of `ta<TAB>b.txt`
+	 * wrote `ta` instead, with `git apply` exiting 0 and reporting no error.
+	 *
+	 * The `a/` and `b/` prefixes go INSIDE the quotes (`"a/ta\tb.txt"`), which is
+	 * what git itself emits. Leaving the prefix outside yields `a/"ta\tb.txt"`, a
+	 * token git cannot parse — it then reports "inconsistent new filename" when
+	 * the `---`/`+++` lines disagree with the header. All three path lines of a
+	 * patch must therefore be quoted together; mixing forms is not enough.
+	 */
+	private static quotePatchPath(path: string): string {
+		const escaped = path.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+		// A path with no character git treats specially is left unquoted, exactly
+		// as `git diff` renders it.
+		return /[\t\n"\\]/.test(path) ? `"${escaped}"` : escaped;
+	}
+
+	/** The `a/<path>` / `b/<path>` side of a diff header, C-quoted whole. */
+	private static patchSidePath(side: 'a' | 'b', filepath: string): string {
+		return SpawnGitAdapter.quotePatchPath(`${side}/${filepath}`);
+	}
+
+	/**
 	 * Fresh patch rendering for `updateIndexContent`. The patch is applied literally
 	 * against the current index for the target filepath only, so it never modifies
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
 		const oldContent = await this.readGitObject(`:${filepath}`);
-		const header = `diff --git a/${filepath} b/${filepath}`;
+		// Quoted, so a tab or newline inside a filename cannot truncate the header's
+		// tab-delimited pathspec and redirect the write to a different file.
+		const quoted = SpawnGitAdapter.patchSidePath('a', filepath);
+		const header = `diff --git ${quoted} ${SpawnGitAdapter.patchSidePath('b', filepath)}`;
 		if (oldContent !== null) {
 			// A literal no-op: the index already holds exactly this content, so the
 			// write is skipped entirely. An empty→empty replace would render a
@@ -765,21 +795,33 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// other shape can reach identical content.
 			if (oldContent === content) return '';
 			// Replace the full index content; the index mode is preserved without headers.
-			return [
+			// A side with no lines contributes no hunk body at all: `hunkBody('', '-')`
+			// returns '', and joining that into the patch emits a bare blank line where
+			// the hunk body should be. `git apply` counts the hunk's declared lines and
+			// finds a line it cannot classify, so it rejects the whole patch as corrupt —
+			// meaning the first line typed into a file committed empty (a placeholder
+			// config.json, a `> file` redirect, a truncated file) could never be staged.
+			// Verified against real git: the blank-line patch fails with
+			// "corrupt patch at ...:N" and the index stays empty; dropping the empty side
+			// applies cleanly and stages the content.
+			const parts = [
 				header,
-				`--- a/${filepath}`,
-				`+++ b/${filepath}`,
-				`@@ -${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(oldContent))} +${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(content))} @@`,
-				SpawnGitAdapter.hunkBody(oldContent, '-'),
-				SpawnGitAdapter.hunkBody(content, '+')
-			].join('\n');
+				`--- ${quoted}`,
+				`+++ ${SpawnGitAdapter.patchSidePath('b', filepath)}`,
+				`@@ -${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(oldContent))} +${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(content))} @@`
+			];
+			const oldBody = SpawnGitAdapter.hunkBody(oldContent, '-');
+			const newBody = SpawnGitAdapter.hunkBody(content, '+');
+			if (oldBody !== '') parts.push(oldBody);
+			if (newBody !== '') parts.push(newBody);
+			return parts.join('\n');
 		}
 
 		// The destination has no index entry: stage it as a new file. A path absent
 		// from the index has no mode to preserve, so this branch always emits the
 		// default index mode. Empty content is emitted without a hunk, which is what
 		// `git diff` produces for empty files.
-		const parts = [header, `new file mode ${SpawnGitAdapter.DEFAULT_INDEX_MODE}`, '--- /dev/null', `+++ b/${filepath}`];
+		const parts = [header, `new file mode ${SpawnGitAdapter.DEFAULT_INDEX_MODE}`, '--- /dev/null', `+++ ${SpawnGitAdapter.patchSidePath('b', filepath)}`];
 		const newCount = SpawnGitAdapter.textLineCount(content);
 		if (newCount > 0) {
 			parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
