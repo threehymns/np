@@ -310,6 +310,50 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	/**
+	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * `filepath`, or undefined when `filepath` is not such a destination.
+	 *
+	 * An unstaged worktree rename is invisible to git: porcelain v1 reports the
+	 * destination as an untracked file and the source as a worktree deletion, and
+	 * rename detection does not help because it only pairs content between two
+	 * commits, not between the index and the worktree. Verified directly:
+	 * `git status --porcelain=v1 -uall --find-renames` still prints ` D src.txt` /
+	 * `?? moved.txt`, and `git diff --find-renames` is empty because the index
+	 * equals HEAD.
+	 *
+	 * So the pair is recovered by content instead. Candidates are limited to paths
+	 * git reports as worktree-deleted *and* still present in the index, and the
+	 * match must be byte-identical to the destination. That is conservative: a
+	 * genuine rename is a byte-identical move by definition, and any destination the
+	 * user has edited will not match, so it is simply treated as an untracked file.
+	 */
+	private async findUnstagedRenameSource(filepath: string): Promise<string | undefined> {
+		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (res.code !== 0) return undefined;
+		const entries = this.parseStatusEntries(res.stdout);
+		const destination = entries.find(e => e.filepath === filepath);
+		if (!destination || destination.x !== '?' || destination.y !== '?') return undefined;
+
+		let destinationContent: string;
+		try {
+			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			destinationContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch {
+			// The destination is gone between status and read; nothing to pair.
+			return undefined;
+		}
+
+		const deletedSources = entries.filter(e => e.y === 'D' && e.filepath !== filepath);
+		for (const source of deletedSources) {
+			const indexContent = await this.readGitObject(`:${source.filepath}`);
+			if (indexContent !== null && indexContent === destinationContent) {
+				return source.filepath;
+			}
+		}
+		return undefined;
+	}
+
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (options?.staged === false) {
 			// Unstaged scope: reset only the worktree copy to the index version. If the
@@ -320,9 +364,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 				if (!this.isPathNotFoundError(res.stderr)) {
 					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
 				}
-				const origPath = await this.resolveOrigPath(filepath);
-				if (origPath && origPath !== filepath) {
-					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', origPath]);
+				// An unstaged worktree rename is not representable in porcelain v1: git
+				// reports it as a worktree deletion plus an untracked file, never as a
+				// rename pair, so `resolveOrigPath` cannot find a source and the
+				// recovery below never ran. Discarding the destination therefore left
+				// the tracked source deleted too, destroying a file git still knows
+				// about — and any content the user had added at the destination, which
+				// was never in the object store and so was unrecoverable.
+				//
+				// Pair the untracked destination back to a tracked source by content: git
+				// itself pairs renames the same way. The source must still be missing
+				// from the worktree and present in the index, so an unrelated deletion
+				// that merely happens to hold identical content is never restored over.
+				const source = await this.findUnstagedRenameSource(filepath);
+				if (source) {
+					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', source]);
 					if (restoreOrigRes.code !== 0) {
 						throw new Error(restoreOrigRes.stderr || `Failed to discard changes for ${filepath}`);
 					}
