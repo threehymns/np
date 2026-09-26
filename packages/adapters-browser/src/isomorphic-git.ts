@@ -1011,7 +1011,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				return;
 			}
 		}
-		await git.add({ fs: this.fs!, dir: this.dir, filepath });
+		await this.stageWorktreeFile(filepath);
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
@@ -1275,9 +1275,50 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					await this.removeFromIndex(filepath as string);
 				}
 			} else {
-				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+				await this.stageWorktreeFile(filepath as string);
 			}
 		}
+	}
+
+	/**
+	 * Stages a worktree file's current content into the index.
+	 *
+	 * `git.add` derives the index mode from `stat().mode`, and `BrowserStats`
+	 * reports a hardcoded `0o100644` for every file because the File System Access
+	 * API exposes no POSIX mode. Staging that way silently rewrote an executable
+	 * entry to 100644 the first time a script was edited, so simply opening a
+	 * `.sh`, changing it and hitting "Stage All" stripped the exec bit from the
+	 * commit.
+	 *
+	 * The fix is to pass the mode explicitly, keeping whatever the index already
+	 * recorded. That is the same approach `updateIndexContent` already takes
+	 * (`mode: destEntry?.mode ?? 0o100644`), and it is the only correct answer for
+	 * this platform: a browser cannot learn or set a POSIX mode, so the index is
+	 * the sole source of truth for one. A file with no index entry yet is genuinely
+	 * new, and 100644 is the honest default.
+	 *
+	 * The blob is written from raw worktree bytes, never from decoded text: a
+	 * decode/re-encode round trip is lossy for any file that is not valid UTF-8
+	 * (a PNG, a .so, a latin-1 source file), and a blob that differs from the file
+	 * on disk leaves the file permanently staged-modified.
+	 */
+	private async stageWorktreeFile(filepath: string): Promise<void> {
+		const [staged, bytes] = await Promise.all([
+			this.readStageEntry(filepath),
+			this.readWorktreeBytes(filepath)
+		]);
+		await git.updateIndex({
+			fs: this.fs!,
+			dir: this.dir,
+			filepath,
+			oid: await git.writeBlob({
+				fs: this.fs!,
+				dir: this.dir,
+				blob: bytes ?? new Uint8Array()
+			}),
+			add: true,
+			mode: staged?.mode ?? 0o100644
+		});
 	}
 
 	async unstageAll(): Promise<void> {

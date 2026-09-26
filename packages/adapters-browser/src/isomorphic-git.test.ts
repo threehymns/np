@@ -376,31 +376,46 @@ describe('IsomorphicGitAdapter', () => {
 			['del.txt', 1, 0, 1], // Deleted from worktree
 			['clean.txt', 1, 1, 1] // Unmodified
 		]);
-		const addSpy = mock(async (_args: { filepath: string }) => {});
-		const removeIndexSpy = mock(async (_args: { filepath: string; remove: boolean; force: boolean }) => {});
+		// Staging a worktree file goes through `updateIndex` with an explicit mode,
+		// not `git.add`, because `git.add` takes the mode from `stat()` and this
+		// adapter's stat shim cannot report a real one. The removal path uses
+		// `updateIndex` with `remove: true`, so the two are told apart by that flag.
+		const updateIndexSpy = mock(async (_args: { filepath: string; remove?: boolean }) => {});
+		const writeBlobSpy = mock(async () => ({ oid: '0'.repeat(40) }));
 		const origStatusMatrix = git.statusMatrix;
-		const origAdd = git.add;
 		const origUpdateIndex = git.updateIndex;
+		const origWriteBlob = git.writeBlob;
 		mockGit.statusMatrix = statusMatrixSpy;
-		mockGit.add = addSpy;
-		mockGit.updateIndex = removeIndexSpy;
+		mockGit.updateIndex = updateIndexSpy;
+		mockGit.writeBlob = writeBlobSpy;
 
 		try {
 			const adapter = new IsomorphicGitAdapter(rootOrigin);
 			await adapter.stageAll();
 
 			expect(statusMatrixSpy).toHaveBeenCalledTimes(1);
-			expect(addSpy).toHaveBeenCalledTimes(2);
-			expect(addSpy.mock.calls.map(([args]: [{ filepath: string }]) => args.filepath).sort()).toEqual(['mod.txt', 'new.txt']);
-			expect(removeIndexSpy).toHaveBeenCalledTimes(1);
-			expect(removeIndexSpy.mock.calls[0][0].filepath).toBe('del.txt');
+
+			const staged = updateIndexSpy.mock.calls
+				.map(([args]: [{ filepath: string; remove?: boolean; mode?: number }]) => args)
+				.filter(a => !a.remove);
+			const removed = updateIndexSpy.mock.calls
+				.map(([args]: [{ filepath: string; remove?: boolean }]) => args)
+				.filter(a => a.remove);
+
+			expect(staged.map(a => a.filepath).sort()).toEqual(['mod.txt', 'new.txt']);
+			// A file with no index entry yet is genuinely new: 100644 is the honest
+			// default, since the browser cannot learn a real mode.
+			expect(staged.every(a => a.mode === 0o100644)).toBe(true);
+
+			expect(removed).toHaveLength(1);
+			expect(removed[0].filepath).toBe('del.txt');
 			// Index-only removal: the worktree is never touched by staging.
-			expect(removeIndexSpy.mock.calls[0][0].remove).toBe(true);
-			expect(removeIndexSpy.mock.calls[0][0].force).toBe(true);
+			expect(removed[0].remove).toBe(true);
+			expect(removed[0].force).toBe(true);
 		} finally {
 			mockGit.statusMatrix = origStatusMatrix;
-			mockGit.add = origAdd;
 			mockGit.updateIndex = origUpdateIndex;
+			mockGit.writeBlob = origWriteBlob;
 		}
 	});
 
