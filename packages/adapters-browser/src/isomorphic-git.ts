@@ -524,6 +524,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		try {
 			const matrix = await this.readStatusMatrix();
 
+			// A status matrix of [1,1,1] means the path is clean in all three
+			// states, which is also exactly what a mode-only change looks like
+			// once File System Access has flattened the worktree's permission
+			// bits: isomorphic-git compares blob ids, and the executable bit
+			// does not alter the blob. So a staged mode never reaches
+			// `snapshots` and the switch drops it, in the index AND the
+			// worktree.
+			//
+			// This filter is not the only mode loss. A mode staged alongside a
+			// content change reports [1,2,2], does get snapshotted, and the
+			// index is then written correctly — but the worktree still comes
+			// out at 644, because the forced checkout rewrites the file at its
+			// HEAD mode and writeFileSafe writes bytes only.
+			//
+			// Neither is repairable in this file: the File System Access API
+			// exposes no permission bits and has no chmod, so a worktree mode
+			// cannot be put back once lost. The behaviour is pinned in
+			// tests/contract/branch-switch.test.ts.
 			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
 				return head !== 1 || workdir !== 1 || stage !== 1;
 			});
