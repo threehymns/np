@@ -652,12 +652,39 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	// repo-wide there are zero occurrences of `.skip(`/`.todo(`/`.only(` on any
 	// receiver other than a test registration.
 	//
-	// Whitespace is also allowed on either side of the dot, so `it\n  .skip(` is
-	// caught. Without that a formatter that breaks a chain across lines hides an
+	// Whitespace is allowed on either side of the dot, so `it\n  .skip(` is caught.
+	// Without that a formatter that breaks a chain across lines hides an
 	// unconditional skip from the gate completely.
-	const opener = new RegExp(`\\b[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*(?:${members})${CALL_OPENERS}`, 'g');
-	let match: RegExpExecArray | null;
-	while ((match = opener.exec(code)) !== null) {
+	//
+	// The member may also be spelled as a string literal — `it['skip'](…)` — which
+	// is a real skip and is measured as one against a real runner. Both spellings
+	// are matched, and both report identically because the name is read from the
+	// same anchored position.
+	//
+	// One alias shape is still not matched, and is named so the claim above is not
+	// read as wider than it is: a *detached* method, `const alias = it.skip; alias('X', …)`,
+	// where the member is not adjacent to a call at all. Detecting that needs
+	// data-flow over the binding, and the spellings that remain visible are the ones
+	// worth reading.
+	const member = `(?:${members})`;
+	const dotted = new RegExp(`\\b[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*${member}${CALL_OPENERS}`, 'g');
+	const bracketed = new RegExp(
+		`\\b[A-Za-z_$][A-Za-z0-9_$]*\\s*\\[\\s*(['"\x60])\\s*${member}\\s*\\1\\s*\\]${CALL_OPENERS}`,
+		'g',
+	);
+	// The two spellings are swept separately and the results merged in source order,
+	// so a site is reported where it is rather than in whichever pattern found it,
+	// and neither can report the same call twice. `dotted` is swept against the
+	// blanked text; `bracketed` cannot be, because the blanker removes the very
+	// member literal the pattern is built from.
+	const sweep: RegExpExecArray[] = [];
+	for (const pattern of [dotted, bracketed]) {
+		const view = pattern === bracketed ? source : code;
+		let found: RegExpExecArray | null;
+		while ((found = pattern.exec(view)) !== null) sweep.push(found);
+	}
+	sweep.sort((a, b) => a.index - b.index);
+	for (const match of sweep) {
 		// The call's `(` is the last one inside the match, not necessarily its last
 		// character: `describe .skipIf (` ends the match on a space. The `(` is what
 		// the argument list is anchored to, so it is located inside the match's own
@@ -688,7 +715,8 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 
 		// `skipNameAt` covers both the direct form and the bound-registrar form, so
 		// `const reg = it.skipIf(true, 'r'); reg('X', …)` is reported as `X` rather
-		// than as a skip nobody can name.
+		// than as a skip nobody can name. It anchors on the call's `(`, so the dotted
+		// and bracketed spellings of the same modifier attribute the same way.
 		const lineIndex = code.slice(0, match.index).split('\n').length - 1;
 		sites.push({ line: lineIndex + 1, name: skipNameAt(source, code, open, isConditional) });
 	}
@@ -1433,6 +1461,47 @@ bunDescribe('contract suite skip policy', () => {
 			`it('a real test', () => { expect(POLICY).toBeString(); });`,
 		].join('\n');
 		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('a bracketed member quoted in a string is a false positive, and is recorded as one', () => {
+		// The known cost of matching `it['skip'](` on the original source, which is
+		// the only view where the member literal survives blanking. The dotted
+		// spelling above is immune because it is matched on the blanked text; this one
+		// is not, so a doc that quotes the bracketed spelling is reported.
+		//
+		// It is asserted rather than left to be discovered, because a gate that
+		// documents a blind spot in its own comment and then does not check it is
+		// worse than one that never claimed to be complete. If this test ever starts
+		// failing, the fix is to blank literals *except* a bracketed member — not to
+		// delete the assertion and keep the gap.
+		//
+		// The name reads as null rather than `'name'`, and that is the trade's second
+		// half: the arguments are balanced on the *blanked* text, where the quoted
+		// `'name'` has been blanked along with the rest of the literal, so there is no
+		// name left to quote. The site is still reported, which is the part that
+		// matters for a gate; the diagnosis a developer gets is worse, and is the
+		// documented price rather than an accident.
+		const quoted = `const DOC = "write it['skip']('name', fn) to drop a test";`;
+		const sites = findUnconditionalSkips(quoted);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBeNull();
+
+		// The cost is bounded to the bracketed spelling, and the only file in this
+		// repository that quotes it is this one — the file that documents the shape,
+		// and the file whose own gate necessarily contains the example. Excluding
+		// this file is not a loophole: it is the one place the pattern is *meant* to
+		// appear, and its detection is already asserted directly above. Every other
+		// file must be free of it, which is what keeps the trade honest as the suite
+		// grows. The scan is narrowed to the bracketed pattern deliberately: a
+		// whole-file sweep would also collect the *dotted* snippets this file keeps
+		// in template literals, which are correctly ignored and would drown the
+		// thing being measured.
+		const bracketedQuoted = /\[\s*(['"])\s*(?:skip|todo|only|skipIf)\s*\1\s*\]\s*\(/;
+		const offenders = walk(REPO_ROOT)
+			.filter(f => /\.(?:ts|md)$/.test(f))
+			.filter(f => !f.endsWith('tests/contract/skip-policy.test.ts'))
+			.filter(f => bracketedQuoted.test(readFileSync(f, 'utf8')));
+		expect(offenders).toEqual([]);
 	});
 
 	bunTest('ignores the pattern when it appears in a template literal', () => {
