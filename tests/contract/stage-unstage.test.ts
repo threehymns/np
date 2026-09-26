@@ -688,12 +688,18 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
 		});
 
-		it('stages a binary file byte-for-byte instead of round-tripping it through UTF-8', async () => {
-			// Staging writes the blob itself, and a decode-then-encode round trip is
-			// not byte-preserving: any byte sequence that is not valid UTF-8 (a PNG
-			// header, a .so, a latin-1 source file) decodes to U+FFFD and re-encodes
-			// to different bytes. The staged blob would then differ from the file on
-			// disk, so the file is never clean and the commit content is wrong.
+		it('stages a binary file byte-for-byte', async () => {
+			// Staging writes the blob itself, so the bytes that reach the index are
+			// whatever the implementation passes to `writeBlob`. A decode-then-encode
+			// round trip there is not byte-preserving: any sequence that is not valid
+			// UTF-8 (a PNG header, a .so, a latin-1 source file) decodes to U+FFFD and
+			// re-encodes to different bytes, the staged blob then differs from the file
+			// on disk, and the file is never clean.
+			//
+			// This is a guard on the current implementation, not a record of a fixed
+			// bug: the previous `git.add` path also wrote the file's raw buffer, so it
+			// passed this before the change too. It fails today if the blob path ever
+			// starts decoding to text.
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			// A NUL byte (invalid standalone in UTF-8), a lone 0x80 continuation byte,
@@ -723,9 +729,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		});
 
 		it('stages an emptied tracked file rather than skipping it', async () => {
-			// `stageAll` writes a blob directly instead of calling `git.add`, so a
-			// file truncated to empty must still produce a staged empty blob. A
-			// falsy read of the worktree content would silently skip the file.
+			// Staging writes the blob directly, so a file truncated to empty must
+			// still produce a staged empty blob. A falsy read of the worktree content
+			// would silently skip the file. As with the binary case this is a guard on
+			// the current implementation; `git.add` staged the empty file too.
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
