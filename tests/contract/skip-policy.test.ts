@@ -216,8 +216,8 @@ function walk(dir: string, out: string[] = [], seen = new Set<string>(), depth =
 	for (const entry of readdirSync(dir)) {
 		const full = join(dir, entry);
 		if (SCAN_EXCLUDES.has(entry)) continue;
-		// A broken or circular symlink must not take the whole gate down. A skip
-		// hidden behind one is not worth failing the merge gate over.
+		// A broken link has no resolved path, so this drops it. A skip nobody can
+		// reach through a dangling link is not worth failing the gate over.
 		let resolved: string;
 		let isDir: boolean;
 		try {
