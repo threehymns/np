@@ -203,28 +203,39 @@ const KNOWN_BLIND_SPOTS: string[] = [
  * The version-floor guard, and the only thing the allowlist covers.
  *
  * `docs/vcs-contract-gate.md` names one legitimate skip: "the explicit version-floor
- * guard (`skip guard self-check (impossible floor 99.0)`)". The version floor is
- * built by binding the guard as a value before any test is registered —
+ * guard (`skip guard self-check (impossible floor 99.0)`)". That guard is not
+ * reached through a variable in the sense this file used to claim — the
+ * `skipIf(true, ...)` calls are plainly visible in `harness.ts` and
+ * `harness.test.ts`:
  *
- *     export const describe = defaultSkipReason ? bunDescribe.skipIf(true, defaultSkipReason) : bunDescribe;
- *     export const it = defaultSkipReason ? bunTest.skipIf(true, defaultSkipReason) : bunTest;
+ *     export const describe = defaultSkipReason
+ *       ? bunDescribe.skipIf(true, defaultSkipReason)
+ *       : bunDescribe;
+ *     export const it = defaultSkipReason
+ *       ? bunTest.skipIf(true, defaultSkipReason)
+ *       : bunTest;
  *
- * — and registering tests through the binding. A test registered that way reads as
- * an ordinary `it('name', fn)`, so the skip is only visible as the `skipIf(true, …)`
- * at the binding, with no test name attached to it.
+ * They went unreported for two reasons, both of which have now been corrected
+ * rather than relied on. First, they use the aliased receivers `bunTest` and
+ * `bunDescribe`, which a literal `it`/`test`/`describe` receiver never matched —
+ * the same hole that let any aliased skip through (see `findUnconditionalSkips`).
+ * Second, the registrar is *bound to a name* instead of being called on the spot,
+ * which is what `isAppliedAt` now tests. Reading the name out of the source rather
+ * than from a list of blessed line numbers is what keeps the exemption honest: the
+ * old comment claimed the guard was invisible, which was simply wrong, and a
+ * wrong justification is worse than none.
  *
- * So the one skip the doc permits is *invisible to the scan*, not exempt from it.
- * The distinction matters: an exemption is a hole someone can widen, and an
- * invisible site is a fact about how the guard is written. It is listed here
- * anyway, so that the fact is stated in a reviewable place instead of being
- * something a future reader has to rediscover from a comment, and so that a test
- * can pin it — see "the sanctioned version-floor skip is the only thing the
- * exemption covers".
+ * The guard is still a predicate that lifts itself on a machine with a newer git
+ * than the 2.23 floor, which is exactly what `skipIf` is for and not the failure
+ * mode this gate exists to catch. So the correct allowlist is empty. It is kept as
+ * a named constant rather than deleted so that a future justified exception is a
+ * deliberate, reviewable edit here instead of an ad-hoc escape hatch inside the
+ * scanner.
  *
- * A test NAME is deliberately not listed. A skip that carries a name is a skip of a
- * specific test, which is exactly what a version floor does not do: it guards the
- * whole suite, so there is no one test whose skip a floor can explain. Any offender
- * that has a name is therefore a bug and is reported.
+ * A test NAME is deliberately never listed. A skip that carries a name is a skip
+ * of a specific test, which is exactly what a version floor does not do: it guards
+ * the whole suite, so there is no one test whose skip a floor can explain. Any
+ * offender that has a name is therefore a bug and is reported.
  */
 const ALLOWED_SKIPS: string[] = [];
 
@@ -493,15 +504,55 @@ const MAX_NAME_SEARCH = 2000;
 
 /**
  * Returns the source text of the arguments passed to a call whose `(` sits at
- * `open`, by matching parentheses. Blanked and original text are both accepted
- * because the two callers want different things: a condition has to be read
- * blanked, so that a `true,` inside a literal is not mistaken for the condition,
- * while a test name has to be read from the original, since the whole point of
- * blanking is that the name is no longer there.
+ * `open`, by matching parentheses. `blanked` is the same file with literal bodies
+ * removed and must share `source`'s offsets, which it does because blanking is
+ * same-length. The two arguments differ because the two callers want different
+ * things: a condition has to be read from the blanked text, so that a `true,`
+ * inside a string is not mistaken for the condition, while a test name has to be
+ * read from the original, since blanking removes exactly the literal the report
+ * has to quote.
  */
 function argsAt(source: string, blanked: string, open: number): string {
-	const end = afterCall(blanked, open);
-	return end > open ? source.slice(open + 1, end) : source.slice(open + 1);
+	return source.slice(open + 1, closeIndexOf(blanked, open));
+}
+
+/**
+ * Index of the `)` that closes the call opened at `open`, or the end of `code`
+ * if the call is never closed.
+ */
+function closeIndexOf(code: string, open: number): number {
+	let depth = 0;
+	for (let i = open; i < code.length; i++) {
+		const c = code[i];
+		if (c === '(') depth++;
+		else if (c === ')') {
+			depth--;
+			if (depth === 0) return i;
+		}
+	}
+	return code.length;
+}
+
+/**
+ * Whether the call opened at `open` is *immediately applied* — i.e. it is itself
+ * the callee of an outer call, as in `it.skipIf(true, 'r')('a', fn)`.
+ *
+ * This is what separates a skip from a guard. `skipIf` is a factory: it returns a
+ * registrar. When that registrar is invoked on the spot, a test is being removed
+ * from the run. When the result is *bound to a name* and used later, it is the
+ * version-floor mechanism this repository depends on:
+ *
+ *     export const it = defaultSkipReason
+ *       ? bunTest.skipIf(true, defaultSkipReason)
+ *       : bunTest;
+ *
+ * That guard skips the whole contract suite below git 2.23 and lifts itself on any
+ * machine with a newer git, which is precisely the "predicate that can lift" case
+ * `ALLOWED_SKIPS` documents. Matching on "is the result called here" keeps the
+ * distinction semantic rather than a hardcoded list of blessed line numbers.
+ */
+function isAppliedAt(code: string, open: number): boolean {
+	return /^\s*\(/.test(code.slice(closeIndexOf(code, open) + 1));
 }
 
 /**
@@ -547,10 +598,19 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 	const constants = readConstants(code);
 
 	const sites: SkipSite[] = [];
-	// Whitespace is allowed on either side of the dot, so `it\n  .skip(` is caught.
-	// Without that, a formatter that breaks a chain across lines hides an
+	// The receiver is matched as *any* identifier rather than the literal
+	// `it`/`test`/`describe`. The reason is aliasing: `import { it as bunTest } from
+	// 'bun:test'` is this repository's own idiom — the harness and this gate use it —
+	// and a literal receiver walked straight past `bunTest.skip('...')` with the gate
+	// still green. Any identifier is safe to match because the modifier itself is the
+	// signal: `skip`, `todo` and `only` are not general-purpose method names, and
+	// repo-wide there are zero occurrences of `.skip(`/`.todo(`/`.only(` on any
+	// receiver other than a test registration.
+	//
+	// Whitespace is also allowed on either side of the dot, so `it\n  .skip(` is
+	// caught. Without that a formatter that breaks a chain across lines hides an
 	// unconditional skip from the gate completely.
-	const opener = new RegExp(`\\b\\w+\\s*\\.\\s*(?:${members})${CALL_OPENERS}`, 'g');
+	const opener = new RegExp(`\\b[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*(?:${members})${CALL_OPENERS}`, 'g');
 	let match: RegExpExecArray | null;
 	while ((match = opener.exec(code)) !== null) {
 		// The call's `(` is the last one inside the match, not necessarily its last
@@ -565,6 +625,10 @@ function findSites(source: string, shapes: SiteShape[]): SkipSite[] {
 		// `skipIf`. A plain `skip`/`todo`/`only` has no condition to inspect, so it
 		// always qualifies.
 		if (isConditional && !isUnconditionalCondition(argsAt(code, code, open), constants)) continue;
+
+		// A `skipIf` whose result is bound to a name rather than called on the spot
+		// is the version-floor guard, not a test being deleted. See `isAppliedAt`.
+		if (isConditional && !isAppliedAt(code, open)) continue;
 
 		// A plain `skip`/`todo`/`only` names its test in its own first argument. A
 		// conditional one names it in the call that the result of `skipIf(...)` is
@@ -1120,10 +1184,16 @@ bunDescribe('contract suite skip policy', () => {
 			].join('\n'),
 		);
 		const proc = Bun.spawnSync(['bun', 'test', file], { cwd: dir });
-		const out = proc.stdout.toString();
+		// `bun test` writes its banner to stdout and the per-test results and the
+		// summary to *stderr*. Reading stdout alone made the two assertions below
+		// vacuous: they passed whether or not the siblings ran. Verified by removing
+		// the `.only` from this fixture — the siblings then really ran and the
+		// `not.toContain` checks still passed. Both streams are asserted now.
+		const out = proc.stdout.toString() + proc.stderr.toString();
 		// The runner really does drop the siblings and still report success.
 		expect(out).not.toContain('first sibling');
 		expect(out).not.toContain('second sibling');
+		expect(out).toContain('the focused one');
 		expect(proc.exitCode).toBe(0);
 		// And the gate reports it rather than passing on that silence. It is
 		// reported by the `.only` detector rather than the skip detector, because a
@@ -1140,6 +1210,93 @@ bunDescribe('contract suite skip policy', () => {
 		// unconditional skip and must not be reported.
 		const source = `it.skipIf(\n\tbelowFloor(),\n\t'version floor'\n)('needs git 2.30', () => {});`;
 		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	// The third shipped version of this gate matched the literal receivers
+	// `it`/`test`/`describe`. Aliasing is not hypothetical here: `import { it as
+	// bunTest } from 'bun:test'` is the house idiom, used by the contract harness
+	// and by this very file, so `bunTest.skip('...')` walked straight past a green
+	// gate at 26 pass / 0 fail. The receiver is now any identifier.
+	for (const receiver of ['bunTest', 'aliasedIt', 'check', 'spec', '_test', '$t']) {
+		bunTest(`detects ${receiver}.skip through an aliased import`, () => {
+			const sites = findUnconditionalSkips(`${receiver}.skip('named thing', () => {});`);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe('named thing');
+		});
+	}
+
+	// A `.only` is still reported by its own detector and not by the skip detector.
+	// Aliasing a receiver does not change that split: a `.only` is not a skip, and
+	// folding it into the skip shapes would tell a developer to fix the wrong thing.
+	for (const modifier of ['skip', 'todo'] as const) {
+		bunTest(`detects an aliased receiver with .${modifier}`, () => {
+			expect(findUnconditionalSkips(`aliasedIt.${modifier}('named thing', () => {});`)).toHaveLength(1);
+		});
+	}
+	bunTest('detects an aliased receiver with .only, through the only detector', () => {
+		expect(findUnconditionalSkips(`aliasedIt.only('named thing', () => {});`)).toEqual([]);
+		expect(findFocusOnly(`aliasedIt.only('named thing', () => {});`)).toHaveLength(1);
+	});
+
+	bunTest('detects an aliased unconditional skipIf', () => {
+		const sites = findUnconditionalSkips(`bunTest.skipIf(true, 'because')('does a thing', () => {});`);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('does a thing');
+	});
+
+	bunTest('an aliased skip really does remove coverage, and the gate reports it', async () => {
+		// The same real-runner proof as `it.only`, for the alias case. Without this
+		// the claim "aliased skips are silent" rests on reasoning about the DSL
+		// rather than on an observation.
+		const dir = mkdtempSync(join(tmpdir(), 'skip-alias-'));
+		const file = join(dir, 'alias.test.ts');
+		writeFileSync(
+			file,
+			[
+				`import { it as aliasedIt, expect } from 'bun:test';`,
+				`aliasedIt('first sibling', () => { expect(1).toBe(1); });`,
+				`aliasedIt.skip('hidden by alias', () => { expect(1).toBe(2); });`,
+				`aliasedIt('second sibling', () => { expect(1).toBe(1); });`,
+				'',
+			].join('\n'),
+		);
+		const proc = Bun.spawnSync(['bun', 'test', file], { cwd: dir });
+		// Both streams: the banner is stdout, the results and summary are stderr.
+		const out = proc.stdout.toString() + proc.stderr.toString();
+		// The aliased skip did remove the failing assertion, and the runner called
+		// that a pass: 2 pass / 1 skip / 0 fail.
+		expect(out).toContain('1 skip');
+		expect(out).toContain('0 fail');
+		expect(proc.exitCode).toBe(0);
+		// And the gate reports it rather than passing on that silence.
+		expect(findUnconditionalSkips(readFileSync(file, 'utf8'))).toHaveLength(1);
+	});
+
+	bunTest('a skipIf bound to a name is a guard, not a deleted test', () => {
+		// This is the shape the contract harness actually uses, and the reason
+		// `ALLOWED_SKIPS` is empty. The registrar is bound rather than called on the
+		// spot, so no test is removed — the binding lifts itself on a machine with a
+		// newer git. Generalizing the receiver exposed these three sites; they are
+		// excluded on this semantic test, not by a hardcoded line number.
+		const source = [
+			`export const it = defaultSkipReason`,
+			`\t? bunTest.skipIf(true, defaultSkipReason)`,
+			`\t: bunTest;`,
+		].join('\n');
+		expect(findUnconditionalSkips(source)).toEqual([]);
+	});
+
+	bunTest('a bound guard next to a real skip still reports the real skip', () => {
+		// The guard test above must not become a blanket exemption: an aliased skip
+		// in the same file is still a deleted test.
+		const source = [
+			`const guarded = bunTest.skipIf(true, reason);`,
+			`guarded('bound', () => {});`,
+			`aliasedIt.skip('actually deleted', () => {});`,
+		].join('\n');
+		const sites = findUnconditionalSkips(source);
+		expect(sites).toHaveLength(1);
+		expect(sites[0].name).toBe('actually deleted');
 	});
 
 	bunTest('ignores the pattern when it appears in a comment', () => {
@@ -1286,25 +1443,33 @@ bunDescribe('contract suite skip policy', () => {
 		expect(sites[0].line).toBe(2);
 	});
 
-	bunTest('the version-floor skip is reached through a variable, so the gate cannot see it', () => {
+	bunTest('the version-floor guard is visible to the scan and is a guard, not a skip', () => {
 		// The version floor binds the guard as a *value* before any skip is registered:
 		//
 		//     export const it = defaultSkipReason ? bunTest.skipIf(true, defaultSkipReason) : bunTest;
 		//
-		// There is no test call here at all — a bare member of `bun:test` is called
-		// with a condition and its result is assigned. The result is then invoked
-		// through that binding, e.g. `it('name', fn)`, which is not a skip spelling
-		// and is indistinguishable from an ordinary test. So the one skip the doc
-		// permits is invisible to this scan, not exempt from it, and no allowlist
-		// entry would change that. It is reported here deliberately, and
-		// `collectOffenders` filters it, so the exemption is stated in one reviewable
-		// place instead of being a hole hidden inside the scanner.
+		// An earlier version of this file claimed those calls were invisible to the
+		// scan, and asserted that by pinning the blessed line numbers it produced. Both
+		// halves of that were wrong: the calls are plainly in the source, and the
+		// reason they were tolerated was an aliased receiver plus a binding, neither of
+		// which is a line number. A wrong justification is worse than none, because it
+		// survives a change that invalidates it.
+		//
+		// What is true is narrower and checkable: the guard is in the source, the scan
+		// can see it, and it is not reported — because `isAppliedAt` finds the result
+		// is bound to a name rather than called, which is what makes it a guard that
+		// lifts itself. `ALLOWED_SKIPS` therefore stays empty, and this test is what
+		// keeps that a decision rather than an accident.
 		const guards = findUnconditionalSkips(readFileSync(join(CONTRACT_DIR, 'harness.ts'), 'utf8'));
-		expect(guards.map(site => site.line)).toEqual([232, 235]);
-		expect(guards.every(site => site.name === null)).toBe(true);
+		expect(guards).toEqual([]);
 
 		const selfCheck = findUnconditionalSkips(readFileSync(join(CONTRACT_DIR, 'harness.test.ts'), 'utf8'));
-		expect(selfCheck.map(site => site.line)).toEqual([122]);
+		expect(selfCheck).toEqual([]);
+
+		// And the distinction is the reason, not a coincidence of which file it is in:
+		// applying the very same guard on the spot is reported.
+		const applied = `bunTest.skipIf(true, 'version floor')('a real skip', () => {});`;
+		expect(findUnconditionalSkips(applied)).toHaveLength(1);
 	});
 
 	bunTest('every other version-floor call is reached through a variable, and is not a skip', () => {
@@ -1441,11 +1606,22 @@ bunDescribe('contract suite skip policy', () => {
 		// The second is a *wrapper* — `c ? it.skipIf(true, 'why') : it` — and this one
 		// the blanker cannot help with: it is code, correctly parsed, and a genuine
 		// `skipIf` whose condition is a literal `true`. It is this repository's own
-		// idiom (`harness.ts` exports exactly that shape), and it was tolerated only
-		// because its condition is an identifier rather than a literal. Move it into
-		// a package's `src` and it turns the gate red on a deliberate design.
+		// idiom (`harness.ts` exports exactly that shape).
+		//
+		// It is no longer reported, and not because the scan was narrowed to dodge it:
+		// the result is never *called* here, so it is a registrar bound to a name and
+		// therefore a guard that lifts itself. `isAppliedAt` is what says so, which is
+		// why the same wrapper moved into a package's `src` stops being able to turn
+		// the gate red on a deliberate design — the decision is semantic, not
+		// file-scoped.
 		const wrapper = `export const maybeSkip = (c: boolean) => c ? it.skipIf(true, 'why') : it;`;
-		expect(findUnconditionalSkips(wrapper)).toHaveLength(1);
+		expect(findUnconditionalSkips(wrapper)).toEqual([]);
+
+		// A skip that *is* applied on the spot is still reported, whichever receiver
+		// it is spelled on. This is the pair that keeps `isAppliedAt` honest in both
+		// directions rather than a filter that only ever suppresses.
+		const applied = `export const drop = () => it.skipIf(true, 'why')('a real skip', () => {});`;
+		expect(findUnconditionalSkips(applied)).toHaveLength(1);
 
 		// So neither can come from an ordinary source file now, because no source
 		// file is scanned. `harness.ts` is the real one, and with the pattern narrowed
