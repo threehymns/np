@@ -25,10 +25,11 @@ import {
 } from './errors';
 import type { DocumentSession } from "../document.svelte";
 import type { KeymapBinding, KeymapRegistry, KeymapTransform } from '../keymap.svelte';
-import type {
-	FileIconTransform,
-	ProductIconTransform,
-	IconRegistryInterface
+import {
+	CORE_ICONS_OWNER,
+	type FileIconTransform,
+	type ProductIconTransform,
+	type IconRegistryInterface
 } from '../editor/icons-types';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
@@ -1968,6 +1969,9 @@ export class PluginHost implements PluginHostInterface {
 
 	attachIconRegistryInternal(registry: IconRegistryInterface): void {
 		this.attachedIconRegistry = registry;
+		registry.setOwnerOrdering?.((ownerIds) =>
+			this.orderedRegistryOwners(ownerIds, (id) => id === CORE_ICONS_OWNER)
+		);
 	}
 
 	/**

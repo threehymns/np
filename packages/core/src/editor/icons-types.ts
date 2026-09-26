@@ -67,6 +67,13 @@ export interface IconRegistryInterface {
   registerFileIconTransform(pluginId: string, transform: FileIconTransform): void;
   registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void;
   removePluginIcons(pluginId: string): void;
+  /**
+   * Deterministic owner ordering shared with the host's replayed registries
+   * (ADR 0012). Set by the host on attach so a disable/enable cycle replays
+   * in computed activation order, not raw push order. Without a host,
+   * first-seen order is preserved.
+   */
+  setOwnerOrdering?(order: (ownerIds: readonly string[]) => string[]): void;
   rebuild(): void;
   refresh(): void;
   getFileThemes(): ThemeInfo[];

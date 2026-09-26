@@ -24,6 +24,7 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 	private productThemes = $state<Record<string, ProductIconProvider>>({});
 	private fileIconTransforms: FileIconTransformRegistration[] = [];
 	private productIconTransforms: ProductIconTransformRegistration[] = [];
+	private ownerOrdering?: (ownerIds: readonly string[]) => string[];
 
 	async initialize(): Promise<void> {}
 
@@ -56,6 +57,22 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 			this.productIconTransforms = keptProductTransforms;
 			this.rebuild();
 		}
+	}
+
+	setOwnerOrdering(order: (ownerIds: readonly string[]) => string[]): void {
+		this.ownerOrdering = order;
+		this.rebuild();
+	}
+
+	private orderedEntries<T extends { pluginId: string }>(entries: readonly T[]): T[] {
+		if (!this.ownerOrdering) return [...entries];
+		const byOwner = new Map<string, T[]>();
+		for (const entry of entries) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) list.push(entry);
+			else byOwner.set(entry.pluginId, [entry]);
+		}
+		return this.ownerOrdering(Array.from(byOwner.keys())).flatMap((id) => byOwner.get(id)!);
 	}
 
 	rebuild(): void {
@@ -112,7 +129,7 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 
 	private replayFileTransforms(): Record<string, FileIconProvider> {
 		let state = new SvelteMap<string, FileIconProvider>();
-		for (const entry of this.fileIconTransforms) {
+		for (const entry of this.orderedEntries(this.fileIconTransforms)) {
 			const next = entry.transform(new SvelteMap(state));
 			state = new SvelteMap(next);
 		}
@@ -121,7 +138,7 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 
 	private replayProductTransforms(): Record<string, ProductIconProvider> {
 		let state = new SvelteMap<string, ProductIconProvider>();
-		for (const entry of this.productIconTransforms) {
+		for (const entry of this.orderedEntries(this.productIconTransforms)) {
 			const next = entry.transform(new SvelteMap(state));
 			state = new SvelteMap(next);
 		}

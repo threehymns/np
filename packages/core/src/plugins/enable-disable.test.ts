@@ -1002,6 +1002,10 @@ describe('toggle off/on round trip restores full function without restart', () =
 						extension: []
 					});
 					host.registerKeymapBindings(id, [{ bindings: { [`ctrl+${id}`]: `${id}.command` } }]);
+					host.registerFileIconTransform(id, (previous) => new Map(previous).set(`${id}-theme`, { id: `${id}-theme` } as any));
+					host.registerSidebarPanel(id, { id: `${id}-panel`, title: id, order: 1, component: {} as any });
+					host.registerStatusBarItem(id, { id: `${id}-status`, alignment: 'left', order: 1, component: {} as any });
+					host.registerTabContent(id, { id: `${id}-tab`, title: id, component: {} as any });
 				}
 			};
 		}
@@ -1009,8 +1013,11 @@ describe('toggle off/on round trip restores full function without restart', () =
 		async function registryOrder(afterToggle: boolean) {
 			const host = new PluginHost();
 			const { KeymapRegistry } = await import('../keymap.svelte');
+			const { HeadlessIconRegistry } = await import('../editor/icons/headless-registry.svelte');
 			const keymaps = new KeymapRegistry({ commands: { execute: () => undefined } } as any);
 			host.attachKeymapRegistryInternal(keymaps);
+			const icons = new HeadlessIconRegistry();
+			host.attachIconRegistryInternal(icons);
 			host.register(contributingPlugin('alpha'));
 			host.register(contributingPlugin('beta'));
 			await host.activateAll();
@@ -1022,7 +1029,11 @@ describe('toggle off/on round trip restores full function without restart', () =
 				commands: host.getCommands().map((command) => command.id),
 				settings: host.getSettingSchemas().map((schema) => schema.namespace),
 				editor: host.getEditorContributions().map((entry) => entry.contribution.id),
-				keymap: keymaps.bindings.map((binding) => binding.commandId)
+				keymap: keymaps.bindings.map((binding) => binding.commandId),
+				icons: icons.getFileThemes().map((theme) => theme.id),
+				panels: host.getSidebarPanels().map((panel) => panel.id),
+				status: host.getStatusBarItems().map((item) => item.id),
+				tabs: host.getTabContents().map((tab) => tab.id)
 			};
 		}
 
