@@ -354,6 +354,40 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(host.getCommand('git.stage')).toBeDefined();
 		});
 
+		it('leaves the folder-less session state alone when no folder is open', async () => {
+			const { host, persistence } = await makeHarness({ detected: true });
+			// The app's unscoped session bucket, which the Git plugin does not own
+			// when it has no folder.
+			const folderLess = [
+				{ id: 'doc-1', origin: { scheme: 'file', path: '/elsewhere/a.md', name: 'a.md' }, isModified: false }
+			];
+			await persistence.saveOpenFiles(folderLess, '');
+			await persistence.saveActiveDocumentId('doc-1', '');
+
+			await host.deactivate('git');
+
+			// Disablement owns no folder here, so it must not rewrite the unscoped
+			// bucket with the workspace's own (here: empty) tab list.
+			expect(await persistence.loadOpenFiles('')).toEqual(folderLess);
+			expect(await persistence.loadActiveDocumentId('')).toBe('doc-1');
+		});
+
+		it('still persists the closed diff tabs for the folder it owns', async () => {
+			const { host, workspace, persistence } = await makeHarness({ detected: true });
+			await workspace.openDirectory();
+			workspace.tabs.push({ id: '__project_diff__', type: 'diff', pluginId: 'git' });
+			await workspace.saveFolderState('file:///repo');
+			expect((await persistence.loadOpenFiles('file:///repo')).map((d) => d.id)).toContain('__project_diff__');
+
+			await host.deactivate('git');
+
+			// The diff tab is gone from the session, and the folder's saved state
+			// no longer resurrects it on the next open.
+			expect(workspace.tabs.some((tab) => tab.id === '__project_diff__')).toBe(false);
+			const saved = await persistence.loadOpenFiles('file:///repo');
+			expect(saved.some((doc) => doc.virtualTabType === 'diff')).toBe(false);
+		});
+
 		it('drops in-flight detect results on disable', async () => {
 			let releaseDetect!: () => void;
 			const detectGate = new Promise<void>((resolve) => (releaseDetect = resolve));

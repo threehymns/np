@@ -172,7 +172,13 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			)) {
 				workspace.closeTab(tab.id);
 			}
-			await workspace.saveFolderState(workspace.rootOrigin ? toURI(workspace.rootOrigin) : '');
+			// Persist the closed diff tabs under the folder this plugin owns. A
+			// workspace with no root folder has nothing of Git's to close, and
+			// the unscoped (folder-less) session bucket is not Git's to rewrite,
+			// so no empty URI is handed to the workspace.
+			if (workspace.rootOrigin) {
+				await workspace.saveFolderState(toURI(workspace.rootOrigin));
+			}
 		}
 		states.clear();
 	};
