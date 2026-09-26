@@ -1,6 +1,6 @@
 import { expect } from 'bun:test';
 import { chmodSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileOrigin } from '@np/core';
 import { toURI } from '@np/core/storage';
@@ -491,6 +491,121 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'new-file.txt')).toBe('new content\n');
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'new-file.txt', 'src.txt']);
 			expect(await indexMode(r, 'new-file.txt')).toBe('100644');
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('preserves the executable index mode of an existing entry across stageAll', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await stageAll(r);
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			const adapter = engine.adapter(r);
+
+			// The ordinary case: the user edits an executable script and stages it.
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+
+			// Staging content must never silently drop the exec bit. A browser
+			// cannot learn a POSIX mode, so the index is the only place the bit
+			// can survive; losing it here breaks the script for everyone who
+			// checks the commit out. The entry must also be fully staged (no
+			// lingering worktree difference), not left permanently modified.
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await indexContents(r, 'hello.ts')).toBe(`${HELLO_V0}extra\n`);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('preserves the executable index mode of an existing entry across stageFile', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await stageAll(r);
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			const adapter = engine.adapter(r);
+
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageFile('hello.ts');
+
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('stages a content change to one executable without touching a second executable', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			chmodSync(path.join(r.path, 'src.txt'), 0o755);
+			// Commit the modes, so both entries start clean at 100755. The second
+			// executable is the control: it must stay clean and keep its mode, so a
+			// mode-preserving fix cannot be faked by blanket-writing 100755.
+			await commitAll(r, 'mark both executable');
+			expect(await porcelainStatus(r)).toEqual([]);
+			const adapter = engine.adapter(r);
+
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await indexMode(r, 'src.txt')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it('stages a binary file byte-for-byte instead of round-tripping it through UTF-8', async () => {
+			// Staging writes the blob itself, and a decode-then-encode round trip is
+			// not byte-preserving: any byte sequence that is not valid UTF-8 (a PNG
+			// header, a .so, a latin-1 source file) decodes to U+FFFD and re-encodes
+			// to different bytes. The staged blob would then differ from the file on
+			// disk, so the file is never clean and the commit content is wrong.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// A NUL byte (invalid standalone in UTF-8), a lone 0x80 continuation byte,
+			// and an invalid 0xFF: none of these survive a UTF-8 round trip.
+			const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x80, 0xff, 0x0a]);
+			await writeFile(path.join(r.path, 'blob.bin'), bytes);
+			await stageAll(r);
+			await commitAll(r, 'add binary');
+			const adapter = engine.adapter(r);
+
+			// Edit the file the way a user would, then stage the whole worktree.
+			const edited = Buffer.concat([bytes, Buffer.from([0xfe, 0x01])]);
+			await writeFile(path.join(r.path, 'blob.bin'), edited);
+			await adapter.stageAll();
+
+			// The staged blob must be exactly the bytes on disk. `cat-file blob` with
+			// `--textconv` off still goes through git's raw path, but the harness
+			// decodes stdout as a string, so compare the blob oid instead: the oid is
+			// a hash over the raw bytes, so matching it proves byte equality without
+			// this test needing a byte channel.
+			const stagedOid = (await checkedGit(r, ['rev-parse', ':blob.bin'])).stdout.trim();
+			const onDiskOid = (await checkedGit(r, ['hash-object', 'blob.bin'])).stdout.trim();
+			expect(stagedOid).toBe(onDiskOid);
+			expect(stagedOid).not.toBe((await checkedGit(r, ['rev-parse', 'HEAD:blob.bin'])).stdout.trim());
+			// And the entry must be fully staged, not left permanently modified.
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'blob.bin' }]);
+		});
+
+		it('stages an emptied tracked file rather than skipping it', async () => {
+			// `stageAll` writes a blob directly instead of calling `git.add`, so a
+			// file truncated to empty must still produce a staged empty blob. A
+			// falsy read of the worktree content would silently skip the file.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			await r.write('src.txt', '');
+			await adapter.stageAll();
+
+			expect(await indexContents(r, 'src.txt')).toBe('');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'src.txt' }]);
 		});
 
 		it.skipIf(
