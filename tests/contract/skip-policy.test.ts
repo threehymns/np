@@ -1105,8 +1105,9 @@ bunDescribe('contract suite skip policy', () => {
 		// Proven against a real runner rather than assumed. `only` is not a skip
 		// of the test it marks: it silences every other test in the same file. A
 		// single `it.only` left behind after debugging therefore removes unrelated
-		// coverage while `bun test` still exits 0, which is the exact failure the
-		// gate exists to stop.
+		// coverage while `bun test` still exits 0 on a dev machine — under CI
+		// bun itself rejects `.only` with exit 1, so the silent case is local —
+		// which is the exact failure the gate exists to stop.
 		const dir = mkdtempSync(join(tmpdir(), 'skip-only-'));
 		const file = join(dir, 'only.test.ts');
 		writeFileSync(
@@ -1121,10 +1122,12 @@ bunDescribe('contract suite skip policy', () => {
 		);
 		const proc = Bun.spawnSync(['bun', 'test', file], { cwd: dir });
 		const out = proc.stdout.toString();
-		// The runner really does drop the siblings and still report success.
+		// The runner really does drop the siblings: neither runs. No
+		// exit-code assertion — outside CI bun exits 0 (the silent case),
+		// while under CI bun itself exits 1 with ".only is disabled", so
+		// the code is environment-dependent and not the property pinned here.
 		expect(out).not.toContain('first sibling');
 		expect(out).not.toContain('second sibling');
-		expect(proc.exitCode).toBe(0);
 		// And the gate reports it rather than passing on that silence. It is
 		// reported by the `.only` detector rather than the skip detector, because a
 		// `.only` is not a skip: the test it marks runs, and its *siblings* do not.
