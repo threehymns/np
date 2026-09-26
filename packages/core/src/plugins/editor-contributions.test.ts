@@ -13,7 +13,8 @@ import {
 	DirectEditorViewAccessError,
 	RawTransactionDispatchError,
 	DocumentRevisionMismatchError,
-	DuplicateEditorContributionIdError
+	DuplicateEditorContributionIdError,
+	UnknownPluginHostMethodError
 } from './errors';
 import {
 	PILOT_GUTTER_CONTRIBUTION,
@@ -444,7 +445,7 @@ describe('Editor contribution contract (#201, ADR 0016)', () => {
 
 			await host.activate('restricted-plugin');
 			expect(() => (pluginHost as any).getAttachedEditorInternal('document')).toThrow(
-				DirectEditorViewAccessError
+				UnknownPluginHostMethodError
 			);
 		});
 

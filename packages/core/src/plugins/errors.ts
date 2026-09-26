@@ -272,6 +272,27 @@ export class SaveCancelledError extends Error {
 }
 
 /**
+ * Actionable diagnostic error thrown when plugin code accesses a host
+ * member that is not part of the plugin host interface (typo or removed
+ * method). Kept distinct from DirectEditorViewAccessError so a typo is
+ * never misdiagnosed as editor-view access.
+ */
+export class UnknownPluginHostMethodError extends Error {
+	readonly accessor: string;
+
+	constructor(accessor: string) {
+		super(
+			`Unknown plugin host member "${accessor}".\n` +
+				`Action: Check the host interface for the correct member name (host.getManifests().map((m) => m.id) lists plugins; ` +
+				`host.getCommands().map((c) => c.id) lists commands). ` +
+				`If "${accessor}" was renamed, update the plugin to the current host interface (hostVersion ${0}).`
+		);
+		this.name = 'UnknownPluginHostMethodError';
+		this.accessor = accessor;
+	}
+}
+
+/**
  * Actionable diagnostic error thrown when plugin code attempts to access
  * the CodeMirror EditorView directly (ADR 0016).
  */

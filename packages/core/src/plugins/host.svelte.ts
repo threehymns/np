@@ -21,6 +21,7 @@ import {
 	PluginActivationError,
 	PluginNotFoundError,
 	SaveCancelledError,
+	UnknownPluginHostMethodError,
 	UnsupportedPlatformError
 } from './errors';
 import type { DocumentSession } from "../document.svelte";
@@ -140,11 +141,35 @@ const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
 	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
 );
 
+/**
+ * Host members that exist to throw dedicated diagnostics (ADR 0016) but
+ * are intentionally absent from the plugin-visible interface. The proxy
+ * forwards them so plugin code receives RawTransactionDispatchError /
+ * DirectEditorViewAccessError instead of a mislabelled unknown-member
+ * error.
+ */
+const FORBIDDEN_HOST_MEMBERS = new SvelteSet([
+	'view',
+	'editorView',
+	'getActiveEditorView',
+	'dispatch',
+	'dispatchTransaction'
+]);
+
 function createPluginHostInterface(host: PluginHost): PluginHostInterface {
 	return new Proxy(Object.create(null), {
 		get(_target, property) {
-			if (typeof property !== 'string' || !PLUGIN_HOST_INTERFACE_KEYS.has(property)) {
-				throw new DirectEditorViewAccessError(`host.${String(property)}`);
+			// Never make the proxy thenable: `await proxy` must not throw.
+			// Symbols (inspect, async-dispose) are not host members either.
+			if (property === 'then' || typeof property !== 'string') {
+				return undefined;
+			}
+			if (!PLUGIN_HOST_INTERFACE_KEYS.has(property)) {
+				if (FORBIDDEN_HOST_MEMBERS.has(property)) {
+					const value = Reflect.get(host as unknown as Record<string, unknown>, property, host);
+					return typeof value === 'function' ? (value as Function).bind(host) : value;
+				}
+				throw new UnknownPluginHostMethodError(`host.${property}`);
 			}
 			const value = Reflect.get(host, property, host);
 			return typeof value === 'function' ? value.bind(host) : value;
@@ -1546,7 +1571,7 @@ export class PluginHost implements PluginHostInterface {
 		// Verify existence
 		for (const id of targetIds) {
 			if (!this.registrations.has(id)) {
-				throw new PluginNotFoundError(id);
+				throw new PluginNotFoundError(id, Array.from(this.registrations.keys()));
 			}
 		}
 
@@ -1690,7 +1715,7 @@ export class PluginHost implements PluginHostInterface {
 			throw new Error(`Cannot activate plugin "${id}": host is disposed (shutdown).`);
 		}
 		if (!this.registrations.has(id)) {
-			throw new PluginNotFoundError(id);
+			throw new PluginNotFoundError(id, Array.from(this.registrations.keys()));
 		}
 		this.assertNotDeactivating(id);
 
@@ -1736,7 +1761,7 @@ export class PluginHost implements PluginHostInterface {
 	private async executeActivation(id: string): Promise<void> {
 		const registration = this.registrations.get(id);
 		if (!registration) {
-			throw new PluginNotFoundError(id);
+			throw new PluginNotFoundError(id, Array.from(this.registrations.keys()));
 		}
 
 		// The one gate for every activation path (activate, activateAll, and
@@ -1825,7 +1850,7 @@ export class PluginHost implements PluginHostInterface {
 	 */
 	async deactivate(id: string, reason = 'Disabled'): Promise<void> {
 		if (!this.registrations.has(id)) {
-			throw new PluginNotFoundError(id);
+			throw new PluginNotFoundError(id, Array.from(this.registrations.keys()));
 		}
 
 		if (this.getPluginState(id) === 'activating') {
