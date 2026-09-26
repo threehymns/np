@@ -626,7 +626,12 @@ export class PluginHost implements PluginHostInterface {
 		phase: 'disablement' | 'activation rollback'
 	): Promise<void> {
 		let timer: ReturnType<typeof setTimeout> | undefined;
-		const settled = Promise.resolve(cleanup()).then(() => 'settled' as const);
+		// Deferred by a microtask so a cleanup that throws before returning
+		// its promise settles through the same rejection path as an async
+		// failure, instead of escaping the bound and the catch below.
+		const settled = Promise.resolve()
+			.then(cleanup)
+			.then(() => 'settled' as const);
 		const expiry = new Promise<'timedOut'>((resolve) => {
 			timer = setTimeout(() => resolve('timedOut'), this.cleanupTimeoutMs);
 		});

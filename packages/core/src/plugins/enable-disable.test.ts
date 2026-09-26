@@ -1,6 +1,7 @@
 import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, mock, spyOn } from 'bun:test';
 import { PluginHost } from './host.svelte';
+import { PluginActivationError } from './errors';
 import { gitRegistration } from './git/registration';
 import { GIT_PANEL_ID, GIT_STATUS_ID } from './git/ui';
 import { DIALOGS_SERVICE_KEY } from './services';
@@ -612,7 +613,73 @@ describe('toggle off/on round trip restores full function without restart', () =
 			errorSpy.mockRestore();
 		});
 
-		it('completes disablement when an active operation never settles', async () => {
+	it('completes disablement when a plugin cleanup throws synchronously', async () => {
+		// A cleanup that throws before returning its promise is still a
+		// cleanup failure: the host reports it against the owning plugin and
+		// finishes the disablement (ADR 0009).
+		const host = new PluginHost({ cleanupTimeoutMs: 20 });
+		host.register({
+			manifest: { id: 'throwing-cleanup', name: 'Throwing Cleanup', version: 0 },
+			setup: () => () => {
+				throw new Error('teardown exploded');
+			}
+		});
+		await host.activate('throwing-cleanup');
+		expect(host.getPluginState('throwing-cleanup')).toBe('active');
+
+		const logged: string[] = [];
+		const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+			logged.push(args.map((arg) => String(arg)).join(' '));
+		});
+
+		await host.deactivate('throwing-cleanup');
+
+		expect(host.getPluginState('throwing-cleanup')).toBe('inactive');
+		expect(logged.join('\n')).toContain('throwing-cleanup');
+		expect(logged.join('\n')).toContain('teardown exploded');
+		errorSpy.mockRestore();
+	});
+
+	it('reports the original activation failure when rollback cleanup throws synchronously', async () => {
+		// Rollback must not replace the setup/rebuild failure the user needs
+		// to see with an error from the plugin's own cleanup.
+		const host = new PluginHost({ cleanupTimeoutMs: 20 });
+		host.register({
+			manifest: { id: 'collider', name: 'Collider', version: 0 },
+			setup: (h) => {
+				h.registerCommands('collider', [
+					{ id: 'shared.command', label: 'Shared', category: 'Fixtures', action: () => undefined }
+				]);
+			}
+		});
+		host.register({
+			manifest: { id: 'rollback-clash', name: 'Rollback Clash', version: 0 },
+			setup: (h) => {
+				h.registerCommands('rollback-clash', [
+					{ id: 'shared.command', label: 'Shared', category: 'Fixtures', action: () => undefined }
+				]);
+				return () => {
+					throw new Error('teardown exploded');
+				};
+			}
+		});
+		await host.activate('collider');
+
+		const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+		let caught: unknown = null;
+		try {
+			await host.activate('rollback-clash');
+		} catch (error) {
+			caught = error;
+		}
+		errorSpy.mockRestore();
+
+		expect(caught).toBeInstanceOf(PluginActivationError);
+		expect((caught as Error).message).toContain('shared.command');
+		expect(host.getPluginState('rollback-clash')).toBe('error');
+	});
+
+	it('completes disablement when an active operation never settles', async () => {
 			// An active write that never resolves must not hold the plugin
 			// in deactivating forever: the host bounds the wait, reports it
 			// against the owning plugin, and finishes disablement (ADR 0009).
