@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
 
 	writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+	isSymlink: (filePath: string) => ipcRenderer.invoke('fs:isSymlink', filePath),
 	readDirectory: (dirPath: string) => ipcRenderer.invoke('fs:readDirectory', dirPath),
 	createDirectory: (dirPath: string) => ipcRenderer.invoke('fs:createDirectory', dirPath),
 	deleteEntry: (entryPath: string) => ipcRenderer.invoke('fs:deleteEntry', entryPath),

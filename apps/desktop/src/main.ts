@@ -228,6 +228,19 @@ function registerIpcHandlers() {
 		await fs.writeFile(filePath, content, 'utf-8');
 	});
 
+	// `lstat`, not `stat`: the answer must describe the link itself rather than
+	// whatever it points at, which is the whole question the renderer is asking.
+	ipcMain.handle('fs:isSymlink', async (_, filePath: string) => {
+		try {
+			return (await fs.lstat(filePath)).isSymbolicLink();
+		} catch (err) {
+			// A path that cannot be stat'd is certainly not a symlink, and the
+			// renderer's own read will report the real reason if it matters.
+			if (isNotFoundError(err)) return false;
+			throw err;
+		}
+	});
+
 	ipcMain.handle('fs:createDirectory', async (_, dirPath: string) => {
 		await fs.mkdir(dirPath, { recursive: true });
 	});
