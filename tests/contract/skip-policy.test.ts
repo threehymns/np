@@ -1,7 +1,17 @@
 import { describe as bunDescribe, expect, it as bunTest } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	rmdirSync,
+	statSync,
+	existsSync,
+	writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { createTrackedRepo } from './harness';
 
 /**
@@ -559,6 +569,45 @@ function collect(detect: (source: string) => SkipSite[]): string[] {
 	return offenders;
 }
 
+/**
+ * A real unconditional skip, in the shape the gate exists to catch.
+ */
+const PLANTED_SKIP = [
+	`import { test } from 'bun:test';`,
+	`test.skipIf(true, 'planted by the gate's own end-to-end test')(`,
+	`	'escaped the gate's scan roots',`,
+	`	() => {},`,
+	`);`,
+	'',
+].join('\n');
+
+/**
+ * Runs `check` with a file planted at the repository-relative `relPath`, then
+ * removes it (and any directory it had to create).
+ *
+ * The plant has to live inside the repository. A file in a temp directory is
+ * outside every scan root, so no test built on one can observe a scan-scope
+ * regression — which is how this file's end-to-end test came to pass with the
+ * repo-wide scan switched off.
+ */
+function withPlantedFile(
+	relPath: string,
+	contents: string,
+	check: (offenders: string[]) => void,
+): void {
+	const full = join(REPO_ROOT, relPath);
+	const parent = dirname(full);
+	const madeParent = !existsSync(parent);
+	if (madeParent) mkdirSync(parent, { recursive: true });
+	writeFileSync(full, contents);
+	try {
+		check(collectOffenders());
+	} finally {
+		rmSync(full, { force: true });
+		if (madeParent) rmdirSync(parent);
+	}
+}
+
 bunDescribe('contract suite skip policy', () => {
 	bunTest('no contract test is skipped unconditionally', () => {
 		expect(collectOffenders()).toEqual([]);
@@ -940,21 +989,17 @@ bunDescribe('contract suite skip policy', () => {
 		expect(scanned.some(f => f.startsWith(`.git${sep}`))).toBe(false);
 	});
 
-	bunTest('a skip outside tests/contract is still reported', () => {
-		// The end-to-end shape of the bug: `collectOffenders` must consider files
-		// beyond the gate's own folder. Proven by planting a real skip in
-		// `tests/e2e` and observing the gate report 12 pass / 0 fail.
-		const planted = join(
-			mkdtempSync(join(tmpdir(), 'skip-scope-')),
-			'planted.spec.ts',
-		);
-		writeFileSync(
-			planted,
-			[`test.skipIf(true, 'unconditional')('escaped the gate', () => {});`, ''].join('\n'),
-		);
-		const sites = findUnconditionalSkips(readFileSync(planted, 'utf8'));
-		expect(sites).toHaveLength(1);
-		expect(sites[0].name).toBe('escaped the gate');
+	bunTest('a file named skip-policy.test.ts outside this one is still scanned', () => {
+		// This file is excluded from its own scan because it necessarily contains
+		// the pattern it forbids. That exclusion has to be this exact file. A
+		// basename suffix match would silently exempt every future file named
+		// `skip-policy.test.ts` anywhere in the repository, which is the same class
+		// of blind spot the gate exists to close.
+		withPlantedFile('packages/core/src/skip-policy.test.ts', PLANTED_SKIP, offenders => {
+			expect(offenders).toEqual([
+				"packages/core/src/skip-policy.test.ts:2  escaped the gate's scan roots",
+			]);
+		});
 	});
 
 	bunTest('contract tests still run against a real repository', () => {
