@@ -39,6 +39,15 @@ import { createTrackedRepo } from './harness';
  * The rule is enforced on the source, not on test output, so it holds even when
  * the suite is run with a filter that skips whole files.
  *
+ * This is a lint, not an enforcement mechanism, and the boundary of what it can
+ * see is deliberate: it matches a receiver spelled `it`, `test` or `describe`
+ * followed by a literal call, tolerating whitespace around the dot. A skip
+ * reached through a variable — `const s = it.skip; s('x', fn)` — is not matched.
+ * Resolving that needs an AST parse, which is a different change at a different
+ * altitude, and it is tracked in `KNOWN_BLIND_SPOTS` so a reader cannot infer
+ * more coverage than exists. The version-floor guard in `harness.ts` is written
+ * through a variable, which is why the allowlist below can stay empty.
+ *
  * Scope: the whole repository, not just this folder. The gate's first version
  * scanned only `tests/contract`, which holds 9 test files — 9 of the
  * repository's 96, and 9 of the 81 `bun test` collects (it also holds three
@@ -158,6 +167,37 @@ const SCAN_EXCLUDES = new Set(['node_modules', '.git', ...ignoredDirectoryNames(
  * filter.
  */
 const SCAN_ROOTS: string[] = [REPO_ROOT];
+
+/**
+ * A skip is found by reading the source, so some shapes are out of reach. Naming
+ * them here is the point: the alternative is a gate whose comment implies a
+ * guarantee it does not make, which is how the previous two versions of this file
+ * shipped.
+ *
+ *   - A receiver reached through a variable: `const s = it.skip; s('x', fn)`, or
+ *     `const { skip } = it; skip('x', fn)`. The regex matches receiver *text*; it
+ *     does not resolve what an identifier was assigned. The version-floor guard
+ *     in `harness.ts` has this shape — deliberately, since it is the predicate
+ *     `ALLOWED_SKIPS` documents — and it is also the shape a maintainer
+ *     generalising `const focused = it.only` would write, which is a real hole.
+ *   - A computed member: `it['skip']('x', fn)`.
+ *   - A receiver that is not a test registrar at all, reached by the same
+ *     mechanism. Widening the match to any identifier would close the first two
+ *     and open this one; `skip`, `todo` and `only` are not general-purpose method
+ *     names, but `anyIdentifier.skipIf(true, …)` on something that is not a
+ *     registrar is a false positive waiting to happen.
+ *
+ * Closing the first shape needs an AST parse rather than a wider pattern, which is
+ * a larger change than a lint should carry on its own.
+ *
+ * One test below asserts that the first shape really is still missed, so this
+ * list cannot quietly go stale.
+ */
+const KNOWN_BLIND_SPOTS: string[] = [
+	'a skip whose receiver is reached through a variable',
+	'a computed member such as it[\'skip\']',
+	'a widened receiver that is not a test registrar',
+];
 
 /**
  * The version-floor guard, and the only thing the allowlist covers.
@@ -813,29 +853,6 @@ bunDescribe('contract suite skip policy', () => {
 		expect(sites[0].line).toBe(1);
 	});
 
-	bunTest('detects a wrapped call, because a formatter can break the chain itself', () => {
-		// Whitespace on either side of the dot is legal JavaScript and a formatter
-		// will produce it the moment a line grows. If the gate's pattern required
-		// the dot to touch both names, wrapping an existing skip would be enough to
-		// hide it — the gate would go green on a suite that is still not running.
-		// Proven: this exact spelling produced zero matches before the pattern was
-		// widened to `\s*\.\s*`.
-		const wrapped = [
-			`it('a real test', () => {});`,
-			`it`,
-			`  .skip('wrapped across lines', () => {});`,
-		].join('\n');
-		expect(findUnconditionalSkips(wrapped).map(site => site.name)).toEqual(['wrapped across lines']);
-
-		// The same widening must not break the conditional shape: a wrapped
-		// `skipIf` still has its condition read, and still reads it from the `(` the
-		// match ends on rather than from the end of the match's own text.
-		const guarded = `describe\n  .skipIf (\n\ttrue,\n\t'version floor'\n)('needs git 2.30', () => {});`;
-		expect(findUnconditionalSkips(guarded).map(site => site.name)).toEqual(['needs git 2.30']);
-		const liftable = `describe\n  .skipIf (\n\tbelowFloor(),\n\t'version floor'\n)('needs git 2.30', () => {});`;
-		expect(findUnconditionalSkips(liftable)).toEqual([]);
-	});
-
 	bunTest('detects a condition that is true however it is written', () => {
 		// Parens are how a reader parenthesises a condition before passing it on,
 		// and the all-caps spelling is how CI configs and issue text spell it. Both
@@ -1206,6 +1223,51 @@ bunDescribe('contract suite skip policy', () => {
 		});
 		// And the offender is still reported at the line a developer would read.
 		expect(findUnconditionalSkips(source).map(site => site.line)).toEqual([7]);
+	});
+
+	// Both regexes tolerate whitespace around the dot, so a receiver wrapped onto
+	// its own line is caught. The bound is the *receiver text*, not the spelling:
+	// `it`/`test`/`describe` spelled out, a literal call. An indirection is not
+	// reached, and `KNOWN_BLIND_SPOTS` below says so where a reader of this file
+	// will see it rather than inferring coverage that does not exist.
+	for (const [label, source, expected] of [
+		['a receiver on its own line', `it\n\t.skip('newline skip', () => {});`, 'newline skip'],
+		['a space before the dot', `it .skip('space skip', () => {});`, 'space skip'],
+		[
+			'a wrapped describe.skip',
+			`describe\n\t.skip\n\t('wrapped newline', () => {});`,
+			'wrapped newline',
+		],
+		[
+			'a wrapped skipIf',
+			`it\n\t.skipIf(true, 'r')('wrapped guarded', () => {});`,
+			'wrapped guarded',
+		],
+	] as const) {
+		bunTest(`detects a skip written with ${label}`, () => {
+			const sites = findUnconditionalSkips(source);
+			expect(sites).toHaveLength(1);
+			expect(sites[0].name).toBe(expected);
+		});
+	}
+
+	bunTest('a wrapped skipIf still has its condition read', () => {
+		// The widened pattern must not widen what counts as unconditional. A wrapped
+		// call no longer ends on its `(`, so the condition has to be read from the `(`
+		// found inside the match rather than assumed to be its last character.
+		const guarded = `describe\n  .skipIf (\n\ttrue,\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(guarded).map(site => site.name)).toEqual(['needs git 2.30']);
+		// And the liftable version of the same wrapping is still allowed through.
+		const liftable = `describe\n  .skipIf (\n\tbelowFloor(),\n\t'version floor'\n)('needs git 2.30', () => {});`;
+		expect(findUnconditionalSkips(liftable)).toEqual([]);
+	});
+
+	bunTest('a skip reached through a variable is a documented blind spot, not coverage', () => {
+		// `KNOWN_BLIND_SPOTS` has to name the shape that is actually missed. If this
+		// test starts failing, the gate has closed the hole and the header is
+		// understating what is enforced.
+		expect(findUnconditionalSkips(`const s = it.skip; s('hidden', () => {});`)).toEqual([]);
+		expect(KNOWN_BLIND_SPOTS.some(s => s.includes('variable'))).toBe(true);
 	});
 
 	bunTest('reports a skip that is not on the allowlist, by name and line', () => {
