@@ -791,7 +791,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			return {
 				commands: host.getCommands().map((command) => command.id),
 				settings: host.getSettingSchemas().map((schema) => schema.namespace),
-				editor: host.getEditorContributions().map((entry) => entry.id),
+				editor: host.getEditorContributions().map((entry) => entry.contribution.id),
 				keymap: keymaps.bindings.map((binding) => binding.commandId)
 			};
 		}
