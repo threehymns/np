@@ -149,3 +149,96 @@ describe('updateIndexContent: a filename outside ASCII', () => {
 		expect(await indexContents(repo, target)).toBe('EDITED\n');
 	});
 });
+
+describe('updateIndexContent: the rendered hunk header', () => {
+	// The cases above all assert only the staged result, which is why a hunk
+	// header with a wrong line count could pass every one of them: the ranges
+	// are the part of the patch git reads before it looks at any content. A
+	// wrong count makes `git apply` reject the whole patch as `corrupt patch at`,
+	// so a count bug is a staging failure that no result-level assertion sees.
+	// These cases capture the bytes the adapter actually hands to git and read
+	// the ranges back out of them.
+	function capturingAdapter(repo: TestRepo): { adapter: SpawnGitAdapter; patches: string[] } {
+		const origin: FileOrigin = { scheme: 'file', path: repo.path, name: 'repo' };
+		const patches: string[] = [];
+		// The adapter renders the patch to a temp file and applies that file, so
+		// the bytes git reads are on disk rather than on stdin. Recording every
+		// write into a path holding a patch keeps the capture independent of the
+		// adapter's internal temp-file naming.
+		const fileAccess = {
+			...nodeFileAccess,
+			writeFile: async (path: string, content: string): Promise<void> => {
+				if (content.startsWith('diff --git ')) patches.push(content);
+				return nodeFileAccess.writeFile(path, content);
+			}
+		};
+		const adapter = new SpawnGitAdapter(origin, (workingDir, args) => runGit(workingDir, repo.env, args), fileAccess);
+		return { adapter, patches };
+	}
+
+	/** Run one `updateIndexContent` while capturing the patch git was given. */
+	async function patchFor(
+		repo: TestRepo,
+		target: string,
+		content: string,
+		seed = 'SEED\n'
+	): Promise<string> {
+		await repo.write(target, seed);
+		const add = await repo.git(['add', '-A']);
+		if (add.code !== 0) throw new Error(add.stderr);
+		const commit = await repo.git(['commit', '-m', 'seed']);
+		if (commit.code !== 0) throw new Error(commit.stderr);
+
+		const { adapter, patches } = capturingAdapter(repo);
+		await adapter.updateIndexContent(target, content);
+		if (patches.length === 0) throw new Error('no patch was passed to git apply');
+		return patches[0]!;
+	}
+
+	/** The `-old,+new` ranges of every `@@` header, as `[old, new]` pairs. */
+	function hunkRanges(patch: string): Array<[string, string]> {
+		return [...patch.matchAll(/^@@ -(\S+) \+(\S+) @@/gm)].map((m) => [m[1]!, m[2]!]);
+	}
+
+	it('counts the lines of an edited file in the header it hands git', async () => {
+		const repo = await createTrackedRepo();
+
+		// The default seed is one line, so the old side ranges to `1` and the new
+		// side to `1,3`: 'a\nb\nc\n' is three lines, because a trailing newline
+		// ends the last one rather than starting a fourth. Collapsing either
+		// range to `0,0` is what made `git apply` answer `corrupt patch`.
+		const patch = await patchFor(repo, 'src.txt', 'a\nb\nc\n');
+		expect(hunkRanges(patch)).toEqual([['1', '1,3']]);
+	});
+
+	it('counts a final line that has no trailing newline', async () => {
+		const repo = await createTrackedRepo();
+
+		// 'a\nb' is two lines, and the missing trailing newline is the case a
+		// naive newline count reports as one, which would emit `1,1`.
+		const patch = await patchFor(repo, 'src.txt', 'a\nb', 'a\nb\nc\nd\n');
+		expect(hunkRanges(patch)).toEqual([['1,4', '1,2']]);
+	});
+
+	it('ranges an emptied file to zero on the new side only', async () => {
+		const repo = await createTrackedRepo();
+
+		// The seeded side is three lines and stays `1,3`; the side emptied by the
+		// edit has no content left, which is `0,0` and a body of only `-` lines.
+		// A single-line file instead ranges to a bare `1` on the surviving side,
+		// which is git's own convention and the case most easily flattened.
+		const patch = await patchFor(repo, 'src.txt', '', 'a\nb\nc\n');
+		expect(hunkRanges(patch)).toEqual([['1,3', '0,0']]);
+	});
+
+	it('ranges a one-line file to a bare count on both sides', async () => {
+		const repo = await createTrackedRepo();
+
+		// git writes a single-line range as `1` with no `,count` suffix, and both
+		// sides here are one line. Reading these back as `1,1` would pass a
+		// substring match while being a range git never emits.
+		const patch = await patchFor(repo, 'src.txt', 'z\n', 'q\n');
+		expect(hunkRanges(patch)).toEqual([['1', '1']]);
+		expect(patch).toContain('@@ -1 +1 @@');
+	});
+});
