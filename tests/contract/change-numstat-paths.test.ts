@@ -242,6 +242,76 @@ describe('getChanges reports line counts for unusual pathnames', () => {
 		}
 	});
 
+	it('reports a staged copy through the same paired framing, under diff.renames=copies', async () => {
+		// The second framing shape is not rename-only. Under `diff.renames=copies`
+		// git emits a *copy* record whose bytes are identical to a rename's:
+		// `<add>\t<del>\t\0<source>\0<dest>`. So "rename or copy" in the parser
+		// comment is load-bearing, and this pins the claim that was previously
+		// assumed.
+		//
+		// Reaching it is fiddlier than it looks, and three separate probes came
+		// back negative first. Each looks like a different bug, so the reasons
+		// are kept:
+		//
+		//  1. A plain `cp` plus `git add` reports `A`, never paired. The source is
+		//     unchanged, so it is absent from the diff and there is nothing to
+		//     copy from.
+		//  2. A staged `git mv` of unchanged content reports `R` even under
+		//     `diff.renames=copies` -- and so does `status.renamesCopies`. Copy
+		//     detection is only tried after rename detection finds nothing.
+		//  3. Editing only the copy still reports `A`. The source has to be in the
+		//     diff *and* stay above the similarity threshold, so both sides are
+		//     edited.
+		const repo = await createTrackedRepo();
+		try {
+			const body = Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n') + '\n';
+			await repo.write('source.txt', body);
+			await repo.git(['add', '-A']);
+			await repo.git(['commit', '-m', 'base']);
+			await repo.git(['config', 'diff.renames', 'copies']);
+			await repo.write('copied.txt', body);
+			await repo.write('source.txt', body + 'to source\n');
+			await repo.write('copied.txt', body + 'to copy\n');
+			await repo.git(['add', '-A']);
+
+			// Premise: the paired framing really is emitted, source name first.
+			// If git changes this, the test must fail rather than quietly stop
+			// testing the thing it was written for.
+			//
+			// Built by joining rather than by writing `'\0'` escapes inline: `'\01'`
+			// is parsed as an octal NUL followed by the character `1`, which
+			// silently deletes the delimiter and produces a string that looks
+			// right in a diff and compares unequal.
+			const numstat = await repo.git(['diff', '--cached', '--numstat', '-z']);
+			const NUL = String.fromCharCode(0);
+			expect(numstat.stdout.split(NUL)).toEqual([
+				'1\t0\t', 'source.txt', 'copied.txt', '1\t0\tsource.txt', ''
+			]);
+
+			// Porcelain reports the destination as an addition, so the change list
+			// asks for `copied.txt` and its counts can only come off the paired
+			// record. Under the default config the same destination reads 61
+			// added, which is what makes this assertion meaningful.
+			const change = changeFor(await adapterFor(repo).getChanges(), 'copied.txt');
+			expect(change!.additions).toBe(1);
+			expect(change!.deletions).toBe(0);
+
+			// Git names the source twice -- once in the paired record, once as an
+			// ordinary record -- with different counts. The destination's number
+			// is only available from the paired form, so this is the sharpest
+			// version of the same claim.
+			await repo.write('source.txt', body + 's1\n');
+			await repo.write('copied.txt', body + 'c1\nc2\nc3\n');
+			await repo.git(['add', '-A']);
+
+			const both = await adapterFor(repo).getChanges();
+			expect(changeFor(both, 'copied.txt')!.additions).toBe(3);
+			expect(changeFor(both, 'source.txt')!.additions).toBe(1);
+		} finally {
+			await repo.cleanup();
+		}
+	});
+
 	it('reports true counts for a rename whose destination contains a newline', async () => {
 		// A rename large enough that git can no longer pair it reports as an
 		// addition plus a deletion, and the destination is C-quoted without `-z`

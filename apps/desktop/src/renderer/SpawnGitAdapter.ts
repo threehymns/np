@@ -626,6 +626,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// it is the first record after a blank one -- rather than by the shape of
 		// its fields. That way a filename may contain `|`, a newline, or any other
 		// byte and still be read back as exactly the one path it is.
+		//
+		// The one place a path and the header still share a record is the first
+		// path, which follows the header across a single newline. Only that one
+		// separator is structural, so only its offset is taken.
 		const commits: GitCommit[] = [];
 		let current: GitCommit | undefined;
 		let expectHeader = true;
@@ -672,6 +676,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 *  - Ordinary change: `<add>\t<del>\t<path>\0`
 	 *  - Rename or copy:  `<add>\t<del>\t\0<source>\0<dest>\0`
 	 *
+	 * The second shape is reachable for renames on a default config, and for
+	 * copies under `diff.renames=copies` -- which makes "rename or copy"
+	 * accurate rather than decorative. Reaching the copy form is fiddlier than
+	 * it looks and the recipe is pinned in the contract suite: the source must be
+	 * in the diff *and* still above the similarity threshold, so both sides get
+	 * edited. A plain `cp`, and a staged `git mv` of unchanged content under any
+	 * copy-related setting, both report an ordinary record instead.
+	 *
 	 * A rename puts an *empty* path in the count prefix and follows it with the
 	 * two names as separate NUL-terminated fields, so the record must be read
 	 * positionally: the counts, then the first name, then the second when the
@@ -710,7 +722,18 @@ export class SpawnGitAdapter implements VCSAdapter {
 				continue;
 			}
 			// An empty name means a rename or copy: the source and destination are
-			// the next two fields, and the change list asks for the destination.
+			// the next two fields. Keying the destination is what matters -- it is
+			// the name porcelain reports, so it is the name getChanges looks up.
+			//
+			// The source is keyed too, and that key is currently unobservable.
+			// Mutating it to a deliberately wrong value ({999, 999}) leaves all
+			// 1182 tests passing, because git only emits a paired record when the
+			// source is itself in the diff, which means git also emits an ordinary
+			// record for it -- and that later record overwrites this one. For a
+			// pure rename the source is reported only inside the `R` record's
+			// second path, never as its own entry, so the key is never read there
+			// either. It is kept as a cheap hedge against a future git that pairs a
+			// source with no ordinary record, not because anything depends on it.
 			const source = fields[i + 1];
 			const dest = fields[i + 2];
 			if (dest) stats.set(dest, counts);
