@@ -66,6 +66,32 @@ const REPO_ROOT = join(CONTRACT_DIR, '..', '..');
 const THIS_FILE = new URL(import.meta.url).pathname;
 
 /**
+ * Files `bun test` collects, and therefore the only files where a skip can cost
+ * real coverage.
+ *
+ * This is the runner's own discovery rule, measured against `bun test` v1.4.2
+ * rather than guessed: it collects `a.test.ts`, `b.spec.ts`, `c_test.ts` and
+ * `n-test.svelte.test.ts`, and does not collect `e.tests.ts`. So the name has to
+ * end in `.test.`/`.spec.` — not the plural `.tests.` — preceded by a dot,
+ * hyphen or underscore. The extension half widens past `.ts` because the runner
+ * collects `.tsx`, `.js`, `.mjs`, `.cjs`, `.jsx`, `.mts` and `.cts` too.
+ *
+ * The hyphen is kept as a separator on purpose. `bun test` does not collect
+ * `d-test.ts`, but this repository has no file of that shape, so matching one
+ * costs no coverage and buys a scan that survives someone naming a test
+ * `skip-policy-test.ts`. A pattern that matched strictly less than the runner
+ * collects would be the more dangerous direction.
+ *
+ * Filtering to test files is what keeps the gate honest rather than merely
+ * strict. The detector reads text, not call expressions, and `stripComments`
+ * blanks comments but not string literals, so scanning source files raised two
+ * false positives the allowlist cannot absorb, since it matches test names: a
+ * doc string mentioning the pattern, and a conditional `skipIf` wrapper like
+ * the one `harness.ts` uses. Both were reported as `(unnamed skip)`.
+ */
+const TEST_FILE_PATTERN = /(\.|_|-)(test|spec)\.[cm]?[jt]sx?$/;
+
+/**
  * Directories never descended into while scanning. `node_modules` is
  * impractical, `.git` is binary, and the vendored agent skill directory is not
  * this project's test surface — a skip in a vendored doc is not a coverage
@@ -131,7 +157,7 @@ function walk(dir: string, out: string[] = []): string[] {
 			continue;
 		}
 		if (isDir) walk(full, out);
-		else if (entry.endsWith('.ts')) out.push(full);
+		else if (TEST_FILE_PATTERN.test(entry)) out.push(full);
 	}
 	return out;
 }
@@ -1022,24 +1048,25 @@ bunDescribe('contract suite skip policy', () => {
 
 	bunTest('the scan follows bun test own file discovery', () => {
 		// A test only reduces coverage if the runner can collect it, so the scan set
-		// and the runner's discovery set have to agree. Verified against `bun test`
+		// and the runner's discovery set have to agree. Measured against `bun test`
 		// v1.4.2: it collects `a.test.ts`, `b.spec.ts`, `c_test.ts` and
-		// `n-test.svelte.test.ts`, and does *not* collect `d-test.ts` or
-		// `e.tests.ts` — so the name must end in `.test.`/`.spec.`, and may be
-		// preceded by a dot, hyphen or underscore.
+		// `n-test.svelte.test.ts`, plus the `.tsx`/`.js`/`.mjs`/`.cjs`/`.jsx`/
+		// `.mts`/`.cts` spellings.
 		expect(TEST_FILE_PATTERN.test('a.test.ts')).toBe(true);
 		expect(TEST_FILE_PATTERN.test('b.spec.ts')).toBe(true);
 		expect(TEST_FILE_PATTERN.test('c_test.ts')).toBe(true);
 		expect(TEST_FILE_PATTERN.test('h.test.mts')).toBe(true);
 		expect(TEST_FILE_PATTERN.test('g.test.js')).toBe(true);
 
-		// Names `bun test` does not collect, so nothing is lost by matching it.
-		expect(TEST_FILE_PATTERN.test('d-test.ts')).toBe(false);
+		// A name `bun test` will not collect, so the pattern must not match it:
+		// `.tests.ts` is a plural, which the runner does not treat as a test.
 		expect(TEST_FILE_PATTERN.test('e.tests.ts')).toBe(false);
 
-		// A source file is not a test file, however test-adjacent its name.
+		// A source file is not a test file, however test-adjacent its name. These
+		// are the real ones in this repository, and the reason the scan skips them.
 		expect(TEST_FILE_PATTERN.test('packages/core/src/index.ts')).toBe(false);
 		expect(TEST_FILE_PATTERN.test('harness.ts')).toBe(false);
+		expect(TEST_FILE_PATTERN.test('node-fs-handle.ts')).toBe(false);
 	});
 
 	bunTest('the scan is spared the false positives a source file would raise', () => {
