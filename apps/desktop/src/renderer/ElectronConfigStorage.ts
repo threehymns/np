@@ -206,6 +206,27 @@ export class ElectronConfigStorage implements PreferenceStorage {
 			// isolated properties: the payload is a snapshot, and writing one
 			// back would revert the owner's current value.
 			const settings = this.settingsDocument(newPrefs);
+			// Remove top-level keys present in the current document but absent
+			// from the full payload (e.g. a plugin namespace whose last key
+			// was unset). Isolated keys are never touched here.
+			try {
+				const errors: ParseError[] = [];
+				const currentDoc = parse(currentText, errors, { allowTrailingComma: true });
+				if (errors.length === 0 && currentDoc && typeof currentDoc === 'object' && !Array.isArray(currentDoc)) {
+					for (const existingKey of Object.keys(currentDoc as Record<string, unknown>)) {
+						if (ElectronConfigStorage.ISOLATED_KEYS.has(existingKey)) continue;
+						if (!(existingKey in settings)) {
+							const edits = modify(currentText, [existingKey], undefined, {
+								formattingOptions: { insertSpaces: true, tabSize: 2 }
+							});
+							currentText = applyEdits(currentText, edits);
+						}
+					}
+				}
+			} catch {
+				// Conservative: if the current document cannot be parsed, fall
+				// through to applying updates without deletions.
+			}
 			for (const [propKey, propVal] of Object.entries(settings)) {
 				currentText = this.applySingleKeyEdit(currentText, propKey, propVal);
 			}

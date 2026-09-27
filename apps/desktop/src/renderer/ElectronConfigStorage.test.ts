@@ -387,4 +387,22 @@ describe('ElectronConfigStorage', () => {
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(2);
 		expect(storage.getItem('np-prefs-v2')).toContain('"zoom":300');
 	});
+
+	it('15. Unset removes the namespace: unsetting the last key of a plugin namespace deletes it from disk', async () => {
+		mockReadConfigFileSync.mockReturnValue(`{\n  "zoom": 100\n}`);
+
+		const storage = new ElectronConfigStorage();
+		const prefs = new Preferences(storage);
+
+		prefs.set('myplugin', 'mykey', 'hello', 'user');
+		await flush();
+		expect(mockWriteConfigFile.mock.calls.at(-1)![0] as string).toContain('"myplugin"');
+
+		prefs.unset('myplugin', 'mykey', 'user');
+		await flush();
+
+		const lastWritten = mockWriteConfigFile.mock.calls.at(-1)![0] as string;
+		expect(lastWritten).not.toContain('"myplugin"');
+		expect(lastWritten).not.toContain('mykey');
+	});
 });
