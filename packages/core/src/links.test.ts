@@ -232,6 +232,41 @@ Final thoughts.`;
 		expect(findHeadingLine(markdownContent, "Nonexistent Heading")).toBeNull();
 	});
 
+	describe("nested heading paths must respect heading levels", () => {
+		// A path segment may only match a heading NESTED UNDER the previous
+		// match. Document order alone is not enough: matching by order made
+		// "Two#Three" resolve to a sibling, and "Shared#Gamma" resolve to a
+		// parent, both of which send the user to a line they did not ask for.
+		const siblingDoc = ["# One", "a", "## Two", "b", "## Three", "c"].join("\n");
+		const parentChildDoc = ["# Alpha", "x", "## Shared", "y", "# Gamma", "z", "## Shared", "w"].join("\n");
+
+		it("does not match a path whose second segment is a sibling, not a child", () => {
+			// "Three" is a sibling of "Two", so "Two#Three" names nothing.
+			expect(findHeadingLine(siblingDoc, "Two#Three")).toBeNull();
+		});
+
+		it("does not match a path whose second segment is a parent", () => {
+			// "Gamma" is the parent of "Shared", not a child of it.
+			expect(findHeadingLine(parentChildDoc, "Shared#Gamma")).toBeNull();
+		});
+
+		it("resolves the correct one when a heading name repeats under different parents", () => {
+			// Both "Shared" headings are real; the parent in the path decides.
+			expect(findHeadingLine(parentChildDoc, "Alpha#Shared")).toBe(3);
+			expect(findHeadingLine(parentChildDoc, "Gamma#Shared")).toBe(7);
+		});
+
+		it("still resolves a genuine multi-level path", () => {
+			const deep = ["# A", "x", "## B", "y", "### C", "z"].join("\n");
+			expect(findHeadingLine(deep, "A#B#C")).toBe(5);
+		});
+
+		it("treats a single-segment lookup as first match, unchanged", () => {
+			// Ambiguous by design: a bare name has no parent to disambiguate it.
+			expect(findHeadingLine(parentChildDoc, "Shared")).toBe(3);
+		});
+	});
+
 	it("finds block line 1-indexed", () => {
 		expect(findBlockLine(markdownContent, "block-1")).toBe(7);
 		expect(findBlockLine(markdownContent, "quote-block")).toBe(16);

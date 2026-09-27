@@ -249,6 +249,12 @@ export function getHeadings(content: string): HeadingItem[] {
 /**
  * Finds the 1-indexed line number of a heading matching `headingPath`.
  * Supports nested subheadings like `Heading 1#Subheading 2`.
+ *
+ * Each path segment must match a heading nested strictly *under* the one the
+ * previous segment matched. Matching on document order alone was not enough:
+ * a sibling pair like `Two#Three` and a parent/child pair spelled backwards
+ * like `Shared#Gamma` both resolved to a line the caller never named, so a
+ * link would scroll the user somewhere unrelated.
  */
 export function findHeadingLine(content: string, headingPath: string): number | null {
 	const headings = getHeadings(content);
@@ -267,16 +273,24 @@ export function findHeadingLine(content: string, headingPath: string): number | 
 		return match ? match.line : null;
 	}
 
-	// Multi-segment heading path
+	// Multi-segment heading path. A segment may only match a heading deeper than
+	// the previous match, so a heading of the same or shallower level ends the
+	// candidate chain rather than continuing it.
 	let currentIndex = 0;
-	let lastMatchedLine: number | null = null;
+	let previousLevel = 0;
 	for (const heading of headings) {
 		const hText = heading.text.trim().toLowerCase();
+		// Headings at or above the last match's level are not inside it, so this
+		// branch is abandoned and the search restarts from later segments.
+		if (heading.level <= previousLevel) {
+			currentIndex = 0;
+			previousLevel = 0;
+		}
 		if (hText === segments[currentIndex]) {
-			lastMatchedLine = heading.line;
+			previousLevel = heading.level;
 			currentIndex++;
 			if (currentIndex === segments.length) {
-				return lastMatchedLine;
+				return heading.line;
 			}
 		}
 	}
