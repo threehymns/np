@@ -142,7 +142,7 @@
 			appState.plugins?.attachEditorInternal(doc.id, {
 				getState: () => view!.state,
 				dispatch: (spec) => view!.dispatch(spec as any)
-			}, untrack(() => doc.language));
+			}, untrack(() => doc.language?.name));
 
 			if (doc.scrollPosition) {
 				view.scrollDOM.scrollTop = doc.scrollPosition.top;
