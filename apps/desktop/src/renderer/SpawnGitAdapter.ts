@@ -1,6 +1,6 @@
 import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded, isNotFoundError } from '@np/core/utils';
+import { mapBounded, isNotFoundError, isDirectoryError } from '@np/core/utils';
 
 export interface GitRunResult {
 	code: number;
@@ -16,6 +16,15 @@ export interface GitFileAccess {
 	readFile(path: string): Promise<Uint8Array | string>;
 	writeFile(path: string, content: string): Promise<void>;
 	deleteEntry(path: string): Promise<void>;
+	/**
+	 * Whether `path` is a symbolic link. A git symlink is a blob whose content
+	 * is the target path (mode 120000), never the text a user edits, so the
+	 * adapter must know before it reads or writes one.
+	 *
+	 * Optional: an access object that cannot answer leaves every path treated as
+	 * a regular file, which is the pre-existing behavior.
+	 */
+	isSymlink?(path: string): Promise<boolean>;
 }
 
 const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
@@ -52,7 +61,8 @@ const ipcFileAccess: GitFileAccess = {
 		return result as Uint8Array;
 	},
 	writeFile: (path, content) => window.electronAPI.writeFile(path, content),
-	deleteEntry: (path) => window.electronAPI.deleteEntry(path)
+	deleteEntry: (path) => window.electronAPI.deleteEntry(path),
+	isSymlink: (path) => window.electronAPI.isSymlink(path)
 };
 
 export class SpawnGitAdapter implements VCSAdapter {
@@ -310,8 +320,98 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
+	/**
+	 * The paths whose deletion is staged but which have since been recreated in the
+	 * worktree, read from an already-parsed porcelain v1 listing.
+	 *
+	 * Git reports that state as two entries for the same path: `D  f.txt` (the
+	 * staged deletion, with an empty worktree column) alongside `?? f.txt` (present
+	 * on disk). Together they mean the user deleted the file, staged the deletion,
+	 * and then wrote a new copy over it. The worktree copy's content is in neither
+	 * the index nor HEAD, so nothing else in the repository can restore it.
+	 *
+	 * Both entries are required, and the deletion must be in the *index* column: a
+	 * plain worktree deletion (` D`) plus an untracked path of the same name has
+	 * the same shape here but is not this state.
+	 */
+	private findResurrectedAfterStagedDelete(entries: Array<{ x: string; y: string; filepath: string }>): string[] {
+		const stagedDeletions = new Set(
+			entries.filter(e => e.x === 'D' && e.y === ' ').map(e => e.filepath)
+		);
+		return entries.filter(e => e.x === '?' && e.y === '?' && stagedDeletions.has(e.filepath)).map(e => e.filepath);
+	}
+
+	private async readResurrectedAfterStagedDelete(): Promise<string[]> {
+		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (res.code !== 0) return [];
+		return this.findResurrectedAfterStagedDelete(this.parseStatusEntries(res.stdout));
+	}
+
+	/**
+	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * `filepath`, or undefined when `filepath` is not such a destination.
+	 *
+	 * An unstaged worktree rename is invisible to git: porcelain v1 reports the
+	 * destination as an untracked file and the source as a worktree deletion, and
+	 * rename detection does not help because it only pairs content between two
+	 * commits, not between the index and the worktree. Verified directly:
+	 * `git status --porcelain=v1 -uall --find-renames` still prints ` D src.txt` /
+	 * `?? moved.txt`, and `git diff --find-renames` is empty because the index
+	 * equals HEAD.
+	 *
+	 * So the pair is recovered by content instead: candidates are paths git reports
+	 * as worktree-deleted *and* still present in the index, and a candidate matches
+	 * only when its index content is byte-identical to the destination.
+	 *
+	 * Byte-identical is necessary but not sufficient to identify a source. Two
+	 * tracked files can hold the same bytes, and a file the user deleted on purpose
+	 * is indistinguishable from the source half of a rename — no git invocation
+	 * separates the two. So a match must be *unique*: when two or more candidates
+	 * match, the pairing is ambiguous and no source is recovered, because
+	 * guessing would resurrect a deliberate deletion while still leaving the real
+	 * source deleted. The destination is then simply treated as an untracked file,
+	 * which is the behaviour that predates this recovery.
+	 */
+	private async findUnstagedRenameSource(filepath: string): Promise<string | undefined> {
+		const res = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (res.code !== 0) return undefined;
+		const entries = this.parseStatusEntries(res.stdout);
+		const destination = entries.find(e => e.filepath === filepath);
+		if (!destination || destination.x !== '?' || destination.y !== '?') return undefined;
+
+		let destinationContent: string;
+		try {
+			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			destinationContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
+		} catch {
+			// The destination is gone between status and read; nothing to pair.
+			return undefined;
+		}
+
+		const deletedSources = entries.filter(e => e.y === 'D' && e.filepath !== filepath);
+		const matches: string[] = [];
+		for (const source of deletedSources) {
+			const indexContent = await this.readGitObject(`:${source.filepath}`);
+			if (indexContent !== null && indexContent === destinationContent) {
+				matches.push(source.filepath);
+			}
+		}
+		return matches.length === 1 ? matches[0] : undefined;
+	}
+
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (options?.staged === false) {
+			// A file whose deletion is staged but which has been recreated holds
+			// content in neither the index nor HEAD, and git's own model calls that
+			// worktree copy untracked, so there are no unstaged changes to revert and
+			// the only way to act on it is to delete it. Both entries below would
+			// destroy the only copy: `restore` cannot reach the path (it left the
+			// index), and the resulting "pathspec did not match" error is what leads
+			// to the `cleanIfPresent` fallback that unlinks it. Measured on a real
+			// repository: git 2.55.
+			if ((await this.readResurrectedAfterStagedDelete()).includes(filepath)) {
+				return;
+			}
 			// Unstaged scope: reset only the worktree copy to the index version. If the
 			// destination path is not in the index (e.g. an unstaged worktree rename),
 			// restore the original source path from the index and clean the destination.
@@ -320,9 +420,21 @@ export class SpawnGitAdapter implements VCSAdapter {
 				if (!this.isPathNotFoundError(res.stderr)) {
 					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
 				}
-				const origPath = await this.resolveOrigPath(filepath);
-				if (origPath && origPath !== filepath) {
-					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', origPath]);
+				// An unstaged worktree rename is not representable in porcelain v1: git
+				// reports it as a worktree deletion plus an untracked file, never as a
+				// rename pair, so `resolveOrigPath` cannot find a source and the
+				// recovery below never ran. Discarding the destination therefore left
+				// the tracked source deleted too, destroying a file git still knows
+				// about — and any content the user had added at the destination, which
+				// was never in the object store and so was unrecoverable.
+				//
+				// Pair the untracked destination back to a tracked source by content: git
+				// itself pairs renames the same way. The source must still be missing
+				// from the worktree and present in the index, so an unrelated deletion
+				// that merely happens to hold identical content is never restored over.
+				const source = await this.findUnstagedRenameSource(filepath);
+				if (source) {
+					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', source]);
 					if (restoreOrigRes.code !== 0) {
 						throw new Error(restoreOrigRes.stderr || `Failed to discard changes for ${filepath}`);
 					}
@@ -419,11 +531,40 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async discardAll(): Promise<void> {
-		const restoreRes = await this.runGit(['restore', '--staged', '--worktree', '.']);
+		// A path whose deletion is staged but which has been recreated holds content
+		// in neither HEAD nor the index, so a blanket "discard everything" would have
+		// to destroy it: `restore --staged --worktree .` cannot reach the path (it
+		// left the index) and `clean -fd .` unlinks it as an untracked file. Measured
+		// on a real repository, git 2.55 — `clean -fd` also ignores `-e
+		// :(exclude)` pathspecs for untracked files, so an exclusion cannot be used
+		// to shield the path; the removals are enumerated instead.
+		const resurrected = new Set(await this.readResurrectedAfterStagedDelete());
+
+		// Unstage and restore everything except those paths, so a resurrected file
+		// keeps its staged deletion and its worktree copy.
+		const restoreArgs = ['restore', '--staged', '--worktree', '.'];
+		for (const filepath of resurrected) {
+			restoreArgs.push(`:(top,exclude,literal)${filepath}`);
+		}
+		const restoreRes = await this.runGit(restoreArgs);
 		if (restoreRes.code !== 0) {
 			throw new Error(restoreRes.stderr || 'Failed to discard all changes');
 		}
-		const cleanRes = await this.runGit(['clean', '-fd', '.']);
+
+		// Whatever is untracked once the restore has run is what this discard is
+		// allowed to remove. That cannot be predicted from the listing above -- a
+		// resurrected path left the index because of the staged deletion, so it only
+		// becomes untracked at that point -- so it is read here rather than assumed.
+		// The recreated paths are dropped from the list and stay on disk.
+		const remainingRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
+		if (remainingRes.code !== 0) {
+			throw new Error(remainingRes.stderr || 'Failed to discard all changes');
+		}
+		const removable = this.parseStatusEntries(remainingRes.stdout)
+			.filter(e => e.x === '?' && e.y === '?' && !resurrected.has(e.filepath))
+			.map(e => e.filepath);
+		if (removable.length === 0) return;
+		const cleanRes = await this.runGit(['clean', '-fd', '--', ...removable]);
 		if (cleanRes.code !== 0) {
 			throw new Error(cleanRes.stderr || 'Failed to discard all changes');
 		}
@@ -461,47 +602,142 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async getCommits(): Promise<GitCommit[]> {
-		const res = await this.runGit(['-c', 'core.quotepath=false', 'log', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
+		// `--name-only` without `-z` C-quotes any path holding an unusual byte, so
+		// a name containing a newline arrives as the two characters `\` and `n`
+		// rather than a real newline. The line-oriented parse still works, but it
+		// hands the caller a *display* string that resolves to no file. `-z`
+		// instead emits every path raw and NUL-delimited, so a name can contain
+		// any byte, including the newlines and `|` this format uses to separate
+		// its own fields.
+		const res = await this.runGit(['log', '-z', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
 				return [];
 			}
 			throw new Error(res.stderr || 'Failed to retrieve git commit log');
 		}
-		// Each block starts with a NUL-prefixed metadata line (hash|author|date|subject)
-		// followed by the changed file names, one per line; blocks are separated by
-		// the newline ending the previous block and the next block's NUL prefix
-		// (file-less commits like merges and empty commits emit no name section).
-		return res.stdout.split('\n\0').filter(Boolean).map(block => {
-			const lines = block.split('\n');
-			const [hash, author, date, ...rest] = lines[0].replace(/^\0/, '').split('|');
-			const message = rest.join('|');
-			return { hash, author, date, message, files: lines.slice(1).filter(Boolean) };
-		});
+		// With `-z` git emits a NUL-separated stream shaped like:
+		//
+		//     \0<hash>|<author>|<date>|<subject>\n<path>\0<path>\0\0\0<next header>...
+		//
+		// `%x00` prefixes each header, every path is newline- and NUL-terminated,
+		// and two more NULs separate one commit from the next. Splitting on NUL
+		// consumes those delimiters, so the header is identified structurally --
+		// it is the first record after a blank one -- rather than by the shape of
+		// its fields. That way a filename may contain `|`, a newline, or any other
+		// byte and still be read back as exactly the one path it is.
+		//
+		// The one place a path and the header still share a record is the first
+		// path, which follows the header across a single newline. Only that one
+		// separator is structural, so only its offset is taken.
+		const commits: GitCommit[] = [];
+		let current: GitCommit | undefined;
+		let expectHeader = true;
+		for (const record of res.stdout.split('\0')) {
+			if (record === '') {
+				// A blank record only ever closes one commit's path list.
+				expectHeader = true;
+				continue;
+			}
+			if (expectHeader) {
+				// The subject is followed by a newline, then the first path, so the
+				// header is everything before the record's *first* newline and the
+				// first path is everything after it -- newline and all. Splitting on
+				// every newline instead would tear a path that itself holds one into
+				// two names, neither of which exists.
+				const sep = record.indexOf('\n');
+				const headerLine = sep === -1 ? record : record.slice(0, sep);
+				const firstPath = sep === -1 ? '' : record.slice(sep + 1);
+				const [hash, author, date, ...rest] = headerLine.split('|');
+				current = {
+					hash,
+					author,
+					date,
+					message: rest.join('|'),
+					files: firstPath === '' ? [] : [firstPath]
+				};
+				commits.push(current);
+				expectHeader = false;
+			} else if (current) {
+				// The whole record is one path, newline and all.
+				current.files.push(record);
+			}
+		}
+		return commits;
 	}
 
+	/**
+	 * Parse `diff --numstat -z` into per-path counts.
+	 *
+	 * With `-z`, git never C-quotes a path, so a name may contain newlines,
+	 * tabs, quotes, and `|` freely. The framing has two shapes, both verified
+	 * against real git output:
+	 *
+	 *  - Ordinary change: `<add>\t<del>\t<path>\0`
+	 *  - Rename or copy:  `<add>\t<del>\t\0<source>\0<dest>\0`
+	 *
+	 * The second shape is reachable for renames on a default config, and for
+	 * copies under `diff.renames=copies` -- which makes "rename or copy"
+	 * accurate rather than decorative. Reaching the copy form is fiddlier than
+	 * it looks and the recipe is pinned in the contract suite: the source must be
+	 * in the diff *and* still above the similarity threshold, so both sides get
+	 * edited. A plain `cp`, and a staged `git mv` of unchanged content under any
+	 * copy-related setting, both report an ordinary record instead.
+	 *
+	 * A rename puts an *empty* path in the count prefix and follows it with the
+	 * two names as separate NUL-terminated fields, so the record must be read
+	 * positionally: the counts, then the first name, then the second when the
+	 * first was empty.
+	 *
+	 * Because the name is whatever remains after the count prefix, a tab inside
+	 * the path is preserved — splitting the record on tabs would corrupt it.
+	 *
+	 * A binary file reports `-` for both counts. That is not a number, so
+	 * `parseInt` yields NaN and the `|| 0` fallback turns it into the same zero
+	 * the previous implementation produced, keeping a usable count in the badge
+	 * rather than leaking NaN.
+	 */
 	private parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
 		const stats = new Map<string, { additions: number; deletions: number }>();
 		if (!output) return stats;
-		const lines = output.split('\n').filter(Boolean);
-		for (const line of lines) {
-			const parts = line.split('\t');
-			if (parts.length >= 3) {
-				const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
-				const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
-				const rawPath = parts.slice(2).join('\t');
-				let targetPath = rawPath;
-				if (targetPath.includes(' => ')) {
-					if (targetPath.includes('{') && targetPath.includes('}')) {
-						targetPath = targetPath.replace(/\{.*? => (.*?)\}/, '$1');
-					} else {
-						const arrowIdx = targetPath.indexOf(' => ');
-						targetPath = targetPath.substring(arrowIdx + 4);
-					}
-				}
-				stats.set(targetPath, { additions, deletions });
-				stats.set(rawPath, { additions, deletions });
+		// Records are NUL-terminated, so the final field is followed by a NUL and
+		// the split leaves an empty tail that must not become a key.
+		const fields = output.split('\0');
+		for (let i = 0; i < fields.length; i++) {
+			const field = fields[i];
+			if (!field) continue;
+			// The counts and the path are the only tabs in an ordinary record;
+			// the second one introduces the path.
+			const pathStart = field.indexOf('\t', field.indexOf('\t') + 1);
+			if (pathStart === -1) continue;
+			const [addField, delField] = field.slice(0, pathStart).split('\t');
+			if (addField === undefined || delField === undefined) continue;
+			const counts = {
+				additions: parseInt(addField, 10) || 0,
+				deletions: parseInt(delField, 10) || 0
+			};
+			const first = field.slice(pathStart + 1);
+			if (first) {
+				stats.set(first, counts);
+				continue;
 			}
+			// An empty name means a rename or copy: the source and destination are
+			// the next two fields. Keying the destination is what matters -- it is
+			// the name porcelain reports, so it is the name getChanges looks up.
+			//
+			// The source is keyed too, and that key is currently unobservable.
+			// Mutating it to a deliberately wrong value ({999, 999}) leaves the
+			// whole suite green, because git only emits a paired record when the
+			// source is itself in the diff, which means git also emits an ordinary
+			// record for it -- and that later record overwrites this one. For a
+			// pure rename the source is reported only inside the `R` record's
+			// second path, never as its own entry, so the key is never read there
+			// either. It is kept as a cheap hedge against a future git that pairs a
+			// source with no ordinary record, not because anything depends on it.
+			const source = fields[i + 1];
+			const dest = fields[i + 2];
+			if (dest) stats.set(dest, counts);
+			if (source && dest) stats.set(source, counts);
 		}
 		return stats;
 	}
@@ -514,8 +750,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getChanges(): Promise<GitChange[]> {
 		const [statusRes, stagedNumstatRes, unstagedNumstatRes] = await Promise.all([
 			this.runGit(['status', '--porcelain=v1', '-z', '-uall']),
-			this.runGit(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat']),
-			this.runGit(['-c', 'core.quotepath=false', 'diff', '--numstat'])
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--cached', '--numstat', '-z']),
+			this.runGit(['-c', 'core.quotepath=false', 'diff', '--numstat', '-z'])
 		]);
 
 		if (statusRes.code !== 0) {
@@ -620,10 +856,36 @@ export class SpawnGitAdapter implements VCSAdapter {
 			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 		} catch (e) {
+			// A directory is not a text file. `git status` lists an untracked
+			// symlink-to-directory as `??`, so the UI can offer it for viewing;
+			// reading it as text is meaningless rather than an error worth
+			// surfacing, and decoding EISDIR verbatim would be a raw syscall
+			// string leaking into a user-facing path.
+			if (isDirectoryError(e)) {
+				return '';
+			}
 			if (!isNotFoundError(e)) {
 				throw e;
 			}
 			return '';
+		}
+	}
+
+	/**
+	 * Whether a path currently exists in the worktree.
+	 *
+	 * Used to check the premise behind a porcelain `D` status, which describes the
+	 * index rather than the disk. Any failure other than "not found" is reported as
+	 * existing, so an unreadable-but-present file is read (and its read error
+	 * surfaces) instead of being silently reported as empty.
+	 */
+	private async worktreeFileExists(filepath: string): Promise<boolean> {
+		try {
+			await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
+			return true;
+		} catch (e) {
+			if (isNotFoundError(e)) return false;
+			return true;
 		}
 	}
 
@@ -642,8 +904,22 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 
 		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
-		const isDeletedWorktree = options?.status === 'D' && options?.staged !== true;
-		const worktreeContent = options?.staged !== true && !isDeletedWorktree ? await this.readWorktreeContent(filepath) : '';
+		//
+		// A porcelain status of `D` means "the index holds a deletion", NOT "the file
+		// is gone from disk". Delete a file, stage the deletion, then recreate it,
+		// and git reports both `D  f.txt` and `?? f.txt`; the UI combines those into
+		// one entry whose status is `D` (see `combineChangesByFilepath`). Trusting
+		// `D` unconditionally therefore reports the worktree as empty while it holds
+		// real content, and the next "discard" writes HEAD content back over that
+		// file — unrecoverable loss of work that was never staged or committed.
+		//
+		// So the worktree is read unless the status says the index holds a deletion
+		// AND the file is genuinely absent. `readWorktreeContent` returns '' for a
+		// missing file, so a file that vanished between the status listing and this
+		// read still yields '' without a second probe.
+		const deletedInIndex = options?.status === 'D' && options?.staged !== true;
+		const worktreeContent =
+			options?.staged === true ? '' : deletedInIndex && !(await this.worktreeFileExists(filepath)) ? '' : await this.readWorktreeContent(filepath);
 
 		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
@@ -651,7 +927,37 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
 	}
 
+	/**
+	 * Reject a write that would corrupt a symlink.
+	 *
+	 * A git symlink's blob content is its *target path*, not file text, so both
+	 * write paths would damage it: `updateFileContent` follows the link and
+	 * overwrites the target file, while `updateIndexContent` replaces the blob
+	 * with editor text and leaves mode 120000 in place, yielding a tree whose
+	 * link target is arbitrary text. Declining the write is the only safe answer.
+	 *
+	 * A path that cannot be stat'd is not a symlink. `updateIndexContent`
+	 * legitimately stages files that do not exist on disk yet, so a missing path
+	 * must pass through rather than abort the write.
+	 */
+	private async assertNotSymlink(filepath: string): Promise<void> {
+		if (!this.fileAccess.isSymlink) return;
+		const fullPath = this.rootOrigin.path + '/' + filepath;
+		try {
+			if (await this.fileAccess.isSymlink(fullPath)) {
+				throw new Error(
+					`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+						'target path, not editable text.'
+				);
+			}
+		} catch (e) {
+			if (isNotFoundError(e)) return;
+			throw e;
+		}
+	}
+
 	async updateFileContent(filepath: string, content: string): Promise<void> {
+		await this.assertNotSymlink(filepath);
 		const fullPath = this.rootOrigin.path + '/' + filepath;
 		await this.fileAccess.writeFile(fullPath, content);
 	}
@@ -687,13 +993,82 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
+	 * C-quotes one side of a diff path for use in a patch header line.
+	 *
+	 * Git's own diff format quotes a path the same way: wrapped in double quotes,
+	 * with `\a \b \t \n \v \f \r \" \\` for those and three-digit octal for every
+	 * other byte it does not consider printable. This is not cosmetic. The
+	 * `diff --git` header is TAB-delimited and its lines are newline-terminated,
+	 * so a raw tab inside a filename splits the line and a raw CR ends it — either
+	 * one addresses the path truncated before it. Staging a hunk of `ta<TAB>b.txt`
+	 * wrote `ta` instead, and a hunk of `pre<CR>fix.txt` wrote `pre`, both with
+	 * `git apply` exiting 0 and reporting no error.
+	 *
+	 * The `a/` and `b/` prefixes go INSIDE the quotes (`"a/ta\tb.txt"`), which is
+	 * what git itself emits. Leaving the prefix outside yields `a/"ta\tb.txt"`, a
+	 * token git cannot parse — it then reports "inconsistent new filename" when
+	 * the `---`/`+++` lines disagree with the header. All three path lines of a
+	 * patch must therefore be quoted together; mixing forms is not enough.
+	 */
+	private static quotePatchPath(path: string): string {
+		// git's C-quoting, measured against `git diff` itself over all 126 characters
+		// a filename can hold. A path needs the whole quoted form exactly when it holds
+		// one of the C escapes below or a character outside printable ASCII — the
+		// whole set, not a hand-picked subset that keeps needing another character
+		// added after the last bug report.
+		//
+		// The table is keyed by CODE UNIT and the control characters are spelled as
+		// escapes: `'\a'` in source is the BEL character, not the two characters
+		// `\` and `a`, so keying by a written-out `'\a'` would also match every plain
+		// `a` in a filename and escape it as `\a`.
+		const C_ESCAPES: Record<string, string> = {
+			'\u0007': '\\a',
+			'\u0008': '\\b',
+			'\t': '\\t',
+			'\n': '\\n',
+			'\u000b': '\\v',
+			'\u000c': '\\f',
+			'\r': '\\r',
+			'"': '\\"',
+			'\\': '\\\\'
+		};
+		// The octal form escapes one BYTE at a time, so the path is walked by UTF-16
+		// code unit rather than by code point. `Array.from` would hand back a whole
+		// character (U+00E9 for `é`) and escape its code point, but git escapes the
+		// bytes that name the file on disk — `c3 a9` for `é`, written `\303\251`.
+		// Getting that wrong renders a header naming a file git cannot find.
+		const escaped = path
+			.split('')
+			.map(ch => {
+				const named = C_ESCAPES[ch];
+				if (named !== undefined) return named;
+				// git quotes exactly when a character falls outside printable ASCII
+				// (U+0020..U+007E), which is the range measured above.
+				if (ch >= ' ' && ch <= '~') return ch;
+				return Array.from(new TextEncoder().encode(ch), byte => `\\${byte.toString(8).padStart(3, '0')}`).join('');
+			})
+			.join('');
+		// A path with no character git treats specially is left unquoted, exactly
+		// as `git diff` renders it.
+		return escaped === path ? path : `"${escaped}"`;
+	}
+
+	/** The `a/<path>` / `b/<path>` side of a diff header, C-quoted whole. */
+	private static patchSidePath(side: 'a' | 'b', filepath: string): string {
+		return SpawnGitAdapter.quotePatchPath(`${side}/${filepath}`);
+	}
+
+	/**
 	 * Fresh patch rendering for `updateIndexContent`. The patch is applied literally
 	 * against the current index for the target filepath only, so it never modifies
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
 		const oldContent = await this.readGitObject(`:${filepath}`);
-		const header = `diff --git a/${filepath} b/${filepath}`;
+		// Quoted, so a tab or newline inside a filename cannot truncate the header's
+		// tab-delimited pathspec and redirect the write to a different file.
+		const quoted = SpawnGitAdapter.patchSidePath('a', filepath);
+		const header = `diff --git ${quoted} ${SpawnGitAdapter.patchSidePath('b', filepath)}`;
 		if (oldContent !== null) {
 			// A literal no-op: the index already holds exactly this content, so the
 			// write is skipped entirely. An empty→empty replace would render a
@@ -701,21 +1076,33 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// other shape can reach identical content.
 			if (oldContent === content) return '';
 			// Replace the full index content; the index mode is preserved without headers.
-			return [
+			// A side with no lines contributes no hunk body at all: `hunkBody('', '-')`
+			// returns '', and joining that into the patch emits a bare blank line where
+			// the hunk body should be. `git apply` counts the hunk's declared lines and
+			// finds a line it cannot classify, so it rejects the whole patch as corrupt —
+			// meaning the first line typed into a file committed empty (a placeholder
+			// config.json, a `> file` redirect, a truncated file) could never be staged.
+			// Verified against real git: the blank-line patch fails with
+			// "corrupt patch at ...:N" and the index stays empty; dropping the empty side
+			// applies cleanly and stages the content.
+			const parts = [
 				header,
-				`--- a/${filepath}`,
-				`+++ b/${filepath}`,
-				`@@ -${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(oldContent))} +${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(content))} @@`,
-				SpawnGitAdapter.hunkBody(oldContent, '-'),
-				SpawnGitAdapter.hunkBody(content, '+')
-			].join('\n');
+				`--- ${quoted}`,
+				`+++ ${SpawnGitAdapter.patchSidePath('b', filepath)}`,
+				`@@ -${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(oldContent))} +${SpawnGitAdapter.hunkRange(SpawnGitAdapter.textLineCount(content))} @@`
+			];
+			const oldBody = SpawnGitAdapter.hunkBody(oldContent, '-');
+			const newBody = SpawnGitAdapter.hunkBody(content, '+');
+			if (oldBody !== '') parts.push(oldBody);
+			if (newBody !== '') parts.push(newBody);
+			return parts.join('\n');
 		}
 
 		// The destination has no index entry: stage it as a new file. A path absent
 		// from the index has no mode to preserve, so this branch always emits the
 		// default index mode. Empty content is emitted without a hunk, which is what
 		// `git diff` produces for empty files.
-		const parts = [header, `new file mode ${SpawnGitAdapter.DEFAULT_INDEX_MODE}`, '--- /dev/null', `+++ b/${filepath}`];
+		const parts = [header, `new file mode ${SpawnGitAdapter.DEFAULT_INDEX_MODE}`, '--- /dev/null', `+++ ${SpawnGitAdapter.patchSidePath('b', filepath)}`];
 		const newCount = SpawnGitAdapter.textLineCount(content);
 		if (newCount > 0) {
 			parts.push(`@@ -0,0 +${SpawnGitAdapter.hunkRange(newCount)} @@`, SpawnGitAdapter.hunkBody(content, '+'));
@@ -724,6 +1111,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async updateIndexContent(filepath: string, content: string): Promise<void> {
+		await this.assertNotSymlink(filepath);
 		const gitDirRes = await this.runGit(['rev-parse', '--git-dir']);
 		const gitDir = gitDirRes.code === 0 && gitDirRes.stdout.trim() ? gitDirRes.stdout.trim() : '.git';
 		const resolvedGitDir = gitDir.startsWith('/') ? gitDir : `${this.rootOrigin.path}/${gitDir}`;

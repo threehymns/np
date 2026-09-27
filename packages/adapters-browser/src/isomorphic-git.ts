@@ -1,8 +1,9 @@
 import git from 'isomorphic-git';
+import type { StatusRow } from 'isomorphic-git';
 import { Buffer } from 'buffer';
 import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
-import { mapBounded } from '@np/core/utils';
+import { mapBounded, isDirectoryError } from '@np/core/utils';
 import { toURI } from '@np/core/storage';
 import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
@@ -10,12 +11,42 @@ import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
 
+/** The index mode git gives a symlink; its blob content is the target path, not text. */
+const SYMLINK_MODE = 0o120000;
+
 /** Parent of a shim path: '/a/b/c' → '/a/b', '' when there is none. */
 function parentDirectory(p: string): string {
 	const trimmed = p.replace(/\/+$/, '');
 	const idx = trimmed.lastIndexOf('/');
 	if (idx <= 0) return '';
 	return trimmed.slice(0, idx);
+}
+
+/**
+ * The index mode to keep when re-staging a path's current content: a recorded
+ * regular-file mode, else the 100644 default. Any other mode describes a
+ * different kind of object — `120000` is a symlink, whose blob must hold the
+ * link target rather than the file's body — and the bytes being staged are
+ * always a regular file's, so such a mode is not inheritable.
+ */
+function stageMode(recorded: number | undefined): number {
+	return recorded === 0o100755 || recorded === 0o100644 ? recorded : 0o100644;
+}
+
+/**
+ * Whether a status row is a file whose deletion is staged but which has been
+ * recreated in the worktree: still in HEAD (1), gone from the index (0), and
+ * present on disk (2).
+ *
+ * Real git reports that state as two porcelain entries, `D  f.txt` and `?? f.txt`.
+ * `statusMatrix` folds it into the single row [f.txt, 1, 2, 0] — the worktree
+ * column is 2, "untracked", precisely because the path left the index, so the two
+ * halves that matter are indistinguishable from a file that was never tracked at
+ * all. Measured on a real repository.
+ */
+function isResurrectedAfterStagedDelete(row: StatusRow): boolean {
+	const [, head, workdir, stage] = row;
+	return head === 1 && workdir === 2 && stage === 0;
 }
 
 class BrowserStats {
@@ -493,6 +524,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		try {
 			const matrix = await this.readStatusMatrix();
 
+			// A status matrix of [1,1,1] means the path is clean in all three
+			// states, which is also exactly what a mode-only change looks like
+			// once File System Access has flattened the worktree's permission
+			// bits: isomorphic-git compares blob ids, and the executable bit
+			// does not alter the blob. So a staged mode never reaches
+			// `snapshots` and the switch drops it, in the index AND the
+			// worktree.
+			//
+			// This filter is not the only mode loss. A mode staged alongside a
+			// content change reports [1,2,2], does get snapshotted, and the
+			// index is then written correctly — but the worktree still comes
+			// out at 644, because the forced checkout rewrites the file at its
+			// HEAD mode and writeFileSafe writes bytes only.
+			//
+			// Neither is repairable in this file: the File System Access API
+			// exposes no permission bits and has no chmod, so a worktree mode
+			// cannot be put back once lost. The behaviour is pinned in
+			// tests/contract/branch-switch.test.ts.
 			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
 				return head !== 1 || workdir !== 1 || stage !== 1;
 			});
@@ -824,7 +873,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			} catch (e: any) {
 				// Only genuinely absent files yield empty worktree content;
 				// anything else (permissions, I/O failures) must reach the caller.
-				if (!isENOENT(e)) throw e;
+				// A directory is the one other case: `git status` lists an
+				// untracked symlink to a directory as `??`, so the UI can offer it
+				// for viewing, and decoding EISDIR verbatim would be a raw syscall
+				// string leaking into a user-facing path. The shim raises it as
+				// `EISDIR` and the File System Access API as `TypeMismatchError`.
+				if (!isENOENT(e) && !isDirectoryError(e)) throw e;
 			}
 		}
 
@@ -851,6 +905,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
+		// Same reasoning as `updateIndexContent`, applied to the worktree. A bare
+		// write follows the link and overwrites the target -- a different, tracked
+		// file that the user never opened -- so the refusal is made first.
+		//
+		// The index entry's mode is again the only available signal, and that
+		// makes this slightly stricter than the worktree-based check the desktop
+		// adapter can afford. Here the link is followed on disk, so the entry
+		// describes the pre-write state and a link replaced by a regular file
+		// (mode 100644) is no longer detected. That case is a deliberate trade:
+		// it costs one extra write to a `.git` object, and it buys protection on
+		// every link the repository actually holds, rather than none.
+		const entry = await this.readStageEntry(filepath);
+		if (entry && entry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
+		}
 		await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, content);
 	}
 
@@ -902,6 +974,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		const destEntry = await this.readStageEntry(filepath);
 		if (destEntry && (await this.readBlobText(destEntry.oid)) === content) {
 			return;
+		}
+
+		// A git symlink's blob content is its *target path*, not file text. The
+		// entry keeps mode 120000, so replacing the blob would stage editor text
+		// under a symlink's mode: the commit succeeds and produces a tree whose
+		// link target is that text, which git checks out as a dangling link.
+		// Declining the write is the only safe answer.
+		//
+		// The index entry's mode is the only signal available here, and unlike
+		// `lstat` it needs no new filesystem capability -- which is the point,
+		// because the FS shim aliases `lstat` to `stat` and hard-codes
+		// `isSymbolicLink()` false, so a symlink imported from disk is invisible
+		// to it while remaining perfectly visible in the index.
+		if (destEntry && destEntry.mode === SYMLINK_MODE) {
+			throw new Error(
+				`Cannot edit ${filepath}: it is a symbolic link. A symlink's content is its ` +
+					'target path, not editable text.'
+			);
 		}
 
 		const oid = await git.writeBlob({
@@ -1011,7 +1101,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				return;
 			}
 		}
-		await git.add({ fs: this.fs!, dir: this.dir, filepath });
+		await this.stageWorktreeFile(filepath);
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
@@ -1088,6 +1178,44 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return bytes === null ? null : new TextDecoder().decode(bytes);
 	}
 
+	/**
+	 * Whether `.gitignore` rules match a path. A repository with no ignore files
+	 * answers false without walking any of them.
+	 */
+	private async isIgnored(filepath: string): Promise<boolean> {
+		try {
+			return await git.isIgnored({ fs: this.fs!, dir: this.dir, filepath });
+		} catch (e) {
+			// An absent or unreadable ignore configuration means nothing matches.
+			// Failing closed here would skip a file the user asked to stage, which is
+			// the worse error; real git treats an unreadable .gitignore as empty.
+			return false;
+		}
+	}
+
+	/**
+	 * CRLF to LF for the staged blob, but only where `core.autocrlf` asks for it
+	 * and only for a file that is valid UTF-8 to begin with: a binary file is
+	 * committed byte-for-byte, as on the desktop engine.
+	 */
+	private async normalizeLineEndings(bytes: Uint8Array): Promise<Uint8Array> {
+		let autocrlf: unknown;
+		try {
+			autocrlf = await git.getConfig({ fs: this.fs!, dir: this.dir, path: 'core.autocrlf' });
+		} catch (e) {
+			return bytes;
+		}
+		if (autocrlf !== true && autocrlf !== 'true') return bytes;
+		try {
+			return new TextEncoder().encode(
+				new TextDecoder('utf8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n')
+			);
+		} catch (e) {
+			// Not UTF-8, so there are no line endings to normalise.
+			return bytes;
+		}
+	}
+
 	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
 	private async unlinkIfPresent(filepath: string): Promise<void> {
 		try {
@@ -1121,6 +1249,51 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return false;
 	}
 
+	/**
+	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * `filepath`, or undefined when `filepath` is not such a destination.
+	 *
+	 * An unstaged worktree rename is invisible to git: the statusMatrix reports the
+	 * destination as untracked and the source as a worktree deletion that is still
+	 * in the index. For this case, measured directly, the rows are
+	 * `[["moved.txt",0,2,0],["src.txt",1,0,1]]` — a `[path, head, worktree, stage]`
+	 * tuple where an untracked destination is `worktree === 2` with `stage === 0`,
+	 * and a worktree-deleted source still in the index is `worktree === 0` with
+	 * `stage === 1` (isomorphic-git's stage numbers differ from git's; the
+	 * non-zero, non-worktree value is what marks it as still present in the index).
+	 *
+	 * The pair is recovered by content, exactly as the desktop engine does. A
+	 * candidate matches only when its index content is byte-identical to the
+	 * destination, and the match must be *unique*: two tracked files can hold the
+	 * same bytes, and a file the user deleted on purpose is indistinguishable from
+	 * the source half of a rename, so an ambiguous match recovers nothing and the
+	 * destination is treated as the untracked file it is. A destination the user
+	 * has edited never matches at all, and is likewise treated as untracked.
+	 */
+	private async findUnstagedRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | undefined> {
+		const destination = matrix.find(([p]) => p === filepath);
+		if (!destination) return undefined;
+		const [, destHead, destWorktree, destStage] = destination;
+		// Untracked destination: absent from HEAD and the index, present in the worktree.
+		if (!(destHead === 0 && destStage === 0 && destWorktree !== 0)) return undefined;
+
+		const destinationText = await this.readWorktreeText(filepath);
+		if (destinationText === null) return undefined;
+
+		const matches: string[] = [];
+		for (const [candidate, , worktree, stage] of matrix) {
+			// Source candidate: missing from the worktree, still recorded in the index.
+			if (candidate === filepath || worktree !== 0 || stage === 0) continue;
+			const staged = await this.readStageEntry(candidate);
+			if (!staged) continue;
+			const stagedText = await this.readBlobText(staged.oid);
+			if (stagedText !== null && stagedText === destinationText) {
+				matches.push(candidate);
+			}
+		}
+		return matches.length === 1 ? matches[0] : undefined;
+	}
+
 	async discardChanges(filepath: string, options?: { staged?: boolean }): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await this.readStatusMatrix();
@@ -1128,10 +1301,29 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (!entry) return;
 
 		if (options?.staged === false) {
+			// Still in HEAD, gone from the index, and present on disk: the user
+			// deleted the file, staged the deletion, and then recreated it.
+			// `statusMatrix` reports that as the single row [path, 1, 2, 0] — the
+			// worktree column is 2 (untracked) precisely because the path left the
+			// index, so the two-entry `D` + `??` pair real git prints is invisible
+			// here. Unlinking it destroyed the only copy of content that is in
+			// neither the index nor HEAD.
+			//
+			// There is also nothing to discard: in git's model that copy is
+			// untracked, so the "unstaged changes" this scope exists to revert do
+			// not exist and the only way to act would be to delete the file. This
+			// scope never touches the index, so the state is left exactly as it
+			// was, with the user's content intact.
+			if (isResurrectedAfterStagedDelete(entry)) {
+				return;
+			}
 			// Unstaged scope: reset only the worktree copy from the index version; the
 			// index is never touched. A path absent from the index (untracked file or
 			// worktree-only rename) has no staged copy to restore from, so its worktree
-			// file is cleaned instead.
+			// file is cleaned instead. An unstaged worktree rename is the case where
+			// cleaning the destination would also lose the tracked source, so restore
+			// the source from the index first — the recovery this engine always meant
+			// to perform, but which porcelain v1 / statusMatrix cannot express.
 			const staged = await this.readStageEntry(filepath);
 			if (staged) {
 				const text = await this.readBlobText(staged.oid);
@@ -1139,6 +1331,15 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					await this.fs!.promises.writeFile(`${this.dir}/${filepath}`, text);
 				}
 			} else {
+				const source = await this.findUnstagedRenameSource(matrix, filepath);
+				if (source) {
+					const sourceStaged = await this.readStageEntry(source);
+					const sourceText = sourceStaged ? await this.readBlobText(sourceStaged.oid) : null;
+					if (sourceText === null) {
+						throw new Error(`Failed to restore rename source for ${filepath}`);
+					}
+					await this.fs!.promises.writeFile(`${this.dir}/${source}`, sourceText);
+				}
 				await this.unlinkIfPresent(filepath);
 			}
 			return;
@@ -1218,9 +1419,66 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					await this.removeFromIndex(filepath as string);
 				}
 			} else {
-				await git.add({ fs: this.fs!, dir: this.dir, filepath: filepath as string });
+				await this.stageWorktreeFile(filepath as string);
 			}
 		}
+	}
+
+	/**
+	 * Stages a worktree file's current content into the index.
+	 *
+	 * `git.add` derives the index mode from `stat().mode`, and `BrowserStats`
+	 * reports a hardcoded `0o100644` for every file because the File System Access
+	 * API exposes no POSIX mode. Staging that way silently rewrote an executable
+	 * entry to 100644 the first time a script was edited, so simply opening a
+	 * `.sh`, changing it and hitting "Stage All" stripped the exec bit from the
+	 * commit.
+	 *
+	 * The fix is to pass the mode explicitly, keeping whatever the index already
+	 * recorded. That is the same approach `updateIndexContent` already takes
+	 * (`mode: destEntry?.mode ?? 0o100644`), and it is the only correct answer for
+	 * this platform: a browser cannot learn or set a POSIX mode, so the index is
+	 * the sole source of truth for one. A file with no index entry yet is genuinely
+	 * new, and 100644 is the honest default.
+	 *
+	 * The recorded mode is only inheritable while the new content is the same kind
+	 * of object. A `120000` entry's blob holds a link *target*, not a file body, so
+	 * keeping that mode over a regular file's bytes writes an entry git cannot
+	 * represent. `readWorktreeBytes` never returns a link — this platform cannot
+	 * read one — so anything other than a regular-file mode is dropped, exactly as
+	 * `git.add` did.
+	 *
+	 * Writing the blob by hand also means the work `git.add` did has to be
+	 * reproduced, or the two engines diverge on the same repository: `.gitignore`
+	 * still governs an untracked path, and `core.autocrlf` still normalises CRLF on
+	 * the way in. The blob is otherwise the file's raw bytes, which is what
+	 * `git.add` wrote too: a decode/re-encode round trip would be lossy for any
+	 * file that is not valid UTF-8 (a PNG, a .so, a latin-1 source file), and a
+	 * blob that differs from the file on disk leaves the file permanently
+	 * staged-modified.
+	 */
+	private async stageWorktreeFile(filepath: string): Promise<void> {
+		const [staged, bytes] = await Promise.all([
+			this.readStageEntry(filepath),
+			this.readWorktreeBytes(filepath)
+		]);
+		// `.gitignore` governs untracked paths only: once a path is in the index, a
+		// later matching rule does not stop further changes from being staged, which
+		// is real git's rule and `git.add`'s. `statusMatrix` never lists an ignored
+		// file, so this only bites a caller that names the path directly.
+		if (!staged && await this.isIgnored(filepath)) return;
+		await git.updateIndex({
+			fs: this.fs!,
+			dir: this.dir,
+			filepath,
+			oid: await git.writeBlob({
+				fs: this.fs!,
+				dir: this.dir,
+				blob: await this.normalizeLineEndings(bytes ?? new Uint8Array())
+			}),
+			add: true,
+			mode: stageMode(staged?.mode)
+		});
 	}
 
 	async unstageAll(): Promise<void> {
@@ -1237,9 +1495,15 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
 		const matrix = await this.readStatusMatrix();
 		const trackedToRestore: string[] = [];
+		// A path whose deletion is staged but which has been recreated holds content
+		// in neither HEAD nor the index, so neither the unlink below nor the HEAD
+		// checkout can be allowed to touch it: that is how a bulk discard destroys a
+		// re-created file outright. Measured on a real repo — [f.txt, 1, 2, 0].
+		const resurrected = new Set(matrix.filter(isResurrectedAfterStagedDelete).map(([filepath]) => filepath));
 		for (const [filepath, head, workdir, stage] of matrix) {
 			const isClean = head === 1 && workdir === 1 && stage === 1;
 			if (isClean) continue;
+			if (resurrected.has(filepath as string)) continue;
 			if (head === 0) {
 				// Absent from HEAD: remove the worktree copy and the index entry. The
 				// unlink tolerates an already-gone file and `removeFromIndex` never
