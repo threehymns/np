@@ -336,12 +336,13 @@ export class KeymapRegistry {
 			return true;
 		}
 
-		// If we were in a chord, but hit an invalid key, cancel the chord
+		// If we were in a chord, but hit an invalid key, cancel the chord.
+		// The chord is abandoned, but the key that abandoned it is still the user's:
+		// consuming it here silently drops the first character of whatever they type next.
+		// There is also no timeout that could clear the buffer later, so this state persists.
 		if (this.keyBuffer.length > 0) {
-			e.preventDefault();
-			e.stopPropagation();
 			this.keyBuffer = [];
-			return true;
+			return false;
 		}
 
 		return false;

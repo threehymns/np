@@ -1,6 +1,6 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, afterEach } from "bun:test";
-import { parseKeySequence, formatShortcutLabel, keystrokesEqual } from "./keymap.svelte";
+import { parseKeySequence, formatShortcutLabel, keystrokesEqual, KeymapRegistry, defaultKeymap } from "./keymap.svelte";
 
 /**
  * The formatter and the parser must agree about the same vocabulary.
@@ -127,5 +127,101 @@ describe("non-mac rendering stays spelled out", () => {
 		expect(label).not.toContain("⇧");
 		expect(label).not.toContain("⌥");
 		expect(label).not.toContain("⌃");
+	});
+});
+
+/**
+ * Abandoning a chord must not eat the next character the user types.
+ *
+ * `space` opens 17 different chords in vim normal mode. If the user presses it and then
+ * changes their mind, the first real keystroke is consumed by the chord logic:
+ * `handleKeydown` returns true and calls `preventDefault`, so the character never reaches
+ * the editor. With no buffer pending the same key returns false and types normally, which
+ * is the control that makes the difference observable.
+ *
+ * There is also no timeout anywhere in keymap.svelte.ts, so the buffer persists until a
+ * keypress clears it — which means this is a real cost, not a momentary one.
+ */
+describe("abandoning a chord does not swallow the next keystroke", () => {
+	function newRegistry() {
+		const executed: string[] = [];
+		const appState: any = {
+			commands: {
+				execute: (id: string) => {
+					executed.push(id);
+					return true;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		reg.setContext("editor", "true");
+		reg.setContext("vim_mode", "normal");
+		return { reg, executed };
+	}
+
+	function keyEvent(key: string) {
+		let prevented = 0;
+		const e = {
+			key,
+			metaKey: false,
+			ctrlKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented };
+	}
+
+	it("passes an unrelated key through when no chord is pending", () => {
+		withPlatform('MacIntel');
+		const { reg } = newRegistry();
+
+		// 'q' starts no binding, so with an empty buffer it must reach the editor.
+		const k = keyEvent("q");
+		expect(reg.handleKeydown(k.e)).toBe(false);
+		expect(k.prevented()).toBe(0);
+	});
+
+	it("does not consume the next key when a chord is abandoned", () => {
+		withPlatform('MacIntel');
+		const { reg } = newRegistry();
+
+		reg.handleKeydown(keyEvent(" ").e); // open the chord
+		expect(reg.keyBuffer).toHaveLength(1);
+
+		const k = keyEvent("q");
+		// The buffer is discarded, but 'q' must still be the user's 'q'.
+		reg.handleKeydown(k.e);
+
+		expect(reg.keyBuffer).toHaveLength(0);
+		expect(k.prevented()).toBe(0);
+	});
+
+	it("still completes a real chord after the change", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		reg.handleKeydown(keyEvent(" ").e);
+		reg.handleKeydown(keyEvent("f").e);
+		reg.handleKeydown(keyEvent("n").e);
+
+		expect(executed).toEqual(["file.new"]);
+		expect(reg.keyBuffer).toHaveLength(0);
+	});
+
+	it("still lets a non-matching key cancel a pending chord", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		reg.handleKeydown(keyEvent(" ").e);
+		reg.handleKeydown(keyEvent("`").e);
+
+		expect(reg.keyBuffer).toHaveLength(0);
+		expect(executed).toEqual([]);
 	});
 });
