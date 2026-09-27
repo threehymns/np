@@ -220,3 +220,53 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		expect(await xy(repo, MAGIC)).toBe('M ');
 	});
 });
+
+/**
+ * `:(literal)` must not narrow a directory argument to a single file. git treats
+ * a pathspec naming a directory as "everything under it", and the wrap has to
+ * preserve that, or staging a folder would stop working.
+ */
+describe('SpawnGitAdapter — a directory path still covers everything under it', () => {
+	it('stageFile on a directory stages every file beneath it', async () => {
+		const repo = await createTrackedRepo();
+		await seedCommit(repo);
+		await repo.write('src/a.txt', 'a\n');
+		await repo.write('src/deep/b.txt', 'b\n');
+		await repo.write('other.txt', 'o\n');
+
+		await adapterFor(repo).stageFile('src');
+
+		expect(await xy(repo, 'src/a.txt')).toBe('A ');
+		expect(await xy(repo, 'src/deep/b.txt')).toBe('A ');
+		expect(await xy(repo, 'other.txt')).toBe('??');
+	});
+
+	it('unstageFile on a directory unstages every file beneath it', async () => {
+		const repo = await createTrackedRepo();
+		await seedCommit(repo);
+		await repo.write('src/a.txt', 'a\n');
+		await repo.write('other.txt', 'o\n');
+		await repo.git(['add', '-A']);
+		await repo.git(['commit', '-q', '-m', 'seed']);
+		await repo.write('src/a.txt', 'a2\n');
+		await repo.write('other.txt', 'o2\n');
+		await repo.git(['add', '-A']);
+
+		await adapterFor(repo).unstageFile('src');
+
+		expect(await xy(repo, 'src/a.txt')).toBe(' M');
+		expect(await xy(repo, 'other.txt')).toBe('M ');
+	});
+
+	it('discarding an untracked directory removes it and leaves siblings alone', async () => {
+		const repo = await createTrackedRepo();
+		await seedCommit(repo);
+		await repo.write('newdir/x.txt', 'x\n');
+		await repo.write('KEEPME.txt', 'keep\n');
+
+		await adapterFor(repo).discardChanges('newdir');
+
+		expect(await worktreeContents(repo, 'newdir/x.txt')).toBeNull();
+		expect(await worktreeContents(repo, 'KEEPME.txt')).toBe('keep\n');
+	});
+});
