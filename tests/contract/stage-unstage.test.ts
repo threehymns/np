@@ -689,6 +689,68 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await worktreeContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
 		});
 
+		it('normalises CRLF to LF for every core.autocrlf value git treats as true, like real git', async () => {
+			// git_config_bool accepts four spellings of true, case-insensitively, and
+			// `core.autocrlf` has a third state (`input`) that is not a boolean at all
+			// but still normalises on commit. Measured against git 2.55.0 — see
+			// scratch/autocrlf-task008-probe2.ts.
+			//
+			// `input` is the spelling to lead with: it is the one git's own docs now
+			// recommend for cross-platform repos, so it is the one a user is most
+			// likely to have.
+			const NORMALISING: string[] = ['true', 'yes', 'on', '1', 'TRUE', 'On', 'input', 'INPUT'];
+			for (const value of NORMALISING) {
+				const r = await createTrackedRepo();
+				await baseRepo(r);
+				await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+				await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+				await r.git(['config', 'core.autocrlf', value]);
+				const adapter = engine.adapter(r);
+				await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+
+				await adapter.stageAll();
+
+				expect(await indexContents(r, 'crlf.txt'), `autocrlf=${value}`).toBe(
+					'line1\nline2\n'
+				);
+			}
+		});
+
+		it('leaves CRLF alone for every core.autocrlf value git treats as false', async () => {
+			// The fix for `input` must not over-correct into normalising on the way
+			// in: `false` and its spellings mean exactly what they say, and the
+			// empty string is git's own "unset" form.
+			for (const value of ['false', 'no', 'off', '0', 'FALSE', 'Off', '']) {
+				const r = await createTrackedRepo();
+				await baseRepo(r);
+				await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+				await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+				await r.git(['config', 'core.autocrlf', value]);
+				const adapter = engine.adapter(r);
+				await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+
+				await adapter.stageAll();
+
+				expect(await indexContents(r, 'crlf.txt'), `autocrlf=${value}`).toBe(
+					'line1\r\nline2\r\n'
+				);
+			}
+		});
+
+		it('does not normalise line endings when core.autocrlf is unset', async () => {
+			// The default, on a repository that never mentions the setting.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+			const adapter = engine.adapter(r);
+			await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+
+			await adapter.stageAll();
+
+			expect(await indexContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
+		});
+
 		it('stages a binary file byte-for-byte', async () => {
 			// Staging writes the blob itself, so the bytes that reach the index are
 			// whatever the implementation passes to `writeBlob`. A decode-then-encode

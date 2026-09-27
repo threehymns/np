@@ -1213,6 +1213,24 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	/**
+	 * Whether git's `core.autocrlf` asks for CRLF to be normalised on commit.
+	 *
+	 * git parses the setting as a boolean, so it accepts four spellings of true
+	 * case-insensitively, plus an `input` third state that is not a boolean but
+	 * still normalises on commit. Measured against git 2.55.0 rather than assumed
+	 * from memory — see `scratch/autocrlf-task008-probe2.ts`.
+	 *
+	 * An unrecognised value is deliberately treated as "do not normalise": real
+	 * git refuses to run at all, but throwing here would turn one bad config line
+	 * into an inability to stage anything.
+	 */
+	private static autocrlfNormalises(value: unknown): boolean {
+		if (typeof value !== 'string') return false;
+		const setting = value.toLowerCase();
+		return setting === 'true' || setting === 'yes' || setting === 'on' || setting === '1' || setting === 'input';
+	}
+
+	/**
 	 * CRLF to LF for the staged blob, but only where `core.autocrlf` asks for it
 	 * and only for a file that is valid UTF-8 to begin with: a binary file is
 	 * committed byte-for-byte, as on the desktop engine.
@@ -1224,7 +1242,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		} catch (e) {
 			return bytes;
 		}
-		if (autocrlf !== true && autocrlf !== 'true') return bytes;
+		if (!IsomorphicGitAdapter.autocrlfNormalises(autocrlf)) return bytes;
 		try {
 			return new TextEncoder().encode(
 				new TextDecoder('utf8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n')
