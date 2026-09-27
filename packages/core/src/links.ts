@@ -63,6 +63,26 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		}
 	}
 
+	// Bare block reference: `[[^block-id]]`, the spelling the editor's own block
+	// completion produces (the user types `[[^`, then picks an id, so the applied
+	// text is just the id). There is no `#` here, so the hash-split below never
+	// runs and the whole thing would otherwise be treated as the *name of a file*.
+	// Left unhandled, `openInternalLink` takes the "target is in a note" branch
+	// with allowCreate defaulting to true, so following the link silently creates
+	// a junk note named `^block-id.md` instead of scrolling to the block.
+	if (str.startsWith('^')) {
+		return {
+			raw: rawLink,
+			path: '',
+			subpath: {
+				type: 'block',
+				value: str.slice(1).trim(),
+			},
+			alias,
+			isEmbed,
+		};
+	}
+
 	// Heading or Block subpath syntax
 	const hashIndex = str.indexOf('#');
 	if (hashIndex !== -1) {

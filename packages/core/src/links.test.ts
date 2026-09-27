@@ -122,6 +122,36 @@ describe("Obsidian Internal Link Parsing", () => {
 		});
 	});
 
+	// `[[^id]]` is the form the editor's own completion produces: the user types
+	// `[[^`, the block list opens, and the applied completion substitutes only the
+	// id, so the resulting link has no `#` and therefore no path part. It is also
+	// the spelling listed in this module's own doc comment.
+	it("parses a bare same-note block link as a block, not a file named '^id'", () => {
+		const parsed = parseInternalLink("[[^alpha]]");
+		expect(parsed.path).toBe("");
+		expect(parsed.subpath).toEqual({ type: "block", value: "alpha" });
+		expect(parsed.alias).toBeNull();
+	});
+
+	it("parses a bare block link with a display alias", () => {
+		const parsed = parseInternalLink("[[^alpha|the first block]]");
+		expect(parsed.path).toBe("");
+		expect(parsed.subpath).toEqual({ type: "block", value: "alpha" });
+		expect(parsed.alias).toBe("the first block");
+	});
+
+	it("still treats an explicit note plus block id as a note link", () => {
+		const parsed = parseInternalLink("[[About Obsidian#^alpha]]");
+		expect(parsed.path).toBe("About Obsidian");
+		expect(parsed.subpath).toEqual({ type: "block", value: "alpha" });
+	});
+
+	it("still treats '#^id' as a same-note block link", () => {
+		const parsed = parseInternalLink("[[#^alpha]]");
+		expect(parsed.path).toBe("");
+		expect(parsed.subpath).toEqual({ type: "block", value: "alpha" });
+	});
+
 	it("parses nested subheading links", () => {
 		const parsed = parseInternalLink(
 			"[[Help and support#Questions and advice#Report bugs and request features]]"
@@ -506,5 +536,16 @@ describe("openInternalLink resolution in Workspace", () => {
 		);
 		expect(resultDoc).toBeNull();
 		expect(storage.files.has("file:///vault/Missing Image.png")).toBe(false);
+	});
+
+	// The damaging half of the bare-block-link bug. A `[[^alpha]]` link parsed as
+	// a file target takes the "target is in a note" branch, where allowCreate
+	// defaults to true for non-embeds -- so following a block reference silently
+	// creates a junk note named `^alpha.md` in the user's vault and navigates to
+	// that empty file instead of scrolling to the block.
+	it("never creates a junk note when following a bare block reference", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[^alpha]]");
+		expect(resultDoc).toBeNull();
+		expect(storage.files.has("file:///vault/^alpha.md")).toBe(false);
 	});
 });
