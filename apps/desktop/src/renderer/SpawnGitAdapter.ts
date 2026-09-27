@@ -29,6 +29,31 @@ export interface GitFileAccess {
 
 const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(workingDir, args);
 
+/**
+ * Wraps `path` so git treats it as one literal path rather than a pathspec.
+ *
+ * A bare `--` only ends option parsing; it does not disable pathspec magic. A
+ * filename that starts with `:(`, `:!` or `glob:` is therefore parsed as a magic
+ * pathspec and matches a different, usually much broader, set of paths. Measured
+ * on a real repository, staging the single untracked file `:(exclude)base.txt`
+ * with `git add -- ':(exclude)base.txt'` stages every untracked file, and
+ * `git clean -fd -- ':(exclude)base.txt'` deletes every untracked file in the
+ * repository except the one named `base.txt`.
+ *
+ * `:(literal)` restores the intended meaning. It is part of git's original
+ * pathspec magic, so it is available on every version this adapter supports
+ * (GIT_FLOOR 2.23), and it is a no-op for an ordinary filename: `plain.txt`
+ * carries no prefix of its own, so `:(literal)plain.txt` still matches only
+ * `plain.txt`.
+ *
+ * Only paths that come from the user are wrapped. The repository-wide
+ * operations pass `.` deliberately, and `:(literal).` would still mean `.` but
+ * would misdocument the intent, so those are left as they are.
+ */
+function literalPathspec(path: string): string {
+	return `:(literal)${path}`;
+}
+
 const ipcFileAccess: GitFileAccess = {
 	readFile: async (path) => {
 		const toNotFound = (cause: unknown): Error => {
@@ -260,7 +285,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	async stageFile(filepath: string): Promise<void> {
-		const res = await this.runGit(['add', '--', filepath]);
+		const res = await this.runGit(['add', '--', literalPathspec(filepath)]);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to stage file: ${filepath}`);
 		}
@@ -269,7 +294,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async unstageFile(filepath: string): Promise<void> {
 		const origPath = await this.resolveOrigPath(filepath);
 		const paths = origPath && origPath !== filepath ? [origPath, filepath] : [filepath];
-		const res = await this.runGit(['reset', 'HEAD', '--', ...paths]);
+		const res = await this.runGit(['reset', 'HEAD', '--', ...paths.map(literalPathspec)]);
 		if (res.code !== 0) {
 			// An unborn HEAD (no commits yet) cannot resolve 'HEAD' as a revision
 			// (older git rejects the explicit reset outright; newer git accepts it),
@@ -279,7 +304,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// commits emits the same error, so the fallback only runs when the
 			// repository is genuinely commit-less.
 			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
-				const rmRes = await this.runGit(['rm', '--cached', '-q', '--', ...paths]);
+				const rmRes = await this.runGit(['rm', '--cached', '-q', '--', ...paths.map(literalPathspec)]);
 				if (rmRes.code !== 0 && !this.isRmEmptyIndexError(rmRes.stderr)) {
 					throw new Error(rmRes.stderr || `Failed to unstage file: ${filepath}`);
 				}
@@ -314,7 +339,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	private async cleanIfPresent(filepath: string): Promise<void> {
-		const cleanRes = await this.runGit(['clean', '-fd', '--', filepath]);
+		const cleanRes = await this.runGit(['clean', '-fd', '--', literalPathspec(filepath)]);
 		if (cleanRes.code !== 0) {
 			throw new Error(cleanRes.stderr || `Failed to discard changes for ${filepath}`);
 		}
@@ -415,7 +440,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// Unstaged scope: reset only the worktree copy to the index version. If the
 			// destination path is not in the index (e.g. an unstaged worktree rename),
 			// restore the original source path from the index and clean the destination.
-			const res = await this.runGit(['restore', '--worktree', '--', filepath]);
+			const res = await this.runGit(['restore', '--worktree', '--', literalPathspec(filepath)]);
 			if (res.code !== 0) {
 				if (!this.isPathNotFoundError(res.stderr)) {
 					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
@@ -434,7 +459,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				// that merely happens to hold identical content is never restored over.
 				const source = await this.findUnstagedRenameSource(filepath);
 				if (source) {
-					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', source]);
+					const restoreOrigRes = await this.runGit(['restore', '--worktree', '--', literalPathspec(source)]);
 					if (restoreOrigRes.code !== 0) {
 						throw new Error(restoreOrigRes.stderr || `Failed to discard changes for ${filepath}`);
 					}
@@ -452,7 +477,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// destination also holds unstaged edits (CM) keeps its worktree copy after
 			// the reset: it is left in place instead of being cleaned away with the
 			// user's edits in it.
-			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', literalPathspec(filepath)]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
@@ -469,11 +494,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// HEAD in index and worktree and remove the new path, instead of dropping the
 			// original tracked file.
 			const preserveDestination = renameEntry.hasWorktreeEdits;
-			const resetRes = await this.runGit(['reset', 'HEAD', '--', origPath, filepath]);
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', literalPathspec(origPath), literalPathspec(filepath)]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
-			const checkoutRes = await this.runGit(['checkout', 'HEAD', '--', origPath]);
+			const checkoutRes = await this.runGit(['checkout', 'HEAD', '--', literalPathspec(origPath)]);
 			if (checkoutRes.code !== 0) {
 				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
@@ -486,7 +511,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			return;
 		}
 
-		const res = await this.runGit(['checkout', 'HEAD', '--', filepath]);
+		const res = await this.runGit(['checkout', 'HEAD', '--', literalPathspec(filepath)]);
 		if (res.code !== 0) {
 			// Only a path absent from HEAD (a staged addition or an untracked file)
 			// reaches the reset+clean recovery; any other checkout failure surfaces
@@ -494,7 +519,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (!this.isPathNotFoundError(res.stderr)) {
 				throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
 			}
-			const resetRes = await this.runGit(['reset', 'HEAD', '--', filepath]);
+			const resetRes = await this.runGit(['reset', 'HEAD', '--', literalPathspec(filepath)]);
 			if (resetRes.code !== 0 && !this.isPathNotFoundError(resetRes.stderr)) {
 				// A trailing "did not match" means the path has no index entry either
 				// (untracked), so proceed to clean instead of failing the discard.
@@ -564,7 +589,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 			.filter(e => e.x === '?' && e.y === '?' && !resurrected.has(e.filepath))
 			.map(e => e.filepath);
 		if (removable.length === 0) return;
-		const cleanRes = await this.runGit(['clean', '-fd', '--', ...removable]);
+		const cleanRes = await this.runGit(['clean', '-fd', '--', ...removable.map(literalPathspec)]);
 		if (cleanRes.code !== 0) {
 			throw new Error(cleanRes.stderr || 'Failed to discard all changes');
 		}

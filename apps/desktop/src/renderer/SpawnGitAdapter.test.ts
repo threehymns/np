@@ -325,8 +325,8 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.discardChanges('file.txt');
 
-		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'file.txt']);
-		expect(commands).toContainEqual(['clean', '-fd', '--', 'file.txt']);
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', ':(literal)file.txt']);
+		expect(commands).toContainEqual(['clean', '-fd', '--', ':(literal)file.txt']);
 	});
 
 	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {
@@ -447,7 +447,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageFile('file.txt');
 
-		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'file.txt']);
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', ':(literal)file.txt']);
 	});
 
 	it('unstageFile resets both origPath and destination path when unstaging a staged rename', async () => {
@@ -464,7 +464,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageFile('new.txt');
 
-		expect(commands).toContainEqual(['reset', 'HEAD', '--', 'old.txt', 'new.txt']);
+		expect(commands).toContainEqual(['reset', 'HEAD', '--', ':(literal)old.txt', ':(literal)new.txt']);
 	});
 
 	it('unstageFile throws when git reset fails', async () => {
@@ -499,7 +499,7 @@ describe('SpawnGitAdapter', () => {
 		expect(commands).toContainEqual(['symbolic-ref', '-q', 'HEAD']);
 		expect(commands).toContainEqual(['rev-parse', '--verify', 'HEAD']);
 		expect(commands).toContainEqual(['for-each-ref', '--format=%(refname)']);
-		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
+		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', ':(literal)file.txt']);
 	});
 
 	it('unstageFile propagates an unborn-HEAD rm --cached failure', async () => {
@@ -610,7 +610,7 @@ describe('SpawnGitAdapter', () => {
 
 		expect(commands).toContainEqual(['symbolic-ref', '-q', 'HEAD']);
 		expect(commands).toContainEqual(['for-each-ref', '--format=%(refname)']);
-		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', 'file.txt']);
+		expect(commands).toContainEqual(['rm', '--cached', '-q', '--', ':(literal)file.txt']);
 	});
 
 	it('unstageFile propagates a git status failure instead of swallowing it', async () => {
@@ -709,7 +709,7 @@ describe('SpawnGitAdapter', () => {
 		// and it ignores `-e :(exclude)` pathspecs, so removals are enumerated instead.
 		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
-		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', 'junk.txt', 'nested/deep.txt']);
+		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt', ':(literal)nested/deep.txt']);
 	});
 
 	it('discardAll shields a recreated file by excluding it from restore and clean', async () => {
@@ -746,7 +746,7 @@ describe('SpawnGitAdapter', () => {
 		// Only the junk is removed; the recreated file is never passed to clean.
 		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
-		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', 'junk.txt']);
+		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt']);
 	});
 
 	it('stageAll throws when git add fails', async () => {
