@@ -301,6 +301,73 @@ Final thoughts.`;
 		});
 	});
 
+	describe("a heading's own # must not be read as a path separator", () => {
+		// findHeadingLine splits the whole heading path on '#' before matching, so
+		// a heading whose OWN text contains a hash was unreachable: the path
+		// `[[#C#]]` becomes the segments ["c", ""], and no heading is named "".
+		// The completion still OFFERS the heading (getHeadings reports its text
+		// verbatim), and the resulting link is a real, clickable WikiLink, so the
+		// user picks a target the app itself listed and following it scrolls
+		// nowhere. Measured: scratch/t010/verdict.ts.
+		const hashDoc = ["# C#", "x", "# Step 2#", "y", "# Plain", "z"].join("\n");
+
+		it("resolves a heading whose text ends in a hash", () => {
+			expect(findHeadingLine(hashDoc, "C#")).toBe(1);
+			expect(findHeadingLine(hashDoc, "Step 2#")).toBe(3);
+		});
+
+		it("resolves a heading whose text contains an internal hash", () => {
+			expect(findHeadingLine(hashDoc, "Issue #42 fixed")).toBeNull();
+			expect(findHeadingLine("# Issue #42 fixed\n", "Issue #42 fixed")).toBe(1);
+		});
+
+		it("resolves a heading whose text contains a pipe, when asked directly", () => {
+			// findHeadingLine itself is fine with a pipe — this passes today and is
+			// a control, not the bug. The pipe defect is EARLIER, in
+			// parseInternalLink, which reads `|` as the alias separator and hands
+			// the lookup only "A". Pinned below as end-to-end so the two are not
+			// confused.
+			expect(findHeadingLine("# A | B\n", "A | B")).toBe(1);
+		});
+
+		it("a pipe in a heading never survives the alias split (known, parseInternalLink)", () => {
+			// NOT FIXED HERE, and recorded rather than papered over. `[[#A | B]]` is
+			// genuinely ambiguous: it can mean "heading `A`, displayed as `B`" or
+			// "heading `A | B`". The parser commits to the alias reading, so the
+			// completion offers `A | B` and following the link scrolls nowhere.
+			// Choosing between the two readings is a behaviour change to link
+			// semantics, not a lookup fix, so it is out of scope for this commit.
+			const t = parseInternalLink("[[#A | B]]");
+			expect(t.subpath).toEqual({ type: "heading", value: "A" });
+			expect(t.alias).toBe("B");
+			// And the end-to-end consequence, stated rather than hidden:
+			expect(findHeadingLine("# A | B\n", t.subpath!.value)).toBeNull();
+		});
+
+		it("still resolves a genuine multi-level path (control)", () => {
+			// The fix must prefer an exact whole-document match over splitting, and
+			// must not break the nesting behaviour task-002 established.
+			const deep = ["# A", "x", "## B", "y", "### C", "z"].join("\n");
+			expect(findHeadingLine(deep, "A#B#C")).toBe(5);
+			expect(findHeadingLine(deep, "A#B")).toBe(3);
+		});
+
+		it("still refuses a path whose second segment is a sibling (control)", () => {
+			// If an exact match is attempted first and fails, we must fall back to
+			// the level-aware split — never to "match anything".
+			const siblingDoc = ["# One", "a", "## Two", "b", "## Three", "c"].join("\n");
+			expect(findHeadingLine(siblingDoc, "Two#Three")).toBeNull();
+		});
+
+		it("prefers the exact heading when a heading's text is itself a path", () => {
+			// A document may legitimately contain both `A#B` as a literal heading
+			// and `A` containing `B`. The literal heading is the one a completion
+			// would offer, so it must win.
+			const doc = ["# A#B", "x", "# A", "y", "## B", "z"].join("\n");
+			expect(findHeadingLine(doc, "A#B")).toBe(1);
+		});
+	});
+
 	describe("fenced code blocks are not headings", () => {
 		// getHeadings tracked fences with a bare boolean toggle, so any
 		// fence-looking line flipped it. CommonMark is specific about what

@@ -369,6 +369,20 @@ export function getHeadings(content: string): HeadingItem[] {
  */
 export function findHeadingLine(content: string, headingPath: string): number | null {
 	const headings = getHeadings(content);
+
+	// A heading's own text may contain '#' (or '|', though the parser has already
+	// split that off as an alias), so try the WHOLE path as one literal name
+	// before splitting. Without this, a heading the completion itself offers —
+	// it reports heading text verbatim — can never be reached: `C#` splits into
+	// ["c", ""] and no heading is named "". The link is a real, clickable
+	// WikiLink, so the user picks a listed target and following it scrolls
+	// nowhere.
+	const whole = headingPath.trim().toLowerCase();
+	if (whole) {
+		const exact = headings.find((h) => h.text.trim().toLowerCase() === whole);
+		if (exact) return exact.line;
+	}
+
 	const segments = headingPath
 		.split('#')
 		.map((s) => s.trim().toLowerCase())
