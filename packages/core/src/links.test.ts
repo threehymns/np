@@ -358,3 +358,167 @@ describe("openInternalLink resolution in Workspace", () => {
 		expect(storage.files.has("file:///vault/Missing Image.png")).toBe(false);
 	});
 });
+
+/**
+ * task-012 — vault containment on the READ path.
+ *
+ * `isWithinPath` guards only the create step (links.ts:621). Steps 1 and 2 build
+ * `${rootPath}/${stripped}` and hand it straight to `storage.readFile`, where
+ * `stripped` is `candidate.replace(/^\//, '')` — one leading slash, nothing else.
+ * The desktop chain has no normalizer at all:
+ *   ElectronStorage -> preload.cts:8 -> main.ts:219  `fs.readFile(filePath)`
+ * and Node resolves `..` itself. So `[[../secret.txt]]` opens a file outside the
+ * vault and renders its contents in the editor.
+ *
+ * IMPORTANT — the storage below resolves `..` on lookup, and it has to. The
+ * in-memory `createMemoryStorage` above keys files by their raw URI, so a lookup of
+ * `/vault/../secret.txt` misses and the traversal *appears* blocked. That would be a
+ * test passing for the wrong reason: it would prove the mock is strict, not that the
+ * code is safe. The real backend is not strict, so the fake has to be faithful to
+ * the real backend. `resolveLikeFilesystem` is POSIX `.`/`..` collapsing, which is
+ * exactly what `fs.readFile` does before opening the file.
+ */
+function resolveLikeFilesystem(path: string): string {
+	const absolute = path.startsWith("/");
+	const out: string[] = [];
+	for (const part of path.split("/")) {
+		if (part === "" || part === ".") continue;
+		if (part === "..") {
+			if (out.length && out[out.length - 1] !== "..") out.pop();
+			else if (!absolute) out.push("..");
+		} else out.push(part);
+	}
+	return (absolute ? "/" : "") + out.join("/");
+}
+
+function createResolvingStorage(files: Record<string, string>) {
+	// Key by the RESOLVED path, so a traversing lookup finds the outside file.
+	const byResolved = new Map<string, string>();
+	for (const [path, content] of Object.entries(files)) {
+		byResolved.set(resolveLikeFilesystem(path), content);
+	}
+	const readPaths: string[] = [];
+	const mockBase = createMockStorage();
+	return {
+		...mockBase,
+		readPaths,
+		files: byResolved,
+		readFile: mock(async (origin: FileOrigin) => {
+			readPaths.push(origin.path);
+			const key = resolveLikeFilesystem(origin.path);
+			if (!byResolved.has(key)) throw new Error(`File not found: ${origin.path}`);
+			return byResolved.get(key)!;
+		}),
+		saveFile: mock(async (content: string, origin?: FileOrigin) => {
+			if (!origin) return null;
+			byResolved.set(resolveLikeFilesystem(origin.path), content);
+			return origin;
+		}),
+		readDirectory: mock(async (origin: FileOrigin) => {
+			const prefix = resolveLikeFilesystem(origin.path) + "/";
+			const entries: any[] = [];
+			for (const [path, _content] of byResolved) {
+				if (!path.startsWith(prefix)) continue;
+				const rest = path.slice(prefix.length);
+				const slash = rest.indexOf("/");
+				const name = slash === -1 ? rest : rest.slice(0, slash);
+				if (entries.some((e) => e.name === name)) continue;
+				entries.push({
+					name,
+					kind: slash === -1 ? "file" : "directory",
+					origin: { scheme: origin.scheme, path: prefix + name, name },
+				});
+			}
+			return entries;
+		}),
+	};
+}
+
+describe("vault containment when following a link (task-012)", () => {
+	let storage: any;
+	let workspace: any;
+
+	beforeEach(async () => {
+		storage = createResolvingStorage({
+			"/vault/Note A.md": "# Note A\n",
+			"/vault/Projects/Note B.md": "# Note B\n",
+			// Outside the vault, one level up — the shape of ~/.ssh/id_rsa or a
+			// config file sitting next to the notes folder.
+			"/secret.txt": "SUPER-SECRET-VALUE-abc123",
+		});
+		workspace = new Workspace(
+			storage,
+			() => ({} as any),
+			new MemorySessionPersistence()
+		);
+		workspace.rootOrigin = { scheme: "file", path: "/vault", name: "vault" };
+		await workspace.projectTree.scan(workspace.rootOrigin);
+	});
+
+	// --- RED: the defect ---
+
+	it("refuses to open a file outside the vault via a traversing link", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+	});
+
+	it("never reads outside the vault for a traversing link", async () => {
+		await openInternalLink(workspace, null, "[[../secret.txt]]", { allowCreate: false });
+		const escaped = storage.readPaths.filter(
+			(p: string) => !resolveLikeFilesystem(p).startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
+	it("refuses a traversing embed too", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "![[../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+	});
+
+	it("refuses a traversal that climbs several levels", async () => {
+		const resultDoc = await openInternalLink(
+			workspace,
+			null,
+			"[[../../../../etc/passwd]]",
+			{ allowCreate: false }
+		);
+		expect(resultDoc).toBeNull();
+	});
+
+	// --- CONTROLS: must keep working, so the fix cannot be "reject any `..`" ---
+
+	it("still opens a note inside the vault (control)", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[Note A]]");
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note A.md");
+	});
+
+	it("still opens a nested note by its path (control)", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[Projects/Note B]]");
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note B.md");
+	});
+
+	it("still allows a `..` that resolves back INSIDE the vault (control)", async () => {
+		const resultDoc = await openInternalLink(
+			workspace,
+			null,
+			"[[Projects/../Note A.md]]",
+			{ allowCreate: false }
+		);
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note A.md");
+	});
+
+	it("still refuses a traversing CREATE (the guard that already existed, control)", async () => {
+		// links.ts:621 already blocked this. If the new read-path guard regressed the
+		// create guard, this is what would catch it.
+		const resultDoc = await openInternalLink(workspace, null, "[[../escaped.md]]");
+		expect(resultDoc).toBeNull();
+		expect(storage.files.has("/escaped.md")).toBe(false);
+	});
+});
