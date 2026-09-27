@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { isNotFoundError, mapBounded } from './utils';
+import { isNotFoundError, isDirectoryError, mapBounded } from './utils';
 
 describe('isNotFoundError', () => {
 	it('keeps the Electron main message fallback identical to core', async () => {
@@ -53,6 +53,60 @@ describe('isNotFoundError', () => {
 		expect(isNotFoundError({ code: 'ENOENT' })).toBe(true);
 		expect(isNotFoundError({ name: 'ENOENT' })).toBe(true);
 		expect(isNotFoundError(new Error('ENOENT'))).toBe(true);
+	});
+});
+
+describe('isDirectoryError', () => {
+	it.each([
+		"EISDIR: illegal operation on a directory, read",
+		"Error invoking remote method 'fs:readFile': Error: EISDIR: illegal operation on a directory, read",
+		"Error: EISDIR: illegal operation on a directory, read",
+		'illegal operation on a directory',
+		'EISDIR'
+	])('recognizes a directory-read message: %s', (message) => {
+		expect(isDirectoryError(new Error(message))).toBe(true);
+	});
+
+	it('recognizes structured directory signals from Node and the File System Access API', () => {
+		expect(isDirectoryError({ code: 'EISDIR' })).toBe(true);
+		expect(isDirectoryError({ name: 'TypeMismatchError' })).toBe(true);
+	});
+
+	it('does not treat a filename mentioning EISDIR as a directory', () => {
+		// The mid-string trap: the marker is a filename, not a failure code.
+		expect(isDirectoryError(new Error("Failed to read '/notes/EISDIR.md'"))).toBe(false);
+	});
+
+	it('preserves a structured non-directory error despite a directory-mentioning cause', () => {
+		// "A code that is present and says something else wins" -- a coded failure
+		// of a different kind is never reclassified just because a chained cause
+		// mentions a directory.
+		//
+		// The message here is written so the regex fallback WOULD match it, so
+		// this case fails if the contradicting-code guard is dropped rather than
+		// passing for the unrelated reason that the message is not anchored on
+		// the marker.
+		const error = Object.assign(
+			new Error("Error invoking remote method 'fs:readFile': Error: EISDIR: illegal operation on a directory"),
+			{ code: 'EACCES' }
+		);
+		expect(isDirectoryError(error)).toBe(false);
+	});
+
+	it.each([
+		"EACCES: permission denied, open '/notes'",
+		"Error invoking remote method 'fs:readFile': Error: ENOENT: EISDIR: chained cause",
+		'EISDIR.md',
+		'EISDIRBackup',
+		'permission denied on a directory entry'
+	])('rejects incidental directory text: %s', (message) => {
+		expect(isDirectoryError(new Error(message))).toBe(false);
+	});
+
+	it('is false for a value that carries no error signal at all', () => {
+		expect(isDirectoryError(undefined)).toBe(false);
+		expect(isDirectoryError(null)).toBe(false);
+		expect(isDirectoryError({})).toBe(false);
 	});
 });
 

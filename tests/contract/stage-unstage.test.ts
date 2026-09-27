@@ -1,6 +1,6 @@
 import { expect } from 'bun:test';
-import { chmodSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { chmodSync, statSync, symlinkSync } from 'node:fs';
+import { rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileOrigin } from '@np/core';
 import { toURI } from '@np/core/storage';
@@ -19,6 +19,7 @@ import {
 	nodeFileAccess,
 	porcelainStatus,
 	runGit,
+	TEST_IDENTITY,
 	worktreeContents
 } from './harness';
 
@@ -491,6 +492,256 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'new-file.txt')).toBe('new content\n');
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'new-file.txt', 'src.txt']);
 			expect(await indexMode(r, 'new-file.txt')).toBe('100644');
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('preserves the executable index mode of an existing entry across stageAll', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await stageAll(r);
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			const adapter = engine.adapter(r);
+
+			// The ordinary case: the user edits an executable script and stages it.
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+
+			// Staging content must never silently drop the exec bit. A browser
+			// cannot learn a POSIX mode, so the index is the only place the bit
+			// can survive; losing it here breaks the script for everyone who
+			// checks the commit out. The entry must also be fully staged (no
+			// lingering worktree difference), not left permanently modified.
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await indexContents(r, 'hello.ts')).toBe(`${HELLO_V0}extra\n`);
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('preserves the executable index mode of an existing entry across stageFile', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await stageAll(r);
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			const adapter = engine.adapter(r);
+
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageFile('hello.ts');
+
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('stages a content change to one executable without touching a second executable', async () => {
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			chmodSync(path.join(r.path, 'src.txt'), 0o755);
+			// Commit the modes, so both entries start clean at 100755. The second
+			// executable is the control: it must stay clean and keep its mode, so a
+			// mode-preserving fix cannot be faked by blanket-writing 100755.
+			await commitAll(r, 'mark both executable');
+			expect(await porcelainStatus(r)).toEqual([]);
+			const adapter = engine.adapter(r);
+
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+
+			expect(await indexMode(r, 'hello.ts')).toBe('100755');
+			expect(await indexMode(r, 'src.txt')).toBe('100755');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX exec bit, git records 100644'
+		)('a staged-then-committed executable still runs after a fresh checkout', async () => {
+			// The end-to-end consequence, not just the index entry. The harm claimed
+			// for the exec-bit bug was that the script is "broken for everyone who
+			// checks it out", so this drives the whole path a user takes: edit,
+			// stage, commit, then clone and check whether the checked-out file is
+			// actually executable. Asserting the index mode alone would only prove
+			// the intermediate state, not the outcome.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// The isomorphic adapter reads author identity from the repository's git
+			// config, not from the harness env, so it must be set per repo.
+			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+			chmodSync(path.join(r.path, 'hello.ts'), 0o755);
+			await commitAll(r, 'mark executable');
+			const adapter = engine.adapter(r);
+
+			// The ordinary action: open the script, change it, stage, commit.
+			await r.write('hello.ts', `${HELLO_V0}extra\n`);
+			await adapter.stageAll();
+			await adapter.commit('edit script');
+
+			// The committed tree must record the mode, not just the index.
+			const committedMode = (await checkedGit(r, ['ls-tree', 'HEAD', '--', 'hello.ts'])).stdout.trim().split(/\s+/)[0];
+			expect(committedMode).toBe('100755');
+
+			// A fresh checkout is the only way to observe what a collaborator gets.
+			const dest = path.join(r.root, 'fresh-checkout');
+			const clone = await r.git(['clone', '--quiet', r.path, dest]);
+			if (clone.code !== 0) throw new Error(clone.stderr);
+			const checked = await runGit(dest, r.env, ['ls-files', '-s', '--', 'hello.ts']);
+			expect(checked.code).toBe(0);
+			expect(checked.stdout.trim().split(/\s+/)[0]).toBe('100755');
+			// And the file on disk in that checkout must carry the exec bit, which
+			// is what a shell actually reads when deciding whether it can run it.
+			const mode = statSync(path.join(dest, 'hello.ts')).mode & 0o777;
+			expect(mode & 0o111).not.toBe(0);
+		});
+
+		it.skipIf(
+			process.platform === 'win32',
+			'skipped on Windows: no POSIX symlinks, git records 100644'
+		)('replaces a symlink with a regular file without carrying the 120000 mode over', async () => {
+			// A 120000 index entry's blob must hold the link *target*, not the
+			// file's body, so keeping the mode while writing a body blob produces
+			// an entry git cannot represent: a fresh clone then materialises a
+			// symlink whose "target" is the file's own content. A browser cannot
+			// read a symlink at all, so the mode is only inheritable while the new
+			// content is the same kind of object — which a regular file never is.
+			const r = await createTrackedRepo();
+			await r.write('target.txt', 'target\n');
+			symlinkSync('target.txt', path.join(r.path, 'link.txt'));
+			await commitAll(r, 'add a symlink');
+			expect(await indexMode(r, 'link.txt')).toBe('120000');
+
+			// The user replaces the symlink with a regular file, the ordinary way.
+			await unlink(path.join(r.path, 'link.txt'));
+			await writeFile(path.join(r.path, 'link.txt'), 'a regular file, not a symlink\n');
+			const adapter = engine.adapter(r);
+
+			await adapter.stageAll();
+
+			// The blob is the file's body, so the mode must be a regular file's.
+			expect(await indexContents(r, 'link.txt')).toBe('a regular file, not a symlink\n');
+			expect(await indexMode(r, 'link.txt')).toBe('100644');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'T', y: ' ', path: 'link.txt' }]);
+		});
+
+		it('leaves an ignored untracked file out of the index when staging it by path', async () => {
+			// `.gitignore` is a promise to the user, and both engines keep it: an
+			// ignored path that is not yet tracked must not enter the index just
+			// because something named it directly (a Hunk Action, a plugin, a
+			// programmatic `stageFile`). Once a path *is* tracked, a later matching
+			// rule does not stop it from being staged — that is real git's rule
+			// too, and the second half of this test pins it.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.write('.gitignore', 'secret.txt\n');
+			await r.write('secret.txt', 'do not commit\n');
+			await stageAll(r);
+			await commitAll(r, 'add gitignore');
+			const adapter = engine.adapter(r);
+
+			// Both engines must leave the index untouched. They refuse in different
+			// ways — the desktop engine surfaces git's non-zero exit, the browser
+			// engine skips silently — so the assertion is the outcome they share.
+			await adapter.stageFile('secret.txt').catch(() => {});
+
+			expect(await indexContents(r, 'secret.txt')).toBe(null);
+			expect(await lsFiles(r)).toEqual(['.gitignore', 'README.md', 'hello.ts', 'src.txt']);
+			expect(await porcelainStatus(r)).toEqual([]);
+			// A refusal must not touch the worktree either: the file is still there.
+			expect(await worktreeContents(r, 'secret.txt')).toBe('do not commit\n');
+
+			// Once tracked, always staged: force the path in, then match it with a
+			// rule and confirm a later edit still reaches the index.
+			await r.git(['add', '-f', '--', 'secret.txt']);
+			await commitAll(r, 'track the ignored file anyway');
+			await r.write('secret.txt', 'now it may be committed\n');
+			await adapter.stageFile('secret.txt');
+
+			expect(await indexContents(r, 'secret.txt')).toBe('now it may be committed\n');
+		});
+
+		it('normalises CRLF to LF when core.autocrlf is set, like real git', async () => {
+			// Staging must honour the repository's own line-ending configuration.
+			// Committing raw CRLF into a repository configured for autocrlf diverges
+			// the browser engine from the desktop engine on the same repository and
+			// shows a whole-file diff to every collaborator.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+			await r.git(['config', 'core.autocrlf', 'true']);
+			const adapter = engine.adapter(r);
+			await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+
+			await adapter.stageAll();
+
+			expect(await indexContents(r, 'crlf.txt')).toBe('line1\nline2\n');
+			// The worktree copy is untouched: normalisation applies to what is
+			// committed, never to the user's file on disk.
+			expect(await worktreeContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
+		});
+
+		it('stages a binary file byte-for-byte', async () => {
+			// Staging writes the blob itself, so the bytes that reach the index are
+			// whatever the implementation passes to `writeBlob`. A decode-then-encode
+			// round trip there is not byte-preserving: any sequence that is not valid
+			// UTF-8 (a PNG header, a .so, a latin-1 source file) decodes to U+FFFD and
+			// re-encodes to different bytes, the staged blob then differs from the file
+			// on disk, and the file is never clean.
+			//
+			// This is a guard on the current implementation, not a record of a fixed
+			// bug: the previous `git.add` path also wrote the file's raw buffer, so it
+			// passed this before the change too. It fails today if the blob path ever
+			// starts decoding to text.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			// A NUL byte (invalid standalone in UTF-8), a lone 0x80 continuation byte,
+			// and an invalid 0xFF: none of these survive a UTF-8 round trip.
+			const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x80, 0xff, 0x0a]);
+			await writeFile(path.join(r.path, 'blob.bin'), bytes);
+			await stageAll(r);
+			await commitAll(r, 'add binary');
+			const adapter = engine.adapter(r);
+
+			// Edit the file the way a user would, then stage the whole worktree.
+			const edited = Buffer.concat([bytes, Buffer.from([0xfe, 0x01])]);
+			await writeFile(path.join(r.path, 'blob.bin'), edited);
+			await adapter.stageAll();
+
+			// The staged blob must be exactly the bytes on disk. `cat-file blob` with
+			// `--textconv` off still goes through git's raw path, but the harness
+			// decodes stdout as a string, so compare the blob oid instead: the oid is
+			// a hash over the raw bytes, so matching it proves byte equality without
+			// this test needing a byte channel.
+			const stagedOid = (await checkedGit(r, ['rev-parse', ':blob.bin'])).stdout.trim();
+			const onDiskOid = (await checkedGit(r, ['hash-object', 'blob.bin'])).stdout.trim();
+			expect(stagedOid).toBe(onDiskOid);
+			expect(stagedOid).not.toBe((await checkedGit(r, ['rev-parse', 'HEAD:blob.bin'])).stdout.trim());
+			// And the entry must be fully staged, not left permanently modified.
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'blob.bin' }]);
+		});
+
+		it('stages an emptied tracked file rather than skipping it', async () => {
+			// Staging writes the blob directly, so a file truncated to empty must
+			// still produce a staged empty blob. A falsy read of the worktree content
+			// would silently skip the file. As with the binary case this is a guard on
+			// the current implementation; `git.add` staged the empty file too.
+			const r = await createTrackedRepo();
+			await baseRepo(r);
+			const adapter = engine.adapter(r);
+
+			await r.write('src.txt', '');
+			await adapter.stageAll();
+
+			expect(await indexContents(r, 'src.txt')).toBe('');
+			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'src.txt' }]);
 		});
 
 		it.skipIf(
