@@ -6,6 +6,8 @@ import { toURI, type FileOrigin } from "./storage";
 let parseInternalLink: any;
 let findHeadingLine: any;
 let findBlockLine: any;
+let getHeadings: any;
+let getBlocks: any;
 let openInternalLink: any;
 let Workspace: any;
 let MemorySessionPersistence: any;
@@ -68,6 +70,8 @@ beforeAll(async () => {
 	parseInternalLink = linksMod.parseInternalLink;
 	findHeadingLine = linksMod.findHeadingLine;
 	findBlockLine = linksMod.findBlockLine;
+	getHeadings = linksMod.getHeadings;
+	getBlocks = linksMod.getBlocks;
 	openInternalLink = linksMod.openInternalLink;
 
 	const workspaceMod = await import("./workspace.svelte");
@@ -264,6 +268,60 @@ Final thoughts.`;
 		it("treats a single-segment lookup as first match, unchanged", () => {
 			// Ambiguous by design: a bare name has no parent to disambiguate it.
 			expect(findHeadingLine(parentChildDoc, "Shared")).toBe(3);
+		});
+	});
+
+	describe("fenced code blocks are not headings", () => {
+		// getHeadings tracked fences with a bare boolean toggle, so any
+		// fence-looking line flipped it. CommonMark is specific about what
+		// opens and closes a fence, and each rule below is from the spec. A
+		// heading inside a code block does not exist: it shows up as a phantom
+		// entry in the outline and is reachable as a link target.
+		const headings = (doc: string) =>
+			getHeadings(doc).map((h) => `${h.level}:${h.text}@${h.line}`);
+
+		it("does not let backticks close a tilde fence", () => {
+			// A closing fence must use the same character as the opener.
+			const doc = ["~~~", "```", "# not a heading", "~~~", "~~~"].join("\n");
+			expect(headings(doc)).toEqual([]);
+		});
+
+		it("does not let a fence with an info string close a fence", () => {
+			// A closing fence may not have an info string; "```text" is code.
+			const doc = ["```", "body", "```text", "# not a heading", "```"].join("\n");
+			expect(headings(doc)).toEqual([]);
+		});
+
+		it("does not let a shorter run close a longer fence", () => {
+			// A 4-backtick fence is closed by 4 or more, never by 3.
+			const doc = ["````", "body", "```", "# not a heading", "````"].join("\n");
+			expect(headings(doc)).toEqual([]);
+		});
+
+		it("does not open a backtick fence whose info string contains a backtick", () => {
+			// A backtick info string may not contain a backtick, so this is a
+			// paragraph, and the heading after it is a real heading.
+			const doc = ["```a`b", "# Real Heading"].join("\n");
+			expect(headings(doc)).toEqual(["1:Real Heading@2"]);
+		});
+
+		it("still honours a plain fence", () => {
+			// Control: the common case must keep working.
+			const doc = ["# Real", "```", "# fake", "```", "# Also Real"].join("\n");
+			expect(headings(doc)).toEqual(["1:Real@1", "1:Also Real@5"]);
+		});
+
+		it("treats an unclosed fence as running to the end of the document", () => {
+			// CommonMark: an unclosed fence is still a code block.
+			const doc = ["# Real", "```", "# fake", "still code"].join("\n");
+			expect(headings(doc)).toEqual(["1:Real@1"]);
+		});
+
+		it("does not report a block id from inside a code fence", () => {
+			// getBlocks had the same toggle, so a code sample could hand out a
+			// block reference that the rest of the app would link to.
+			const doc = ["# Real", "```", "text ^fake-id", "```"].join("\n");
+			expect(getBlocks(doc)).toEqual([]);
 		});
 	});
 

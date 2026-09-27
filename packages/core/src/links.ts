@@ -181,13 +181,73 @@ export interface HeadingItem {
 }
 
 /**
+ * Tracks fenced code blocks across the lines of a document.
+ *
+ * A boolean "am I inside a code block" flag is not enough: a closing fence must
+ * match the opener, so the tracker has to remember the character and the length
+ * of the fence currently open.
+ *
+ * The rules implemented here are CommonMark's:
+ *  - A fence is three or more backticks, or three or more tildes.
+ *  - A closing fence uses the SAME character as its opener, is at least as long,
+ *    and carries no info string.
+ *  - A backtick fence's info string may not contain a backtick, so "```a`b" opens
+ *    nothing at all.
+ *  - A fence left open at the end of the document stays open.
+ */
+class FenceTracker {
+	/** The fence character currently open, or null when not in a code block. */
+	private char: string | null = null;
+	/** How many of that character the opener used; a closer may not be shorter. */
+	private length = 0;
+
+	/**
+	 * Feeds one trimmed line. Returns true when the line is a fence delimiter or
+	 * code-block content, so callers should skip their own parsing for it.
+	 */
+	skip(line: string): boolean {
+		if (this.char === null) {
+			return this.tryOpen(line);
+		}
+		if (this.closes(line)) {
+			this.char = null;
+			this.length = 0;
+		}
+		return true; // the opener, the closer, or code content
+	}
+
+	private tryOpen(line: string): boolean {
+		const backticks = /^`{3,}/.exec(line);
+		if (backticks) {
+			// A backtick info string containing a backtick is not a fence.
+			if (line.slice(backticks[0].length).includes('`')) return false;
+			this.char = '`';
+			this.length = backticks[0].length;
+			return true;
+		}
+		const tildes = /^~{3,}/.exec(line);
+		if (tildes) {
+			this.char = '~';
+			this.length = tildes[0].length;
+			return true;
+		}
+		return false;
+	}
+
+	private closes(line: string): boolean {
+		const char = this.char === '~' ? '~' : '`';
+		return new RegExp(`^${char}{${this.length},}\\s*$`).test(line);
+	}
+}
+
+/**
  * Extracts all ATX and Setext headings from markdown content.
  */
 export function getHeadings(content: string): HeadingItem[] {
 	const lines = content.split(/\r?\n/);
 	const headings: HeadingItem[] = [];
 
-	let inCodeBlock = false;
+	const fence = new FenceTracker();
 
 	// Skip YAML frontmatter: a leading `---` block whose keys would otherwise
 	// be misread as Setext H2 underlines (e.g. `tags: [a]` followed by `---`).
@@ -206,13 +266,8 @@ export function getHeadings(content: string): HeadingItem[] {
 		const line = lines[i];
 		const trimmed = line.trim();
 
-		// Track code fence
-		if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-			inCodeBlock = !inCodeBlock;
-			continue;
-		}
-
-		if (inCodeBlock) continue;
+		// Fences and their contents are never headings or Setext underlines.
+		if (fence.skip(trimmed)) continue;
 
 		// 1. ATX headings (# Heading)
 		const atxMatch = line.match(/^(#{1,6})\s+(.+?)(?:\s+#+)?$/);
@@ -228,6 +283,8 @@ export function getHeadings(content: string): HeadingItem[] {
 		}
 
 		// 2. Setext headings (Line followed by === or ---)
+		//    Reaching here means this line is not inside a code block, and a run
+		//    of '=' or '-' can never be a fence, so the underline is ordinary text.
 		if (i + 1 < lines.length) {
 			const nextLine = lines[i + 1].trim();
 			if (trimmed.length > 0 && /^[=-]{3,}$/.test(nextLine)) {
@@ -311,18 +368,15 @@ export function getBlocks(content: string): BlockItem[] {
 	const lines = content.split(/\r?\n/);
 	const blocks: BlockItem[] = [];
 
-	let inCodeBlock = false;
+	// Same CommonMark fence rules as getHeadings, so a code sample cannot hand
+	// out a block reference the rest of the app would treat as real.
+	const fence = new FenceTracker();
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		const trimmed = line.trim();
 
-		if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-			inCodeBlock = !inCodeBlock;
-			continue;
-		}
-
-		if (inCodeBlock) continue;
+		if (fence.skip(trimmed)) continue;
 
 		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line
 		const match = line.match(/\^([a-zA-Z0-9-]+)$/);
