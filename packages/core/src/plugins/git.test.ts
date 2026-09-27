@@ -13,7 +13,7 @@ import { MemorySessionPersistence } from '../persistence';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';
-import { openFolderRepository, createWorkspaceGitState } from './git/lifecycle';
+import { openFolderRepository, initializeWorkspaceRepository, createWorkspaceGitState } from './git/lifecycle';
 
 const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
 
@@ -786,6 +786,112 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			// Stale repo for folder A was cleared and not left active for folder B
 			expect(workspace.repository).toBeNull();
 			expect(state.repository).toBeNull();
+		});
+
+		it("stale refresh cleanup keeps a newer publication and its ownership", async () => {
+			let releaseRefreshA!: () => void;
+			const refreshGateA = new Promise<void>((resolve) => (releaseRefreshA = resolve));
+			let publishedA = false;
+
+			const host = new PluginHost();
+			const storage = createLocalMockStorage();
+			const persistence = new MemorySessionPersistence();
+			const originA: FileOrigin = { scheme: "file", path: "/repo-a", name: "repo-a" };
+			const originB: FileOrigin = { scheme: "file", path: "/repo-b", name: "repo-b" };
+
+			const workspace = new Workspace(
+				storage,
+				(root: FileOrigin) => ({
+					detect: mock(async () => true),
+					getCurrentBranch: async () => {
+						if (root.path === "/repo-a") await refreshGateA;
+						return "main";
+					},
+					getBranches: async () => ["main"],
+					getChanges: async () => [],
+					getCommits: async () => [],
+					getStatus: async () => ({ isDirty: false, uncommittedFiles: [] })
+				}),
+				persistence,
+				host
+			);
+
+			const state = createWorkspaceGitState(workspace);
+			workspace.rootOrigin = originA;
+
+			const openTaskA = openFolderRepository(state, originA);
+			// Wait until A publishes before starting B
+			for (let i = 0; i < 50 && !workspace.repository; i++) await tick(1);
+			expect(workspace.repository).not.toBeNull();
+			publishedA = true;
+
+			// Newer open displaces A and publishes B
+			workspace.rootOrigin = originB;
+			await openFolderRepository(state, originB);
+			const repoB = workspace.repository;
+			expect(repoB).not.toBeNull();
+			expect(workspace.repositoryOwnerId).toBe("git");
+
+			// Stale A refresh completes; it must not clear B or its ownership
+			releaseRefreshA();
+			await openTaskA;
+
+			expect(publishedA).toBe(true);
+			expect(workspace.repository).toBe(repoB);
+			expect(workspace.repositoryOwnerId).toBe("git");
+			expect(state.repository).toBe(repoB);
+		});
+
+		it("stale initialize cleanup keeps a newer publication", async () => {
+			let releaseScan!: () => void;
+			const scanGate = new Promise<void>((resolve) => (releaseScan = resolve));
+			let scanStarted = false;
+
+			const host = new PluginHost();
+			const storage = createLocalMockStorage();
+			const persistence = new MemorySessionPersistence();
+			const originA: FileOrigin = { scheme: "file", path: "/repo-a", name: "repo-a" };
+			const originB: FileOrigin = { scheme: "file", path: "/repo-b", name: "repo-b" };
+
+			const workspace = new Workspace(
+				storage,
+				() => ({
+					detect: mock(async () => true),
+					init: mock(async () => {}),
+					getCurrentBranch: async () => "main",
+					getBranches: async () => ["main"],
+					getChanges: async () => [],
+					getCommits: async () => [],
+					getStatus: async () => ({ isDirty: false, uncommittedFiles: [] })
+				}),
+				persistence,
+				host
+			);
+
+			const state = createWorkspaceGitState(workspace);
+			workspace.rootOrigin = originA;
+			workspace.hasRootPermission = true;
+			workspace.projectTree.scan = mock(async () => {
+				scanStarted = true;
+				await scanGate;
+			});
+
+			const initTaskA = initializeWorkspaceRepository(state);
+			for (let i = 0; i < 50 && !scanStarted; i++) await tick(1);
+			expect(scanStarted).toBe(true);
+
+			// Newer folder-open publishes B while init A is stuck in scan
+			workspace.rootOrigin = originB;
+			await openFolderRepository(state, originB);
+			const repoB = workspace.repository;
+			expect(repoB).not.toBeNull();
+
+			// Stale init A finishes; it must not clear B
+			releaseScan();
+			expect(await initTaskA).toBe(false);
+			expect(workspace.repository).toBe(repoB);
+			expect(workspace.repositoryOwnerId).toBe("git");
+			expect(state.repository).toBe(repoB);
 		});
 	});
 

@@ -73,6 +73,26 @@ export function disposePublishedRepository(state: WorkspaceGitState): void {
 }
 
 /**
+ * Drops a specific stale operation's repository, but only when the workspace
+ * slot still publishes that exact instance: never clear a newer publication
+ * (or its ownership) that replaced us while we were in flight. Ownership is
+ * released together with the repository so a stale operation cannot orphan a
+ * newer publication by clearing its owner.
+ */
+function disposeSpecificRepository(state: WorkspaceGitState, repo: Repository): void {
+	const workspace = state.workspace;
+	if (workspace.repository === repo) {
+		workspace.repository = null;
+		if (workspace.repositoryOwnerId === state.ownerId) {
+			workspace.repositoryOwnerId = null;
+		}
+	}
+	if (state.repository === repo) {
+		state.repository = null;
+	}
+}
+
+/**
  * Folder-open lifecycle: detect + refresh for one workspace, previously
  * hardwired inline in Workspace.openDirectory / requestRootPermission /
  * restoreSession. The workspace clears its slot and awaits this through
@@ -121,15 +141,7 @@ export async function openFolderRepository(
 			!state.workspace.rootOrigin ||
 			toURI(state.workspace.rootOrigin) !== targetUri
 		) {
-			if (state.workspace.repository === repo) {
-				state.workspace.repository = null;
-			}
-			if (state.workspace.repositoryOwnerId === state.ownerId) {
-				state.workspace.repositoryOwnerId = null;
-			}
-			if (state.repository === repo) {
-				state.repository = null;
-			}
+			disposeSpecificRepository(state, repo);
 			return;
 		}
 	}
@@ -198,21 +210,21 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	state.repository = repo;
 	const refreshed = await track(state, repo.refresh());
 	if (!refreshed) {
-		disposePublishedRepository(state);
+		disposeSpecificRepository(state, repo);
 		return false;
 	}
 	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
-		disposePublishedRepository(state);
+		disposeSpecificRepository(state, repo);
 		return false;
 	}
 	try {
 		await workspace.projectTree.scan(targetOrigin);
 	} catch (e) {
-		disposePublishedRepository(state);
+		disposeSpecificRepository(state, repo);
 		throw e;
 	}
 	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
-		disposePublishedRepository(state);
+		disposeSpecificRepository(state, repo);
 		return false;
 	}
 	return true;
