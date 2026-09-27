@@ -325,6 +325,63 @@ Final thoughts.`;
 		});
 	});
 
+	describe("getHeadings must agree with the app's own renderer", () => {
+		// The editor renders Markdown with @codemirror/lang-markdown, so when
+		// getHeadings and the renderer disagree, the outline shows something the
+		// user cannot see and a [[Note#heading]] link points at a line that is
+		// not a heading. The renderer is the oracle for these, measured by
+		// scratch/lezer-heading-probe.ts.
+		const headings = (doc: string) =>
+			getHeadings(doc).map((h) => `${h.level}@${h.line}`);
+
+		it("finds an ATX heading indented by up to three spaces", () => {
+			// The regex was anchored to column 0, so any indentation hid a
+			// heading the editor renders. Indenting under a list is common.
+			expect(headings(" # One")).toEqual(["1@1"]);
+			expect(headings("  # Two")).toEqual(["1@1"]);
+			expect(headings("   # Three")).toEqual(["1@1"]);
+		});
+
+		it("does not treat four-space-indented ATX text as a heading", () => {
+			// Four spaces is an indented code block, which the renderer agrees.
+			expect(headings("    # Code")).toEqual([]);
+		});
+
+		it("does not make a list item a heading just because a rule follows", () => {
+			// "- item" then "---" is a list followed by a thematic break, not a
+			// setext heading. The outline was listing the list item as an H2.
+			expect(headings("- item\n---")).toEqual([]);
+		});
+
+		it("does not make a blockquote line a heading", () => {
+			expect(headings("> quoted\n---")).toEqual([]);
+		});
+
+		it("does not make an HTML block line a heading", () => {
+			expect(headings("<div>x</div>\n---")).toEqual([]);
+		});
+
+		it("does not make an indented code line a heading", () => {
+			expect(headings("    code\n---")).toEqual([]);
+		});
+
+		it("still finds a real setext heading", () => {
+			// The plain paragraph case must keep working: this is the whole point
+			// of the Setext branch.
+			expect(headings("Title\n=====")).toEqual(["1@1"]);
+			expect(headings("Title\n-----")).toEqual(["2@1"]);
+		});
+
+		it("still skips YAML frontmatter even though the renderer does not", () => {
+			// Deliberate divergence, and the renderer is the one that is wrong
+			// here: it reads the frontmatter's closing "---" as a setext
+			// underline. Pinned by packages/ui/src/editor/frontmatter.test.ts.
+			expect(headings("---\n# NotAHeading\ntags: [a]\n---\n# Real")).toEqual([
+				"1@5",
+			]);
+		});
+	});
+
 	it("finds block line 1-indexed", () => {
 		expect(findBlockLine(markdownContent, "block-1")).toBe(7);
 		expect(findBlockLine(markdownContent, "quote-block")).toBe(16);

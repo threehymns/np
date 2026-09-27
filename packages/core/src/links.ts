@@ -181,6 +181,33 @@ export interface HeadingItem {
 }
 
 /**
+ * Can this trimmed line carry a Setext heading underline under it?
+ *
+ * A Setext underline turns the line above it into a heading only when that line
+ * is paragraph text. Anything that opens another block — a list, a blockquote,
+ * an HTML block, an indented code block, or a thematic break of its own — is not
+ * paragraph text, and a `---` after it is a thematic break, not an underline.
+ *
+ * The indented-code case is why this takes the trimmed line: four or more
+ * leading spaces in the ORIGINAL line mean a code block, so the caller passes a
+ * line whose indentation has been measured, not simply stripped.
+ */
+function isParagraphText(trimmed: string, originalLine?: string): boolean {
+	if (trimmed.length === 0) return false;
+	// 4+ spaces of original indentation is an indented code block.
+	if (originalLine !== undefined && /^(?: {4}|\t)/.test(originalLine)) return false;
+	// List item (bullet, ordered, or task) and blockquote.
+	if (/^(?:[-*+]|\d{1,9}[.)])\s/.test(trimmed)) return false;
+	if (trimmed.startsWith('>')) return false;
+	// Thematic break: `---`, `***`, `___`. Only the first can precede an
+	// underline, but all three start a new block, so none is paragraph text.
+	if (/^(?:[*-]\s*){3,}$/.test(trimmed)) return false;
+	// HTML block.
+	if (trimmed.startsWith('<')) return false;
+	return true;
+}
+
+/**
  * Tracks fenced code blocks across the lines of a document.
  *
  * A boolean "am I inside a code block" flag is not enough: a closing fence must
@@ -270,7 +297,11 @@ export function getHeadings(content: string): HeadingItem[] {
 		if (fence.skip(trimmed)) continue;
 
 		// 1. ATX headings (# Heading)
-		const atxMatch = line.match(/^(#{1,6})\s+(.+?)(?:\s+#+)?$/);
+		//    Up to three leading spaces are allowed. Four or more make an indented
+		//    code block instead, which this anchor enforces by not matching.
+		//    Indentation is common in practice, e.g. a heading under a list item,
+		//    and the editor renders those as headings.
+		const atxMatch = line.match(/^ {0,3}(#{1,6})\s+(.+?)(?:\s+#+)?$/);
 		if (atxMatch) {
 			const level = atxMatch[1].length;
 			const text = atxMatch[2].trim();
@@ -285,9 +316,12 @@ export function getHeadings(content: string): HeadingItem[] {
 		// 2. Setext headings (Line followed by === or ---)
 		//    Reaching here means this line is not inside a code block, and a run
 		//    of '=' or '-' can never be a fence, so the underline is ordinary text.
-		if (i + 1 < lines.length) {
+		//    The line above the underline must be paragraph TEXT: a list item, a
+		//    blockquote, an HTML block, or an indented code line is followed by a
+		//    thematic break, not a heading, and the editor does not render it as one.
+		if (i + 1 < lines.length && isParagraphText(trimmed, line)) {
 			const nextLine = lines[i + 1].trim();
-			if (trimmed.length > 0 && /^[=-]{3,}$/.test(nextLine)) {
+			if (/^[=-]{3,}$/.test(nextLine)) {
 				const isH1 = nextLine.startsWith('=');
 				headings.push({
 					text: trimmed,
