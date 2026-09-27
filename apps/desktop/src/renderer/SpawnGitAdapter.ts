@@ -609,7 +609,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// instead emits every path raw and NUL-delimited, so a name can contain
 		// any byte, including the newlines and `|` this format uses to separate
 		// its own fields.
-		const res = await this.runGit(['log', '-z', '-n', '50', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames']);
+		const res = await this.runGit(['log', '-z', '-n', '50', '--date=short', '--pretty=format:%x00%h%x00%an <%ae>%x00%ad%x00%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
 				return [];
@@ -618,7 +618,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 		// With `-z` git emits a NUL-separated stream shaped like:
 		//
-		//     \0<hash>|<author>|<date>|<subject>\n<path>\0<path>\0\0\0<next header>...
+		//     \0<hash>\0<author>\0<date>\0<subject>\n<path>\0<path>\0\0\0<next hash>...
 		//
 		// `%x00` prefixes each header, every path is newline- and NUL-terminated,
 		// and two more NULs separate one commit from the next. Splitting on NUL
@@ -627,41 +627,64 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// its fields. That way a filename may contain `|`, a newline, or any other
 		// byte and still be read back as exactly the one path it is.
 		//
+		// The header's own four fields are NUL-separated too, for the same reason
+		// the paths are: an author name or email may contain `|`, and those come
+		// from the repository's own history rather than from anything the user
+		// typed just now, so a fork, a rebase, or an upstream patch series decides
+		// them. Splitting the header on a printable delimiter let such a name shift
+		// every field behind it by one position. NUL cannot occur in a commit
+		// message at all -- `git commit` rejects it outright -- so it is the one
+		// byte guaranteed not to appear inside any of the four fields.
+		//
 		// The one place a path and the header still share a record is the first
-		// path, which follows the header across a single newline. Only that one
+		// path, which follows the subject across a single newline. Only that one
 		// separator is structural, so only its offset is taken.
 		const commits: GitCommit[] = [];
-		let current: GitCommit | undefined;
-		let expectHeader = true;
-		for (const record of res.stdout.split('\0')) {
-			if (record === '') {
-				// A blank record only ever closes one commit's path list.
-				expectHeader = true;
-				continue;
+		const records = res.stdout.split('\0');
+		// Records are walked by index rather than by `for..of`: a commit's header
+		// occupies four consecutive records, and an iterator cannot consume four and
+		// then resume at the fifth without discarding what it already read.
+		//
+		// The four fields are read by position and are never skipped, even when one
+		// is empty. That is what makes an empty subject safe. A commit with an empty
+		// subject and no files produces an empty subject record sitting directly
+		// against the blank that closes the previous commit, so a parse that skipped
+		// empty records would let the *next* commit's hash drift upward into this
+		// one's message slot. Consuming exactly four records keeps every field
+		// aligned with its own commit whatever the field happens to contain.
+		//
+		// The blanks that follow are only separators, and they are skipped as a
+		// block. That is safe precisely because the four header fields were already
+		// taken positionally above: only a terminator can be reached here, never a
+		// field, so no header field can be lost to this skip.
+		let i = 0;
+		// The `%x00` prefix makes the very first record empty; step over it.
+		while (i < records.length && records[i] === '') i += 1;
+		while (i < records.length) {
+			const [hash, author, date, subjectAndFirstPath] = records.slice(i, i + 4);
+			if (hash === undefined) break;
+			// The subject is followed by a newline and then the first path, so both
+			// share one record. Only that single newline is structural, so only its
+			// offset is taken; a path that itself holds a newline stays one name.
+			const sep = subjectAndFirstPath.indexOf('\n');
+			const message = sep === -1 ? subjectAndFirstPath : subjectAndFirstPath.slice(0, sep);
+			const firstPath = sep === -1 ? '' : subjectAndFirstPath.slice(sep + 1);
+			const commit: GitCommit = {
+				hash,
+				author,
+				date,
+				message,
+				files: firstPath === '' ? [] : [firstPath]
+			};
+			commits.push(commit);
+			i += 4;
+			// Every further non-blank record is one path for this commit, held whole.
+			while (i < records.length && records[i] !== '') {
+				commit.files.push(records[i]);
+				i += 1;
 			}
-			if (expectHeader) {
-				// The subject is followed by a newline, then the first path, so the
-				// header is everything before the record's *first* newline and the
-				// first path is everything after it -- newline and all. Splitting on
-				// every newline instead would tear a path that itself holds one into
-				// two names, neither of which exists.
-				const sep = record.indexOf('\n');
-				const headerLine = sep === -1 ? record : record.slice(0, sep);
-				const firstPath = sep === -1 ? '' : record.slice(sep + 1);
-				const [hash, author, date, ...rest] = headerLine.split('|');
-				current = {
-					hash,
-					author,
-					date,
-					message: rest.join('|'),
-					files: firstPath === '' ? [] : [firstPath]
-				};
-				commits.push(current);
-				expectHeader = false;
-			} else if (current) {
-				// The whole record is one path, newline and all.
-				current.files.push(record);
-			}
+			// Step over the run of blanks that terminates this commit.
+			while (i < records.length && records[i] === '') i += 1;
 		}
 		return commits;
 	}
