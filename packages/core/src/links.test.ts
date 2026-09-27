@@ -355,6 +355,41 @@ Final thoughts.`;
 		});
 	});
 
+	describe("getBlocks tolerates trailing whitespace after the id", () => {
+		// The pattern is anchored with `$` and no whitespace tolerance, so a
+		// single trailing space made the id stop existing. Trailing whitespace
+		// is invisible in an editor and is exactly what a formatter, a
+		// copy-paste, or a stray keystroke leaves behind -- and the note keeps
+		// rendering normally, so the id silently stops resolving.
+		it("finds an id followed by a trailing space", () => {
+			expect(findBlockLine("Some text ^abc ", "abc")).toBe(1);
+		});
+
+		it("finds an id followed by several trailing spaces", () => {
+			expect(findBlockLine("Some text ^abc   ", "abc")).toBe(1);
+		});
+
+		it("finds an id followed by a trailing tab", () => {
+			expect(findBlockLine("Some text ^abc\t", "abc")).toBe(1);
+		});
+
+		it("keeps the preview free of the trailing whitespace", () => {
+			expect(getBlocks("Some text ^abc ")).toEqual([
+				{ id: "abc", preview: "Some text", line: 1 },
+			]);
+		});
+
+		it("still requires the id to be at the end of the line", () => {
+			// Control: whitespace is tolerated, but trailing CONTENT is not, or
+			// this would swallow any ^word in the middle of a sentence.
+			expect(getBlocks("^abc is a caret followed by words")).toEqual([]);
+		});
+
+		it("still does not match an incomplete id followed by a space", () => {
+			expect(getBlocks("text ^ab c")).toEqual([]);
+		});
+	});
+
 	describe("getHeadings must agree with the app's own renderer", () => {
 		// The editor renders Markdown with @codemirror/lang-markdown, so when
 		// getHeadings and the renderer disagree, the outline shows something the

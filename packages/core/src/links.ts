@@ -432,12 +432,17 @@ export function getBlocks(content: string): BlockItem[] {
 
 		if (fence.skip(trimmed)) continue;
 
-		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line
-		const match = line.match(/\^([a-zA-Z0-9-]+)$/);
+		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line.
+		// Trailing whitespace after the id is tolerated: it is invisible in the
+		// editor and is what a formatter, a copy-paste, or a stray keystroke
+		// leaves behind. Without this, one trailing space silently made the id
+		// stop resolving while the note rendered perfectly. The id must still be
+		// the last thing on the line -- whitespace is skipped, content is not.
+		const match = line.match(/\^([a-zA-Z0-9-]+)[ \t]*$/);
 		if (match) {
 			const id = match[1];
 			// Preview is line content without the marker
-			const preview = line.replace(/\^([a-zA-Z0-9-]+)$/, '').trim();
+			const preview = line.replace(/\^([a-zA-Z0-9-]+)[ \t]*$/, '').trim();
 			blocks.push({
 				id,
 				preview: preview || id,
