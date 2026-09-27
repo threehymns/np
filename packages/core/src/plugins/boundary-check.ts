@@ -209,17 +209,19 @@ export function checkManifestFile(filePath: string): ManifestBoundaryResult {
  * Collects every runtime module specifier a source imports.
  *
  * Covers static imports (excluding `import type`), side-effect imports,
- * dynamic `import()`, and `require()`, so a rule built on this cannot be
- * bypassed by switching import syntax. `import type` is excluded because it
- * emits no runtime import under `verbatimModuleSyntax`.
+ * runtime re-exports (`export ... from`, excluding `export type`), dynamic
+ * `import()`, and `require()`, so a rule built on this cannot be bypassed
+ * by switching import syntax. `import type` is excluded because it emits
+ * no runtime import under `verbatimModuleSyntax`.
  */
 export function runtimeImportSpecifiers(source: string): string[] {
 	const found: string[] = [];
 	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
 	const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
+	const reExportRe = /^\s*export\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
 	const dynamicRe = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 	const requireRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-	for (const re of [staticRe, sideEffectRe, dynamicRe, requireRe]) {
+	for (const re of [staticRe, sideEffectRe, reExportRe, dynamicRe, requireRe]) {
 		let m: RegExpExecArray | null;
 		while ((m = re.exec(source)) !== null) {
 			found.push(m[1]);

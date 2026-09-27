@@ -60,6 +60,17 @@ describe('Platform separation static boundary', () => {
 		expect(platformImportViolations(source)).toEqual(['electron']);
 	});
 
+	it('rejects runtime re-exports of platform-only modules', () => {
+		expect(platformImportViolations(`export { app } from 'electron';`)).toEqual(['electron']);
+		expect(platformImportViolations(`export * from 'node:fs';`)).toEqual(['node:fs']);
+		expect(platformImportViolations(`export * as fs from 'node:fs';`)).toEqual(['node:fs']);
+	});
+
+	it('ignores type-only re-exports', () => {
+		expect(platformImportViolations(`export type { Foo } from 'electron';`)).toEqual([]);
+		expect(platformImportViolations(`export type * from 'node:fs';`)).toEqual([]);
+	});
+
 	it('keeps the bundled manifests platform-neutral on disk', () => {
 		for (const file of ['git/manifest.ts']) {
 			const filePath = join(import.meta.dir, file);
