@@ -106,7 +106,17 @@ export function parseKeySequence(sequence: string): Keystroke[] {
 		let alt = false;
 		let shift = false;
 
-		const normalized = keystrokeStr.toLowerCase();
+		// Accept the macOS glyphs that `formatShortcutLabel` itself emits, so a user
+		// can hand-write the label they see in the menubar into their keymap JSON
+		// (ADR 0003: "Users must be able to override default keybindings via a JSON
+		// configuration file"). Without this, `⌘⇧P` parsed as a single literal key
+		// named "⌘⇧p" carrying no modifiers — a binding that could never fire.
+		// Glyphs are mapped to the same words the modifier loop below already knows.
+		const glyphed = keystrokeStr.replace(/[⌘⌃⌥⇧]/g, ch =>
+			ch === '⌘' ? 'cmd+' : ch === '⌃' ? 'ctrl+' : ch === '⌥' ? 'alt+' : 'shift+'
+		);
+
+		const normalized = glyphed.toLowerCase();
 		let parts: string[];
 		if (normalized.includes('+')) {
 			parts = normalized.split('+');

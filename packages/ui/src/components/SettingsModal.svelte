@@ -66,15 +66,6 @@
 		return appState.keymaps.getShortcutForCommand(cmdId) || '';
 	}
 
-	function formatShortcutLabel(shortcut: string) {
-		const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-		return shortcut
-			.replace('cmd', isMac ? '⌘' : 'Ctrl')
-			.replace('shift', '⇧')
-			.replace('alt', '⌥')
-			.toUpperCase();
-	}
-
 	function startRecording(cmdId: string) {
 		recordingCmdId = cmdId;
 	}
