@@ -811,41 +811,92 @@ describe('SpawnGitAdapter', () => {
 	});
 
 	describe('init', () => {
-		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
+		/**
+		 * Default mock for the new-repo path: `rev-parse --verify HEAD` fails
+		 * (unborn HEAD), so `init` goes on to pin the initial branch.
+		 */
+		const mockFreshRepo = (stdout = 'Initialized empty Git repository') => {
 			const commands: Array<{ workingDir: string; args: string[] }> = [];
 			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
 				commands.push({ workingDir, args });
-				return { code: 0, stdout: 'Initialized empty Git repository', stderr: '' };
+				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+				return { code: 0, stdout, stderr: '' };
+			});
+			return commands;
+		};
+
+		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
+			const commands = mockFreshRepo();
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await adapter.init();
+
+			// A newly created repository is pinned to `main` so it matches the
+			// IsomorphicGitAdapter, which hardcodes defaultBranch: "main".
+			expect(commands).toEqual([
+				{ workingDir: '/test/repo', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/test/repo', args: ['init'] },
+				{ workingDir: '/test/repo', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
+			]);
+		});
+
+		it('initializes repository with explicit rootPath when provided', async () => {
+			const commands = mockFreshRepo();
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await adapter.init('/custom/repo/path');
+
+			expect(commands).toEqual([
+				{ workingDir: '/custom/repo/path', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/custom/repo/path', args: ['init'] },
+				{ workingDir: '/custom/repo/path', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
+			]);
+		});
+
+		it('does not move HEAD when the repository already has commits', async () => {
+			const commands: Array<{ workingDir: string; args: string[] }> = [];
+			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
+				commands.push({ workingDir, args });
+				// HEAD resolves, so the repository is not empty and its branch
+				// name is the user's choice, not ours to overwrite.
+				if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+				return { code: 0, stdout: '', stderr: '' };
 			});
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await adapter.init();
 
-			expect(commands).toEqual([{ workingDir: '/test/repo', args: ['init'] }]);
+			expect(commands).toEqual([
+				{ workingDir: '/test/repo', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/test/repo', args: ['init'] }
+			]);
+			expect(commands.some(c => c.args[0] === 'symbolic-ref')).toBe(false);
 		});
 
-		it('initializes repository with explicit rootPath when provided', async () => {
-			const commands: Array<{ workingDir: string; args: string[] }> = [];
-			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
-				commands.push({ workingDir, args });
+		it('throws when git init fails', async () => {
+			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'init') {
+					return { code: 1, stdout: '', stderr: 'fatal: cannot mkdir .git: Permission denied' };
+				}
+				return { code: 128, stdout: '', stderr: '' };
+			});
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');
+		});
+
+		it('throws when the initial branch cannot be pinned', async () => {
+			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+				// `init` must succeed so the symbolic-ref branch is actually reached.
+				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+				if (args[0] === 'symbolic-ref') {
+					return { code: 1, stdout: '', stderr: 'fatal: cannot update HEAD' };
+				}
 				return { code: 0, stdout: '', stderr: '' };
 			});
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
-			await adapter.init('/custom/repo/path');
-
-			expect(commands).toEqual([{ workingDir: '/custom/repo/path', args: ['init'] }]);
-		});
-
-		it('throws when git init fails', async () => {
-			mockGitRun.mockImplementation(async () => ({
-				code: 1,
-				stdout: '',
-				stderr: 'fatal: cannot mkdir .git: Permission denied'
-			}));
-
-			const adapter = new SpawnGitAdapter(rootOrigin);
-			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');
+			await expect(adapter.init()).rejects.toThrow('fatal: cannot update HEAD');
 		});
 	});
 });

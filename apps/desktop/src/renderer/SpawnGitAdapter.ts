@@ -83,10 +83,46 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async init(rootPath?: string): Promise<void> {
 		const targetPath = rootPath ?? this.rootOrigin.path;
+		// Only a repository with no commits can have its HEAD moved without any risk
+		// of stranding work, so that is the precondition for choosing a branch name.
+		const hadCommits = await this.hasCommits(targetPath);
 		const res = await this.gitRunner(targetPath, ['init']);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to initialize git repository at ${targetPath}`);
 		}
+		if (hadCommits) {
+			// `git init` on an existing repository is documented as safe and does not
+			// move HEAD. Repointing HEAD here would strand every commit the user has
+			// on a branch the working tree is no longer on, so an existing repository
+			// is left exactly as `git init` left it.
+			return;
+		}
+		// Pin the initial branch to `main` so the engines agree. `IsomorphicGitAdapter`
+		// hardcodes `defaultBranch: "main"`, while a bare `git init` falls back to
+		// git's own default -- `master` unless the user set `init.defaultBranch` --
+		// so a repository created on the desktop engine was invisible to the web one.
+		//
+		// This is done with `symbolic-ref` rather than `git init --initial-branch`
+		// because that flag only exists from git 2.28, while this adapter supports
+		// GIT_FLOOR 2.23 (docs/vcs-contract-gate.md). `symbolic-ref` works on every
+		// supported version, and the contract harness's own createTestRepo already
+		// relies on it for the same reason.
+		const ref = await this.gitRunner(targetPath, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+		if (ref.code !== 0) {
+			throw new Error(ref.stderr || `Failed to set the initial branch at ${targetPath}`);
+		}
+	}
+
+	/**
+	 * Whether `path` already resolves to a repository that has at least one commit.
+	 *
+	 * `rev-parse --verify HEAD` fails for an unborn HEAD, so a freshly initialized
+	 * directory and an existing-but-empty repository both answer false -- which is
+	 * exactly the set of repositories where moving HEAD costs the user nothing.
+	 */
+	private async hasCommits(path: string): Promise<boolean> {
+		const res = await this.gitRunner(path, ['rev-parse', '--verify', 'HEAD']);
+		return res.code === 0;
 	}
 
 	private static readonly PATH_NOT_FOUND_MARKERS = [
