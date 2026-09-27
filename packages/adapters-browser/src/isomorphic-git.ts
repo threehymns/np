@@ -11,6 +11,25 @@ import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
 
+/**
+ * Whether `statusMatrix` should consider a worktree path at all.
+ *
+ * The test is on whole path *segments*, not on substrings. A note called
+ * `node_modules-is-fine.md` is an ordinary file in the vault this editor
+ * targets, and a containment test silently drops it from the status matrix.
+ * That is not cosmetic: `getStatus` then reports `isDirty: false`, and
+ * `switchBranch` neither counts the file as a conflict nor snapshots it, so
+ * the forced checkout overwrites the user's uncommitted edits with no error
+ * and no rollback. Real git refuses the same checkout.
+ */
+function isUserPath(filepath: string): boolean {
+	const segments = filepath.split('/');
+	// `.git` is a directory, never a user file; the others are the heavy
+	// build-output directories `git.walk` would otherwise descend into.
+	if (segments.includes('.git')) return false;
+	return !segments.some((segment) => HEAVY_WORKTREE_DIRS.has(segment));
+}
+
 /** The index mode git gives a symlink; its blob content is the target path, not text. */
 const SYMLINK_MODE = 0o120000;
 
@@ -368,7 +387,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return await git.statusMatrix({
 			fs: this.fs!,
 			dir: this.dir,
-			filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+			filter: isUserPath
 		});
 	}
 
