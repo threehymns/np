@@ -50,6 +50,7 @@ The contract suite in [`tests/contract/`](../tests/contract) exercises the entir
 
 | Area | Contract Test File | Key Behaviors Verified |
 | :--- | :--- | :--- |
+| **Repository Creation** | [`repo-init.test.ts`](../tests/contract/repo-init.test.ts) | `init` creating a repository on `main` on both engines, the new repository being detectable, reportable through `getCurrentBranch` and committable, idempotence on an existing repository, and `init` never moving the HEAD of a repository that already exists (with or without commits) |
 | **Change & Diff Reads** | [`change-diff-reads.test.ts`](../tests/contract/change-diff-reads.test.ts) | Untracked, tracked, deleted, modified, renamed, copied, mixed staging states, diff reconstruction on both engines |
 | **Metadata Reads** | [`metadata-reads.test.ts`](../tests/contract/metadata-reads.test.ts) | `getCurrentBranch`, `getBranches`, `getCommits` (author, date, message, file lists, pagination, empty commits), `getUserConfig` |
 | **Staging & Unstaging** | [`stage-unstage.test.ts`](../tests/contract/stage-unstage.test.ts) | `stageFile`, `unstageFile`, `stageAll`, `unstageAll`, `updateIndexContent` for additions, deletions, renames, mode preservation, `updateFileContent` worktree writes (tracked edit, empty content, nested path, untracked creation) |
