@@ -70,7 +70,13 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 	// Left unhandled, `openInternalLink` takes the "target is in a note" branch
 	// with allowCreate defaulting to true, so following the link silently creates
 	// a junk note named `^block-id.md` instead of scrolling to the block.
-	if (str.startsWith('^')) {
+	//
+	// The "no `#`" part is load-bearing and not just descriptive: `[[^alpha#…]]`
+	// does have one, so it belongs to the hash-split like every other link.
+	// Folding the whole string into a single block id made the id "alpha#…",
+	// which no block can have (ids are [a-zA-Z0-9-]), so the link resolved to
+	// nothing. The shortcut only applies to the hash-free spelling above.
+	if (str.startsWith('^') && !str.includes('#')) {
 		return {
 			raw: rawLink,
 			path: '',

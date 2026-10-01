@@ -152,6 +152,24 @@ describe("Obsidian Internal Link Parsing", () => {
 		expect(parsed.subpath).toEqual({ type: "block", value: "alpha" });
 	});
 
+	// The bare-block shortcut has to be limited to the shape that needs it.
+	// `[[^alpha#Heading]]` carries a '#', so it is not the "[[^ then an id"
+	// spelling the completion produces, and it used to split into path and
+	// subpath like any other link. Reading the whole string as one block id
+	// made the id "alpha#Heading", which no block can ever have -- block ids
+	// are [a-zA-Z0-9-] -- so the link resolved to nothing at all.
+	it("still splits a caret-leading link that has a hash", () => {
+		const parsed = parseInternalLink("[[^alpha#Heading]]");
+		expect(parsed.path).toBe("^alpha");
+		expect(parsed.subpath).toEqual({ type: "heading", value: "Heading" });
+	});
+
+	it("still reads '#^id' after a caret-leading path", () => {
+		const parsed = parseInternalLink("[[^alpha#^beta]]");
+		expect(parsed.path).toBe("^alpha");
+		expect(parsed.subpath).toEqual({ type: "block", value: "beta" });
+	});
+
 	it("parses nested subheading links", () => {
 		const parsed = parseInternalLink(
 			"[[Help and support#Questions and advice#Report bugs and request features]]"
