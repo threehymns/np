@@ -432,6 +432,15 @@ Final thoughts.`;
 			expect(headings(doc)).toEqual(["1:Real@1"]);
 		});
 
+		it("does not open a fence indented four or more spaces", () => {
+			// A fence may be indented up to three spaces. Further left it is an
+			// indented code block, which ends at the first non-blank line that is
+			// not itself indented -- so both "# fake" and "# real" are headings,
+			// and the renderer agrees.
+			const doc = ["    ```", "# fake", "    ```", "# real"].join("\n");
+			expect(headings(doc)).toEqual(["1:fake@2", "1:real@4"]);
+		});
+
 		it("does not report a block id from inside a code fence", () => {
 			// getBlocks had the same toggle, so a code sample could hand out a
 			// block reference that the rest of the app would link to.

@@ -207,21 +207,28 @@ export interface HeadingItem {
 }
 
 /**
+ * Does this ORIGINAL line open an indented code block?
+ *
+ * Four or more leading spaces, or a leading tab, make one. Indentation is a
+ * property of the line as written, so this must never be asked about a trimmed
+ * line — trimming destroys the evidence.
+ */
+function isIndentedCode(line: string): boolean {
+	return /^(?: {4}|\t)/.test(line);
+}
+
+/**
  * Can this trimmed line carry a Setext heading underline under it?
  *
  * A Setext underline turns the line above it into a heading only when that line
  * is paragraph text. Anything that opens another block — a list, a blockquote,
  * an HTML block, an indented code block, or a thematic break of its own — is not
  * paragraph text, and a `---` after it is a thematic break, not an underline.
- *
- * The indented-code case is why this takes the trimmed line: four or more
- * leading spaces in the ORIGINAL line mean a code block, so the caller passes a
- * line whose indentation has been measured, not simply stripped.
  */
 function isParagraphText(trimmed: string, originalLine?: string): boolean {
 	if (trimmed.length === 0) return false;
 	// 4+ spaces of original indentation is an indented code block.
-	if (originalLine !== undefined && /^(?: {4}|\t)/.test(originalLine)) return false;
+	if (originalLine !== undefined && isIndentedCode(originalLine)) return false;
 	// List item (bullet, ordered, or task) and blockquote.
 	if (/^(?:[-*+]|\d{1,9}[.)])\s/.test(trimmed)) return false;
 	if (trimmed.startsWith('>')) return false;
@@ -256,6 +263,8 @@ function isParagraphText(trimmed: string, originalLine?: string): boolean {
  *  - A backtick fence's info string may not contain a backtick, so "```a`b" opens
  *    nothing at all.
  *  - A fence left open at the end of the document stays open.
+ *  - A fence may be indented up to three spaces. Further left it is an indented
+ *    code block, not a fence.
  */
 class FenceTracker {
 	/** The fence character currently open, or null when not in a code block. */
@@ -264,14 +273,16 @@ class FenceTracker {
 	private length = 0;
 
 	/**
-	 * Feeds one trimmed line. Returns true when the line is a fence delimiter or
-	 * code-block content, so callers should skip their own parsing for it.
+	 * Feeds one line as written. Returns true when the line is a fence delimiter
+	 * or code-block content, so callers should skip their own parsing for it.
 	 */
 	skip(line: string): boolean {
 		if (this.char === null) {
-			return this.tryOpen(line);
+			// Indentation is only evidence on an OPENER, so this is asked here
+			// and not inside tryOpen, which also sees lines that are not openers.
+			return isIndentedCode(line) ? false : this.tryOpen(line.trim());
 		}
-		if (this.closes(line)) {
+		if (this.closes(line.trim())) {
 			this.char = null;
 			this.length = 0;
 		}
@@ -329,7 +340,7 @@ export function getHeadings(content: string): HeadingItem[] {
 		const trimmed = line.trim();
 
 		// Fences and their contents are never headings or Setext underlines.
-		if (fence.skip(trimmed)) continue;
+		if (fence.skip(line)) continue;
 
 		// 1. ATX headings (# Heading)
 		//    Up to three leading spaces are allowed. Four or more make an indented
@@ -459,7 +470,7 @@ export function getBlocks(content: string): BlockItem[] {
 		const line = lines[i];
 		const trimmed = line.trim();
 
-		if (fence.skip(trimmed)) continue;
+		if (fence.skip(line)) continue;
 
 		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line.
 		// Trailing whitespace after the id is tolerated: it is invisible in the
