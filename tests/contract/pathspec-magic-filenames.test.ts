@@ -24,24 +24,18 @@
  * defect is desktop-only.
  */
 import { expect } from 'bun:test';
-import { readFile, rm, writeFile } from 'node:fs/promises';
 import type { FileOrigin } from '@np/core';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
-import type { GitFileAccess } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import {
 	TestRepo,
 	createTrackedRepo,
 	describe,
 	it,
+	nodeFileAccess,
+	porcelainStatus,
 	seedCommit,
 	worktreeContents
 } from './harness';
-
-const nodeFileAccess: GitFileAccess = {
-	readFile: (filePath) => readFile(filePath),
-	writeFile: (filePath, content) => writeFile(filePath, content),
-	deleteEntry: (filePath) => rm(filePath, { force: true })
-};
 
 /**
  * A filename that is valid magic pathspec syntax, so an unwrapped path is
@@ -89,13 +83,8 @@ async function stageEditsToBoth(repo: TestRepo): Promise<void> {
 
 /** The index/worktree status letters for `filepath`, or undefined when unchanged. */
 async function xy(repo: TestRepo, filepath: string): Promise<string | undefined> {
-	const status = await repo.git(['status', '--porcelain=v1', '-z', '-uall']);
-	if (status.code !== 0 || !status.stdout) return undefined;
-	for (const entry of status.stdout.split('\0')) {
-		if (entry.length < 4) continue;
-		if (entry.slice(3) === filepath) return entry.slice(0, 2);
-	}
-	return undefined;
+	const entry = (await porcelainStatus(repo)).find(e => e.path === filepath);
+	return entry ? `${entry.x}${entry.y}` : undefined;
 }
 
 describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', () => {
@@ -187,15 +176,16 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await repo.git(['commit', '-q', '-m', 'seed']);
 		await repo.write(MAGIC, 'magic\n');
 		await repo.write('junk.txt', 'junk\n');
+		await repo.write('BYPASSER_UNTRACKED.txt', 'precious\n');
 
 		await adapterFor(repo).discardAll();
 
-		// Every untracked file is removed — that is what discardAll means. Unwrapped,
-		// the first magic pathspec excludes the rest of the list and nothing is
-		// removed at all.
+		// Every untracked file is removed — that is what discardAll means, and the
+		// magic-named file is no exception. Unwrapped, the magic pathspec reads as
+		// "everything except base.txt", which spares it and removes nothing.
 		expect(await worktreeContents(repo, MAGIC)).toBeNull();
 		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
-		expect(await worktreeContents(repo, 'IMPORTANT_UNTRACKED.txt')).toBeNull();
+		expect(await worktreeContents(repo, 'BYPASSER_UNTRACKED.txt')).toBeNull();
 	});
 
 	it('discardAll leaves tracked files alone', async () => {
