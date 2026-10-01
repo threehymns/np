@@ -413,34 +413,31 @@ export async function resolveTargetOrigin(
 			const candidateName = candidate.split('/').pop()!;
 			const stripped = candidate.replace(/^\//, '');
 
-			// Resolve before touching storage, then require containment. Steps 1 and 2
-			// build `${rootPath}/${stripped}` and read it directly, and `stripped`
-			// strips one leading slash and nothing else — so `[[../secret.txt]]` used
-			// to hand `/vault/../secret.txt` to readFile. Nothing downstream normalizes:
-			// MultiSchemeStorage passes through, and the desktop chain ends at
-			// main.ts:219 `fs.readFile(filePath)`, which resolves `..` itself. The result
-			// was a link that opens, and renders, a file outside the vault.
-			//
-			// The existing create-path guard (below) was the only isWithinPath call, so
-			// traversal was blocked on create but allowed on read. Both now normalize
-			// first and compare after, which is the only order in which a string-prefix
-			// containment test is meaningful.
-			const rootCandidatePath = normalizePosixPath(`${rootPath}/${stripped}`);
-			if (!isWithinPath(rootCandidatePath, rootPath)) {
-				continue;
-			}
-
 			// 1. Direct path relative to workspace root
-			const directRootOrigin: FileOrigin = {
-				scheme,
-				path: rootCandidatePath,
-				name: candidateName,
-			};
-			try {
-				await workspace.storage.readFile(directRootOrigin);
-				return directRootOrigin;
-			} catch {
-				// Not found directly at root
+			// Resolve before touching storage, then require containment. This path is
+			// built by concatenation and read directly, and `stripped` strips one
+			// leading slash and nothing else — so `[[../secret.txt]]` used to hand
+			// `/vault/../secret.txt` to readFile, which Node resolves itself. The
+			// create step below was the only isWithinPath call, so traversal was blocked
+			// on create and allowed on read. Normalizing before comparing is what makes
+			// a string-prefix containment test meaningful.
+			//
+			// An escaping path costs THIS step only: the link may still resolve inside
+			// the vault by another step, and refusing the whole candidate would turn a
+			// refused read into a dead link.
+			const rootCandidatePath = normalizePosixPath(`${rootPath}/${stripped}`);
+			if (isWithinPath(rootCandidatePath, rootPath)) {
+				const directRootOrigin: FileOrigin = {
+					scheme,
+					path: rootCandidatePath,
+					name: candidateName,
+				};
+				try {
+					await workspace.storage.readFile(directRootOrigin);
+					return directRootOrigin;
+				} catch {
+					// Not found directly at root
+				}
 			}
 
 			// 2. Path relative to current note directory
@@ -449,22 +446,23 @@ export async function resolveTargetOrigin(
 				const lastSlash = currentDocPath.lastIndexOf('/');
 				if (lastSlash !== -1) {
 					const currentDir = currentDocPath.slice(0, lastSlash);
-					// Same containment requirement as step 1: this path is built by
+					// Same containment requirement as step 1: this path is also built by
 					// concatenation and read directly, so it needs the guard too.
-					const relPath = normalizePosixPath(`${currentDir}/${stripped}`);
-					if (!isWithinPath(relPath, rootPath)) {
-						continue;
-					}
-					const relOrigin: FileOrigin = {
-						scheme,
-						path: relPath,
-						name: candidateName,
-					};
-					try {
-						await workspace.storage.readFile(relOrigin);
-						return relOrigin;
-					} catch {
-						// Not found relative to current file
+					const currentDirCandidatePath = normalizePosixPath(
+						`${currentDir}/${stripped}`
+					);
+					if (isWithinPath(currentDirCandidatePath, rootPath)) {
+						const currentDirOrigin: FileOrigin = {
+							scheme,
+							path: currentDirCandidatePath,
+							name: candidateName,
+						};
+						try {
+							await workspace.storage.readFile(currentDirOrigin);
+							return currentDirOrigin;
+						} catch {
+							// Not found relative to current file
+						}
 					}
 				}
 			}

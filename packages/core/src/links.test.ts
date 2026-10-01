@@ -442,6 +442,9 @@ describe("vault containment when following a link (task-012)", () => {
 		storage = createResolvingStorage({
 			"/vault/Note A.md": "# Note A\n",
 			"/vault/Projects/Note B.md": "# Note B\n",
+			// A note nested two folders down, so links are followed from a
+			// currentDoc whose directory is deeper than the vault root.
+			"/vault/a/b/deep.md": "# deep\n",
 			// Outside the vault, one level up — the shape of ~/.ssh/id_rsa or a
 			// config file sitting next to the notes folder.
 			"/secret.txt": "SUPER-SECRET-VALUE-abc123",
@@ -489,6 +492,25 @@ describe("vault containment when following a link (task-012)", () => {
 		expect(resultDoc).toBeNull();
 	});
 
+	it("refuses a traversal from a note nested below the vault root", async () => {
+		// The single-level `..` cases above all pass currentDoc = null, which never
+		// runs the current-note-directory step. From a nested note the same escape is
+		// reachable through that step too, so it needs its own case.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+		const escaped = storage.readPaths.filter(
+			(p: string) => !p.startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
 	// --- CONTROLS: must keep working, so the fix cannot be "reject any `..`" ---
 
 	it("still opens a note inside the vault (control)", async () => {
@@ -515,10 +537,42 @@ describe("vault containment when following a link (task-012)", () => {
 	});
 
 	it("still refuses a traversing CREATE (the guard that already existed, control)", async () => {
-		// links.ts:621 already blocked this. If the new read-path guard regressed the
-		// create guard, this is what would catch it.
+		// The create-path guard (in resolveTargetOrigin's step 4) already blocked
+		// this. If the new read-path guard regressed it, this is what would catch it.
 		const resultDoc = await openInternalLink(workspace, null, "[[../escaped.md]]");
 		expect(resultDoc).toBeNull();
 		expect(storage.files.has("/escaped.md")).toBe(false);
+	});
+
+	// --- CONTROLS: an escaping step must cost only THAT step, not the whole link ---
+
+	it("still resolves a `..` that escapes root-relative but lands inside the vault from the note's own folder", async () => {
+		// `/vault/../../Note A.md` escapes (step 1), but from a note in /vault/a/b the
+		// same link resolves to `/vault/Note A.md` (step 2), which is inside the vault
+		// and exists. Refusing the whole link because step 1 escaped loses this.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../../Note A.md]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc?.origin?.path).toBe("/vault/Note A.md");
+	});
+
+	it("still falls back to the vault-wide search when both explicit steps escape", async () => {
+		// Step 1 -> `/Note A.md` (escapes). Step 2 -> `/vault/a/Note A.md` (inside, but
+		// no such file). Step 3 finds `/vault/Note A.md` by name. The vault-wide search
+		// is bounded by the tree walk, so it can only ever return an in-vault origin.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../Note A.md]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc?.origin?.path).toBe("/vault/Note A.md");
 	});
 });
