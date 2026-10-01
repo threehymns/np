@@ -812,6 +812,19 @@ describe('SpawnGitAdapter', () => {
 
 	describe('init', () => {
 		/**
+		 * Which working directory `init()` runs git in.
+		 *
+		 * Kept as mocks, against the gate's pruning rule, because no contract test
+		 * can observe it: every test in `tests/contract/repo-init.test.ts` passes an
+		 * explicit `rootPath` that happens to be the same path as `rootOrigin.path`,
+		 * so "honours the argument" and "ignores it" are indistinguishable against
+		 * real git. That leaves argument routing -- the case the gate keeps mock
+		 * tests for. Everything else `init()` does is pinned there against both
+		 * real engines, including the branch it picks and the fact that it never
+		 * moves the HEAD of a repository that already exists.
+		 */
+
+		/**
 		 * Default mock for the new-repo path: `rev-parse --git-dir` finds no
 		 * repository, so `init` goes on to create one and pin its branch.
 		 */
@@ -851,26 +864,6 @@ describe('SpawnGitAdapter', () => {
 				{ workingDir: '/custom/repo/path', args: ['init'] },
 				{ workingDir: '/custom/repo/path', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
 			]);
-		});
-
-		it('does not move HEAD when the repository already has commits', async () => {
-			const commands: Array<{ workingDir: string; args: string[] }> = [];
-			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
-				commands.push({ workingDir, args });
-				// A repository is already there, so its branch name is the user's
-				// choice, not ours to overwrite.
-				if (args[0] === 'rev-parse') return { code: 0, stdout: '.git\n', stderr: '' };
-				return { code: 0, stdout: '', stderr: '' };
-			});
-
-			const adapter = new SpawnGitAdapter(rootOrigin);
-			await adapter.init();
-
-			expect(commands).toEqual([
-				{ workingDir: '/test/repo', args: ['rev-parse', '--git-dir'] },
-				{ workingDir: '/test/repo', args: ['init'] }
-			]);
-			expect(commands.some(c => c.args[0] === 'symbolic-ref')).toBe(false);
 		});
 
 		it('throws when git init fails', async () => {
