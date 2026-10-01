@@ -209,8 +209,15 @@ describe('commit metadata survives a pipe in any field (VCS contract)', () => {
 		expect(commits[1].files).toEqual(['a.txt']);
 	});
 
-	/** The seed commit's own date must not leak into the case above, so pin it as its own check. */
-	it('SpawnGitAdapter (real git) keeps two pipes in one history from colliding', async () => {
+	/**
+	 * A pipe in every field at once, in a history that has a commit underneath it.
+	 *
+	 * The cases above put one pipe in one field, so each shows a single field
+	 * surviving. This one loads all three, and pins the commit *below* as well: a
+	 * parse that let one commit's records bleed into the next would shift the older
+	 * commit's author too, and asserting only the newest would not see it.
+	 */
+	it('SpawnGitAdapter (real git) keeps three pipes in one commit from bleeding into the commit below', async () => {
 		const r = await createTrackedRepo();
 		await r.write('a.txt', 'a\n');
 		const add = await r.git(['add', '-A']);
