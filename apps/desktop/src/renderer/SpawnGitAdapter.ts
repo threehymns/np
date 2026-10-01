@@ -606,9 +606,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// a name containing a newline arrives as the two characters `\` and `n`
 		// rather than a real newline. The line-oriented parse still works, but it
 		// hands the caller a *display* string that resolves to no file. `-z`
-		// instead emits every path raw and NUL-delimited, so a name can contain
-		// any byte, including the newlines and `|` this format uses to separate
-		// its own fields.
+		// instead emits every path raw and NUL-delimited, so a name can hold
+		// any byte git cannot store a NUL in -- a newline included. NUL is the
+		// only delimiter this stream has, so `\` and `|` are ordinary bytes in a
+		// path and nothing outside that one NUL can be mistaken for a boundary.
 		const res = await this.runGit(['log', '-z', '-n', '50', '--date=short', '--pretty=format:%x00%h%x00%an <%ae>%x00%ad%x00%s', '--name-only', '--no-renames']);
 		if (res.code !== 0) {
 			if (res.stderr.includes('does not have any commits yet') || res.stderr.includes('fatal: bad default revision')) {
@@ -622,10 +623,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 		//
 		// `%x00` prefixes each header, every path is newline- and NUL-terminated,
 		// and two more NULs separate one commit from the next. Splitting on NUL
-		// consumes those delimiters, so the header is identified structurally --
-		// it is the first record after a blank one -- rather than by the shape of
-		// its fields. That way a filename may contain `|`, a newline, or any other
-		// byte and still be read back as exactly the one path it is.
+		// consumes those delimiters, so no record has to be recognised by the shape
+		// of its content: the four header records are taken by position and the
+		// paths after them are read whole. That way a filename may contain `|`, a
+		// newline, or any other byte and still be read back as exactly the one path
+		// it is.
 		//
 		// The header's own four fields are NUL-separated too, for the same reason
 		// the paths are: an author name or email may contain `|`, and those come

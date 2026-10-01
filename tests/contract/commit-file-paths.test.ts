@@ -70,11 +70,18 @@ function runGitSync(repo: TestRepo, args: string[]): string {
 	return res.stdout;
 }
 
-/** Raw `getCommits` output, with or without the `-z` the fix relies on. */
+/**
+ * Raw `getCommits` output, with or without the `-z` the fix relies on.
+ *
+ * The `--pretty=format:` string is the one `SpawnGitAdapter.getCommits` runs: each
+ * of the four header fields is separated by its own NUL. It used to be
+ * `%h|%an <%ae>|%ad|%s`, and a premise helper that still asked for the `|` form
+ * would have modelled an invocation the adapter never makes.
+ */
 function rawLog(repo: TestRepo, nul: boolean): string {
 	const args = ['log'];
 	if (nul) args.push('-z');
-	args.push('-n', '1', '--date=short', '--pretty=format:%x00%h|%an <%ae>|%ad|%s', '--name-only', '--no-renames');
+	args.push('-n', '1', '--date=short', '--pretty=format:%x00%h%x00%an <%ae>%x00%ad%x00%s', '--name-only', '--no-renames');
 	return runGitSync(repo, args);
 }
 
@@ -99,15 +106,28 @@ describe('getCommits returns unquoted pathnames', () => {
 			expect(raw).toContain('two\nlines.txt');
 			expect(raw).toContain('has\ttab.txt');
 			expect(raw).not.toContain('"two\\nlines.txt"');
+
+			// And the header in it is the NUL-delimited one the adapter actually
+			// runs: a leading empty record from `%x00`, then the hash alone, then
+			// the author, then the date. A `|`-joined header puts all four in
+			// record 1, so this is what catches the premise helper drifting away
+			// from the invocation it claims to model.
+			const records = raw.split('\0');
+			expect(records[0]).toBe('');
+			expect(records[1]).toMatch(/^[0-9a-f]+$/);
+			expect(records[2]).toContain('<');
+			expect(records[3]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 		} finally {
 			await repo.cleanup();
 		}
 	});
 
-	it('a name containing the field separator is not mistaken for a commit header', async () => {
-		// The corrected format packs header fields with `|`, and a path is now raw,
-		// so a filename may legitimately contain that separator. Header detection
-		// must not depend on field count alone.
+	it('a name containing a pipe is not mistaken for a commit header', async () => {
+		// The header's four fields are NUL-separated, so `|` is not a delimiter
+		// anywhere in this stream -- it is an ordinary byte, in a path as much as
+		// in an author name. These names are therefore inert: no parse of this
+		// output can be misled by them, however it detects a header. They stay as
+		// a guard that nothing reintroduces `|` as structural.
 		const repo = await createTrackedRepo();
 		try {
 			await repo.write('a|b|c|d.txt', 'p\n');
