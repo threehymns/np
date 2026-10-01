@@ -698,10 +698,13 @@ for (const engine of ENGINES) {
 		// overwrites them with no error and no rollback, and getStatus reports
 		// isDirty:false while they are dirty.
 		describe('status filter matches whole path segments', () => {
-			// Scoped to the engine that owns the filter. The desktop engine shells
-			// out to git, which already matches whole path segments (and refuses
-			// the checkout below outright), so there is nothing to assert there.
-			if (engine.name.startsWith('IsomorphicGitAdapter')) {
+			// Scoped to the engine that owns the filter, compared by identity: the
+			// desktop engine shells out to git, which already matches whole path
+			// segments (and refuses the checkout below outright), so there is
+			// nothing to assert there. Matching on `engine.name` instead would
+			// void this whole block the first time a display string is reworded,
+			// silently leaving a data-loss regression unguarded.
+			if (engine === isomorphicEngine) {
 				it('preserves a dirty tracked file whose name merely mentions node_modules', async () => {
 					const r = await createTrackedRepo();
 					const NOTE = 'notes/node_modules-is-fine.md';
