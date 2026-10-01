@@ -754,16 +754,63 @@ for (const engine of ENGINES) {
 				});
 
 				it('still hides paths that are genuinely inside a heavy directory', async () => {
+					// Depth matters here, and getting it wrong makes the test vacuous.
+					// `BrowserGitFS.readdir` already hides a root-level `node_modules`
+					// before the walk reaches the filter, so asserting on
+					// `node_modules/left-pad/index.js` proved nothing: the file never
+					// became a candidate. These two sit *below* a directory, where the
+					// filter is the only thing that can drop them.
 					const r = await createTrackedRepo();
 					await commitFiles(r, 'initial', { 'common.txt': 'base\n' });
-					await r.write('node_modules/left-pad/index.js', 'module.exports = 1;\n');
+					await r.write('notes/node_modules/deep/x.md', 'x\n');
+					await r.write('docs/.svelte-kit/notes/thing.md', 'thing\n');
+					// And a control the filter must leave alone: without it, "these
+					// paths are absent" would also hold on an empty matrix.
+					await r.write('notes/ordinary.md', 'ordinary\n');
 
 					const adp = engine.adapter(r);
 					const status = await adp.getStatus();
 					// The point of the filter is that the adapter never surfaces a
-					// path inside node_modules as user content. This is the half
-					// the substring form got right, and it must not regress.
-					expect(status.uncommittedFiles ?? []).not.toContain('node_modules/left-pad/index.js');
+					// path inside node_modules or .svelte-kit as user content. This
+					// is the half the substring form got right, and it must not regress.
+					expect(status.uncommittedFiles ?? []).not.toContain('notes/node_modules/deep/x.md');
+					expect(status.uncommittedFiles ?? []).not.toContain('docs/.svelte-kit/notes/thing.md');
+					expect(status.uncommittedFiles ?? []).toContain('notes/ordinary.md');
+				});
+
+				it('reports a dirty tracked file whose name merely mentions .svelte-kit', async () => {
+					// The same substring trap as `node_modules`, reached through the
+					// other heavy directory: `.svelte-kit-notes.md` is a note about
+					// SvelteKit, and the containment test swallowed it.
+					const r = await createTrackedRepo();
+					const NOTE = 'notes/.svelte-kit-notes.md';
+					await commitFiles(r, 'initial', { [NOTE]: 'base\n' });
+
+					const adp = engine.adapter(r);
+					expect((await adp.getStatus()).isDirty).toBe(false);
+
+					await r.write(NOTE, 'edited\n');
+					const status = await adp.getStatus();
+					expect(status.isDirty).toBe(true);
+					expect(status.uncommittedFiles).toContain(NOTE);
+				});
+
+				it('reports .gitignore, whose name starts with .git but is not the git directory', async () => {
+					// `.git` is a whole-segment name in the filter, so the mistake
+					// available here is matching it as a prefix. `.gitignore` is an
+					// ordinary user file that git tracks like any other, and every
+					// rule the filter applies has to keep it visible.
+					const r = await createTrackedRepo();
+					await commitFiles(r, 'initial', { 'common.txt': 'base\n' });
+
+					const adp = engine.adapter(r);
+					await r.write('.gitignore', 'dist\n');
+					await r.write('notes/.gitignore', 'dist\n');
+
+					const status = await adp.getStatus();
+					expect(status.isDirty).toBe(true);
+					expect(status.uncommittedFiles).toContain('.gitignore');
+					expect(status.uncommittedFiles).toContain('notes/.gitignore');
 				});
 			}
 		});
