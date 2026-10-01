@@ -535,6 +535,26 @@ describe("vault containment when following a link (task-012)", () => {
 		expect(escaped).toEqual([]);
 	});
 
+	it("refuses a traversal from a note AT the vault root, where its folder is empty", async () => {
+		// A note in the vault root has no parent folder, so the current-note-directory
+		// step resolves the target against an empty base and would reach the
+		// filesystem root (`/${target}`) rather than the vault. Step 1 already covers
+		// this note's folder, so refusing the step costs nothing.
+		const atRoot = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/Note A.md",
+			name: "Note A.md",
+		});
+		const resultDoc = await openInternalLink(workspace, atRoot!, "[[../../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+		const escaped = storage.readPaths.filter(
+			(p: string) => !p.startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
 	// --- CONTROLS: must keep working, so the fix cannot be "reject any `..`" ---
 
 	it("still opens a note inside the vault (control)", async () => {
