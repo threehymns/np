@@ -812,14 +812,14 @@ describe('SpawnGitAdapter', () => {
 
 	describe('init', () => {
 		/**
-		 * Default mock for the new-repo path: `rev-parse --verify HEAD` fails
-		 * (unborn HEAD), so `init` goes on to pin the initial branch.
+		 * Default mock for the new-repo path: `rev-parse --git-dir` finds no
+		 * repository, so `init` goes on to create one and pin its branch.
 		 */
 		const mockFreshRepo = (stdout = 'Initialized empty Git repository') => {
 			const commands: Array<{ workingDir: string; args: string[] }> = [];
 			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
 				commands.push({ workingDir, args });
-				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
 				return { code: 0, stdout, stderr: '' };
 			});
 			return commands;
@@ -834,7 +834,7 @@ describe('SpawnGitAdapter', () => {
 			// A newly created repository is pinned to `main` so it matches the
 			// IsomorphicGitAdapter, which hardcodes defaultBranch: "main".
 			expect(commands).toEqual([
-				{ workingDir: '/test/repo', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/test/repo', args: ['rev-parse', '--git-dir'] },
 				{ workingDir: '/test/repo', args: ['init'] },
 				{ workingDir: '/test/repo', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
 			]);
@@ -847,7 +847,7 @@ describe('SpawnGitAdapter', () => {
 			await adapter.init('/custom/repo/path');
 
 			expect(commands).toEqual([
-				{ workingDir: '/custom/repo/path', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/custom/repo/path', args: ['rev-parse', '--git-dir'] },
 				{ workingDir: '/custom/repo/path', args: ['init'] },
 				{ workingDir: '/custom/repo/path', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
 			]);
@@ -857,9 +857,9 @@ describe('SpawnGitAdapter', () => {
 			const commands: Array<{ workingDir: string; args: string[] }> = [];
 			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
 				commands.push({ workingDir, args });
-				// HEAD resolves, so the repository is not empty and its branch
-				// name is the user's choice, not ours to overwrite.
-				if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc1234\n', stderr: '' };
+				// A repository is already there, so its branch name is the user's
+				// choice, not ours to overwrite.
+				if (args[0] === 'rev-parse') return { code: 0, stdout: '.git\n', stderr: '' };
 				return { code: 0, stdout: '', stderr: '' };
 			});
 
@@ -867,7 +867,7 @@ describe('SpawnGitAdapter', () => {
 			await adapter.init();
 
 			expect(commands).toEqual([
-				{ workingDir: '/test/repo', args: ['rev-parse', '--verify', 'HEAD'] },
+				{ workingDir: '/test/repo', args: ['rev-parse', '--git-dir'] },
 				{ workingDir: '/test/repo', args: ['init'] }
 			]);
 			expect(commands.some(c => c.args[0] === 'symbolic-ref')).toBe(false);
@@ -888,7 +888,7 @@ describe('SpawnGitAdapter', () => {
 		it('throws when the initial branch cannot be pinned', async () => {
 			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 				// `init` must succeed so the symbolic-ref branch is actually reached.
-				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: Needed a single revision' };
+				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
 				if (args[0] === 'symbolic-ref') {
 					return { code: 1, stdout: '', stderr: 'fatal: cannot update HEAD' };
 				}

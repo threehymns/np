@@ -83,18 +83,20 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async init(rootPath?: string): Promise<void> {
 		const targetPath = rootPath ?? this.rootOrigin.path;
-		// Only a repository with no commits can have its HEAD moved without any risk
-		// of stranding work, so that is the precondition for choosing a branch name.
-		const hadCommits = await this.hasCommits(targetPath);
+		// `git init` is a documented no-op on a repository that already exists: it
+		// neither reinitializes the work tree nor moves HEAD. So choosing a branch
+		// name is ours to do only where we are the ones creating the repository.
+		const alreadyExisted = await this.isRepository(targetPath);
 		const res = await this.gitRunner(targetPath, ['init']);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to initialize git repository at ${targetPath}`);
 		}
-		if (hadCommits) {
-			// `git init` on an existing repository is documented as safe and does not
-			// move HEAD. Repointing HEAD here would strand every commit the user has
-			// on a branch the working tree is no longer on, so an existing repository
-			// is left exactly as `git init` left it.
+		if (alreadyExisted) {
+			// Repointing HEAD here would silently rename the branch the user chose
+			// when they ran `git init` themselves, and in a repository that has
+			// commits it would strand all of them on a branch the working tree is no
+			// longer on. An existing repository is left exactly as `git init` left it,
+			// which is also what `IsomorphicGitAdapter` does.
 			return;
 		}
 		// Pin the initial branch to `main` so the engines agree. `IsomorphicGitAdapter`
@@ -114,14 +116,17 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Whether `path` already resolves to a repository that has at least one commit.
+	 * Whether `path` already sits inside a git repository.
 	 *
-	 * `rev-parse --verify HEAD` fails for an unborn HEAD, so a freshly initialized
-	 * directory and an existing-but-empty repository both answer false -- which is
-	 * exactly the set of repositories where moving HEAD costs the user nothing.
+	 * `rev-parse --git-dir` resolves in any directory inside a work tree and fails
+	 * everywhere else, which is the same line `git init` itself draws: it creates a
+	 * repository where there is none, and leaves one alone where there already is
+	 * one. Deliberately not `rev-parse --verify HEAD`, which cannot tell an existing
+	 * but empty repository -- an unborn HEAD, the case where a user has staged work
+	 * and not committed it -- from a directory that is not a repository at all.
 	 */
-	private async hasCommits(path: string): Promise<boolean> {
-		const res = await this.gitRunner(path, ['rev-parse', '--verify', 'HEAD']);
+	private async isRepository(path: string): Promise<boolean> {
+		const res = await this.gitRunner(path, ['rev-parse', '--git-dir']);
 		return res.code === 0;
 	}
 

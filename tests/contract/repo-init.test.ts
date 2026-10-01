@@ -9,6 +9,7 @@ import {
 	createTrackedDirectory,
 	currentBranch,
 	describe,
+	indexContents,
 	it,
 	nodeFileAccess,
 	runGit
@@ -146,6 +147,29 @@ describe('init()', () => {
 				expect(await currentBranch(repo)).toBe('my-work');
 				const log = await repo.git(['log', '--oneline']);
 				expect(log.stdout).toContain('second');
+			});
+
+			it('never moves HEAD of a repository that already exists, even with no commits', async () => {
+				const repo = await createTrackedDirectory();
+				const adapter = engine.adapter(repo);
+
+				// The user ran `git init` themselves and staged a file without
+				// committing, so HEAD is unborn. `-c` pins their branch whatever the
+				// machine's own `init.defaultBranch` happens to be.
+				const init = await repo.git(['-c', 'init.defaultBranch=master', 'init']);
+				expect(init.code).toBe(0);
+				await repo.write('file.txt', 'staged\n');
+				await repo.git(['add', 'file.txt']);
+				expect(await currentBranch(repo)).toBe('master');
+
+				await adapter.init(repo.path);
+
+				// An unborn HEAD is exactly the case where nothing is stranded by
+				// leaving it alone, and exactly the case where the user has already
+				// said which branch they want. git itself does not move it, so
+				// neither engine may.
+				expect(await currentBranch(repo)).toBe('master');
+				expect(await indexContents(repo, 'file.txt')).toBe('staged\n');
 			});
 		});
 	}
