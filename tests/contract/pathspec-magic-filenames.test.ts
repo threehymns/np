@@ -176,7 +176,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await repo.git(['commit', '-q', '-m', 'seed']);
 		await repo.write(MAGIC, 'magic\n');
 		await repo.write('junk.txt', 'junk\n');
-		await repo.write('BYPASSER_UNTRACKED.txt', 'precious\n');
+		await repo.write('BYSTANDER_UNTRACKED.txt', 'precious\n');
 
 		await adapterFor(repo).discardAll();
 
@@ -185,7 +185,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		// "everything except base.txt", which spares it and removes nothing.
 		expect(await worktreeContents(repo, MAGIC)).toBeNull();
 		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
-		expect(await worktreeContents(repo, 'BYPASSER_UNTRACKED.txt')).toBeNull();
+		expect(await worktreeContents(repo, 'BYSTANDER_UNTRACKED.txt')).toBeNull();
 	});
 
 	it('discardAll leaves tracked files alone', async () => {
