@@ -411,6 +411,20 @@ export function getHeadings(content: string): HeadingItem[] {
 }
 
 /**
+ * The first heading whose text is `name`, both sides trimmed and lowercased.
+ *
+ * `findHeadingLine` looks a name up twice — once for the whole path, once for a
+ * single segment — and both lookups must agree on what "the same name" means,
+ * so the comparison lives here rather than being written out twice.
+ */
+function findHeadingByText(
+	headings: HeadingItem[],
+	name: string
+): HeadingItem | undefined {
+	return headings.find((h) => h.text.trim().toLowerCase() === name);
+}
+
+/**
  * Finds the 1-indexed line number of a heading matching `headingPath`.
  * Supports nested subheadings like `Heading 1#Subheading 2`.
  *
@@ -432,7 +446,7 @@ export function findHeadingLine(content: string, headingPath: string): number | 
 	// nowhere.
 	const whole = headingPath.trim().toLowerCase();
 	if (whole) {
-		const exact = headings.find((h) => h.text.trim().toLowerCase() === whole);
+		const exact = findHeadingByText(headings, whole);
 		if (exact) return exact.line;
 	}
 
@@ -444,10 +458,7 @@ export function findHeadingLine(content: string, headingPath: string): number | 
 	if (segments.length === 0) return null;
 
 	if (segments.length === 1) {
-		const target = segments[0];
-		const match = headings.find(
-			(h) => h.text.trim().toLowerCase() === target
-		);
+		const match = findHeadingByText(headings, segments[0]);
 		return match ? match.line : null;
 	}
 
