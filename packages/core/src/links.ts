@@ -420,7 +420,8 @@ export async function resolveTargetOrigin(
 			// `/vault/../secret.txt` to readFile, which Node resolves itself. The
 			// create step below was the only isWithinPath call, so traversal was blocked
 			// on create and allowed on read. Normalizing before comparing is what makes
-			// a string-prefix containment test meaningful.
+			// a string-prefix containment test meaningful. See isWithinPath for the
+			// check's precondition, and for the symlink case it does not cover.
 			//
 			// An escaping path costs THIS step only: the link may still resolve inside
 			// the vault by another step, and refusing the whole candidate would turn a
@@ -537,6 +538,12 @@ function normalizePosixPath(path: string): string {
 
 /**
  * Checks that a normalized candidate path stays beneath the vault root.
+ *
+ * PRECONDITION: `candidatePath` must already be resolved by `normalizePosixPath`
+ * (a prefix test against an unresolved path is meaningless), and the check is
+ * LEXICAL — it does not follow symlinks, so a link inside the root that points
+ * outside it still passes here and is then read through the link. Containment
+ * therefore holds for `..` traversal, not for symlinked paths.
  */
 function isWithinPath(candidatePath: string, rootPath: string): boolean {
 	const root = rootPath.replace(/\/$/, '') || '/';
