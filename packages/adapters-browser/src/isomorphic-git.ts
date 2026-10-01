@@ -777,15 +777,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				}
 
 				if (hasUnstaged) {
-					// A file whose deletion was staged and which has since been
-					// recreated reaches here as row [path, 1, 2, 0]: still in HEAD,
-					// worktree column 2, index 0. The `head === 0` test below cannot
-					// see it, so without naming the case it falls through to the
-					// `stage === 0` arm and is reported as an unstaged *addition* --
-					// indistinguishable from a file the user really staged. Real git
-					// reports this state as `D` plus `??`, so the recreate is
-					// untracked and `U` is the faithful mapping. Same predicate the
-					// discard paths already use for this state.
+					// Real git prints `D` + `??` for this state; `U` is the faithful mapping.
 					const recreated = isResurrectedAfterStagedDelete([filepath as string, head, workdir, stage]);
 					const status = recreated || (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
 
