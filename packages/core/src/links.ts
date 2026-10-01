@@ -414,20 +414,11 @@ export async function resolveTargetOrigin(
 			const stripped = candidate.replace(/^\//, '');
 
 			// 1. Direct path relative to workspace root
-			// Resolve before touching storage, then require containment. This path is
-			// built by concatenation and read directly, and `stripped` strips one
-			// leading slash and nothing else — so `[[../secret.txt]]` used to hand
-			// `/vault/../secret.txt` to readFile, which Node resolves itself. The
-			// create step below was the only isWithinPath call, so traversal was blocked
-			// on create and allowed on read. Normalizing before comparing is what makes
-			// a string-prefix containment test meaningful. See isWithinPath for the
-			// check's precondition, and for the symlink case it does not cover.
-			//
-			// An escaping path costs THIS step only: the link may still resolve inside
-			// the vault by another step, and refusing the whole candidate would turn a
+			// An escaping path costs this step only — steps 2 and 3 can still resolve
+			// the link inside the vault, and refusing the whole candidate would turn a
 			// refused read into a dead link.
-			const rootCandidatePath = normalizePosixPath(`${rootPath}/${stripped}`);
-			if (isWithinPath(rootCandidatePath, rootPath)) {
+			const rootCandidatePath = resolveWithinRoot(rootPath, rootPath, stripped);
+			if (rootCandidatePath !== null) {
 				const directRootOrigin: FileOrigin = {
 					scheme,
 					path: rootCandidatePath,
@@ -447,12 +438,12 @@ export async function resolveTargetOrigin(
 				const lastSlash = currentDocPath.lastIndexOf('/');
 				if (lastSlash !== -1) {
 					const currentDir = currentDocPath.slice(0, lastSlash);
-					// Same containment requirement as step 1: this path is also built by
-					// concatenation and read directly, so it needs the guard too.
-					const currentDirCandidatePath = normalizePosixPath(
-						`${currentDir}/${stripped}`
+					const currentDirCandidatePath = resolveWithinRoot(
+						rootPath,
+						currentDir,
+						stripped
 					);
-					if (isWithinPath(currentDirCandidatePath, rootPath)) {
+					if (currentDirCandidatePath !== null) {
 						const currentDirOrigin: FileOrigin = {
 							scheme,
 							path: currentDirCandidatePath,
@@ -495,11 +486,9 @@ export async function resolveTargetOrigin(
 			hasMdExtension || hasExplicitExtension
 				? normalizedTarget
 				: `${normalizedTarget}.md`;
-		const newPath = normalizePosixPath(
-			`${rootPath}/${createTarget.replace(/^\//, '')}`
-		);
 		// Reject traversal outside the vault (e.g. [[../outside]]) before creating.
-		if (!isWithinPath(newPath, rootPath)) {
+		const newPath = resolveWithinRoot(rootPath, rootPath, createTarget.replace(/^\//, ''));
+		if (newPath === null) {
 			return null;
 		}
 		const newOrigin: FileOrigin = {
@@ -534,6 +523,25 @@ function normalizePosixPath(path: string): string {
 		}
 	}
 	return (isAbsolute ? '/' : '') + stack.join('/');
+}
+
+/**
+ * Resolves a link target against a base directory inside the workspace and
+ * returns the path to read, or null when the resolved path leaves the vault.
+ *
+ * Every path handed to storage is built by concatenating a base directory with
+ * the target, and a target keeps its `..` segments: the only thing stripped is
+ * one leading slash, so `[[../secret.txt]]` would otherwise reach storage as
+ * `/vault/../secret.txt` and be resolved by the filesystem underneath us. So
+ * resolve FIRST, then require containment — a string-prefix test against an
+ * unresolved path is meaningless.
+ *
+ * One function for every read and create site, so the order cannot drift
+ * between them. See isWithinPath for the check's precondition.
+ */
+function resolveWithinRoot(rootPath: string, baseDir: string, target: string): string | null {
+	const resolved = normalizePosixPath(`${baseDir}/${target}`);
+	return isWithinPath(resolved, rootPath) ? resolved : null;
 }
 
 /**
