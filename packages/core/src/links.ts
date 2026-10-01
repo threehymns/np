@@ -16,6 +16,29 @@ export interface InternalLinkTarget {
 }
 
 /**
+ * The one spelling of a block id this module accepts, shared by every pattern
+ * that has to recognise one. `getBlocks` writes ids with BLOCK_ID_AT_END_RE and
+ * `parseInternalLink` reads one back out of a link with NESTED_BLOCK_ID_RE, so
+ * the class lives here once: if the two ends disagree, a written id stops
+ * resolving to itself.
+ */
+const BLOCK_ID_CLASS = '[a-zA-Z0-9-]+';
+
+/**
+ * A block id at the very end of a line.
+ *
+ * Trailing whitespace after the id is tolerated: it is invisible in the editor
+ * and is what a formatter, a copy-paste, or a stray keystroke leaves behind.
+ * Without this, one trailing space silently made the id stop resolving while the
+ * note rendered perfectly. The id must still be the last thing on the line --
+ * whitespace is skipped, content is not.
+ */
+const BLOCK_ID_AT_END_RE = new RegExp(`\\^(${BLOCK_ID_CLASS})[ \\t]*$`);
+
+/** A block id as the last segment of a multi-level heading path (`A#B#^id`). */
+const NESTED_BLOCK_ID_RE = new RegExp(`#\\^(${BLOCK_ID_CLASS})$`);
+
+/**
  * Parses an Obsidian-style internal link.
  * Supports:
  * - [[Note]]
@@ -111,7 +134,7 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 
 		// Heading subpath (can be multi-level: Section 2#Sub-item A)
 		let headingPart = afterHash;
-		const blockMatch = afterHash.match(/#\^([a-zA-Z0-9-]+)$/);
+		const blockMatch = NESTED_BLOCK_ID_RE.exec(afterHash);
 		if (blockMatch) {
 			return {
 				raw: rawLink,
@@ -472,21 +495,19 @@ export function getBlocks(content: string): BlockItem[] {
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		const trimmed = line.trim();
 
 		if (fence.skip(line)) continue;
 
-		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line.
-		// Trailing whitespace after the id is tolerated: it is invisible in the
-		// editor and is what a formatter, a copy-paste, or a stray keystroke
-		// leaves behind. Without this, one trailing space silently made the id
-		// stop resolving while the note rendered perfectly. The id must still be
-		// the last thing on the line -- whitespace is skipped, content is not.
-		const match = line.match(/\^([a-zA-Z0-9-]+)[ \t]*$/);
+		// Block reference: a ^id at the end of a block or line. See
+		// BLOCK_ID_AT_END_RE for what counts as an id and why trailing
+		// whitespace is allowed.
+		const match = BLOCK_ID_AT_END_RE.exec(line);
 		if (match) {
 			const id = match[1];
-			// Preview is line content without the marker
-			const preview = line.replace(/\^([a-zA-Z0-9-]+)[ \t]*$/, '').trim();
+			// Preview is the line content before the marker. Cutting at
+			// match.index rather than re-running the pattern means the id and
+			// the preview can never be cut by two different versions of one rule.
+			const preview = line.slice(0, match.index).trim();
 			blocks.push({
 				id,
 				preview: preview || id,
