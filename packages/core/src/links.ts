@@ -294,8 +294,12 @@ function isParagraphText(trimmed: string, isIndented: boolean): boolean {
  *    code block, not a fence.
  */
 class FenceTracker {
-	/** The fence character currently open, or null when not in a code block. */
-	private char: string | null = null;
+	/**
+	 * The fence character currently open, or null when not in a code block. The
+	 * union is the whole of CommonMark's rule: there are exactly two fence
+	 * characters, so "which character closes this" needs no fallback.
+	 */
+	private char: '`' | '~' | null = null;
 	/** How many of that character the opener used; a closer may not be shorter. */
 	private length = 0;
 
@@ -304,12 +308,13 @@ class FenceTracker {
 	 * or code-block content, so callers should skip their own parsing for it.
 	 */
 	skip(line: string): boolean {
-		if (this.char === null) {
+		const open = this.char;
+		if (open === null) {
 			// Indentation is only evidence on an OPENER, so this is asked here
 			// and not inside tryOpen, which also sees lines that are not openers.
 			return isIndentedCode(line) ? false : this.tryOpen(line.trim());
 		}
-		if (this.closes(line.trim())) {
+		if (this.closes(open, line.trim())) {
 			this.char = null;
 			this.length = 0;
 		}
@@ -334,9 +339,8 @@ class FenceTracker {
 		return false;
 	}
 
-	private closes(line: string): boolean {
-		const char = this.char === '~' ? '~' : '`';
-		return new RegExp(`^${char}{${this.length},}\\s*$`).test(line);
+	private closes(open: '`' | '~', line: string): boolean {
+		return new RegExp(`^${open}{${this.length},}\\s*$`).test(line);
 	}
 }
 
