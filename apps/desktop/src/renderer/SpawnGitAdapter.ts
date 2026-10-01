@@ -683,6 +683,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// The subject is followed by a newline and then the first path, so both
 			// share one record. Only that single newline is structural, so only its
 			// offset is taken; a path that itself holds a newline stays one name.
+			//
+			// Taking the *first* newline is safe because `%s` cannot contribute one:
+			// git folds a commit message down to its subject line, so a message
+			// written across several lines arrives here as its first line alone.
+			// Verified against real git. If that ever changed, this offset would
+			// land mid-subject and graft the remainder into `files[0]`.
 			const sep = subjectAndFirstPath.indexOf('\n');
 			const message = sep === -1 ? subjectAndFirstPath : subjectAndFirstPath.slice(0, sep);
 			const firstPath = sep === -1 ? '' : subjectAndFirstPath.slice(sep + 1);
