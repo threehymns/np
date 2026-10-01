@@ -41,7 +41,7 @@ import {
  * A filename that is valid magic pathspec syntax, so an unwrapped path is
  * parsed as a pathspec rather than as a name.
  */
-const MAGIC = ':(exclude)base.txt';
+const MAGIC_NAME = ':(exclude)base.txt';
 
 /** An ordinary filename, which must keep working exactly as before. */
 const PLAIN = 'plain.txt';
@@ -54,29 +54,29 @@ function adapterFor(r: TestRepo): SpawnGitAdapter {
 	return new SpawnGitAdapter(origin(r), (workingDir, args) => r.git(args), nodeFileAccess);
 }
 
-/** A repo with one commit, holding committed `MAGIC` and `PLAIN` files. */
+/** A repo with one commit, holding committed `MAGIC_NAME` and `PLAIN` files. */
 async function repoWithTrackedMagicFile(): Promise<TestRepo> {
 	const repo = await createTrackedRepo();
 	await seedCommit(repo);
-	await repo.write(MAGIC, 'magic\n');
+	await repo.write(MAGIC_NAME, 'magic\n');
 	await repo.write(PLAIN, 'plain\n');
 	await repo.git(['add', '-A']);
 	await repo.git(['commit', '-q', '-m', 'add magic and plain']);
 	return repo;
 }
 
-/** A repo with one commit, holding an untracked `MAGIC` file and a bystander. */
+/** A repo with one commit, holding an untracked `MAGIC_NAME` file and a bystander. */
 async function repoWithUntrackedMagicFile(): Promise<TestRepo> {
 	const repo = await createTrackedRepo();
 	await seedCommit(repo);
-	await repo.write(MAGIC, 'magic\n');
+	await repo.write(MAGIC_NAME, 'magic\n');
 	await repo.write('IMPORTANT_UNTRACKED.txt', 'precious\n');
 	return repo;
 }
 
-/** Stage an edit to both `MAGIC` and `PLAIN`, so per-file scoping is observable. */
+/** Stage an edit to both `MAGIC_NAME` and `PLAIN`, so per-file scoping is observable. */
 async function stageEditsToBoth(repo: TestRepo): Promise<void> {
-	await repo.write(MAGIC, 'magic edited\n');
+	await repo.write(MAGIC_NAME, 'magic edited\n');
 	await repo.write(PLAIN, 'plain edited\n');
 	await repo.git(['add', '-A']);
 }
@@ -93,11 +93,11 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await repo.write('OTHER_UNTRACKED.txt', 'other\n');
 		await repo.write('nested/deep.txt', 'deep\n');
 
-		await adapterFor(repo).stageFile(MAGIC);
+		await adapterFor(repo).stageFile(MAGIC_NAME);
 
 		// Only the requested file is staged. Unwrapped, the magic pathspec reads as
 		// "everything except base.txt" and stages all four.
-		expect(await xy(repo, MAGIC)).toBe('A ');
+		expect(await xy(repo, MAGIC_NAME)).toBe('A ');
 		expect(await xy(repo, 'OTHER_UNTRACKED.txt')).toBe('??');
 		expect(await xy(repo, 'IMPORTANT_UNTRACKED.txt')).toBe('??');
 		expect(await xy(repo, 'nested/deep.txt')).toBe('??');
@@ -118,10 +118,10 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 	it('discarding an untracked magic-named file leaves other untracked files alone', async () => {
 		const repo = await repoWithUntrackedMagicFile();
 
-		await adapterFor(repo).discardChanges(MAGIC);
+		await adapterFor(repo).discardChanges(MAGIC_NAME);
 
 		// The named file is gone...
-		expect(await worktreeContents(repo, MAGIC)).toBeNull();
+		expect(await worktreeContents(repo, MAGIC_NAME)).toBeNull();
 		// ...and the bystander the user never mentioned survives. Unwrapped, the
 		// clean deletes it: that is the data loss this pins.
 		expect(await worktreeContents(repo, 'IMPORTANT_UNTRACKED.txt')).toBe('precious\n');
@@ -131,10 +131,10 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		const repo = await repoWithTrackedMagicFile();
 		await stageEditsToBoth(repo);
 
-		await adapterFor(repo).discardChanges(MAGIC, { staged: true });
+		await adapterFor(repo).discardChanges(MAGIC_NAME, { staged: true });
 
 		// The magic file's staged change is discarded...
-		expect(await xy(repo, MAGIC)).toBeUndefined();
+		expect(await xy(repo, MAGIC_NAME)).toBeUndefined();
 		// ...and the plain file keeps its staged change. Unwrapped, `checkout HEAD`
 		// matches every path but base.txt and discards this one too.
 		expect(await xy(repo, PLAIN)).toBe('M ');
@@ -144,13 +144,13 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		const repo = await repoWithTrackedMagicFile();
 		await stageEditsToBoth(repo);
 		// Now both also differ from the index in the worktree.
-		await repo.write(MAGIC, 'magic worktree 2\n');
+		await repo.write(MAGIC_NAME, 'magic worktree 2\n');
 		await repo.write(PLAIN, 'plain worktree 2\n');
 
-		await adapterFor(repo).discardChanges(MAGIC, { staged: false });
+		await adapterFor(repo).discardChanges(MAGIC_NAME, { staged: false });
 
 		// The magic file's worktree copy is back to its staged version...
-		expect(await worktreeContents(repo, MAGIC)).toBe('magic edited\n');
+		expect(await worktreeContents(repo, MAGIC_NAME)).toBe('magic edited\n');
 		// ...and the plain file's worktree edit is untouched.
 		expect(await worktreeContents(repo, PLAIN)).toBe('plain worktree 2\n');
 	});
@@ -159,10 +159,10 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		const repo = await repoWithTrackedMagicFile();
 		await stageEditsToBoth(repo);
 
-		await adapterFor(repo).unstageFile(MAGIC);
+		await adapterFor(repo).unstageFile(MAGIC_NAME);
 
 		// The named file is now unstaged-only...
-		expect(await xy(repo, MAGIC)).toBe(' M');
+		expect(await xy(repo, MAGIC_NAME)).toBe(' M');
 		// ...while the other staged change is still staged.
 		expect(await xy(repo, PLAIN)).toBe('M ');
 	});
@@ -174,7 +174,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await repo.write('tracked.txt', 'tracked\n');
 		await repo.git(['add', '-A']);
 		await repo.git(['commit', '-q', '-m', 'seed']);
-		await repo.write(MAGIC, 'magic\n');
+		await repo.write(MAGIC_NAME, 'magic\n');
 		await repo.write('junk.txt', 'junk\n');
 		await repo.write('BYSTANDER_UNTRACKED.txt', 'precious\n');
 
@@ -183,7 +183,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		// Every untracked file is removed — that is what discardAll means, and the
 		// magic-named file is no exception. Unwrapped, the magic pathspec reads as
 		// "everything except base.txt", which spares it and removes nothing.
-		expect(await worktreeContents(repo, MAGIC)).toBeNull();
+		expect(await worktreeContents(repo, MAGIC_NAME)).toBeNull();
 		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
 		expect(await worktreeContents(repo, 'BYSTANDER_UNTRACKED.txt')).toBeNull();
 	});
@@ -195,7 +195,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await adapterFor(repo).discardAll();
 
 		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
-		expect(await worktreeContents(repo, MAGIC)).toBe('magic\n');
+		expect(await worktreeContents(repo, MAGIC_NAME)).toBe('magic\n');
 		expect(await worktreeContents(repo, PLAIN)).toBe('plain\n');
 	});
 
@@ -207,7 +207,7 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 
 		expect(await xy(repo, PLAIN)).toBe(' M');
 		// The magic-named sibling is untouched by operating on the plain one.
-		expect(await xy(repo, MAGIC)).toBe('M ');
+		expect(await xy(repo, MAGIC_NAME)).toBe('M ');
 	});
 });
 

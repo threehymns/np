@@ -42,13 +42,15 @@ const ipcGitRunner: GitRunner = (workingDir, args) => window.electronAPI.gitRun(
  *
  * `:(literal)` restores the intended meaning. It is part of git's original
  * pathspec magic, so it is available on every version this adapter supports
- * (GIT_FLOOR 2.23), and it is a no-op for an ordinary filename: `plain.txt`
+ * (git 2.23 and later), and it is a no-op for an ordinary filename: `plain.txt`
  * carries no prefix of its own, so `:(literal)plain.txt` still matches only
  * `plain.txt`.
  *
- * Only paths that come from the user are wrapped. The repository-wide
- * operations pass `.` deliberately, and `:(literal).` would still mean `.` but
- * would misdocument the intent, so those are left as they are.
+ * Every path taken from the caller is wrapped, whether it arrives from the user
+ * or from a rename's `origPath` or from a porcelain listing — all of them can
+ * name a magic-looking file. The repository-wide operations pass `.`
+ * deliberately, and `:(literal).` would still mean `.` but would misdocument
+ * the intent, so those are left as they are.
  */
 function literalPathspec(path: string): string {
 	return `:(literal)${path}`;
