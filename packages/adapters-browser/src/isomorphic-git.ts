@@ -21,6 +21,12 @@ const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
  * `switchBranch` neither counts the file as a conflict nor snapshots it, so
  * the forced checkout overwrites the user's uncommitted edits with no error
  * and no rollback. Real git refuses the same checkout.
+ *
+ * This shares HEAVY_WORKTREE_DIRS with `readdir`, and deliberately nothing
+ * more. `readdir` hides those directories only at the worktree root, and it
+ * must keep looking for `.git` there -- routing it through this predicate would
+ * hide the git directory from the detection walk at `detect()` and no repository
+ * would ever be found. Same vocabulary, two different questions.
  */
 function isUserPath(filepath: string): boolean {
 	const segments = filepath.split('/');
@@ -221,6 +227,9 @@ class BrowserGitFS {
 		}
 
 		const names: string[] = [];
+		// Root-only, unlike `isUserPath`, which drops a heavy directory at any
+		// depth. `detect()` walks ancestors reading this, and hiding `.git` here
+		// would leave it unable to find a repository at all. See `isUserPath`.
 		const isWorktreeRoot = path.replace(/\/+$/, '') === REPO_DIR;
 		for await (const name of (handle as FileSystemDirectoryHandle).keys()) {
 			if (isWorktreeRoot && HEAVY_WORKTREE_DIRS.has(name)) continue;
@@ -1217,8 +1226,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	 *
 	 * git parses the setting as a boolean, so it accepts four spellings of true
 	 * case-insensitively, plus an `input` third state that is not a boolean but
-	 * still normalises on commit. Measured against git 2.55.0 rather than assumed
-	 * from memory — see `scratch/autocrlf-task008-probe2.ts`.
+	 * still normalises on commit. Measured against git 2.55.0 by running the
+	 * contract test for each spelling against SpawnGitAdapter, which shells out
+	 * to that binary: every spelling below is git's own verdict, not a reading
+	 * of its documentation.
 	 *
 	 * An unrecognised value is deliberately treated as "do not normalise": real
 	 * git refuses to run at all, but throwing here would turn one bad config line
