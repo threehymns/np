@@ -228,8 +228,17 @@ function isParagraphText(trimmed: string, originalLine?: string): boolean {
 	// Thematic break: `---`, `***`, `___`. Only the first can precede an
 	// underline, but all three start a new block, so none is paragraph text.
 	if (/^(?:[*-]\s*){3,}$/.test(trimmed)) return false;
-	// HTML block.
-	if (trimmed.startsWith('<')) return false;
+	// HTML block. CommonMark opens one on a tag, comment, processing
+	// instruction, declaration or CDATA section, so every one of those is a
+	// '<'. A bare '<3' is not an opener and the line is ordinary paragraph
+	// text, which the renderer renders as a Setext heading.
+	//
+	// Known divergence, in the safe direction: this accepts ANY tag name, so
+	// a non-block tag ('<span>x</span>') is treated as an HTML block here and
+	// yields no heading, while the renderer makes it a Setext heading.
+	// Copying the renderer's exact block-tag list into a hand-rolled parser
+	// is not worth it for a case that only loses a heading nobody writes.
+	if (/^<[A-Za-z!/?]/.test(trimmed)) return false;
 	return true;
 }
 

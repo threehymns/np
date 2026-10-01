@@ -511,6 +511,23 @@ Final thoughts.`;
 			expect(headings("<div>x</div>\n---")).toEqual([]);
 		});
 
+		it("still makes a heading from a paragraph that merely opens with a less-than", () => {
+			// '<' only opens an HTML block when a tag, comment, processing
+			// instruction or declaration follows it. "<3 love" is a paragraph,
+			// and the renderer makes it a Setext H2 -- rejecting every '<' hid a
+			// heading the user can actually see in the editor.
+			expect(headings("<3 love\n---")).toEqual(["2@1"]);
+			expect(headings("a < b\n---")).toEqual(["2@1"]);
+		});
+
+		it("still rejects the HTML block openers a less-than can be followed by", () => {
+			// Control for the case above: comments, processing instructions and
+			// block-level tags all open an HTML block, and the renderer agrees.
+			expect(headings("<!-- c -->\n---")).toEqual([]);
+			expect(headings("<?php echo 1; ?>\n---")).toEqual([]);
+			expect(headings("<p>para</p>\n---")).toEqual([]);
+		});
+
 		it("does not make an indented code line a heading", () => {
 			expect(headings("    code\n---")).toEqual([]);
 		});
