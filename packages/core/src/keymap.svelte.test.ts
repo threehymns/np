@@ -116,6 +116,54 @@ describe("macOS shortcut labels round-trip through the parser", () => {
 		expect(k!.shift).toBe(true);
 		expect(k!.key).toBe("p");
 	});
+
+	it("carries all four modifiers in one glyph run", () => {
+		withPlatform('MacIntel');
+
+		const original = parseKeySequence("cmd+ctrl+alt+shift+p");
+		const label = formatShortcutLabel("cmd+ctrl+alt+shift+p");
+		expect(label).toBe("⌘⌃⌥⇧P");
+
+		const [k] = parseKeySequence(label);
+		expect(keystrokesEqual(k!, original[0]!)).toBe(true);
+		expect([k!.meta, k!.ctrl, k!.alt, k!.shift]).toEqual([true, true, true, true]);
+		expect(k!.key).toBe("p");
+	});
+
+	// A glyph that is not a modifier is a key, not a typo to be papered over with
+	// `shift+`. This is the guard on the glyph table: if a glyph is ever added to the
+	// set of things the parser rewrites, it must arrive with a mapping, or this fails
+	// instead of silently producing a shift binding.
+	it("leaves a non-modifier glyph as a literal key with no modifiers", () => {
+		withPlatform('MacIntel');
+
+		const [backspace] = parseKeySequence("⌫");
+		expect(backspace!.key).toBe("⌫");
+		expect([backspace!.meta, backspace!.ctrl, backspace!.alt, backspace!.shift]).toEqual([false, false, false, false]);
+	});
+});
+
+describe("glyph bindings stay portable across platforms", () => {
+	// A keymap file is portable text, and the word form already normalizes: `cmd` on
+	// Linux/Windows is read as `ctrl` by the modifier loop. The glyph form must
+	// normalize identically, or the same file behaves differently depending on how the
+	// user happened to write the modifier.
+	it("reads ⌘K as ctrl+k on a non-mac platform", () => {
+		withPlatform('Win32');
+
+		const [k] = parseKeySequence("⌘K");
+		expect(k!.ctrl).toBe(true);
+		expect(k!.meta).toBe(false);
+		expect(k!.key).toBe("k");
+	});
+
+	it("agrees with the word form on a non-mac platform", () => {
+		withPlatform('Win32');
+
+		const [glyphed] = parseKeySequence("⌘⇧P");
+		const [worded] = parseKeySequence("cmd+shift+p");
+		expect(keystrokesEqual(glyphed!, worded!)).toBe(true);
+	});
 });
 
 describe("non-mac rendering stays spelled out", () => {

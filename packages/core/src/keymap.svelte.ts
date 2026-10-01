@@ -97,6 +97,27 @@ export function formatShortcutLabel(sequence: string): string {
 	}).join(' ');
 }
 
+/**
+ * The macOS modifier glyphs, mapped to the word form the modifier loop in
+ * `parseKeySequence` already understands. This is the inverse of the
+ * substitutions in `formatShortcutLabel`, and the reason the two cannot drift:
+ * the rewrite below is driven by these keys, so a glyph cannot be recognised
+ * without a word to rewrite it to.
+ *
+ * A keymap file is portable text, so this is deliberately *not* gated on
+ * platform. The word form already normalizes `cmd` to `ctrl` off mac, and the
+ * glyph must not become a second, platform-sensitive spelling of the same
+ * binding.
+ */
+const GLYPH_TO_MODIFIER: Record<string, string> = {
+	'⌘': 'cmd',
+	'⌃': 'ctrl',
+	'⌥': 'alt',
+	'⇧': 'shift',
+};
+
+const MODIFIER_GLYPH_RE = new RegExp(`[${Object.keys(GLYPH_TO_MODIFIER).join('')}]`, 'g');
+
 export function parseKeySequence(sequence: string): Keystroke[] {
 	const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
@@ -111,12 +132,12 @@ export function parseKeySequence(sequence: string): Keystroke[] {
 		// (ADR 0003: "Users must be able to override default keybindings via a JSON
 		// configuration file"). Without this, `⌘⇧P` parsed as a single literal key
 		// named "⌘⇧p" carrying no modifiers — a binding that could never fire.
-		// Glyphs are mapped to the same words the modifier loop below already knows.
-		const glyphed = keystrokeStr.replace(/[⌘⌃⌥⇧]/g, ch =>
-			ch === '⌘' ? 'cmd+' : ch === '⌃' ? 'ctrl+' : ch === '⌥' ? 'alt+' : 'shift+'
+		const withWordedModifiers = keystrokeStr.replace(
+			MODIFIER_GLYPH_RE,
+			glyph => `${GLYPH_TO_MODIFIER[glyph]}+`
 		);
 
-		const normalized = glyphed.toLowerCase();
+		const normalized = withWordedModifiers.toLowerCase();
 		let parts: string[];
 		if (normalized.includes('+')) {
 			parts = normalized.split('+');
