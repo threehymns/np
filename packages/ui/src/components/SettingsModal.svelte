@@ -6,7 +6,8 @@
 	import { Switch } from './ui/switch/index.js';
 	import { useAppState } from '@np/core';
 	import { setMode, resetMode } from "mode-watcher";
-	import { Palette, TextT, Gear, Keyboard } from "phosphor-svelte";
+	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
+	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { cn } from '@np/core';
 	import type { AppearanceMode } from '@np/core';
 
@@ -14,7 +15,46 @@
 
 	let { open = $bindable(false) } = $props();
 
+	/**
+	 * The scope switcher owns `appState.prefs.activeScope`, and the ordinary
+	 * preference setters (zoom, theme, ...) write to whichever scope is
+	 * active. This dialog stays mounted after it closes, so a closed dialog
+	 * must never leave the workspace scope active: the reset hangs off the
+	 * `open` binding every close path funnels through (escape, outside click,
+	 * Done, the settings command) instead of a close handler that could miss
+	 * one.
+	 */
+	$effect(() => {
+		if (!open) appState.prefs.activeScope = 'user';
+	});
+
 	let activeCategory = $state('appearance');
+
+	/**
+	 * Single owner of the plugin-category string protocol: categories for
+	 * generated plugin sections are `plugin:<namespace>`, and the state
+	 * badge labels come from one lookup. Nothing else in this file may
+	 * hardcode the prefix, its length, or a state label.
+	 */
+	const PLUGIN_CATEGORY_PREFIX = 'plugin:';
+
+	const PLUGIN_STATE_LABELS: Record<string, string> = {
+		active: 'Active',
+		activating: 'Activating…',
+		deactivating: 'Deactivating…',
+		error: 'Error',
+		inactive: 'Off'
+	};
+
+	function pluginCategoryFor(namespace: string): string {
+		return `${PLUGIN_CATEGORY_PREFIX}${namespace}`;
+	}
+
+	function pluginNamespaceForCategory(category: string): string | null {
+		return category.startsWith(PLUGIN_CATEGORY_PREFIX)
+			? category.slice(PLUGIN_CATEGORY_PREFIX.length)
+			: null;
+	}
 
 	function handleModeChange(value: string) {
 		if (value === 'system') {
@@ -44,11 +84,81 @@
 		{ id: 'system', name: 'System', icon: 'monitor' }
 	];
 
+	const pluginSchemas = $derived(
+		appState.prefs.settings
+			? appState.prefs.settings.getAllSchemas().filter((s) => s.namespace !== 'editor' && s.namespace !== 'ui')
+			: []
+	);
+
 	const categories = [
 		{ id: 'appearance', name: 'Appearance', icon: Palette },
 		{ id: 'editor', name: 'Editor', icon: TextT },
+		{ id: 'plugins', name: 'Plugins', icon: PuzzlePiece },
 		{ id: 'keymaps', name: 'Keybindings', icon: Keyboard }
 	];
+
+	/**
+	 * Plugin enablement rows (#204, ADR 0008/0009/0017). Host-owned and
+	 * fully generic: every row renders from manifest metadata plus live
+	 * host state, so no per-plugin settings UI is ever needed (ADR 0014).
+	 */
+	const pluginRows = $derived(
+		appState.plugins
+			.getManifests()
+			.slice()
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map((manifest) => {
+				const state = appState.plugins.getPluginState(manifest.id);
+				const reason = appState.plugins.getDeactivationReason(manifest.id);
+				const dependentIds = state === 'active' ? appState.plugins.getActiveDependents(manifest.id) : [];
+				const dependentNames = dependentIds.map(
+					(depId) => appState.plugins.getManifest(depId)?.name ?? depId
+				);
+				return {
+					manifest,
+					state,
+					reason,
+					dependentIds,
+					dependentNames,
+					enabled: state === 'active' || state === 'activating',
+					busy: state === 'activating' || state === 'deactivating'
+				};
+			})
+	);
+
+	let pluginActionError = $state<string | null>(null);
+	let pluginConfirmId = $state<string | null>(null);
+
+	function pluginStateLabel(state: string): string {
+		return PLUGIN_STATE_LABELS[state] ?? PLUGIN_STATE_LABELS.inactive;
+	}
+
+	async function doTogglePlugin(id: string, enable: boolean) {
+		pluginActionError = null;
+		pluginConfirmId = null;
+		try {
+			await appState.setPluginEnabled(id, enable);
+		} catch (e) {
+			pluginActionError = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	function handlePluginToggle(
+		row: { manifest: { id: string }; enabled: boolean; dependentNames: string[] },
+		next: boolean
+	) {
+		if (next) {
+			void doTogglePlugin(row.manifest.id, true);
+			return;
+		}
+		// Disabling cascades to active dependents (ADR 0017): confirm
+		// inline so the explanation stays visible next to the toggle.
+		if (row.dependentNames.length > 0 && pluginConfirmId !== row.manifest.id) {
+			pluginConfirmId = row.manifest.id;
+			return;
+		}
+		void doTogglePlugin(row.manifest.id, false);
+	}
 
 	let searchQuery = $state('');
 	let recordingCmdId = $state<string | null>(null);
@@ -182,7 +292,7 @@
 					<span class="font-bold tracking-tight text-lg">Settings</span>
 				</div>
 				
-				<nav class="flex flex-col gap-1">
+				<nav class="flex flex-col gap-1 flex-1 overflow-y-auto">
 					{#each categories as cat (cat.id)}
 						<button
 							onclick={() => activeCategory = cat.id}
@@ -197,13 +307,92 @@
 							{cat.name}
 						</button>
 					{/each}
+
+					{#if pluginSchemas.length > 0}
+						<div class="pt-4 pb-1 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+							Plugins
+						</div>
+						{#each pluginSchemas as schema (schema.namespace)}
+							<button
+								onclick={() => activeCategory = pluginCategoryFor(schema.namespace)}
+								class={cn(
+									"flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+									activeCategory === pluginCategoryFor(schema.namespace)
+										? "bg-primary text-primary-foreground shadow-md"
+										: "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+								)}
+							>
+								<PuzzlePiece size={18} weight={activeCategory === pluginCategoryFor(schema.namespace) ? "fill" : "regular"} />
+								<span class="truncate">{schema.title || schema.namespace}</span>
+							</button>
+						{/each}
+					{/if}
 				</nav>
 			</aside>
 
 			<!-- Content Area -->
 			<main class="flex-1 flex flex-col min-w-0 bg-background overflow-y-auto">
-				<div class="px-8 pt-8 pb-6">
-					{#if activeCategory === 'appearance'}
+				<!-- Scope Switcher Header -->
+				<div class="px-8 pt-6 pb-4 border-b border-border/60 flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur z-10">
+					<div class="flex items-center gap-1.5 p-1 rounded-lg bg-muted/60 border border-border/50">
+						<button
+							onclick={() => appState.prefs.activeScope = 'user'}
+							class={cn(
+								"px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer",
+								appState.prefs.activeScope === 'user'
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground"
+							)}
+						>
+							User Settings
+						</button>
+						<button
+							onclick={() => appState.prefs.activeScope = 'workspace'}
+							class={cn(
+								"px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 cursor-pointer",
+								appState.prefs.activeScope === 'workspace'
+									? "bg-background text-foreground shadow-sm"
+									: "text-muted-foreground hover:text-foreground"
+							)}
+						>
+							<span>Workspace Settings</span>
+							{#if appState.workspace.rootOrigin}
+								<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+							{/if}
+						</button>
+					</div>
+
+					<div class="text-xs text-muted-foreground flex items-center gap-2">
+						{#if appState.prefs.activeScope === 'workspace'}
+							{#if appState.workspace.rootOrigin}
+								<FolderOpen size={14} class="text-emerald-500" />
+								<span class="font-medium text-foreground truncate max-w-xs">{appState.workspace.rootOrigin.name || appState.workspace.rootOrigin.path}</span>
+								<span class="font-mono text-[11px] opacity-70">(.np/settings.json)</span>
+							{:else}
+								<span class="text-amber-500 font-medium">No folder open</span>
+							{/if}
+						{/if}
+					</div>
+				</div>
+
+				<div class="px-8 pt-6 pb-6">
+					{#if appState.prefs.activeScope === 'workspace' && !appState.workspace.rootOrigin}
+						<div class="p-6 rounded-xl border border-dashed border-border bg-card/40 text-center space-y-1.5 mb-6">
+							<p class="text-sm font-semibold text-foreground">No Workspace Open</p>
+							<p class="text-xs text-muted-foreground">Workspace settings are stored in <code class="font-mono text-primary bg-muted px-1.5 py-0.5 rounded">.np/settings.json</code> in the project root. Open a directory to configure workspace-specific settings.</p>
+						</div>
+					{/if}
+
+					{#if pluginNamespaceForCategory(activeCategory)}
+						{@const ns = pluginNamespaceForCategory(activeCategory) ?? ''}
+						{@const schema = appState.prefs.settings.getSchema(ns)}
+						{#if schema}
+							<GeneratedSettingsSection
+								{schema}
+								scope={appState.prefs.activeScope}
+							/>
+						{/if}
+					{:else if activeCategory === 'appearance'}
 						<div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
 							<header>
 								<h2 class="text-2xl font-bold tracking-tight">Appearance</h2>
@@ -398,6 +587,84 @@
 							</div>
 						</div>
 					</div>
+					{:else if activeCategory === 'plugins'}
+						<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+							<header>
+								<h2 class="text-2xl font-bold tracking-tight">Plugins</h2>
+								<p class="text-sm text-muted-foreground">Bundled plugins apply immediately — no restart needed. Turning a plugin off stops new operations, finishes in-flight writes, then unloads it. Dependents unload first and stay off until you turn them back on.</p>
+							</header>
+
+							{#if appState.pluginStartupError}
+								<div class="p-4 rounded-xl border border-destructive/50 bg-destructive/10 space-y-1">
+									<p class="text-sm font-semibold text-destructive">Plugin dependency check failed at startup</p>
+									<p class="text-xs text-muted-foreground whitespace-pre-wrap">{appState.pluginStartupError}</p>
+								</div>
+							{/if}
+
+							{#if pluginActionError}
+								<div class="p-4 rounded-xl border border-destructive/50 bg-destructive/10 space-y-1">
+									<p class="text-sm font-semibold text-destructive">Could not change plugin state</p>
+									<p class="text-xs text-muted-foreground whitespace-pre-wrap">{pluginActionError}</p>
+								</div>
+							{/if}
+
+							<div class="space-y-3">
+								{#each pluginRows as row (row.manifest.id)}
+									<div class="p-4 rounded-xl border bg-card/50 shadow-sm space-y-2">
+										<div class="flex items-center justify-between gap-3">
+											<div class="min-w-0">
+												<div class="flex items-center gap-2">
+													<span class="text-sm font-semibold text-foreground truncate">{row.manifest.name}</span>
+													<span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">v{row.manifest.version}</span>
+													<span class={cn(
+														"text-[10px] px-1.5 py-0.5 rounded font-semibold",
+														row.state === 'active' ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" :
+														row.state === 'deactivating' ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" :
+														row.state === 'error' ? "bg-destructive/15 text-destructive" :
+														"bg-muted text-muted-foreground"
+													)}>{pluginStateLabel(row.state)}</span>
+												</div>
+												{#if row.manifest.description}
+													<p class="text-xs text-muted-foreground mt-1">{row.manifest.description}</p>
+												{/if}
+											</div>
+											<Switch
+												bind:checked={() => row.enabled, (next) => handlePluginToggle(row, next)}
+												disabled={row.busy}
+											/>
+										</div>
+										{#if row.state === 'deactivating'}
+											<p class="text-xs text-amber-600 dark:text-amber-400">Finishing in-flight operations — new operations are blocked until unload completes.</p>
+										{/if}
+										{#if row.state === 'inactive' && row.reason}
+											<p class="text-xs text-muted-foreground">Off: {row.reason}</p>
+										{/if}
+										{#if row.state === 'active' && row.dependentNames.length > 0}
+											<p class="text-xs text-muted-foreground">Required by {row.dependentNames.join(', ')} — turning this off also turns {#if row.dependentNames.length > 1}these{:else}this{/if} off.</p>
+										{/if}
+										{#if pluginConfirmId === row.manifest.id}
+											<div class="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-2">
+												<p class="text-xs text-foreground">Turning off {row.manifest.name} will also turn off {row.dependentNames.join(', ')}, which will stay off until you re-enable {#if row.dependentNames.length > 1}them{:else}it{/if}. Continue?</p>
+												<div class="flex gap-2 justify-end">
+													<button
+														class="px-3 py-1 text-xs font-semibold rounded-md border bg-background hover:bg-muted transition-colors cursor-pointer"
+														onclick={() => pluginConfirmId = null}
+													>
+														Cancel
+													</button>
+													<button
+														class="px-3 py-1 text-xs font-semibold rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors cursor-pointer"
+														onclick={() => doTogglePlugin(row.manifest.id, false)}
+													>
+														Turn off
+													</button>
+												</div>
+											</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
 					{:else if activeCategory === 'keymaps'}
 						<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col h-[520px]">
 							<header class="flex justify-between items-center">

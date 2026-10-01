@@ -23,7 +23,6 @@ describe('Repo-wide Manifest Import Boundary Invariants', () => {
 		const packagesDir = join(import.meta.dir, '..', 'packages');
 		const manifestFiles = findManifestFiles(packagesDir);
 
-		// Ensure we found at least the bundled hello plugin manifest
 		expect(manifestFiles.length).toBeGreaterThanOrEqual(1);
 
 		for (const file of manifestFiles) {

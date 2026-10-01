@@ -3,6 +3,7 @@
 	import { useAppState } from '@np/core';
 	import { ArrowLeft } from "phosphor-svelte";
 	import Icon from './Icon.svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	const appState = useAppState();
 
@@ -29,6 +30,24 @@
 			e.preventDefault();
 			appState.commandPalette.goBack();
 		}
+	}
+
+	// Palette is a view over the shared command registry (ADR 0015):
+	// categories derive from registered visible commands so plugin
+	// contributions (e.g. Git's Source Control) appear without hardcoding.
+	let paletteCategories = $derived.by(() => {
+		const cats = new SvelteSet<string>();
+		for (const c of appState.commands.getAll()) {
+			if (c.isVisible && !c.isVisible()) continue;
+			cats.add(c.category);
+		}
+		return [...cats].sort();
+	});
+
+	function visibleCommandsFor(category: string) {
+		return appState.commands
+			.getByCategory(category)
+			.filter((c) => !c.isVisible || c.isVisible());
 	}
 </script>
 
@@ -89,9 +108,9 @@
 				</Command.Item>
 			{/each}
 		{:else}
-			{#each ["File", "Edit", "Format", "View", "Export"] as category}
+			{#each paletteCategories as category (category)}
 				<Command.Group heading={category}>
-					{#each appState.commands.getByCategory(category) as command}
+					{#each visibleCommandsFor(category) as command (command.id)}
 						<Command.Item
 							onSelect={() => executeCommand(command.id)}
 							disabled={command.isEnabled && !command.isEnabled()}

@@ -44,7 +44,7 @@ import { expect } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { Text } from '../../packages/core/node_modules/@codemirror/state';
 import { Chunk } from '../../packages/core/node_modules/@codemirror/merge';
-import { applyHunkAction, type HunkRange } from '../../packages/core/src/commands.svelte';
+import { applyHunkAction, type HunkRange } from '../../packages/core/src/plugins/git/commands';
 import { Repository } from '../../packages/core/src/project/repository.svelte';
 import type { AppState } from '../../packages/core/src/state.svelte';
 import type { FileOrigin, GitChange, VCSAdapter } from '@np/core';
@@ -125,13 +125,14 @@ function combinedChange(changes: GitChange[], filepath: string): GitChange {
 /** A minimal Repository + AppState so the real Hunk Action write path can run. */
 function hunkContext(r: TestRepo, adapter: VCSAdapter): { repository: Repository; appState: AppState } {
 	const repository = new Repository({ scheme: 'file', path: r.path, name: 'repo' } as FileOrigin, () => adapter);
+	// Hunk actions take the Git plugin's command context (#202).
 	const appState = {
-		workspace: { repository },
-		dialogService: {
-			alert: async (msg: string) => {
-				throw new Error(`Unexpected alert dialog: ${msg}`);
-			}
-		}
+		getWorkspace: () => ({ repository }),
+		alert: async (msg: string) => {
+			throw new Error(`Unexpected alert dialog: ${msg}`);
+		},
+		confirm: async () => false,
+		getDiffNavigator: () => undefined
 	} as unknown as AppState;
 	return { repository, appState };
 }

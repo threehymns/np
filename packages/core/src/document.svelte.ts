@@ -1,3 +1,4 @@
+import { DirectEditorViewAccessError, RawTransactionDispatchError } from "./plugins/errors";
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { isNotFoundError } from './utils';
 import { LanguageSupport, allLanguages } from './editor/language.svelte';
@@ -7,6 +8,7 @@ export type PermissionState = 'granted' | 'prompt' | 'denied';
 export class DocumentSession {
 	id = crypto.randomUUID();
 	private _content = $state('');
+	private _revision = $state(0);
 	origin = $state.raw<FileOrigin | null>(null);
 	untitledTitle = $state('Untitled');
 	permissionState = $state<PermissionState>('granted');
@@ -39,6 +41,30 @@ export class DocumentSession {
 		}
 	}
 
+	get revision(): number {
+		return this._revision;
+	}
+
+	incrementRevision(): void {
+		this._revision++;
+	}
+
+	get view(): never {
+		throw new DirectEditorViewAccessError("doc.view");
+	}
+
+	get editorView(): never {
+		throw new DirectEditorViewAccessError("doc.editorView");
+	}
+
+	dispatch(): never {
+		throw new RawTransactionDispatchError("Direct dispatch on DocumentSession is rejected. Use host document-edit operations.");
+	}
+
+	dispatchTransaction(): never {
+		throw new RawTransactionDispatchError("Direct dispatchTransaction on DocumentSession is rejected. Use host document-edit operations.");
+	}
+
 	get content() {
 		return this._content;
 	}
@@ -53,6 +79,7 @@ export class DocumentSession {
 	set content(value: string) {
 		if (this._content === value) return;
 		this._content = value;
+		this._revision++;
 	}
 
 	get fileName() {
@@ -120,6 +147,7 @@ export class DocumentSession {
 			const keepEdits = this.isModified;
 			const current = this._content;
 			this.savedBaseline = fileContent;
+			if (!keepEdits && this._content !== fileContent) this._revision++;
 			this._content = keepEdits ? current : fileContent;
 			this.deletedOnDisk = false;
 			this.isLoaded = true;

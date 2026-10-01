@@ -1,3 +1,11 @@
+import {
+	SettingsManager,
+	FileWorkspaceSettingsStorage,
+	type ResolvedSetting,
+	type SettingDiagnostic,
+	type SettingScope
+} from './plugins/settings';
+
 export type Theme = 
 	| 'default' 
 	| 'gruvbox-dark-hard' | 'gruvbox-dark-medium' | 'gruvbox-dark-soft'
@@ -13,11 +21,11 @@ export interface PreferenceStorage {
 
 export class LocalStorageAdapter implements PreferenceStorage {
 	getItem(key: string): string | null {
-		if (typeof window === 'undefined') return null;
+		if (typeof window === 'undefined' || !window.localStorage) return null;
 		return window.localStorage.getItem(key);
 	}
 	setItem(key: string, value: string): void {
-		if (typeof window === 'undefined') return;
+		if (typeof window === 'undefined' || !window.localStorage) return;
 		window.localStorage.setItem(key, value);
 	}
 }
@@ -27,6 +35,8 @@ const DEFAULTS = {
 	statusBar: true,
 	vimMode: false,
 	vimSyncClipboard: true,
+	tabSize: 2,
+	lineNumbers: true,
 	zoom: 100,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,
@@ -37,8 +47,18 @@ const DEFAULTS = {
 	productIconThemeId: 'phosphor' as string,
 };
 
+/** Separate storage key for plugin enablement (app-scoped per ADR 0009: never workspace-overridden). */
+const PLUGIN_ENABLEMENT_KEY = 'np-plugin-enablement-v1';
+
 export class Preferences {
+	activeScope = $state<SettingScope>('user');
 	private _data = $state({ ...DEFAULTS });
+	/**
+	 * Reactive version bumped by the SettingsManager on every mutation
+	 * (set, unset, load*, validateAll). UI that renders resolved values or
+	 * diagnostics reads this so it refreshes without remounting.
+	 */
+	settingsVersion = $state(0);
 	onIconThemeChange?: (type: 'file' | 'product', id: string) => void;
 
 	private storage: PreferenceStorage;
@@ -46,96 +66,272 @@ export class Preferences {
 	private isInitialized = false;
 	private isRestoring = false;
 
+	/** Underlying settings manager providing namespaces, schema validation, and diagnostics */
+	readonly settings: SettingsManager;
+
 	constructor(storage: PreferenceStorage = new LocalStorageAdapter()) {
 		this.storage = storage;
+		this.settings = new SettingsManager({
+			storage,
+			storageKey: this.storageKey,
+			onChange: () => {
+				this.settingsVersion++;
+			}
+		});
+
 		this.reload();
 		this.isInitialized = true;
 	}
 
-	get wordWrap() { return this._data.wordWrap; }
+	get wordWrap(): boolean { return this._data.wordWrap; }
 	set wordWrap(val: boolean) {
 		if (this._data.wordWrap === val) return;
 		this._data.wordWrap = val;
-		this.save();
+		this.syncToSettingsAndSave('editor', 'word_wrap', val);
 	}
 
-	get statusBar() { return this._data.statusBar; }
+	get statusBar(): boolean { return this._data.statusBar; }
 	set statusBar(val: boolean) {
 		if (this._data.statusBar === val) return;
 		this._data.statusBar = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'status_bar', val);
 	}
 
-	get vimMode() { return this._data.vimMode; }
+	get vimMode(): boolean { return this._data.vimMode; }
 	set vimMode(val: boolean) {
 		if (this._data.vimMode === val) return;
 		this._data.vimMode = val;
-		this.save();
+		this.syncToSettingsAndSave('editor', 'vim_mode', val);
 	}
 
-	get vimSyncClipboard() { return this._data.vimSyncClipboard; }
+	get vimSyncClipboard(): boolean { return this._data.vimSyncClipboard; }
 	set vimSyncClipboard(val: boolean) {
 		if (this._data.vimSyncClipboard === val) return;
 		this._data.vimSyncClipboard = val;
-		this.save();
+		this.syncToSettingsAndSave('editor', 'vim_sync_clipboard', val);
 	}
 
-	get zoom() { return this._data.zoom; }
+	get tabSize(): number { return this._data.tabSize; }
+	set tabSize(val: number) {
+		if (this._data.tabSize === val) return;
+		this._data.tabSize = val;
+		this.syncToSettingsAndSave('editor', 'tab_size', val);
+	}
+
+	get lineNumbers(): boolean { return this._data.lineNumbers; }
+	set lineNumbers(val: boolean) {
+		if (this._data.lineNumbers === val) return;
+		this._data.lineNumbers = val;
+		this.syncToSettingsAndSave('editor', 'line_numbers', val);
+	}
+
+	get zoom(): number { return this._data.zoom; }
 	set zoom(val: number) {
 		if (this._data.zoom === val) return;
 		this._data.zoom = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'zoom', val);
 	}
 
-	get theme() { return this._data.theme; }
+	get theme(): Theme { return this._data.theme; }
 	set theme(val: Theme) {
 		if (this._data.theme === val) return;
 		this._data.theme = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'theme', val);
 	}
 
-	get appearanceMode() { return this._data.appearanceMode; }
+	get appearanceMode(): AppearanceMode { return this._data.appearanceMode; }
 	set appearanceMode(val: AppearanceMode) {
 		if (this._data.appearanceMode === val) return;
 		this._data.appearanceMode = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'appearance_mode', val);
 	}
 
-	get accentColor() { return this._data.accentColor; }
+	get accentColor(): string { return this._data.accentColor; }
 	set accentColor(val: string) {
 		if (this._data.accentColor === val) return;
 		this._data.accentColor = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'accent_color', val);
 	}
 
-	get sidebarVisible() { return this._data.sidebarVisible; }
+	get sidebarVisible(): boolean { return this._data.sidebarVisible; }
 	set sidebarVisible(val: boolean) {
 		if (this._data.sidebarVisible === val) return;
 		this._data.sidebarVisible = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'sidebar_visible', val);
 	}
 
-	get sidebarWidth() { return this._data.sidebarWidth; }
+	get sidebarWidth(): number { return this._data.sidebarWidth; }
 	set sidebarWidth(val: number) {
 		if (this._data.sidebarWidth === val) return;
 		this._data.sidebarWidth = val;
-		this.save();
+		this.syncToSettingsAndSave('ui', 'sidebar_width', val);
 	}
 
-	get fileIconThemeId() { return this._data.fileIconThemeId; }
+	get fileIconThemeId(): string { return this._data.fileIconThemeId; }
 	set fileIconThemeId(val: string) {
 		if (this._data.fileIconThemeId === val) return;
 		this._data.fileIconThemeId = val;
 		this.onIconThemeChange?.('file', val);
-		this.save();
+		this.syncToSettingsAndSave('ui', 'file_icon_theme_id', val);
 	}
 
-	get productIconThemeId() { return this._data.productIconThemeId; }
+	get productIconThemeId(): string { return this._data.productIconThemeId; }
 	set productIconThemeId(val: string) {
 		if (this._data.productIconThemeId === val) return;
 		this._data.productIconThemeId = val;
 		this.onIconThemeChange?.('product', val);
-		this.save();
+		this.syncToSettingsAndSave('ui', 'product_icon_theme_id', val);
+	}
+
+	get diagnostics(): SettingDiagnostic[] {
+		return this.settings.getDiagnostics();
+	}
+
+	getDiagnostics(): SettingDiagnostic[] {
+		return this.settings.getDiagnostics();
+	}
+
+	resolve<T = any>(namespace: string, key: string): ResolvedSetting<T> {
+		return this.settings.resolve<T>(namespace, key);
+	}
+
+	get<T = any>(namespace: string, key: string, scope?: SettingScope): T {
+		return this.settings.get<T>(namespace, key, scope);
+	}
+
+	/**
+	 * Effective plugin enablement (ADR 0009: app-scoped configuration).
+	 * Returns the explicitly persisted toggle when the user ever changed
+	 * it, otherwise the manifest's `defaultEnabled`.
+	 */
+	isPluginEnabled(pluginId: string, defaultEnabled = false): boolean {
+		try {
+			const raw = this.storage.getItem(PLUGIN_ENABLEMENT_KEY);
+			if (!raw) return defaultEnabled;
+			const parsed: unknown = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>)[pluginId] === 'boolean') {
+				return (parsed as Record<string, boolean>)[pluginId];
+			}
+			return defaultEnabled;
+		} catch {
+			return defaultEnabled;
+		}
+	}
+
+	/**
+	 * Persists an explicit plugin enablement choice under its own storage
+	 * key, leaving every other stored namespace untouched (including
+	 * disabled-plugin settings, ADR 0014).
+	 */
+	setPluginEnabled(pluginId: string, enabled: boolean): void {
+		let map: Record<string, boolean> = {};
+		try {
+			const raw = this.storage.getItem(PLUGIN_ENABLEMENT_KEY);
+			if (raw) {
+				const parsed: unknown = JSON.parse(raw);
+				if (parsed && typeof parsed === 'object') map = { ...(parsed as Record<string, boolean>) };
+			}
+		} catch {
+			map = {};
+		}
+		map[pluginId] = enabled;
+		try {
+			this.storage.setItem(PLUGIN_ENABLEMENT_KEY, JSON.stringify(map));
+		} catch (e) {
+			console.error('Failed to save plugin enablement', e);
+		}
+	}
+
+	set<T = any>(namespace: string, key: string, value: T, scope: SettingScope = 'user'): void {
+		if (scope === 'workspace') {
+			this.settings.set(namespace, key, value, 'workspace');
+			this.refreshEffectiveData();
+			return;
+		}
+
+		// Persist once through SettingsManager.set (comment-preserving JSONC
+		// edit, single storage write). The document is never rewritten
+		// wholesale afterwards, which would lose comments and materialize
+		// inherited values.
+		this.settings.set(namespace, key, value, 'user');
+		this.refreshEffectiveData();
+	}
+
+	unset(namespace: string, key: string, scope: SettingScope = 'workspace'): void {
+		this.settings.unset(namespace, key, scope);
+		this.refreshEffectiveData();
+	}
+
+	async attachWorkspace(storage: any, rootOrigin: any): Promise<void> {
+		const wsStorage = new FileWorkspaceSettingsStorage(storage, rootOrigin);
+		await this.settings.attachWorkspaceStorage(wsStorage);
+		this.refreshEffectiveData();
+	}
+
+	clearWorkspace(): void {
+		this.settings.clearWorkspace();
+		this.refreshEffectiveData();
+	}
+
+	loadWorkspaceFromText(rawText: string | null | undefined): void {
+		this.settings.loadWorkspaceFromText(rawText);
+		this.refreshEffectiveData();
+	}
+
+	getWorkspaceDocument(): Record<string, any> {
+		return this.settings.getWorkspaceDocument();
+	}
+
+	getWorkspaceText(): string {
+		return this.settings.getWorkspaceText();
+	}
+
+	hasWorkspaceOverride(namespace: string, key: string): boolean {
+		return this.settings.hasOverride(namespace, key, 'workspace');
+	}
+
+	private refreshEffectiveData(): void {
+		try {
+			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
+			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
+			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
+			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
+			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+
+			this._data.theme = this.settings.resolve('ui', 'theme').value;
+			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
+			this._data.accentColor = this.settings.resolve('ui', 'accent_color').value;
+			this._data.zoom = this.settings.resolve('ui', 'zoom').value;
+			this._data.statusBar = this.settings.resolve('ui', 'status_bar').value;
+			this._data.sidebarVisible = this.settings.resolve('ui', 'sidebar_visible').value;
+			this._data.sidebarWidth = this.settings.resolve('ui', 'sidebar_width').value;
+
+			const newFileIconTheme = this.settings.resolve('ui', 'file_icon_theme_id').value;
+			if (newFileIconTheme !== this._data.fileIconThemeId) {
+				this._data.fileIconThemeId = newFileIconTheme;
+				this.onIconThemeChange?.('file', newFileIconTheme);
+			}
+
+			const newProductIconTheme = this.settings.resolve('ui', 'product_icon_theme_id').value;
+			if (newProductIconTheme !== this._data.productIconThemeId) {
+				this._data.productIconThemeId = newProductIconTheme;
+				this.onIconThemeChange?.('product', newProductIconTheme);
+			}
+		} catch (e) {
+			console.error('Failed to refresh effective preferences data:', e);
+		}
+	}
+
+	private syncToSettingsAndSave(namespace: string, key: string, value: any): void {
+		if (!this.isInitialized || this.isRestoring) return;
+
+		try {
+			// Single comment-preserving write through SettingsManager; it owns the
+			// stored document, so there is no second copy to keep in sync here.
+			this.settings.set(namespace, key, value, this.activeScope);
+		} finally {
+			this.refreshEffectiveData();
+		}
 	}
 
 	private resetToDefaults() {
@@ -152,21 +348,37 @@ export class Preferences {
 
 	private applyData(raw: string | null) {
 		this.resetToDefaults();
+		this.settings.loadFromText(raw);
+
 		if (!raw) return;
+
 		try {
-			const prefs = JSON.parse(raw);
-			for (const key of Object.keys(DEFAULTS)) {
-				if (prefs[key] !== undefined && key !== 'fileIconThemeId' && key !== 'productIconThemeId') {
-					(this._data as any)[key] = prefs[key];
-				}
+			// Resolve editor settings
+			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
+			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
+			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
+			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
+			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+
+			// Resolve UI settings
+			this._data.theme = this.settings.resolve('ui', 'theme').value;
+			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
+			this._data.accentColor = this.settings.resolve('ui', 'accent_color').value;
+			this._data.zoom = this.settings.resolve('ui', 'zoom').value;
+			this._data.statusBar = this.settings.resolve('ui', 'status_bar').value;
+			this._data.sidebarVisible = this.settings.resolve('ui', 'sidebar_visible').value;
+			this._data.sidebarWidth = this.settings.resolve('ui', 'sidebar_width').value;
+
+			const newFileIconTheme = this.settings.resolve('ui', 'file_icon_theme_id').value;
+			if (newFileIconTheme !== this._data.fileIconThemeId) {
+				this._data.fileIconThemeId = newFileIconTheme;
+				this.onIconThemeChange?.('file', newFileIconTheme);
 			}
-			if (prefs.fileIconThemeId !== undefined && prefs.fileIconThemeId !== this._data.fileIconThemeId) {
-				this._data.fileIconThemeId = prefs.fileIconThemeId;
-				this.onIconThemeChange?.('file', prefs.fileIconThemeId);
-			}
-			if (prefs.productIconThemeId !== undefined && prefs.productIconThemeId !== this._data.productIconThemeId) {
-				this._data.productIconThemeId = prefs.productIconThemeId;
-				this.onIconThemeChange?.('product', prefs.productIconThemeId);
+
+			const newProductIconTheme = this.settings.resolve('ui', 'product_icon_theme_id').value;
+			if (newProductIconTheme !== this._data.productIconThemeId) {
+				this._data.productIconThemeId = newProductIconTheme;
+				this.onIconThemeChange?.('product', newProductIconTheme);
 			}
 		} catch (e) {
 			console.error('Failed to load preferences', e);
@@ -180,15 +392,6 @@ export class Preferences {
 			this.applyData(content);
 		} finally {
 			this.isRestoring = false;
-		}
-	}
-
-	private save() {
-		if (!this.isInitialized || this.isRestoring) return;
-		try {
-			this.storage.setItem(this.storageKey, JSON.stringify(this._data));
-		} catch (e) {
-			console.error('Failed to save preferences', e);
 		}
 	}
 

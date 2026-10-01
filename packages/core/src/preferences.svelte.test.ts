@@ -118,7 +118,10 @@ describe("Preferences lifecycle and hardening", () => {
 		prefs.wordWrap = false;
 		expect(storage.setItemCalls.length).toBe(1);
 		let savedData = JSON.parse(storage.setItemCalls[0][1]);
-		expect(savedData.wordWrap).toBe(false);
+		expect(savedData.editor?.word_wrap).toBe(false);
+		// Flat aliases are not materialized; unmodified keys stay absent.
+		expect(savedData.wordWrap).toBeUndefined();
+		expect(savedData.ui).toBeUndefined();
 
 		// Setting to false again should NOT trigger storage write:
 		prefs.wordWrap = false;
@@ -132,7 +135,8 @@ describe("Preferences lifecycle and hardening", () => {
 		prefs.zoom = 110;
 		expect(storage.setItemCalls.length).toBe(2);
 		savedData = JSON.parse(storage.setItemCalls[1][1]);
-		expect(savedData.zoom).toBe(110);
+		expect(savedData.ui?.zoom).toBe(110);
+		expect(savedData.zoom).toBeUndefined();
 
 		// Setting zoom to 110 again -> no write:
 		prefs.zoom = 110;
@@ -281,5 +285,50 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(prefs.fileIconThemeId).toBe("phosphor");
 		expect(events).toEqual([{ type: "file", id: "phosphor" }]);
 		expect(storage.setItemCalls.length).toBe(0);
+	});
+
+	it("bumps settingsVersion when the underlying settings manager mutates", () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+
+		const before = prefs.settingsVersion;
+		prefs.settings.set("editor", "tab_size", 8, "user");
+		expect(prefs.settingsVersion).toBeGreaterThan(before);
+
+		const afterSet = prefs.settingsVersion;
+		prefs.settings.unset("editor", "tab_size", "user");
+		expect(prefs.settingsVersion).toBeGreaterThan(afterSet);
+	});
+
+	it("writes using activeScope and refreshes effective data in finally block", async () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+		const workspaceStorage = {
+			readFile: mock(async () => null),
+			saveFile: mock(async () => {})
+		};
+		await prefs.attachWorkspace(workspaceStorage, {
+			scheme: "file",
+			path: "/workspace",
+			name: "workspace"
+		});
+
+		// Switch to workspace scope
+		prefs.activeScope = "workspace";
+
+		// Set tabSize while activeScope is workspace
+		prefs.tabSize = 8;
+		expect(prefs.tabSize).toBe(8);
+		expect(prefs.hasWorkspaceOverride("editor", "tab_size")).toBe(true);
+		// User storage must not have been touched
+		expect(storage.setItemCalls.length).toBe(0);
+
+		// An invalid value causes SettingsManager.set to throw
+		expect(() => {
+			(prefs as any).appearanceMode = "invalid-mode";
+		}).toThrow();
+
+		// finally block refreshed effective data so appearanceMode is reverted to system
+		expect(prefs.appearanceMode).toBe("system");
 	});
 });

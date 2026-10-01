@@ -10,8 +10,16 @@ import { CommandPaletteState } from './components/commandPalette.svelte';
 import { HeadlessIconRegistry } from './editor/icons/headless-registry.svelte';
 import type { IconRegistryInterface } from './editor/icons-types';
 import { getContext } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { type SessionPersistence, MemorySessionPersistence } from './persistence';
-import { PluginHost, helloRegistration, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginHost, type CommandRegistryLike, type PluginPlatform } from './plugins';
+import { PluginDependencyDisabledError, type DisabledPluginDependency } from './plugins/errors';
+import {
+	DIALOGS_SERVICE_KEY,
+	DIFF_NAVIGATOR_SERVICE_KEY,
+	PLUGIN_UI_LOADER_SERVICE_KEY,
+	type PluginUILoader
+} from './plugins/services';
 
 export interface DialogService {
 	alert?(message: string): Promise<void> | void;
@@ -71,8 +79,8 @@ export interface ExportService {
 
 /**
  * Hunk-navigation bridge published by the mounted diff view (issue #80).
- * Core `git.nextHunk` / `git.prevHunk` commands call through this slot so
- * they mirror the DiffViewer's button handlers including wrap behavior.
+ * Feature hunk commands call through this slot so they mirror the
+ * DiffViewer's button handlers including wrap behavior.
  */
 export interface DiffHunkNavigator {
 	nextHunk(): void;
@@ -110,11 +118,35 @@ export class AppState {
 		return this.plugins.commands;
 	}
 	settingsOpen = $state(false);
+	/**
+	 * Actionable startup failure from the plugin dependency check
+	 * (cycle / missing interface / version mismatch, ADR 0017), surfaced
+	 * in the Plugins settings page instead of failing silently.
+	 */
+	pluginStartupError = $state<string | null>(null);
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
 	
-	activeSidebarTab = $state<'explorer' | 'git'>('explorer');
+	private _activeSidebarTab = $state<string>('explorer');
+
+	get activeSidebarTab(): string {
+		if (
+			this._activeSidebarTab !== 'explorer' &&
+			!this.plugins.getSidebarPanel(this._activeSidebarTab)
+		) {
+			return 'explorer';
+		}
+		return this._activeSidebarTab;
+	}
+
+	set activeSidebarTab(val: string) {
+		this._activeSidebarTab = val;
+	}
+
+	get ui() {
+		return this.plugins.ui;
+	}
 	activeEditorView = $state<any>(undefined);
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.
@@ -139,14 +171,106 @@ export class AppState {
 		};
 
 		this.plugins = options.pluginHost ?? new PluginHost({ platform: options.platform });
-		this.plugins.register(helloRegistration);
+		this.plugins.attachKeymapRegistryInternal(this.keymaps);
+		this.plugins.attachIconRegistryInternal(this.icons);
+		// The document-edit operation addresses a document by the id a plugin
+		// read from a tab, so the host resolves ids against the open documents
+		// the workspace owns (ADR 0016).
+		this.plugins.attachDocumentResolverInternal(
+			(docId) => this.workspace.documents.find((doc) => doc.id === docId)
+		);
+		// Bundled feature plugins (e.g. version control) register through the
+		// generic UI bridge (`@np/ui` plugins entry) so this file stays free
+		// of feature names.
+		// Plugin-contributed settings schemas flow into the generated
+		// settings UI (#199) through the shared host registry.
+		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
-		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence);
+		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		// Generic collaborator services for feature plugins (#202, ADR 0008):
+		// dialog capability and the mounted diff view's hunk navigator. The
+		// workspace publishes itself. Keys are generic; values are consumed
+		// by each plugin with its own types.
+		if (this.dialogService) {
+			this.plugins.provideService(DIALOGS_SERVICE_KEY, this.dialogService);
+		}
+		this.plugins.provideService(DIFF_NAVIGATOR_SERVICE_KEY, {
+			getCurrentNavigator: () => this.activeDiffNavigator ?? undefined
+		});
+		this.workspace.onRootOriginChange = async (origin) => {
+			if (origin && this.workspace.hasRootPermission) {
+				await this.prefs.attachWorkspace(this.storage, origin);
+			} else {
+				this.prefs.clearWorkspace();
+			}
+		};
 		registerCoreCommands(this);
 	}
 
+	private async loadPluginUI(pluginId: string): Promise<void> {
+		const loader = this.plugins.getService<PluginUILoader>(PLUGIN_UI_LOADER_SERVICE_KEY);
+		if (loader) await loader.load(pluginId);
+	}
+
+	/**
+	 * Dependencies of `id` (transitively, as activation would run them) whose
+	 * effective enablement is off. Activation activates those dependencies, so
+	 * an off one would be switched back on without the user asking (ADR 0017).
+	 */
+	private offPluginDependencies(id: string): DisabledPluginDependency[] {
+		return this.plugins
+			.computeActivationOrder([id])
+			.filter((pluginId) => pluginId !== id && !this.isPluginEnabled(pluginId))
+			.map((pluginId) => ({
+				id: pluginId,
+				name: this.plugins.getManifest(pluginId)?.name ?? pluginId
+			}));
+	}
+
+	/**
+	 * Activation never flips an off dependency on: it refuses with an
+	 * explanation naming the dependencies, leaving the toggle untouched.
+	 */
+	private assertPluginDependenciesEnabled(id: string): void {
+		const off = this.offPluginDependencies(id);
+		if (off.length > 0) throw new PluginDependencyDisabledError(id, off);
+	}
+
 	async init() {
+		// Cycle/interface check first (ADR 0017): a broken dependency graph
+		// surfaces as one actionable error in the Plugins settings page
+		// instead of partial per-plugin failures.
+		try {
+			this.plugins.computeActivationOrder();
+		} catch (e) {
+			this.pluginStartupError = (e as Error).message;
+			console.error('[AppState] Plugin dependency check failed:', e);
+		}
+
+		// Activate enabled plugins before session restore so per-workspace
+		// lifecycles are plugin-owned from the first open. Generic: no
+		// feature names here; persisted toggles win, otherwise manifests
+		// declare `defaultEnabled`. Guarded for custom hosts that never
+		// registered them.
+		if (!this.pluginStartupError) {
+			try {
+				for (const manifest of this.plugins.getManifests()) {
+					if (this.isPluginEnabled(manifest.id) && !this.plugins.isPluginActive(manifest.id)) {
+						try {
+							this.assertPluginDependenciesEnabled(manifest.id);
+							await this.loadPluginUI(manifest.id);
+							await this.plugins.activate(manifest.id);
+						} catch (e) {
+							console.error(`[AppState] Failed to activate plugin "${manifest.id}":`, e);
+						}
+					}
+				}
+			} catch (e) {
+				console.error('[AppState] Failed to activate default plugins:', e);
+			}
+		}
+
 		try {
 			await this.workspace.restoreSession();
 		} catch (e) {
@@ -157,6 +281,45 @@ export class AppState {
 			this.icons.initialize().catch((e) => {
 				console.error('[AppState] Failed to initialize icons:', e);
 			});
+		}
+	}
+
+	/**
+	 * Effective enablement for a plugin: the persisted user toggle wins,
+	 * otherwise the manifest's `defaultEnabled` (ADR 0009: app-scoped).
+	 */
+	isPluginEnabled(id: string): boolean {
+		const manifest = this.plugins.getManifest(id);
+		return this.prefs.isPluginEnabled(id, manifest?.defaultEnabled ?? false);
+	}
+
+	/**
+	 * Live enable/disable without restart (ADR 0008): activates or
+	 * deactivates through the host, then persists the choice. On disable,
+	 * cascade-deactivated dependents are also persisted as off so they
+	 * never auto re-enable (ADR 0017).
+	 */
+	async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+		if (enabled) {
+			this.assertPluginDependenciesEnabled(id);
+			await this.loadPluginUI(id);
+			await this.plugins.activate(id);
+			this.prefs.setPluginEnabled(id, true);
+			return;
+		}
+		const activeBefore = new SvelteSet(
+			this.plugins.getManifests().map((m) => m.id).filter((pid) => this.plugins.isPluginActive(pid))
+		);
+		const manifest = this.plugins.getManifest(id);
+		await this.plugins.deactivate(
+			id,
+			manifest ? `${manifest.name} disabled in settings.` : 'Disabled in settings.'
+		);
+		this.prefs.setPluginEnabled(id, false);
+		for (const pid of activeBefore) {
+			if (pid !== id && !this.plugins.isPluginActive(pid)) {
+				this.prefs.setPluginEnabled(pid, false);
+			}
 		}
 	}
 
@@ -171,15 +334,45 @@ export class AppState {
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
 	async saveFile() {
-		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument);
+		if (this.activeDocument) {
+			const ok = await this.workspace.saveDocument(this.activeDocument);
+			if (!ok && this.workspace.lastSaveCancellationReason) {
+				if (this.dialogService?.alert) {
+					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+				} else if (typeof window !== 'undefined' && window.alert) {
+					window.alert(this.workspace.lastSaveCancellationReason);
+				}
+			}
+			return ok;
+		}
 	}
 	async saveFileAs() {
-		if (this.activeDocument) await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+		if (this.activeDocument) {
+			const ok = await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+			if (!ok && this.workspace.lastSaveCancellationReason) {
+				if (this.dialogService?.alert) {
+					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+				} else if (typeof window !== 'undefined' && window.alert) {
+					window.alert(this.workspace.lastSaveCancellationReason);
+				}
+			}
+			return ok;
+		}
 	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string) { this.workspace.closeTab(id); }
-	finalizeClose(id: string, saveFirst = false) { this.workspace.finalizeClose(id, saveFirst); }
+	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst);
+		if (!closed && this.workspace.lastSaveCancellationReason) {
+			if (this.dialogService?.alert) {
+				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
+			} else if (typeof window !== 'undefined' && window.alert) {
+				window.alert(this.workspace.lastSaveCancellationReason);
+			}
+		}
+		return closed;
+	}
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
 }
 

@@ -6,7 +6,9 @@ import { MemorySessionPersistence } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
 import { DocumentSession } from "./document.svelte";
-import { CommandRegistry, registerCoreCommands } from "./commands.svelte";
+import { gitRegistration } from "./plugins/git/registration";
+import { DIALOGS_SERVICE_KEY } from "./plugins/services";
+import type { PluginHost } from "./plugins/host.svelte";
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -17,12 +19,34 @@ beforeAll(async () => {
 
 let makeWorkspace: (
 	detected: boolean
-) => Promise<{ ws: Workspace }>;
+) => Promise<{ ws: Workspace; host: PluginHost }>;
+let withGitPlugin: (
+	storage: ReturnType<typeof createMockStorage>,
+	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
+	persistence: MemorySessionPersistence
+) => Promise<{ ws: Workspace; host: PluginHost }>;
 let WorkspaceClass: typeof import("./workspace.svelte").Workspace;
+let PluginHostClass: typeof import("./plugins/host.svelte").PluginHost;
 
 beforeAll(async () => {
 	const mod = await import("./workspace.svelte");
 	WorkspaceClass = mod.Workspace;
+	const hostMod = await import("./plugins/host.svelte");
+	PluginHostClass = hostMod.PluginHost;
+
+	// Repository lifecycle is owned by the Git Core Plugin (#202): folder
+	// open only detects/refreshes with the plugin registered and enabled.
+	withGitPlugin = async (storage, vcsFactory, persistence) => {
+		const host = new PluginHostClass();
+		host.register(gitRegistration);
+		host.provideService(DIALOGS_SERVICE_KEY, {
+			alert: mock(async () => {}),
+			confirm: mock(async () => true)
+		});
+		const ws = new mod.Workspace(storage, vcsFactory, persistence, host);
+		await host.activate('git');
+		return { ws, host };
+	};
 
 	makeWorkspace = async (detected: boolean) => {
 		const storage = createMockStorage({
@@ -38,8 +62,7 @@ beforeAll(async () => {
 			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
 			switchBranch: mock(async () => ({ status: "switched" as const }))
 		});
-		const ws = new mod.Workspace(storage, vcsFactory, new MemorySessionPersistence());
-		return { ws };
+		return withGitPlugin(storage, vcsFactory, new MemorySessionPersistence());
 	};
 });
 
@@ -61,6 +84,25 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		await ws.openDirectory();
 		expect(ws.repository).not.toBeNull();
 	});
+	it("leaves workspace.repository null without the Git plugin even when detection would succeed", async () => {
+		const storage = createMockStorage({
+			pickDirectory: async () => rootOrigin,
+			verifyPermission: async () => true
+		});
+		const vcsFactory = (): VCSAdapter => ({
+			detect: mock(async () => true),
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: mock(async () => ({ status: "switched" as const }))
+		});
+		// No plugin host wiring: the core performs no repository probe on its own (#202).
+		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		await ws.openDirectory();
+		expect(ws.repository).toBeNull();
+	});
 	it("keeps repository null and scans project tree in requestRootPermission when the folder is not a git repository", async () => {
 		const storage = createMockStorage({
 			verifyPermission: async () => true
@@ -74,7 +116,7 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
 			switchBranch: mock(async () => ({ status: "switched" as const }))
 		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		const { ws } = await withGitPlugin(storage, vcsFactory, new MemorySessionPersistence());
 		ws.rootOrigin = rootOrigin;
 		let scannedWith: FileOrigin | null = null;
 		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
@@ -108,7 +150,7 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		const persistence = new MemorySessionPersistence();
 		await persistence.saveRootFolder(rootOrigin);
 
-		const ws = new WorkspaceClass(storage, vcsFactory, persistence);
+		const { ws } = await withGitPlugin(storage, vcsFactory, persistence);
 		let scannedWith: FileOrigin | null = null;
 		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
 			scannedWith = origin;
@@ -119,359 +161,6 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 
 		expect(ws.repository).toBeNull();
 		expect(scannedWith).toEqual(rootOrigin);
-	});
-});
-
-describe("Workspace.initializeRepository action (ticket #118)", () => {
-	it("refuses cleanly and returns false when no rootOrigin is open", async () => {
-		let factoryCalled = false;
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => {
-			factoryCalled = true;
-			return {
-				detect: mock(async () => false),
-				getCurrentBranch: async () => "main",
-				getBranches: async () => ["main"],
-				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-				switchBranch: mock(async () => ({ status: "switched" as const }))
-			};
-		};
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = null;
-		ws.hasRootPermission = true;
-
-		const result = await ws.initializeRepository();
-		expect(result).toBe(false);
-		expect(ws.repository).toBeNull();
-		expect(factoryCalled).toBe(false);
-	});
-
-	it("refuses cleanly and returns false when hasRootPermission is false", async () => {
-		let factoryCalled = false;
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => {
-			factoryCalled = true;
-			return {
-				detect: mock(async () => false),
-				getCurrentBranch: async () => "main",
-				getBranches: async () => ["main"],
-				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-				switchBranch: mock(async () => ({ status: "switched" as const }))
-			};
-		};
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = false;
-
-		const result = await ws.initializeRepository();
-		expect(result).toBe(false);
-		expect(ws.repository).toBeNull();
-		expect(factoryCalled).toBe(false);
-	});
-
-	it("initializes repository, refreshes metadata, and rescans project tree on success", async () => {
-		let initPath: string | undefined;
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			init: mock(async (path?: string) => {
-				initPath = path;
-			}),
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getChanges: async () => [],
-			getCommits: async () => [],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-
-		let scannedOrigin: FileOrigin | null = null;
-		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
-			scannedOrigin = origin;
-		});
-
-		const result = await ws.initializeRepository();
-
-		expect(result).toBe(true);
-		expect(initPath).toBe(rootOrigin.path);
-		expect(ws.repository).not.toBeNull();
-		expect(ws.repository?.currentBranch).toBe("main");
-		expect(scannedOrigin).toEqual(rootOrigin);
-	});
-
-	it("clears stale repository before asynchronous initialization starts", async () => {
-		let repoClearedBeforeInit = false;
-		let resolveInit!: () => void;
-		const initPromise = new Promise<void>((r) => (resolveInit = r));
-
-		const storage = createMockStorage({});
-		const ws = new WorkspaceClass(
-			storage,
-			(): VCSAdapter => ({
-				detect: mock(async () => true),
-				init: mock(async () => {
-					repoClearedBeforeInit = ws.repository === null;
-					await initPromise;
-				}),
-				getCurrentBranch: async () => "main",
-				getBranches: async () => ["main"],
-				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-				switchBranch: mock(async () => ({ status: "switched" as const }))
-			}),
-			new MemorySessionPersistence()
-		);
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-
-		// Set a pre-existing fake repository
-		ws.repository = { currentBranch: "old-branch" } as any;
-
-		const initTask = ws.initializeRepository();
-		await new Promise((resolve) => setTimeout(resolve, 0));
-
-		// Stale repository must be cleared immediately
-		expect(ws.repository).toBeNull();
-
-		resolveInit();
-		await initTask;
-
-		expect(repoClearedBeforeInit).toBe(true);
-		expect(ws.repository).not.toBeNull();
-	});
-
-	it("does not publish repository or scan results when folder switches during deferred init", async () => {
-		let resolveInit!: () => void;
-		const initGate = new Promise<void>((r) => (resolveInit = r));
-
-		const storage = createMockStorage({});
-		const ws = new WorkspaceClass(
-			storage,
-			(): VCSAdapter => ({
-				detect: mock(async () => true),
-				init: mock(async () => {
-					await initGate;
-				}),
-				getCurrentBranch: async () => "main",
-				getBranches: async () => ["main"],
-				getChanges: async () => [],
-				getCommits: async () => [],
-				getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-				switchBranch: mock(async () => ({ status: "switched" as const }))
-			}),
-			new MemorySessionPersistence()
-		);
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		const scanned: FileOrigin[] = [];
-		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
-			scanned.push(origin);
-		});
-
-		const initTask = ws.initializeRepository();
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(ws.repository).toBeNull();
-
-		// Switch folders while adapter.init is still deferred.
-		const otherOrigin: FileOrigin = { scheme: "file", path: "/projects/other", name: "other" };
-		ws.rootOrigin = otherOrigin;
-		const newerRepository = { currentBranch: "newer" } as any;
-		ws.repository = newerRepository;
-
-		resolveInit();
-		const result = await initTask;
-
-		expect(result).toBe(false);
-		// Stale init must not overwrite the newer folder's repository.
-		expect(ws.repository).toBe(newerRepository);
-		// Stale init must not scan the outdated folder.
-		expect(scanned).toEqual([]);
-	});
-
-	it("throws and leaves repository null when VCS adapter lacks init capability", async () => {
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => false),
-			// init is omitted
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		ws.repository = { currentBranch: "stale" } as any;
-
-		await expect(ws.initializeRepository()).rejects.toThrow(
-			"VCS adapter does not support repository initialization"
-		);
-		expect(ws.repository).toBeNull();
-	});
-
-	it("throws and leaves repository null when adapter init rejects", async () => {
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => false),
-			init: mock(async () => {
-				throw new Error("Filesystem write permission denied");
-			}),
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		ws.repository = { currentBranch: "stale" } as any;
-
-		await expect(ws.initializeRepository()).rejects.toThrow("Filesystem write permission denied");
-		expect(ws.repository).toBeNull();
-	});
-
-	it("returns false, leaves repository null, and skips scan when repo.refresh fails", async () => {
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			init: mock(async () => {}),
-			getCurrentBranch: async () => {
-				throw new Error("Corrupted repository state");
-			},
-			getBranches: async () => {
-				throw new Error("Cannot read branches");
-			},
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		const scanMock = mock(async () => {});
-		ws.projectTree.scan = scanMock;
-
-		const result = await ws.initializeRepository();
-		expect(result).toBe(false);
-		expect(ws.repository).toBeNull();
-		expect(scanMock).not.toHaveBeenCalled();
-	});
-
-	it("discards initialization results if root changes during projectTree.scan", async () => {
-		let resolveScan!: () => void;
-		const scanPromise = new Promise<void>((resolve) => {
-			resolveScan = resolve;
-		});
-
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			init: mock(async () => {}),
-			getCurrentBranch: async () => "main",
-			getBranches: async () => ["main"],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		ws.projectTree.scan = mock(async () => {
-			await scanPromise;
-		});
-
-		const initOp = ws.initializeRepository();
-
-		await Promise.resolve();
-		await Promise.resolve();
-
-		// Switch root mid-flight during scan
-		ws.rootOrigin = { scheme: "file", path: "/projects/other", name: "other" };
-		resolveScan();
-
-		const result = await initOp;
-		expect(result).toBe(false);
-		expect(ws.repository).toBeNull();
-	});
-
-	it("throws and leaves repository null when project tree scan rejects", async () => {
-		const storage = createMockStorage({});
-		const vcsFactory = (): VCSAdapter => ({
-			detect: mock(async () => true),
-			init: mock(async () => {}),
-			getCurrentBranch: async () => {
-				throw new Error("Corrupted repository state");
-			},
-			getBranches: async () => ["main"],
-			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
-			switchBranch: mock(async () => ({ status: "switched" as const }))
-		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
-		ws.hasRootPermission = true;
-		ws.projectTree.scan = mock(async () => {
-			throw new Error("Project tree scan failure");
-		});
-
-		await expect(ws.initializeRepository()).rejects.toThrow("Project tree scan failure");
-		expect(ws.repository).toBeNull();
-	});
-
-	it("registers git.init command and delegates to workspace.initializeRepository", async () => {
-		const commands = new CommandRegistry();
-		let initCalled = false;
-		const mockWorkspace = {
-			initializeRepository: mock(async () => {
-				initCalled = true;
-				return true;
-			})
-		};
-		const alerts: string[] = [];
-		const appState = {
-			commands,
-			workspace: mockWorkspace,
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		} as any;
-
-		registerCoreCommands(appState);
-
-		const cmd = commands.get("git.init");
-		expect(cmd).toBeDefined();
-		expect(cmd?.label).toBe("Git: Initialize Repository");
-		expect(cmd?.category).toBe("Source Control");
-
-		const result = await commands.execute("git.init");
-		expect(result).toBe(true);
-		expect(initCalled).toBe(true);
-	});
-
-	it("git.init command handles failure and displays alert dialog", async () => {
-		const commands = new CommandRegistry();
-		const mockWorkspace = {
-			initializeRepository: mock(async () => {
-				throw new Error("Initialization failed: disk full");
-			})
-		};
-		const alerts: string[] = [];
-		const appState = {
-			commands,
-			workspace: mockWorkspace,
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		} as any;
-
-		registerCoreCommands(appState);
-
-		const result = await commands.execute("git.init");
-		expect(result).toBe(false);
-		expect(alerts).toEqual(["Failed to initialize repository: Initialization failed: disk full"]);
 	});
 });
 
@@ -491,7 +180,7 @@ describe("branch switch preserves unsaved in-memory edits (issue #86)", () => {
 			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
 			switchBranch: mock(async () => ({ status: "switched" as const }))
 		});
-		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
+		const { ws } = await withGitPlugin(storage, vcsFactory, new MemorySessionPersistence());
 		await ws.openDirectory();
 		return { storage, ws };
 	};

@@ -1,6 +1,7 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
-import { applyHunkAction, registerCoreCommands, CommandRegistry, type HunkRange } from "./commands.svelte";
+import { registerCoreCommands, CommandRegistry } from "./commands.svelte";
+import { applyHunkAction, createGitCommands, type HunkRange } from "./plugins/git/commands";
 import { Repository, runExclusively } from "./project/repository.svelte";
 import type { GitChange, VCSAdapter } from "./project/vcs";
 
@@ -54,9 +55,15 @@ describe("repository git operations serialize", () => {
 			refresh: mock(async () => {})
 		};
 		const appState = { workspace: { repository: repo }, dialogService: { alert: mock(async () => {}) } } as any;
+		const ctx = {
+			getWorkspace: () => appState.workspace,
+			alert: (message: string) => appState.dialogService.alert(message),
+			confirm: async () => false,
+			getDiffNavigator: () => undefined
+		};
 
-		const first = applyHunkAction(appState, createTestChange('a.txt'), hunk, 'stage');
-		const second = applyHunkAction(appState, createTestChange('b.txt'), hunk, 'stage');
+		const first = applyHunkAction(ctx, createTestChange('a.txt'), hunk, 'stage');
+		const second = applyHunkAction(ctx, createTestChange('b.txt'), hunk, 'stage');
 		await flushQueue();
 
 		expect(writes).toEqual(['a.txt']);
@@ -83,7 +90,13 @@ describe("repository git operations serialize", () => {
 			refresh: mock(async () => {})
 		};
 		const commands = new CommandRegistry();
-		registerCoreCommands({ commands, workspace: { repository: repo }, dialogService: { alert: mock(async () => {}) } } as any);
+		const workspace = { repository: repo };
+		commands.registerCommands('git', createGitCommands({
+			getWorkspace: () => workspace as any,
+			alert: mock(async () => {}),
+			confirm: async () => false,
+			getDiffNavigator: () => undefined
+		}, { initializeRepository: async () => false }));
 
 		const first = commands.execute('git.stage', 'x.txt');
 		const second = commands.execute('git.stage', 'y.txt');

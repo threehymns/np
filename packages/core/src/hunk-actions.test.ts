@@ -1,31 +1,34 @@
 import { describe, it, expect, mock } from "bun:test";
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
-import { applyHunkAction, mapPos, mapRange, spliceText, type HunkRange } from "./commands.svelte";
+import { mapPos, mapRange, spliceText } from "./commands.svelte";
+import { applyHunkAction, type HunkRange } from "./plugins/git/commands";
 import { countLines, countDiffStats, diffCacheKey, resolveDiffDetail, type GitChange, type VCSAdapter } from "./project/vcs";
 
 function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] = []) {
+	// Hunk actions take the Git plugin's command context (#202): the fake
+	// repository is exposed alongside for behavior assertions.
+	const repository = {
+		adapter,
+		isBusy: false,
+		refresh: mock(async () => {}),
+		getFileDiff: async (filepath: string, options?: any) => {
+			if (adapter.getFileDiff) {
+				return await adapter.getFileDiff(filepath, options);
+			}
+			return null;
+		}
+	};
 	return {
 		appState: {
-			workspace: {
-				repository: {
-					adapter,
-					isBusy: false,
-					refresh: mock(async () => {}),
-					getFileDiff: async (filepath: string, options?: any) => {
-						if (adapter.getFileDiff) {
-							return await adapter.getFileDiff(filepath, options);
-						}
-						return null;
-					}
-				}
-			},
-			dialogService: {
-				alert: mock(async (msg: string) => {
-					alerts.push(msg);
-				})
-			}
-		} as any,
+			getWorkspace: () => ({ repository }) as any,
+			alert: mock(async (msg: string) => {
+				alerts.push(msg);
+			}),
+			confirm: mock(async () => false),
+			getDiffNavigator: () => undefined
+		},
+		repository,
 		alerts
 	};
 }
@@ -46,29 +49,29 @@ function createTestChange(overrides: Partial<GitChange> = {}): GitChange {
 
 describe("applyHunkAction error handling", () => {
 	it("handles missing adapter.updateIndexContent on stage via showAlert instead of throwing", async () => {
-		const { appState, alerts } = createMockAppState();
+		const { appState, repository, alerts } = createMockAppState();
 		const change = createTestChange();
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("VCS adapter does not support updating index for hunk stage");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("handles missing adapter.updateIndexContent on unstage via showAlert instead of throwing", async () => {
-		const { appState, alerts } = createMockAppState();
+		const { appState, repository, alerts } = createMockAppState();
 		const change = createTestChange({ staged: true });
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "unstage")).resolves.toBeUndefined();
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("VCS adapter does not support updating index for hunk unstage");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("handles missing originalContent via showAlert instead of throwing", async () => {
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async () => {})
 		});
 		const change = createTestChange({ originalContent: undefined });
@@ -77,11 +80,11 @@ describe("applyHunkAction error handling", () => {
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("Cannot perform hunk stage: missing diff content for test.txt");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("handles missing modifiedContent via showAlert instead of throwing", async () => {
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async () => {})
 		});
 		const change = createTestChange({ modifiedContent: undefined });
@@ -90,23 +93,23 @@ describe("applyHunkAction error handling", () => {
 		await expect(applyHunkAction(appState, change, hunk, "stage")).resolves.toBeUndefined();
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("Cannot perform hunk stage: missing diff content for test.txt");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("handles missing adapter.updateFileContent on discard via showAlert", async () => {
-		const { appState, alerts } = createMockAppState();
+		const { appState, repository, alerts } = createMockAppState();
 		const change = createTestChange();
 		const hunk: HunkRange = { fromA: 0, toA: 1, fromB: 0, toB: 1 };
 
 		await expect(applyHunkAction(appState, change, hunk, "discard")).resolves.toBeUndefined();
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("VCS adapter does not support updating file content for hunk discard");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("handles missing adapter.updateIndexContent on staged hunk discard via showAlert", async () => {
 		let updateFileCalled = false;
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateFileContent: mock(async () => {
 				updateFileCalled = true;
 			})
@@ -123,13 +126,13 @@ describe("applyHunkAction error handling", () => {
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("VCS adapter does not support updating index for hunk discard");
 		expect(updateFileCalled).toBe(false);
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("successfully applies unstaged hunk discard when adapter only supports updateFileContent", async () => {
 		let updatedWorktreeFile = "";
 		let updatedWorktreeContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateFileContent: mock(async (file: string, content: string) => {
 				updatedWorktreeFile = file;
 				updatedWorktreeContent = content;
@@ -145,14 +148,14 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line1\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("successfully applies hunk stage action when adapter and content are valid", async () => {
 		let updatedFile = "";
 		let updatedContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedFile = file;
 				updatedContent = content;
@@ -167,8 +170,8 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "stage");
 		expect(updatedFile).toBe("test.txt");
 		expect(updatedContent).toBe("line1\nline2\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("successfully applies staged hunk discard when adapter supports updateIndexContent and updateFileContent", async () => {
@@ -176,7 +179,7 @@ describe("applyHunkAction error handling", () => {
 		let updatedIndexContent = "";
 		let updatedWorktreeFile = "";
 		let updatedWorktreeContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedIndexFile = file;
 				updatedIndexContent = content;
@@ -204,13 +207,13 @@ describe("applyHunkAction error handling", () => {
 		expect(updatedIndexContent).toBe("line1\n");
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line1\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("rolls back index when worktree write fails during staged hunk discard", async () => {
 		const indexCalls: string[] = [];
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexCalls.push(content);
 			}),
@@ -235,12 +238,12 @@ describe("applyHunkAction error handling", () => {
 		expect(indexCalls).toEqual(["line1\n", "line1\nline2\n"]);
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toContain("Disk write failure");
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("preserves CRLF line endings when unstaging a hunk", async () => {
 		let updatedContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedContent = content;
 			})
@@ -260,7 +263,7 @@ describe("applyHunkAction error handling", () => {
 	it("preserves CRLF line endings when discarding a staged hunk from index and worktree", async () => {
 		let updatedIndexContent = "";
 		let updatedWorktreeContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedIndexContent = content;
 			}),
@@ -288,7 +291,7 @@ describe("applyHunkAction error handling", () => {
 
 	it("restores CRLF index content when rolling back after a failed worktree write", async () => {
 		const indexCalls: string[] = [];
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexCalls.push(content);
 			}),
@@ -319,7 +322,7 @@ describe("applyHunkAction error handling", () => {
 		let updatedIndexContent = "";
 		let worktreeWriteCount = 0;
 		let updatedWorktreeContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedIndexContent = content;
 			}),
@@ -363,7 +366,7 @@ describe("applyHunkAction error handling", () => {
 		let indexWriteCount = 0;
 		let updatedIndexContent = "";
 		let worktreeWriteCount = 0;
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexWriteCount++;
 				updatedIndexContent = content;
@@ -401,14 +404,14 @@ describe("applyHunkAction error handling", () => {
 		expect(indexWriteCount).toBe(1);
 		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
 		expect(worktreeWriteCount).toBe(0);
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
+		expect(repository.refresh).toHaveBeenCalled();
 	});
 
 	it("reverts only the index when worktree content is unavailable for a staged hunk discard", async () => {
 		let indexWriteCount = 0;
 		let updatedIndexContent = "";
 		let worktreeWriteCount = 0;
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexWriteCount++;
 				updatedIndexContent = content;
@@ -430,8 +433,8 @@ describe("applyHunkAction error handling", () => {
 		expect(indexWriteCount).toBe(1);
 		expect(updatedIndexContent).toBe("line1\n");
 		expect(worktreeWriteCount).toBe(0);
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("resolves missing diff content via adapter.getFileDiff on stage", async () => {
@@ -444,7 +447,7 @@ describe("applyHunkAction error handling", () => {
 				stagedContent: "line1\n"
 			};
 		});
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedFile = file;
@@ -463,8 +466,8 @@ describe("applyHunkAction error handling", () => {
 		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: false });
 		expect(updatedFile).toBe("test.txt");
 		expect(updatedContent).toBe("line1\nline2\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("resolves missing diff content via adapter.getFileDiff on unstage", async () => {
@@ -477,7 +480,7 @@ describe("applyHunkAction error handling", () => {
 				stagedContent: "line1\nline2\n"
 			};
 		});
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedFile = file;
@@ -496,8 +499,8 @@ describe("applyHunkAction error handling", () => {
 		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: true });
 		expect(updatedFile).toBe("test.txt");
 		expect(updatedContent).toBe("line1\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("resolves missing diff content via adapter.getFileDiff on discard", async () => {
@@ -510,7 +513,7 @@ describe("applyHunkAction error handling", () => {
 				stagedContent: "line1\n"
 			};
 		});
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateFileContent: mock(async (file: string, content: string) => {
 				updatedWorktreeFile = file;
@@ -529,8 +532,8 @@ describe("applyHunkAction error handling", () => {
 		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: false });
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line1\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("resolves missing diff content for combined changes via getFileDiff without a staged scope", async () => {
@@ -545,7 +548,7 @@ describe("applyHunkAction error handling", () => {
 				stagedContent: "line0\nline1\nDIFF\nline3\n"
 			};
 		});
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedFile = file;
@@ -571,13 +574,13 @@ describe("applyHunkAction error handling", () => {
 		// (staged offset 17), matching the worktree order (line2, X, line3) and
 		// git add -p. Mapping it to the chunk start would insert X before DIFF.
 		expect(updatedContent).toBe("line0\nline1\nDIFF\nX\nline3\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("refuses to guess index content for a combined change when stagedContent is unavailable", async () => {
 		let indexWriteCount = 0;
-		const { appState, alerts } = createMockAppState({
+		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async () => {
 				indexWriteCount++;
 			})
@@ -598,7 +601,7 @@ describe("applyHunkAction error handling", () => {
 		expect(alerts[0]).toContain("combined change");
 		expect(alerts[0]).toContain("missing staged content");
 		expect(indexWriteCount).toBe(0);
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.isBusy).toBe(false);
 	});
 
 	it("discards an unstaged hunk in a combined change using the full-diff scope", async () => {
@@ -612,7 +615,7 @@ describe("applyHunkAction error handling", () => {
 				stagedContent: "line0\nline1\nDIFF\nline3\n"
 			};
 		});
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateFileContent: mock(async (file: string, content: string) => {
 				updatedWorktreeFile = file;
@@ -631,15 +634,15 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedWorktreeFile).toBe("test.txt");
 		expect(updatedWorktreeContent).toBe("line0\nline1\nline2\nline3\n");
-		expect(appState.workspace.repository.refresh).toHaveBeenCalled();
-		expect(appState.workspace.repository.isBusy).toBe(false);
+		expect(repository.refresh).toHaveBeenCalled();
+		expect(repository.isBusy).toBe(false);
 	});
 });
 
 describe("applyHunkAction line ending preservation", () => {
 	it("preserves CRLF line endings when staging a hunk", async () => {
 		let updatedContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedContent = content;
 			})
@@ -656,7 +659,7 @@ describe("applyHunkAction line ending preservation", () => {
 
 	it("preserves CRLF line endings when discarding an unstaged hunk", async () => {
 		let updatedContent = "";
-		const { appState } = createMockAppState({
+		const { appState, repository } = createMockAppState({
 			updateFileContent: mock(async (_file: string, content: string) => {
 				updatedContent = content;
 			})
