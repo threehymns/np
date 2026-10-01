@@ -1,13 +1,18 @@
 import { expect } from 'bun:test';
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { FileOrigin } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { IsomorphicGitAdapter, browserHandleRegistry } from '@np/adapters-browser';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import { NodeDirectoryHandle } from './node-fs-handle';
-import { TestRepo, currentBranch, describe, gitEnv, it, nodeFileAccess, runGit } from './harness';
+import {
+	TestRepo,
+	createTrackedDirectory,
+	currentBranch,
+	describe,
+	it,
+	nodeFileAccess,
+	runGit
+} from './harness';
 
 /**
  * `init()` under contract.
@@ -61,32 +66,11 @@ const isomorphicEngine: Engine = {
 
 const engines: Engine[] = [spawnEngine, isomorphicEngine];
 
-const bareDirectories: TestRepo[] = [];
-
-/**
- * A hermetic directory that is NOT yet a repository.
- *
- * `createTestRepo` runs `git init` itself, so it cannot exercise `init()` -- doing
- * so would test nothing. This builds the same isolated environment the harness
- * uses, minus the init, so the adapter's own `init()` is the only thing that
- * creates the repository.
- */
-async function createBareDirectory(): Promise<TestRepo> {
-	const root = await mkdtemp(join(tmpdir(), 'np-init-contract-'));
-	const path = join(root, 'repo');
-	const home = join(root, 'home');
-	await mkdir(path);
-	await mkdir(home);
-	const repo = new TestRepo(root, path, gitEnv(home));
-	bareDirectories.push(repo);
-	return repo;
-}
-
 describe('init()', () => {
 	for (const engine of engines) {
 		describe(engine.name, () => {
 			it('creates a repository on the "main" branch, matching the other engine', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
@@ -95,7 +79,7 @@ describe('init()', () => {
 			});
 
 			it('leaves a repository that detect() recognizes as a work tree', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
@@ -104,7 +88,7 @@ describe('init()', () => {
 			});
 
 			it('reports the initialized repository through getCurrentBranch()', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
@@ -113,7 +97,7 @@ describe('init()', () => {
 			});
 
 			it('produces a repository that can actually be committed to', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
@@ -127,7 +111,7 @@ describe('init()', () => {
 			});
 
 			it('is idempotent: init() on an existing repository preserves its history', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
@@ -144,7 +128,7 @@ describe('init()', () => {
 			});
 
 			it('never moves HEAD off a branch the user already has work on', async () => {
-				const repo = await createBareDirectory();
+				const repo = await createTrackedDirectory();
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);

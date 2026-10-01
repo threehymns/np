@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -135,15 +136,24 @@ export class TestRepo {
 }
 
 /**
- * Create a fresh throwaway repository: isolated temp home, `git init`, and a
- * deterministic `main` branch selected via `symbolic-ref` on every git version.
+ * A fresh hermetic temp tree: an isolated work tree directory plus an isolated
+ * `home/` for git config. Not yet a repository -- callers decide whether to `git init`.
  */
-export async function createTestRepo(): Promise<TestRepo> {
-	const root = await mkdtemp(join(tmpdir(), 'np-contract-'));
+async function createTempTree(prefix: string): Promise<{ root: string; path: string; home: string }> {
+	const root = await mkdtemp(join(tmpdir(), prefix));
 	const path = join(root, 'repo');
 	const home = join(root, 'home');
 	await mkdir(path);
 	await mkdir(home);
+	return { root, path, home };
+}
+
+/**
+ * Create a fresh throwaway repository: isolated temp home, `git init`, and a
+ * deterministic `main` branch selected via `symbolic-ref` on every git version.
+ */
+export async function createTestRepo(): Promise<TestRepo> {
+	const { root, path, home } = await createTempTree('np-contract-');
 	const repo = new TestRepo(root, path, gitEnv(home));
 	try {
 		const init = await repo.git(['init', '-q']);
@@ -163,13 +173,40 @@ export async function createTestRepo(): Promise<TestRepo> {
 
 const registeredRepos: TestRepo[] = [];
 
-bunAfterAll(async () => {
-	await Promise.all(registeredRepos.map(repo => repo.cleanup()));
-});
+/**
+ * Remove every temp tree registered so far.
+ *
+ * Synchronous, so it is safe to call from any hook, including a skipped scope.
+ */
+function removeRegisteredRepos(): void {
+	for (const repo of registeredRepos.splice(0)) {
+		try {
+			rmSync(repo.root, { recursive: true, force: true });
+		} catch {
+			// A temp tree that will not remove must not fail the run.
+		}
+	}
+}
 
 /** Like `createTestRepo`, but registers the repository for cleanup at suite end. */
 export async function createTrackedRepo(): Promise<TestRepo> {
 	const repo = await createTestRepo();
+	registeredRepos.push(repo);
+	return repo;
+}
+
+/**
+ * Like `createTrackedRepo`, but the directory is **not** a repository.
+ *
+ * `createTestRepo` runs `git init` itself, so it cannot exercise an adapter's own
+ * `init()` -- doing so would test nothing. This builds the same isolated
+ * environment the harness uses, minus the init, so the adapter under test is the
+ * only thing that creates the repository.
+ */
+export async function createTrackedDirectory(): Promise<TestRepo> {
+	const { root, path, home } = await createTempTree('np-init-contract-');
+	const repo = new TestRepo(root, path, gitEnv(home));
+	// Registered before anything can throw so a failed setup still gets cleaned up.
 	registeredRepos.push(repo);
 	return repo;
 }
@@ -234,8 +271,32 @@ if (defaultSkipReason) {
 	console.warn(`[contract harness] ${defaultSkipReason} — contract suite provider unavailable`);
 }
 
-/** `describe` bound to the git version floor: the whole suite skips below git 2.23 with a clear reason. */
-export const describe = defaultSkipReason ? bunDescribe.skipIf(true, defaultSkipReason) : bunDescribe;
+const floorBoundDescribe = defaultSkipReason ? bunDescribe.skipIf(true, defaultSkipReason) : bunDescribe;
+
+/**
+ * `describe` bound to the git version floor: the whole suite skips below git 2.23
+ * with a clear reason.
+ *
+ * It also opens every scope with an `afterAll` that removes the temp trees
+ * registered while that scope ran. That is not incidental: `bun:test` scopes a
+ * *module-level* `afterAll` to the one test file that first evaluated this
+ * module, and sixteen contract files import this harness, so a module-level hook
+ * cleaned only the first file's repositories and left the rest in `/tmp` on
+ * every run. `process.on('exit')` and `process.on('beforeExit')` do not fire
+ * under `bun test` at all, so a per-scope hook is the only teardown that reaches
+ * every file. Each file wraps all of its top-level scopes in this `describe`, so
+ * no contract file can leak a repository.
+ */
+function scopedDescribe(name: string, fn: () => void): void {
+	floorBoundDescribe(name, () => {
+		bunAfterAll(removeRegisteredRepos);
+		fn();
+	});
+}
+
+scopedDescribe.skipIf = floorBoundDescribe.skipIf;
+
+export const describe = scopedDescribe;
 
 /** `it` bound to the git version floor: each test skips below git 2.23 with a clear reason. */
 export const it = defaultSkipReason ? bunTest.skipIf(true, defaultSkipReason) : bunTest;
