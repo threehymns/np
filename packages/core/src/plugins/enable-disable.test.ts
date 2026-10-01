@@ -520,7 +520,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			for (let i = 0; i < 50 && !initCalled; i++) await tick(1);
 			expect(initCalled).toBe(true);
 
-			// Request disablement mid-write: visible blocked state, not success.
+			// Request disablement mid-write: visible deactivating state, not success.
 			let deactivateResolved = false;
 			const deactivateTask = host.deactivate('git').then(() => {
 				deactivateResolved = true;
