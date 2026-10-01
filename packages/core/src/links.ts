@@ -224,11 +224,15 @@ function isIndentedCode(line: string): boolean {
  * is paragraph text. Anything that opens another block — a list, a blockquote,
  * an HTML block, an indented code block, or a thematic break of its own — is not
  * paragraph text, and a `---` after it is a thematic break, not an underline.
+ *
+ * `isIndented` is the caller's `isIndentedCode(line)` reading of the line as
+ * written. It is passed rather than derived, because trimming the line first
+ * would destroy the indentation this rule is about.
  */
-function isParagraphText(trimmed: string, originalLine?: string): boolean {
+function isParagraphText(trimmed: string, isIndented: boolean): boolean {
 	if (trimmed.length === 0) return false;
 	// 4+ spaces of original indentation is an indented code block.
-	if (originalLine !== undefined && isIndentedCode(originalLine)) return false;
+	if (isIndented) return false;
 	// List item (bullet, ordered, or task) and blockquote.
 	if (/^(?:[-*+]|\d{1,9}[.)])\s/.test(trimmed)) return false;
 	if (trimmed.startsWith('>')) return false;
@@ -365,7 +369,7 @@ export function getHeadings(content: string): HeadingItem[] {
 		//    The line above the underline must be paragraph TEXT: a list item, a
 		//    blockquote, an HTML block, or an indented code line is followed by a
 		//    thematic break, not a heading, and the editor does not render it as one.
-		if (i + 1 < lines.length && isParagraphText(trimmed, line)) {
+		if (i + 1 < lines.length && isParagraphText(trimmed, isIndentedCode(line))) {
 			const nextLine = lines[i + 1].trim();
 			if (/^[=-]{3,}$/.test(nextLine)) {
 				const isH1 = nextLine.startsWith('=');
