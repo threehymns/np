@@ -65,6 +65,15 @@ const ipcFileAccess: GitFileAccess = {
 	isSymlink: (path) => window.electronAPI.isSymlink(path)
 };
 
+/**
+ * Records one `getCommits` header occupies: hash, author, date, subject.
+ *
+ * Named because the count is the parse's core invariant -- the records are taken
+ * by position, never skipped -- and a bare `4` at the slice and at the advance
+ * would let the two drift apart silently.
+ */
+const COMMIT_HEADER_RECORDS = 4;
+
 export class SpawnGitAdapter implements VCSAdapter {
 	constructor(
 		private rootOrigin: FileOrigin,
@@ -663,8 +672,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// The `%x00` prefix makes the very first record empty; step over it.
 		while (i < records.length && records[i] === '') i += 1;
 		while (i < records.length) {
-			const [hash, author, date, subjectAndFirstPath] = records.slice(i, i + 4);
-			if (hash === undefined) break;
+			// The guard is on the count, not on one field: the loop condition only
+			// guarantees *a* record, so fewer than four left means the stream stopped
+			// mid-header and the trailing slots are missing rather than empty. Real
+			// git always terminates a header, so this is not a shape it emits; a
+			// short read is. Stopping here drops the incomplete commit instead of
+			// indexing a record that is not there.
+			if (records.length - i < COMMIT_HEADER_RECORDS) break;
+			const [hash, author, date, subjectAndFirstPath] = records.slice(i, i + COMMIT_HEADER_RECORDS);
 			// The subject is followed by a newline and then the first path, so both
 			// share one record. Only that single newline is structural, so only its
 			// offset is taken; a path that itself holds a newline stays one name.
@@ -679,7 +694,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				files: firstPath === '' ? [] : [firstPath]
 			};
 			commits.push(commit);
-			i += 4;
+			i += COMMIT_HEADER_RECORDS;
 			// Every further non-blank record is one path for this commit, held whole.
 			while (i < records.length && records[i] !== '') {
 				commit.files.push(records[i]);

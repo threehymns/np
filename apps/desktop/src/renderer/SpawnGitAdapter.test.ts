@@ -848,4 +848,50 @@ describe('SpawnGitAdapter', () => {
 			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');
 		});
 	});
+
+	describe('getCommits', () => {
+		// A header block that stops short of its four records.
+		//
+		// Real git cannot produce this: every commit's block is terminated, so the
+		// four header records are always all there. `tests/contract/` has no way to
+		// reach it. What does produce it is stdout that arrives short -- a
+		// truncated IPC read, or a git killed mid-write -- which is exactly the
+		// "error path real git cannot trigger" that ADR 0004 leaves to a mock.
+		//
+		// The old guard here checked `hash === undefined`, a slot that can never be
+		// undefined because the loop condition already guarantees `i` is in range.
+		// The slot that *can* be missing is the last one, the subject, so these
+		// cases are the ones that make the difference between guarding it and not.
+		const ONE_COMPLETE_COMMIT = '\0h1\0Author One <one@test.invalid>\0d1\0first subject\nfirst.txt\0\0';
+
+		const logReturning = (stdout: string) => {
+			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'log') return { code: 0, stdout, stderr: '' };
+				return { code: 0, stdout: '', stderr: '' };
+			});
+		};
+
+		it('returns the commits before a tail truncated mid-header', async () => {
+			// Stops after the author, so there is no subject record to take.
+			logReturning(`${ONE_COMPLETE_COMMIT}\0h2\0Author Two`);
+
+			const commits = await new SpawnGitAdapter(rootOrigin).getCommits();
+
+			expect(commits).toEqual([
+				{
+					hash: 'h1',
+					author: 'Author One <one@test.invalid>',
+					date: 'd1',
+					message: 'first subject',
+					files: ['first.txt']
+				}
+			]);
+		});
+
+		it('returns no half-built commit when the very first header is truncated', async () => {
+			logReturning('\0h1\0Author One');
+
+			expect(await new SpawnGitAdapter(rootOrigin).getCommits()).toEqual([]);
+		});
+	});
 });
