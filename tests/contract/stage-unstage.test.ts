@@ -88,13 +88,15 @@ const CRLF_WORKTREE = 'line1\r\nline2\r\n';
  * `adapter.stageAll()`.
  *
  * Every line-ending case differs only in that one config value, so they share
- * the fixture. Resolves the adapter, the resulting index contents and the
- * worktree copy, so a caller asserts on the outcome rather than re-deriving it.
+ * the fixture. Resolves the repository, the adapter, the resulting index
+ * contents and the worktree copy, so a caller asserts on the outcome rather
+ * than re-deriving it. Returns the repository because one case has to read the
+ * index back with the config line removed first.
  */
 async function stageCrlfWithAutocrlf(
 	engine: Engine,
 	autocrlf: string | null
-): Promise<{ adapter: StageUnstage; staged: string | null; worktree: string }> {
+): Promise<{ repo: TestRepo; adapter: StageUnstage; staged: string | null; worktree: string }> {
 	const r = await createTrackedRepo();
 	await baseRepo(r);
 	await r.git(['config', 'user.name', TEST_IDENTITY.name]);
@@ -106,6 +108,7 @@ async function stageCrlfWithAutocrlf(
 	await adapter.stageAll();
 
 	return {
+		repo: r,
 		adapter,
 		staged: await indexContents(r, 'crlf.txt'),
 		worktree: await worktreeContents(r, 'crlf.txt')
@@ -738,6 +741,32 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(staged).toBe(CRLF_WORKTREE);
 		});
+
+		// Scoped to the engine that owns the degrade, by identity rather than by
+		// display name. The desktop engine has no degrade to assert: it shells out
+		// to git, and git's own behaviour on a value it rejects is to refuse —
+		// "fatal: bad boolean config value 'bogus' for 'core.autocrlf'", exit 128.
+		// That refusal is the thing the browser engine deliberately does not copy.
+		if (engine === isomorphicEngine) {
+			it('degrades to no normalisation for a core.autocrlf value git rejects outright', async () => {
+				// The one requirement with no red test until now: that an
+				// unrecognised value must not throw. Throwing would turn a single
+				// bad config line into an inability to stage anything at all, which
+				// is a strictly worse failure than staging CRLF unchanged.
+				const { repo, staged, worktree } = await stageCrlfWithAutocrlf(engine, 'bogus');
+
+				// git refuses *every* command while that config line is bad —
+				// including `git show :path`, which is how the index is normally
+				// read back. Removing the line first does not change what was
+				// staged: unsetting `core.autocrlf` does not rewrite the index, and
+				// `show :path` prints the staged blob verbatim.
+				await repo.git(['config', '--unset', 'core.autocrlf']);
+
+				expect(await indexContents(repo, 'crlf.txt')).toBe(CRLF_WORKTREE);
+				expect(worktree).toBe(CRLF_WORKTREE);
+				expect(staged).toBe(null);
+			});
+		}
 
 		it('stages a binary file byte-for-byte', async () => {
 			// Staging writes the blob itself, so the bytes that reach the index are
