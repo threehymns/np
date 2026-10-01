@@ -62,5 +62,5 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Context Registry**: A registry tracking active focus states and environment tags (e.g. `editor`, `vim_mode == normal`) to evaluate whether keybindings are active.
 - **Keymap Registry**: The central coordinator that intercept key events (using a global capture-phase listener), matches them against active keymap bindings, handles chords, and dispatches corresponding commands. It also manages a key buffer for active chords.
 - **WhichKey**: A visual HUD that appears during a keybinding chord to guide the user through available next keys and their associated commands or groups.
-- **Chord**: A sequence of keypresses (e.g. `Space f n`) that triggers a command. Chords are context-aware and can be navigated back via `Backspace` or cancelled via `Escape`.
+- **Chord**: A sequence of keypresses (e.g. `Space f n`) that triggers a command. Chords are context-aware and can be navigated back via `Backspace` or cancelled via `Escape`. A Chord is also **abandoned** when a keystroke arrives that cannot continue it; the buffer is discarded and that keystroke is re-evaluated as the first keystroke of a new Chord, so abandoning a Chord never consumes the keystroke that abandoned it.
 
