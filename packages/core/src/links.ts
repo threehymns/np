@@ -506,8 +506,12 @@ export async function resolveTargetOrigin(
 
 /**
  * Normalizes a POSIX-style vault path, resolving `.` and `..` segments.
+ *
+ * Matches what the filesystem does to a path before opening it, which is why
+ * containment is checked against the result and never against the raw link
+ * target.
  */
-function normalizePosixPath(path: string): string {
+export function normalizePosixPath(path: string): string {
 	const isAbsolute = path.startsWith('/');
 	const stack: string[] = [];
 	for (const part of path.split('/')) {

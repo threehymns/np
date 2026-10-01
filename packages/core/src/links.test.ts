@@ -1,5 +1,6 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, beforeAll, beforeEach, mock } from "bun:test";
+import { posix } from "node:path";
 import { createMockStorage } from "../../../tests/mock-storage";
 import { toURI, type FileOrigin } from "./storage";
 
@@ -7,6 +8,7 @@ let parseInternalLink: any;
 let findHeadingLine: any;
 let findBlockLine: any;
 let openInternalLink: any;
+let normalizePosixPath: any;
 let Workspace: any;
 let MemorySessionPersistence: any;
 
@@ -69,6 +71,7 @@ beforeAll(async () => {
 	findHeadingLine = linksMod.findHeadingLine;
 	findBlockLine = linksMod.findBlockLine;
 	openInternalLink = linksMod.openInternalLink;
+	normalizePosixPath = linksMod.normalizePosixPath;
 
 	const workspaceMod = await import("./workspace.svelte");
 	Workspace = workspaceMod.Workspace;
@@ -362,40 +365,33 @@ describe("openInternalLink resolution in Workspace", () => {
 /**
  * task-012 — vault containment on the READ path.
  *
- * `isWithinPath` guards only the create step (links.ts:621). Steps 1 and 2 build
- * `${rootPath}/${stripped}` and hand it straight to `storage.readFile`, where
+ * `isWithinPath` guarded only the create step. The two read steps built
+ * `${rootPath}/${stripped}` and handed it straight to `storage.readFile`, where
  * `stripped` is `candidate.replace(/^\//, '')` — one leading slash, nothing else.
- * The desktop chain has no normalizer at all:
- *   ElectronStorage -> preload.cts:8 -> main.ts:219  `fs.readFile(filePath)`
- * and Node resolves `..` itself. So `[[../secret.txt]]` opens a file outside the
- * vault and renders its contents in the editor.
+ * The desktop chain has no normalizer of its own (ElectronStorage -> preload ->
+ * the main process's `fs:readFile`), and Node resolves `..` itself. So
+ * `[[../secret.txt]]` opened a file outside the vault and rendered its contents
+ * in the editor.
  *
  * IMPORTANT — the storage below resolves `..` on lookup, and it has to. The
- * in-memory `createMemoryStorage` above keys files by their raw URI, so a lookup of
- * `/vault/../secret.txt` misses and the traversal *appears* blocked. That would be a
- * test passing for the wrong reason: it would prove the mock is strict, not that the
- * code is safe. The real backend is not strict, so the fake has to be faithful to
- * the real backend. `resolveLikeFilesystem` is POSIX `.`/`..` collapsing, which is
- * exactly what `fs.readFile` does before opening the file.
+ * in-memory `createMemoryStorage` above keys files by their raw URI, so a lookup
+ * of `/vault/../secret.txt` misses and the traversal *appears* blocked. That would
+ * be a test passing for the wrong reason: it would prove the mock is strict, not
+ * that the code is safe. The real backend is not strict, so the fake has to
+ * resolve paths the way the filesystem does.
+ *
+ * It resolves them with `normalizePosixPath` — the same function production
+ * uses — so the fake cannot quietly drift from the code it is standing in for.
+ * That sharing is only safe because the normalizer's own behaviour is pinned
+ * against Node's resolver below: if the two ever disagreed, the fake would
+ * resolve paths production would not, and a traversal could look blocked (or
+ * look open) for the wrong reason.
  */
-function resolveLikeFilesystem(path: string): string {
-	const absolute = path.startsWith("/");
-	const out: string[] = [];
-	for (const part of path.split("/")) {
-		if (part === "" || part === ".") continue;
-		if (part === "..") {
-			if (out.length && out[out.length - 1] !== "..") out.pop();
-			else if (!absolute) out.push("..");
-		} else out.push(part);
-	}
-	return (absolute ? "/" : "") + out.join("/");
-}
-
 function createResolvingStorage(files: Record<string, string>) {
 	// Key by the RESOLVED path, so a traversing lookup finds the outside file.
 	const byResolved = new Map<string, string>();
 	for (const [path, content] of Object.entries(files)) {
-		byResolved.set(resolveLikeFilesystem(path), content);
+		byResolved.set(normalizePosixPath(path), content);
 	}
 	const readPaths: string[] = [];
 	const mockBase = createMockStorage();
@@ -405,17 +401,17 @@ function createResolvingStorage(files: Record<string, string>) {
 		files: byResolved,
 		readFile: mock(async (origin: FileOrigin) => {
 			readPaths.push(origin.path);
-			const key = resolveLikeFilesystem(origin.path);
+			const key = normalizePosixPath(origin.path);
 			if (!byResolved.has(key)) throw new Error(`File not found: ${origin.path}`);
 			return byResolved.get(key)!;
 		}),
 		saveFile: mock(async (content: string, origin?: FileOrigin) => {
 			if (!origin) return null;
-			byResolved.set(resolveLikeFilesystem(origin.path), content);
+			byResolved.set(normalizePosixPath(origin.path), content);
 			return origin;
 		}),
 		readDirectory: mock(async (origin: FileOrigin) => {
-			const prefix = resolveLikeFilesystem(origin.path) + "/";
+			const prefix = normalizePosixPath(origin.path) + "/";
 			const entries: any[] = [];
 			for (const [path, _content] of byResolved) {
 				if (!path.startsWith(prefix)) continue;
@@ -433,6 +429,34 @@ function createResolvingStorage(files: Record<string, string>) {
 		}),
 	};
 }
+
+describe("normalizePosixPath", () => {
+	// The containment tests below stand in for the filesystem using this function,
+	// so it is pinned to Node's own resolver instead of to a second hand-written
+	// copy of the same rule. Absolute paths only: the normalizer keeps a relative
+	// path relative, while posix.resolve anchors it to the cwd.
+	const CASES = [
+		"/vault/Note A.md",
+		"/vault/../secret.txt",
+		"/vault/a/b/../../Note A.md",
+		"/vault/a/b/../../../etc/passwd",
+		"/vault/./Projects/Note B.md",
+		"/vault//Projects///Note B.md",
+		"/vault/Projects/../Note A.md",
+		"/",
+	];
+
+	it("resolves a path exactly as the filesystem would", () => {
+		for (const path of CASES) {
+			expect(normalizePosixPath(path)).toBe(posix.resolve(path));
+		}
+	});
+
+	it("keeps a relative path relative, rather than anchoring it to the cwd", () => {
+		expect(normalizePosixPath("a/b/../../c.md")).toBe("c.md");
+		expect(normalizePosixPath("../c.md")).toBe("../c.md");
+	});
+});
 
 describe("vault containment when following a link (task-012)", () => {
 	let storage: any;
@@ -470,7 +494,7 @@ describe("vault containment when following a link (task-012)", () => {
 	it("never reads outside the vault for a traversing link", async () => {
 		await openInternalLink(workspace, null, "[[../secret.txt]]", { allowCreate: false });
 		const escaped = storage.readPaths.filter(
-			(p: string) => !resolveLikeFilesystem(p).startsWith("/vault/")
+			(p: string) => !normalizePosixPath(p).startsWith("/vault/")
 		);
 		expect(escaped).toEqual([]);
 	});
