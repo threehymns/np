@@ -29,14 +29,12 @@
  * adapter's output: the contract is that both engines agree with real git.
  */
 import { expect } from 'bun:test';
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { FileOrigin, GitChange } from '@np/core';
 import { toURI } from '@np/core/storage';
 import { IsomorphicGitAdapter, browserHandleRegistry } from '@np/adapters-browser';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
 import { NodeDirectoryHandle } from './node-fs-handle';
-import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit } from './harness';
+import { TestRepo, checkedGit, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit } from './harness';
 
 interface ChangeReads {
 	getChanges(): Promise<GitChange[]>;
@@ -69,16 +67,13 @@ const engines: Engine[] = [spawnEngine, isomorphicEngine];
 /** Track `f.txt` so the delete/recreate cycle starts from a committed state. */
 async function seed(repo: TestRepo): Promise<void> {
 	await repo.write('f.txt', 'A\nB\n');
-	const add = await repo.git(['add', '-A']);
-	if (add.code !== 0) throw new Error(add.stderr);
-	const commit = await repo.git(['commit', '-m', 'seed']);
-	if (commit.code !== 0) throw new Error(commit.stderr);
+	await checkedGit(repo, ['add', '-A']);
+	await checkedGit(repo, ['commit', '-m', 'seed']);
 }
 
 /** Delete `f.txt`, stage the deletion, then recreate it with new content. */
 async function deleteStageAndRecreate(repo: TestRepo, content: string): Promise<void> {
-	const rmResult = await repo.git(['rm', '-q', '-f', 'f.txt']);
-	if (rmResult.code !== 0) throw new Error(rmResult.stderr);
+	await checkedGit(repo, ['rm', '-q', '-f', 'f.txt']);
 	await repo.write('f.txt', content);
 }
 
@@ -103,6 +98,12 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			// `U` is np's spelling of git's `??`. Reporting `A` here would make a
 			// recreate indistinguishable from a file the user staged for addition.
 			expect(unstaged!.status).toBe('U');
+			// The count converges with it, for the same root cause: an untracked file
+			// has no HEAD blob to diff against, so both engines count the worktree
+			// file's lines. Before the fix the browser engine's row was labelled 'A',
+			// kept out of its counting branch, and reported 0.
+			expect(unstaged!.additions).toBe(1);
+			expect(unstaged!.deletions).toBe(0);
 		});
 
 		it(`[${engine.name}] still reports a genuinely staged addition as 'A'`, async () => {
@@ -112,8 +113,7 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			const repo = await createTrackedRepo();
 			await seed(repo);
 			await repo.write('added.txt', 'new\n');
-			const add = await repo.git(['add', '-A']);
-			if (add.code !== 0) throw new Error(add.stderr);
+			await checkedGit(repo, ['add', '-A']);
 
 			const changes = await engine.adapter(repo).getChanges();
 			const staged = changes.find((c) => c.filepath === 'added.txt');
@@ -121,6 +121,9 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			expect(staged).toBeDefined();
 			expect(staged!.staged).toBe(true);
 			expect(staged!.status).toBe('A');
+			// Nothing unstaged: a real addition has no worktree delta, so a leaked
+			// unstaged row here is exactly the failure this boundary exists to catch.
+			expect(changes.find(c => c.filepath === 'added.txt' && !c.staged)).toBeUndefined();
 		});
 
 		it(`[${engine.name}] reports a plain untracked file as 'U'`, async () => {
@@ -143,8 +146,7 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			// row must keep reporting the staged deletion, not a recreate.
 			const repo = await createTrackedRepo();
 			await seed(repo);
-			const rmResult = await repo.git(['rm', '-q', '-f', 'f.txt']);
-			if (rmResult.code !== 0) throw new Error(rmResult.stderr);
+			await checkedGit(repo, ['rm', '-q', '-f', 'f.txt']);
 
 			const changes = await engine.adapter(repo).getChanges();
 			const staged = changes.find((c) => c.filepath === 'f.txt' && c.staged);
@@ -152,6 +154,9 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			expect(staged).toBeDefined();
 			expect(staged!.status).toBe('D');
 			expect(await repo.read('f.txt')).toBeNull();
+			// The worktree copy is gone, so there is no recreate to report. An unstaged
+			// row here would be the fix leaking past the state it names.
+			expect(changes.find(c => c.filepath === 'f.txt' && !c.staged)).toBeUndefined();
 		});
 	}
 
@@ -180,7 +185,6 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			const changes = await engine.adapter(repo).getChanges();
 			const unstagedAdd = changes.find((c) => c.filepath === 'f.txt' && !c.staged && c.status === 'A');
 			expect(unstagedAdd).toBeUndefined();
-			await rm(join(repo.path, '.git'), { recursive: true, force: true });
 		}
 	});
 });
