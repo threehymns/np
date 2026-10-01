@@ -336,13 +336,16 @@ export class KeymapRegistry {
 			return true;
 		}
 
-		// If we were in a chord, but hit an invalid key, cancel the chord.
-		// The chord is abandoned, but the key that abandoned it is still the user's:
-		// consuming it here silently drops the first character of whatever they type next.
-		// There is also no timeout that could clear the buffer later, so this state persists.
+		// If we were in a chord, but hit an invalid key, abandon the chord.
+		// The chord is discarded, but the key that abandoned it is still the user's:
+		// consuming it here silently drops the first keystroke of whatever they do
+		// next. `AppShell` holds the only capture listener, so returning `false` here
+		// is a one-way door — nothing downstream will re-evaluate the event. Clear the
+		// buffer *first*, then re-dispatch: with an empty buffer this call cannot reach
+		// the abandon branch again, so the recursion is bounded at depth 2.
 		if (this.keyBuffer.length > 0) {
 			this.keyBuffer = [];
-			return false;
+			return this.handleKeydown(e);
 		}
 
 		return false;

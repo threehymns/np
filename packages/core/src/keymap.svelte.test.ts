@@ -161,14 +161,14 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 		return { reg, executed };
 	}
 
-	function keyEvent(key: string) {
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
 		let prevented = 0;
 		const e = {
 			key,
-			metaKey: false,
-			ctrlKey: false,
-			altKey: false,
-			shiftKey: false,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
 			preventDefault: () => {
 				prevented++;
 			},
@@ -223,5 +223,37 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 
 		expect(reg.keyBuffer).toHaveLength(0);
 		expect(executed).toEqual([]);
+	});
+
+	// The key that abandons a chord is the user's key, not the chord's. It must be
+	// re-evaluated as the first keystroke of a *new* binding, otherwise the only
+	// capture listener in the app (`AppShell.svelte`) has already been told
+	// "not mine" and the binding silently never fires.
+	it("re-evaluates the abandoning key as the first key of a new binding", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		reg.handleKeydown(keyEvent(" ").e); // open a chord
+		expect(reg.keyBuffer).toHaveLength(1);
+
+		// cmd+f is a single-key global binding, so it can never be a continuation
+		// of the pending `space` chord — it is purely a fresh binding.
+		reg.handleKeydown(keyEvent("f", { meta: true }).e);
+
+		expect(executed).toEqual(["edit.find"]);
+		expect(reg.keyBuffer).toHaveLength(0);
+	});
+
+	it("opens a new chord when the abandoning key starts one", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		reg.handleKeydown(keyEvent(" ").e); // open a chord
+		// `cmd+k m` is a chord; `cmd+k` cannot follow the pending `space`.
+		reg.handleKeydown(keyEvent("k", { meta: true }).e);
+
+		expect(executed).toEqual([]);
+		expect(reg.keyBuffer).toHaveLength(1);
+		expect(reg.keyBuffer[0]!.key).toBe("k");
 	});
 });
