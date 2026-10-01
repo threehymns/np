@@ -9,28 +9,35 @@ import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, runGit, TEST
 
 /**
  * `SpawnGitAdapter.getCommits()` reads its commit header out of
- * `git log --pretty=format:%h|%an <%ae>|%ad|%s`, which joins four fields with a
- * bare `|`. It then splits that line on `|`.
+ * `git log -z --pretty=format:%x00%h%x00%an <%ae>%x00%ad%x00%s`, which gives each
+ * of the four header fields a record of its own. It then takes those four
+ * records by position.
+ *
+ * That framing is what this file holds in place. The header used to be
+ * `%h|%an <%ae>|%ad|%s` -- one record with the four fields joined by a bare `|` --
+ * and the parse split it on `|`.
  *
  * A `|` is legal in a git author name and legal in an author email, and both are
  * attacker-influenced in the ordinary case: they come from the repository's own
  * history, which a collaborator, a rebase onto a fork, or a patch series from
  * upstream decides. So a commit authored by `Ada|Lovelace <ada@example.com>`
- * splits into more pieces than there are fields, and every field after the
- * offender is read one position too far to the left.
+ * split into more pieces than there were fields, and every field after the
+ * offender was read one position too far to the left.
  *
- * The subject is the one field that survives, because the parse collects the
- * remainder and rejoins it -- `message: rest.join('|')`. The author is the field
- * that breaks, and it breaks the two fields behind it.
+ * The subject was the one field that survived, because the parse collected the
+ * remainder and rejoined it. The author was the field that broke, and it broke
+ * the two fields behind it.
  *
- * The fix is to stop using an in-band delimiter for a field that can contain
- * one. `--pretty=format:` already supports NUL, and `-z` is already in use for
- * the path side, so the same framing that made paths safe makes this safe.
+ * NUL is the delimiter to use: `git commit` rejects a NUL in a commit message
+ * outright, so it provably cannot appear in the subject, the name, or the email.
+ * `-z` is already in use for the path side, so the same framing that made paths
+ * safe makes this safe.
  *
  * The isomorphic-git engine never had this bug: it reads `commit.author.name`
  * and `commit.author.email` as structured fields and never parses a delimited
  * string. So the cases below are cross-engine checks, and the spawn engine is
- * expected to be the one that disagrees before the fix.
+ * the one that would disagree if the header ever went back to a printable
+ * delimiter.
  */
 describe('commit metadata survives a pipe in any field (VCS contract)', () => {
 	/** Every engine that answers getCommits, so the check is a real contract, not a spawn-only unit test. */
