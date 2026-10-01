@@ -280,7 +280,7 @@ const floorBoundDescribe = defaultSkipReason ? bunDescribe.skipIf(true, defaultS
  * It also opens every scope with an `afterAll` that removes the temp trees
  * registered while that scope ran. That is not incidental: `bun:test` scopes a
  * *module-level* `afterAll` to the one test file that first evaluated this
- * module, and sixteen contract files import this harness, so a module-level hook
+ * module, and every contract file imports this harness, so a module-level hook
  * cleaned only the first file's repositories and left the rest in `/tmp` on
  * every run. `process.on('exit')` and `process.on('beforeExit')` do not fire
  * under `bun test` at all, so a per-scope hook is the only teardown that reaches
