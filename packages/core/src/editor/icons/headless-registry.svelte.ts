@@ -37,13 +37,23 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 	}
 
 	registerFileIconTransform(pluginId: string, transform: FileIconTransform): void {
-		this.fileIconTransforms.push({ pluginId, transform });
-		this.rebuild();
+		// Atomic like the keymap registry: a throwing transform must not
+		// wedge the owner's list.
+		const next = [...this.fileIconTransforms, { pluginId, transform }];
+		const fileThemes = this.replayFileTransformsFrom(next);
+		this.fileIconTransforms = next;
+		this.fileThemes = fileThemes;
+		this.applyAppearance();
 	}
 
 	registerProductIconTransform(pluginId: string, transform: ProductIconTransform): void {
-		this.productIconTransforms.push({ pluginId, transform });
-		this.rebuild();
+		// Atomic like the keymap registry: a throwing transform must not
+		// wedge the owner's list.
+		const next = [...this.productIconTransforms, { pluginId, transform }];
+		const productThemes = this.replayProductTransformsFrom(next);
+		this.productIconTransforms = next;
+		this.productThemes = productThemes;
+		this.applyAppearance();
 	}
 
 	removePluginIcons(pluginId: string): void {
@@ -128,8 +138,14 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 	}
 
 	private replayFileTransforms(): Record<string, FileIconProvider> {
+		return this.replayFileTransformsFrom(this.fileIconTransforms);
+	}
+
+	private replayFileTransformsFrom(
+		entries: readonly FileIconTransformRegistration[]
+	): Record<string, FileIconProvider> {
 		let state = new SvelteMap<string, FileIconProvider>();
-		for (const entry of this.orderedEntries(this.fileIconTransforms)) {
+		for (const entry of this.orderedEntries(entries)) {
 			const next = entry.transform(new SvelteMap(state));
 			state = new SvelteMap(next);
 		}
@@ -137,8 +153,14 @@ export class HeadlessIconRegistry implements IconRegistryInterface {
 	}
 
 	private replayProductTransforms(): Record<string, ProductIconProvider> {
+		return this.replayProductTransformsFrom(this.productIconTransforms);
+	}
+
+	private replayProductTransformsFrom(
+		entries: readonly ProductIconTransformRegistration[]
+	): Record<string, ProductIconProvider> {
 		let state = new SvelteMap<string, ProductIconProvider>();
-		for (const entry of this.orderedEntries(this.productIconTransforms)) {
+		for (const entry of this.orderedEntries(entries)) {
 			const next = entry.transform(new SvelteMap(state));
 			state = new SvelteMap(next);
 		}

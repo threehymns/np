@@ -151,6 +151,54 @@ describe("ADR 0002 Headless Core Invariants", () => {
 		expect(registry.getFileThemes()).toEqual(clean.getFileThemes());
 	});
 
+	it("rebuilds product icon providers after removing one owner and matches a clean build", () => {
+		const provider = (id: string) => ({
+			id,
+			name: id,
+			resolveProductIcon: () => null
+		});
+		const registry = new HeadlessIconRegistry();
+		const clean = new HeadlessIconRegistry();
+		const add = (id: string) => (previous: ReadonlyMap<string, any>) =>
+			new Map(previous).set(id, provider(id));
+
+		registry.registerProductIconTransform("alpha", add("alpha"));
+		registry.registerProductIconTransform("beta", add("beta"));
+		clean.registerProductIconTransform("beta", add("beta"));
+		registry.removePluginIcons("alpha");
+		registry.refresh();
+
+		expect(registry.getProductThemes()).toEqual(clean.getProductThemes());
+	});
+
+	it("a throwing product icon transform leaves no wedged entry behind", () => {
+		const provider = (id: string) => ({
+			id,
+			name: id,
+			resolveProductIcon: () => null
+		});
+		const registry = new HeadlessIconRegistry();
+		const add = (id: string) => (previous: ReadonlyMap<string, any>) =>
+			new Map(previous).set(id, provider(id));
+		registry.registerProductIconTransform("alpha", add("alpha"));
+		const before = registry.getProductThemes();
+
+		let threw: unknown = null;
+		try {
+			registry.registerProductIconTransform("beta", () => {
+				throw new Error("boom");
+			});
+		} catch (error) {
+			threw = error;
+		}
+		expect(threw).toBeInstanceOf(Error);
+		expect((threw as Error).message).toContain("boom");
+		// Failed registration is atomic: the bad entry is dropped.
+		expect(registry.getProductThemes()).toEqual(before);
+		registry.rebuild();
+		expect(registry.getProductThemes()).toEqual(before);
+	});
+
 	it("removes plugin keymap and icon transforms through host lifecycle", async () => {
 		const app = new AppState({
 			storage: createMockStorage(),
