@@ -40,17 +40,17 @@ import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, runGit, TEST
  * delimiter.
  */
 describe('commit metadata survives a pipe in any field (VCS contract)', () => {
+	/** The spawn engine over the repo's hermetic env. Used by every case here. */
+	const spawnAdapter = (r: TestRepo) =>
+		new SpawnGitAdapter(
+			{ scheme: 'file', path: r.path, name: 'repo' },
+			(workingDir, args) => runGit(workingDir, r.env, args),
+			nodeFileAccess
+		);
+
 	/** Every engine that answers getCommits, so the check is a real contract, not a spawn-only unit test. */
 	const engines = [
-		{
-			name: 'SpawnGitAdapter (real git)',
-			create: (r: TestRepo) =>
-				new SpawnGitAdapter(
-					{ scheme: 'file', path: r.path, name: 'repo' },
-					(workingDir, args) => runGit(workingDir, r.env, args),
-					nodeFileAccess
-				)
-		},
+		{ name: 'SpawnGitAdapter (real git)', create: spawnAdapter },
 		{
 			name: 'IsomorphicGitAdapter (isomorphic-git)',
 			create: (r: TestRepo) => {
@@ -192,11 +192,7 @@ describe('commit metadata survives a pipe in any field (VCS contract)', () => {
 		const empty = await r.git(['commit', '-q', '--allow-empty', '--allow-empty-message', '-m', '']);
 		if (empty.code !== 0) throw new Error(empty.stderr);
 
-		const commits: GitCommit[] = await new SpawnGitAdapter(
-			{ scheme: 'file', path: r.path, name: 'repo' },
-			(workingDir, args) => runGit(workingDir, r.env, args),
-			nodeFileAccess
-		).getCommits();
+		const commits: GitCommit[] = await spawnAdapter(r).getCommits();
 
 		expect(commits).toHaveLength(2);
 		// The empty-subject commit: its own hash, and an empty message that is not
@@ -227,11 +223,7 @@ describe('commit metadata survives a pipe in any field (VCS contract)', () => {
 
 		await commitWithIdentity(r, 'sub|ject with a pipe', 'Ada|Lovelace', 'a|b@contract.test.invalid', '2024-05-10');
 
-		const commits: GitCommit[] = await new SpawnGitAdapter(
-			{ scheme: 'file', path: r.path, name: 'repo' },
-			(workingDir, args) => runGit(workingDir, r.env, args),
-			nodeFileAccess
-		).getCommits();
+		const commits: GitCommit[] = await spawnAdapter(r).getCommits();
 
 		expect(commits).toHaveLength(2);
 		const top = commits[0];
