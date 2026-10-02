@@ -279,11 +279,20 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(staged?.status).toBe('D');
 			expect(staged?.deletions).toBe(trackedStats(engine, { additions: 0, deletions: 3 }).deletions);
 			const unstaged = changes.find(c => c.filepath === 'README.md' && !c.staged);
-			// The desktop adapter sees porcelain '??' and reports 'U' with a line count; the
-			// browser adapter derives 'A' from the status matrix with zero counts (see #30).
-			// The drift is pinned per-engine until #34 settles staged-delete-plus-recreated.
-			expect(unstaged?.status).toBe(engine === isomorphicEngine ? 'A' : 'U');
-			expect(unstaged?.additions).toBe(engine === isomorphicEngine ? 0 : 1);
+			// Both engines report the recreate as untracked. The desktop adapter reads
+			// porcelain '??' directly; the browser adapter derives the same 'U' from the
+			// status matrix row [README.md, 1, 2, 0], the recreate
+			// `isResurrectedAfterStagedDelete` names. So the per-engine carve-out this
+			// assertion used to carry is gone.
+			//
+			// The staged `D` half of the same row still drifts, and `trackedStats` above
+			// is what pins it: the browser engine reports no numstat for a tracked file
+			// until its diff is loaded (#30). Only the recreate half settled here.
+			expect(unstaged?.status).toBe('U');
+			// 1 on both engines, for the same reason: the browser adapter counts lines
+			// only under `status === 'U'` (#30), and the recreate is now 'U'. Before the
+			// fix the row was labelled 'A' and so fell outside that branch and reported 0.
+			expect(unstaged?.additions).toBe(1);
 
 			const unstagedDiff = await adapter.getFileDiff('README.md', { staged: false });
 			expect(unstagedDiff.originalContent).toBe('');

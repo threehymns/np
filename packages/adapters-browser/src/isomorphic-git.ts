@@ -777,7 +777,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				}
 
 				if (hasUnstaged) {
-					const status = (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
+					// Real git prints `D` + `??` for this state; `U` is the faithful mapping.
+					const recreated = isResurrectedAfterStagedDelete([filepath as string, head, workdir, stage]);
+					const status = recreated || (head === 0 && stage === 0) ? 'U' : (stage === 0 ? 'A' : (workdir === 0 ? 'D' : 'M'));
 
 					let additions = 0;
 					let deletions = 0;
