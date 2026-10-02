@@ -16,6 +16,29 @@ export interface InternalLinkTarget {
 }
 
 /**
+ * The one spelling of a block id this module accepts, shared by every pattern
+ * that has to recognise one. `getBlocks` writes ids with BLOCK_ID_AT_END_RE and
+ * `parseInternalLink` reads one back out of a link with NESTED_BLOCK_ID_RE, so
+ * the class lives here once: if the two ends disagree, a written id stops
+ * resolving to itself.
+ */
+const BLOCK_ID_CLASS = '[a-zA-Z0-9-]+';
+
+/**
+ * A block id at the very end of a line.
+ *
+ * Trailing whitespace after the id is tolerated: it is invisible in the editor
+ * and is what a formatter, a copy-paste, or a stray keystroke leaves behind.
+ * Without this, one trailing space silently made the id stop resolving while the
+ * note rendered perfectly. The id must still be the last thing on the line --
+ * whitespace is skipped, content is not.
+ */
+const BLOCK_ID_AT_END_RE = new RegExp(`\\^(${BLOCK_ID_CLASS})[ \\t]*$`);
+
+/** A block id as the last segment of a multi-level heading path (`A#B#^id`). */
+const NESTED_BLOCK_ID_RE = new RegExp(`#\\^(${BLOCK_ID_CLASS})$`);
+
+/**
  * Parses an Obsidian-style internal link.
  * Supports:
  * - [[Note]]
@@ -63,6 +86,32 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 		}
 	}
 
+	// Bare block reference: `[[^block-id]]`, the spelling the editor's own block
+	// completion produces (the user types `[[^`, then picks an id, so the applied
+	// text is just the id). There is no `#` here, so the hash-split below never
+	// runs and the whole thing would otherwise be treated as the *name of a file*.
+	// Left unhandled, `openInternalLink` takes the "target is in a note" branch
+	// with allowCreate defaulting to true, so following the link silently creates
+	// a junk note named `^block-id.md` instead of scrolling to the block.
+	//
+	// The "no `#`" part is load-bearing and not just descriptive: `[[^alpha#…]]`
+	// does have one, so it belongs to the hash-split like every other link.
+	// Folding the whole string into a single block id made the id "alpha#…",
+	// which no block can have (ids are [a-zA-Z0-9-]), so the link resolved to
+	// nothing. The shortcut only applies to the hash-free spelling above.
+	if (str.startsWith('^') && !str.includes('#')) {
+		return {
+			raw: rawLink,
+			path: '',
+			subpath: {
+				type: 'block',
+				value: str.slice(1).trim(),
+			},
+			alias,
+			isEmbed,
+		};
+	}
+
 	// Heading or Block subpath syntax
 	const hashIndex = str.indexOf('#');
 	if (hashIndex !== -1) {
@@ -85,7 +134,7 @@ export function parseInternalLink(rawLink: string): InternalLinkTarget {
 
 		// Heading subpath (can be multi-level: Section 2#Sub-item A)
 		let headingPart = afterHash;
-		const blockMatch = afterHash.match(/#\^([a-zA-Z0-9-]+)$/);
+		const blockMatch = NESTED_BLOCK_ID_RE.exec(afterHash);
 		if (blockMatch) {
 			return {
 				raw: rawLink,
@@ -181,13 +230,128 @@ export interface HeadingItem {
 }
 
 /**
+ * Does this ORIGINAL line open an indented code block?
+ *
+ * Four or more leading spaces, or a leading tab, make one. Indentation is a
+ * property of the line as written, so this must never be asked about a trimmed
+ * line — trimming destroys the evidence.
+ */
+function isIndentedCode(line: string): boolean {
+	return /^(?: {4}|\t)/.test(line);
+}
+
+/**
+ * Can this trimmed line carry a Setext heading underline under it?
+ *
+ * A Setext underline turns the line above it into a heading only when that line
+ * is paragraph text. Anything that opens another block — a list, a blockquote,
+ * an HTML block, an indented code block, or a thematic break of its own — is not
+ * paragraph text, and a `---` after it is a thematic break, not an underline.
+ *
+ * `isIndented` is the caller's `isIndentedCode(line)` reading of the line as
+ * written. It is passed rather than derived, because trimming the line first
+ * would destroy the indentation this rule is about.
+ */
+function isParagraphText(trimmed: string, isIndented: boolean): boolean {
+	if (trimmed.length === 0) return false;
+	// 4+ spaces of original indentation is an indented code block.
+	if (isIndented) return false;
+	// List item (bullet, ordered, or task) and blockquote.
+	if (/^(?:[-*+]|\d{1,9}[.)])\s/.test(trimmed)) return false;
+	if (trimmed.startsWith('>')) return false;
+	// Thematic break: `---`, `***`, `___`. Only the first can precede an
+	// underline, but all three start a new block, so none is paragraph text.
+	if (/^(?:[*-]\s*){3,}$/.test(trimmed)) return false;
+	// HTML block. CommonMark opens one on a tag, comment, processing
+	// instruction, declaration or CDATA section, so every one of those is a
+	// '<'. A bare '<3' is not an opener and the line is ordinary paragraph
+	// text, which the renderer renders as a Setext heading.
+	//
+	// Known divergence, in the safe direction: this accepts ANY tag name, so
+	// a non-block tag ('<span>x</span>') is treated as an HTML block here and
+	// yields no heading, while the renderer makes it a Setext heading.
+	// Copying the renderer's exact block-tag list into a hand-rolled parser
+	// is not worth it for a case that only loses a heading nobody writes.
+	if (/^<[A-Za-z!/?]/.test(trimmed)) return false;
+	return true;
+}
+
+/**
+ * Tracks fenced code blocks across the lines of a document.
+ *
+ * A boolean "am I inside a code block" flag is not enough: a closing fence must
+ * match the opener, so the tracker has to remember the character and the length
+ * of the fence currently open.
+ *
+ * The rules implemented here are CommonMark's:
+ *  - A fence is three or more backticks, or three or more tildes.
+ *  - A closing fence uses the SAME character as its opener, is at least as long,
+ *    and carries no info string.
+ *  - A backtick fence's info string may not contain a backtick, so "```a`b" opens
+ *    nothing at all.
+ *  - A fence left open at the end of the document stays open.
+ *  - A fence may be indented up to three spaces. Further left it is an indented
+ *    code block, not a fence.
+ */
+class FenceTracker {
+	/**
+	 * The fence character currently open, or null when not in a code block. The
+	 * union is the whole of CommonMark's rule: there are exactly two fence
+	 * characters, so "which character closes this" needs no fallback.
+	 */
+	private char: '`' | '~' | null = null;
+	/** How many of that character the opener used; a closer may not be shorter. */
+	private length = 0;
+
+	/**
+	 * Feeds one line as written. Returns true when the line is a fence delimiter
+	 * or code-block content, so callers should skip their own parsing for it.
+	 */
+	skip(line: string): boolean {
+		const open = this.char;
+		if (open === null) {
+			// Indentation is only evidence on an OPENER, so this is asked here
+			// and not inside tryOpen, which also sees lines that are not openers.
+			return isIndentedCode(line) ? false : this.tryOpen(line.trim());
+		}
+		if (this.closes(open, line.trim())) {
+			this.char = null;
+			this.length = 0;
+		}
+		return true; // the opener, the closer, or code content
+	}
+
+	private tryOpen(line: string): boolean {
+		const backticks = /^`{3,}/.exec(line);
+		if (backticks) {
+			// A backtick info string containing a backtick is not a fence.
+			if (line.slice(backticks[0].length).includes('`')) return false;
+			this.char = '`';
+			this.length = backticks[0].length;
+			return true;
+		}
+		const tildes = /^~{3,}/.exec(line);
+		if (tildes) {
+			this.char = '~';
+			this.length = tildes[0].length;
+			return true;
+		}
+		return false;
+	}
+
+	private closes(open: '`' | '~', line: string): boolean {
+		return new RegExp(`^${open}{${this.length},}\\s*$`).test(line);
+	}
+}
+
+/**
  * Extracts all ATX and Setext headings from markdown content.
  */
 export function getHeadings(content: string): HeadingItem[] {
 	const lines = content.split(/\r?\n/);
 	const headings: HeadingItem[] = [];
 
-	let inCodeBlock = false;
+	const fence = new FenceTracker();
 
 	// Skip YAML frontmatter: a leading `---` block whose keys would otherwise
 	// be misread as Setext H2 underlines (e.g. `tags: [a]` followed by `---`).
@@ -206,16 +370,15 @@ export function getHeadings(content: string): HeadingItem[] {
 		const line = lines[i];
 		const trimmed = line.trim();
 
-		// Track code fence
-		if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-			inCodeBlock = !inCodeBlock;
-			continue;
-		}
-
-		if (inCodeBlock) continue;
+		// Fences and their contents are never headings or Setext underlines.
+		if (fence.skip(line)) continue;
 
 		// 1. ATX headings (# Heading)
-		const atxMatch = line.match(/^(#{1,6})\s+(.+?)(?:\s+#+)?$/);
+		//    Up to three leading spaces are allowed. Four or more make an indented
+		//    code block instead, which this anchor enforces by not matching.
+		//    Indentation is common in practice, e.g. a heading under a list item,
+		//    and the editor renders those as headings.
+		const atxMatch = line.match(/^ {0,3}(#{1,6})\s+(.+?)(?:\s+#+)?$/);
 		if (atxMatch) {
 			const level = atxMatch[1].length;
 			const text = atxMatch[2].trim();
@@ -228,9 +391,14 @@ export function getHeadings(content: string): HeadingItem[] {
 		}
 
 		// 2. Setext headings (Line followed by === or ---)
-		if (i + 1 < lines.length) {
+		//    Reaching here means this line is not inside a code block, and a run
+		//    of '=' or '-' can never be a fence, so the underline is ordinary text.
+		//    The line above the underline must be paragraph TEXT: a list item, a
+		//    blockquote, an HTML block, or an indented code line is followed by a
+		//    thematic break, not a heading, and the editor does not render it as one.
+		if (i + 1 < lines.length && isParagraphText(trimmed, isIndentedCode(line))) {
 			const nextLine = lines[i + 1].trim();
-			if (trimmed.length > 0 && /^[=-]{3,}$/.test(nextLine)) {
+			if (/^[=-]{3,}$/.test(nextLine)) {
 				const isH1 = nextLine.startsWith('=');
 				headings.push({
 					text: trimmed,
@@ -247,11 +415,45 @@ export function getHeadings(content: string): HeadingItem[] {
 }
 
 /**
+ * The first heading whose text is `name`, both sides trimmed and lowercased.
+ *
+ * `findHeadingLine` looks a name up twice — once for the whole path, once for a
+ * single segment — and both lookups must agree on what "the same name" means,
+ * so the comparison lives here rather than being written out twice.
+ */
+function findHeadingByText(
+	headings: HeadingItem[],
+	name: string
+): HeadingItem | undefined {
+	return headings.find((h) => h.text.trim().toLowerCase() === name);
+}
+
+/**
  * Finds the 1-indexed line number of a heading matching `headingPath`.
  * Supports nested subheadings like `Heading 1#Subheading 2`.
+ *
+ * Each path segment must match a heading nested strictly *under* the one the
+ * previous segment matched. Matching on document order alone was not enough:
+ * a sibling pair like `Two#Three` and a parent/child pair spelled backwards
+ * like `Shared#Gamma` both resolved to a line the caller never named, so a
+ * link would scroll the user somewhere unrelated.
  */
 export function findHeadingLine(content: string, headingPath: string): number | null {
 	const headings = getHeadings(content);
+
+	// A heading's own text may contain '#' (or '|', though the parser has already
+	// split that off as an alias), so try the WHOLE path as one literal name
+	// before splitting. Without this, a heading the completion itself offers —
+	// it reports heading text verbatim — can never be reached: `C#` splits into
+	// ["c", ""] and no heading is named "". The link is a real, clickable
+	// WikiLink, so the user picks a listed target and following it scrolls
+	// nowhere.
+	const whole = headingPath.trim().toLowerCase();
+	if (whole) {
+		const exact = findHeadingByText(headings, whole);
+		if (exact) return exact.line;
+	}
+
 	const segments = headingPath
 		.split('#')
 		.map((s) => s.trim().toLowerCase())
@@ -260,23 +462,28 @@ export function findHeadingLine(content: string, headingPath: string): number | 
 	if (segments.length === 0) return null;
 
 	if (segments.length === 1) {
-		const target = segments[0];
-		const match = headings.find(
-			(h) => h.text.trim().toLowerCase() === target
-		);
+		const match = findHeadingByText(headings, segments[0]);
 		return match ? match.line : null;
 	}
 
-	// Multi-segment heading path
+	// Multi-segment heading path. A segment may only match a heading deeper than
+	// the previous match, so a heading of the same or shallower level ends the
+	// candidate chain rather than continuing it.
 	let currentIndex = 0;
-	let lastMatchedLine: number | null = null;
+	let previousLevel = 0;
 	for (const heading of headings) {
 		const hText = heading.text.trim().toLowerCase();
+		// Headings at or above the last match's level are not inside it, so this
+		// branch is abandoned and the search restarts from later segments.
+		if (heading.level <= previousLevel) {
+			currentIndex = 0;
+			previousLevel = 0;
+		}
 		if (hText === segments[currentIndex]) {
-			lastMatchedLine = heading.line;
+			previousLevel = heading.level;
 			currentIndex++;
 			if (currentIndex === segments.length) {
-				return lastMatchedLine;
+				return heading.line;
 			}
 		}
 	}
@@ -297,25 +504,25 @@ export function getBlocks(content: string): BlockItem[] {
 	const lines = content.split(/\r?\n/);
 	const blocks: BlockItem[] = [];
 
-	let inCodeBlock = false;
+	// Same CommonMark fence rules as getHeadings, so a code sample cannot hand
+	// out a block reference the rest of the app would treat as real.
+	const fence = new FenceTracker();
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		const trimmed = line.trim();
 
-		if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-			inCodeBlock = !inCodeBlock;
-			continue;
-		}
+		if (fence.skip(line)) continue;
 
-		if (inCodeBlock) continue;
-
-		// Block reference: ^([a-zA-Z0-9-]+) at end of block or line
-		const match = line.match(/\^([a-zA-Z0-9-]+)$/);
+		// Block reference: a ^id at the end of a block or line. See
+		// BLOCK_ID_AT_END_RE for what counts as an id and why trailing
+		// whitespace is allowed.
+		const match = BLOCK_ID_AT_END_RE.exec(line);
 		if (match) {
 			const id = match[1];
-			// Preview is line content without the marker
-			const preview = line.replace(/\^([a-zA-Z0-9-]+)$/, '').trim();
+			// Preview is the line content before the marker. Cutting at
+			// match.index rather than re-running the pattern means the id and
+			// the preview can never be cut by two different versions of one rule.
+			const preview = line.slice(0, match.index).trim();
 			blocks.push({
 				id,
 				preview: preview || id,
