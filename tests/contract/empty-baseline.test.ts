@@ -62,7 +62,7 @@ import {
 	porcelainStatus,
 	runGit,
 	seedCommit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 /**
@@ -191,7 +191,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			// The index now holds exactly the worktree bytes, and nothing else moved.
 			expect(await indexContents(r, 'untracked.txt')).toBe(content);
-			expect(await worktreeContents(r, 'untracked.txt')).toBe(content);
+			expect(await workingTreeContents(r, 'untracked.txt')).toBe(content);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: ' ', path: 'untracked.txt' }]);
 		});
 
@@ -211,7 +211,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// so the trailing newline is part of the content.
 			expect((await runGit(r.path, r.env, ['cat-file', '-e', 'HEAD:added.txt'])).code).not.toBe(0);
 			expect(await indexContents(r, 'added.txt')).toBe('staged version\n');
-			expect(await worktreeContents(r, 'added.txt')).toBe('staged version\nplus an unstaged line\n');
+			expect(await workingTreeContents(r, 'added.txt')).toBe('staged version\nplus an unstaged line\n');
 			expect((await runGit(r.path, r.env, ['status', '--porcelain', '-z', '--', 'added.txt'])).stdout.startsWith('AM ')).toBe(true);
 
 			// The combined AM entry carries status 'A'; the UI sends `{ status }` with
@@ -247,7 +247,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Precondition: porcelain really is x='A', y='D', and the index still holds it.
 			expect((await runGit(r.path, r.env, ['status', '--porcelain', '-z', '--', 'gone.txt'])).stdout.startsWith('AD ')).toBe(true);
 			expect(await indexContents(r, 'gone.txt')).toBe('was here\n');
-			expect(await worktreeContents(r, 'gone.txt')).toBeNull();
+			expect(await workingTreeContents(r, 'gone.txt')).toBeNull();
 
 			// Drive the real pipeline: getChanges splits it, the combined entry
 			// takes the staged letter ('A'), and that is what the UI sends.
@@ -289,7 +289,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// The index entry is now empty and the worktree is untouched. The index
 			// holds '' (an empty blob), not a deleted path.
 			expect(await indexContents(r, 'added.txt')).toBe('');
-			expect(await worktreeContents(r, 'added.txt')).toBe('one\ntwo\nthree\n');
+			expect(await workingTreeContents(r, 'added.txt')).toBe('one\ntwo\nthree\n');
 			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: 'M', path: 'added.txt' }]);
 		});
 

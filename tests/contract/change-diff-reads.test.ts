@@ -18,7 +18,7 @@ import {
 	indexContents,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 const copyVersion = await gitVersion();
@@ -150,7 +150,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			const diff = await adapter.getFileDiff('hello.ts', { staged: false });
 			expect(diff.originalContent).toBe(await indexContents(r, 'hello.ts'));
-			expect(diff.modifiedContent).toBe(await worktreeContents(r, 'hello.ts'));
+			expect(diff.modifiedContent).toBe(await workingTreeContents(r, 'hello.ts'));
 		});
 
 		it('splits a staged+unstaged combination into two changes with per-scope baselines', async () => {
@@ -189,7 +189,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			const unstagedDiff = await adapter.getFileDiff('hello.ts', { staged: false });
 			expect(unstagedDiff.originalContent).toBe(await indexContents(r, 'hello.ts'));
-			expect(unstagedDiff.modifiedContent).toBe(await worktreeContents(r, 'hello.ts'));
+			expect(unstagedDiff.modifiedContent).toBe(await workingTreeContents(r, 'hello.ts'));
 
 			const combinedDiff = await adapter.getFileDiff('hello.ts');
 			expect(combinedDiff.originalContent).toBe(HELLO_V0);
@@ -451,7 +451,7 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 
 		const unstagedDiff = await adapter.getFileDiff('moved.txt', { staged: false });
 		expect(unstagedDiff.originalContent).toBe('');
-		expect(unstagedDiff.modifiedContent).toBe(await worktreeContents(r, 'moved.txt'));
+		expect(unstagedDiff.modifiedContent).toBe(await workingTreeContents(r, 'moved.txt'));
 
 		const combinedDiff = await adapter.getFileDiff('moved.txt');
 		expect(combinedDiff.originalContent).toBe('');

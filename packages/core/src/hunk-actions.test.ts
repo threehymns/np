@@ -130,12 +130,12 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("successfully applies unstaged hunk discard when adapter only supports updateFileContent", async () => {
-		let updatedWorktreeFile = "";
-		let updatedWorktreeContent = "";
+		let updatedWorkingTreeFile = "";
+		let updatedWorkingTreeContent = "";
 		const { appState, repository } = createMockAppState({
 			updateFileContent: mock(async (file: string, content: string) => {
-				updatedWorktreeFile = file;
-				updatedWorktreeContent = content;
+				updatedWorkingTreeFile = file;
+				updatedWorkingTreeContent = content;
 			})
 		});
 		const change = createTestChange({
@@ -146,8 +146,8 @@ describe("applyHunkAction error handling", () => {
 		const hunk: HunkRange = { fromA: 6, toA: 6, fromB: 6, toB: 12 };
 
 		await applyHunkAction(appState, change, hunk, "discard");
-		expect(updatedWorktreeFile).toBe("test.txt");
-		expect(updatedWorktreeContent).toBe("line1\n");
+		expect(updatedWorkingTreeFile).toBe("test.txt");
+		expect(updatedWorkingTreeContent).toBe("line1\n");
 		expect(repository.refresh).toHaveBeenCalled();
 		expect(repository.isBusy).toBe(false);
 	});
@@ -177,16 +177,16 @@ describe("applyHunkAction error handling", () => {
 	it("successfully applies staged hunk discard when adapter supports updateIndexContent and updateFileContent", async () => {
 		let updatedIndexFile = "";
 		let updatedIndexContent = "";
-		let updatedWorktreeFile = "";
-		let updatedWorktreeContent = "";
+		let updatedWorkingTreeFile = "";
+		let updatedWorkingTreeContent = "";
 		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (file: string, content: string) => {
 				updatedIndexFile = file;
 				updatedIndexContent = content;
 			}),
 			updateFileContent: mock(async (file: string, content: string) => {
-				updatedWorktreeFile = file;
-				updatedWorktreeContent = content;
+				updatedWorkingTreeFile = file;
+				updatedWorkingTreeContent = content;
 			}),
 			getFileDiff: async () => ({
 				originalContent: "line1\nline2\n",
@@ -205,13 +205,13 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedIndexFile).toBe("test.txt");
 		expect(updatedIndexContent).toBe("line1\n");
-		expect(updatedWorktreeFile).toBe("test.txt");
-		expect(updatedWorktreeContent).toBe("line1\n");
+		expect(updatedWorkingTreeFile).toBe("test.txt");
+		expect(updatedWorkingTreeContent).toBe("line1\n");
 		expect(repository.refresh).toHaveBeenCalled();
 		expect(repository.isBusy).toBe(false);
 	});
 
-	it("rolls back index when worktree write fails during staged hunk discard", async () => {
+	it("rolls back index when working-tree write fails during staged hunk discard", async () => {
 		const indexCalls: string[] = [];
 		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
@@ -260,15 +260,15 @@ describe("applyHunkAction error handling", () => {
 		expect(updatedContent).toBe("a\r\nb\r\n");
 	});
 
-	it("preserves CRLF line endings when discarding a staged hunk from index and worktree", async () => {
+	it("preserves CRLF line endings when discarding a staged hunk from index and working tree", async () => {
 		let updatedIndexContent = "";
-		let updatedWorktreeContent = "";
+		let updatedWorkingTreeContent = "";
 		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedIndexContent = content;
 			}),
 			updateFileContent: mock(async (_file: string, content: string) => {
-				updatedWorktreeContent = content;
+				updatedWorkingTreeContent = content;
 			}),
 			getFileDiff: async () => ({
 				originalContent: "a\r\nB\r\n",
@@ -286,10 +286,10 @@ describe("applyHunkAction error handling", () => {
 
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedIndexContent).toBe("a\r\nb\r\n");
-		expect(updatedWorktreeContent).toBe("a\r\nb\r\n");
+		expect(updatedWorkingTreeContent).toBe("a\r\nb\r\n");
 	});
 
-	it("restores CRLF index content when rolling back after a failed worktree write", async () => {
+	it("restores CRLF index content when rolling back after a failed working-tree write", async () => {
 		const indexCalls: string[] = [];
 		const { appState, repository, alerts } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
@@ -318,24 +318,24 @@ describe("applyHunkAction error handling", () => {
 		expect(alerts[0]).toContain("Disk write failure");
 	});
 
-	it("preserves unrelated unstaged worktree edits when discarding a staged hunk", async () => {
+	it("preserves unrelated unstaged working-tree edits when discarding a staged hunk", async () => {
 		let updatedIndexContent = "";
-		let worktreeWriteCount = 0;
-		let updatedWorktreeContent = "";
+		let workingTreeWriteCount = 0;
+		let updatedWorkingTreeContent = "";
 		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				updatedIndexContent = content;
 			}),
 			updateFileContent: mock(async (_file: string, content: string) => {
-				worktreeWriteCount++;
-				updatedWorktreeContent = content;
+				workingTreeWriteCount++;
+				updatedWorkingTreeContent = content;
 			}),
 			getFileDiff: async (_filepath: string, options?: { staged?: boolean }) => {
 				if (options?.staged === false) {
-					// index vs worktree: unrelated unstaged edit on line 3
+					// index vs working tree: unrelated unstaged edit on line 3
 					return {
 						originalContent: "HEAD1\nB1\nHEAD3\n",
-						modifiedContent: "HEAD1\nB1\nWORKTREE3\n",
+						modifiedContent: "HEAD1\nB1\nWORKINGTREE3\n",
 						stagedContent: "HEAD1\nB1\nHEAD3\n"
 					};
 				}
@@ -357,26 +357,26 @@ describe("applyHunkAction error handling", () => {
 
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
-		expect(worktreeWriteCount).toBe(1);
-		// The unstaged WORKTREE3 edit must survive; only the hunk's line reverts.
-		expect(updatedWorktreeContent).toBe("HEAD1\nHEAD2\nWORKTREE3\n");
+		expect(workingTreeWriteCount).toBe(1);
+		// The unstaged WORKINGTREE3 edit must survive; only the hunk's line reverts.
+		expect(updatedWorkingTreeContent).toBe("HEAD1\nHEAD2\nWORKINGTREE3\n");
 	});
 
-	it("leaves the worktree untouched when an unstaged edit overlaps the discarded staged hunk", async () => {
+	it("leaves the working tree untouched when an unstaged edit overlaps the discarded staged hunk", async () => {
 		let indexWriteCount = 0;
 		let updatedIndexContent = "";
-		let worktreeWriteCount = 0;
+		let workingTreeWriteCount = 0;
 		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexWriteCount++;
 				updatedIndexContent = content;
 			}),
 			updateFileContent: mock(async () => {
-				worktreeWriteCount++;
+				workingTreeWriteCount++;
 			}),
 			getFileDiff: async (_filepath: string, options?: { staged?: boolean }) => {
 				if (options?.staged === false) {
-					// index vs worktree: line 2 was edited again after staging
+					// index vs working tree: line 2 was edited again after staging
 					return {
 						originalContent: "HEAD1\nB1\nHEAD3\n",
 						modifiedContent: "HEAD1\nBX\nHEAD3\n",
@@ -400,24 +400,24 @@ describe("applyHunkAction error handling", () => {
 
 		await applyHunkAction(appState, change, hunk, "discard");
 		// Index-only revert: the overlapping unstaged edit survives in the
-		// worktree and resurfaces as part of the unstaged diff.
+		// working tree and resurfaces as part of the unstaged diff.
 		expect(indexWriteCount).toBe(1);
 		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
-		expect(worktreeWriteCount).toBe(0);
+		expect(workingTreeWriteCount).toBe(0);
 		expect(repository.refresh).toHaveBeenCalled();
 	});
 
-	it("reverts only the index when worktree content is unavailable for a staged hunk discard", async () => {
+	it("reverts only the index when working-tree content is unavailable for a staged hunk discard", async () => {
 		let indexWriteCount = 0;
 		let updatedIndexContent = "";
-		let worktreeWriteCount = 0;
+		let workingTreeWriteCount = 0;
 		const { appState, repository } = createMockAppState({
 			updateIndexContent: mock(async (_file: string, content: string) => {
 				indexWriteCount++;
 				updatedIndexContent = content;
 			}),
 			updateFileContent: mock(async () => {
-				worktreeWriteCount++;
+				workingTreeWriteCount++;
 			})
 			// no getFileDiff: repository.getFileDiff resolves null
 		});
@@ -432,7 +432,7 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(indexWriteCount).toBe(1);
 		expect(updatedIndexContent).toBe("line1\n");
-		expect(worktreeWriteCount).toBe(0);
+		expect(workingTreeWriteCount).toBe(0);
 		expect(repository.refresh).toHaveBeenCalled();
 		expect(repository.isBusy).toBe(false);
 	});
@@ -504,8 +504,8 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("resolves missing diff content via adapter.getFileDiff on discard", async () => {
-		let updatedWorktreeFile = "";
-		let updatedWorktreeContent = "";
+		let updatedWorkingTreeFile = "";
+		let updatedWorkingTreeContent = "";
 		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
 			return {
 				originalContent: "line1\n",
@@ -516,8 +516,8 @@ describe("applyHunkAction error handling", () => {
 		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateFileContent: mock(async (file: string, content: string) => {
-				updatedWorktreeFile = file;
-				updatedWorktreeContent = content;
+				updatedWorkingTreeFile = file;
+				updatedWorkingTreeContent = content;
 			})
 		});
 		const change = createTestChange({
@@ -530,8 +530,8 @@ describe("applyHunkAction error handling", () => {
 
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(getFileDiffMock).toHaveBeenCalledWith("test.txt", { staged: false });
-		expect(updatedWorktreeFile).toBe("test.txt");
-		expect(updatedWorktreeContent).toBe("line1\n");
+		expect(updatedWorkingTreeFile).toBe("test.txt");
+		expect(updatedWorkingTreeContent).toBe("line1\n");
 		expect(repository.refresh).toHaveBeenCalled();
 		expect(repository.isBusy).toBe(false);
 	});
@@ -541,7 +541,7 @@ describe("applyHunkAction error handling", () => {
 		let updatedContent = "";
 		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
 			expect(options).toBeUndefined();
-			// HEAD vs worktree (full diff), with index content as stagedContent
+			// HEAD vs working tree (full diff), with index content as stagedContent
 			return {
 				originalContent: "line0\nline1\nline2\nline3\n",
 				modifiedContent: "line0\nline1\nline2\nX\nline3\n",
@@ -563,7 +563,7 @@ describe("applyHunkAction error handling", () => {
 			modifiedContent: undefined,
 			stagedContent: undefined
 		});
-		// Hunk inserting "X" after line2 in the worktree (HEAD offsets 18..18).
+		// Hunk inserting "X" after line2 in the working tree (HEAD offsets 18..18).
 		const hunk: HunkRange = { fromA: 18, toA: 18, fromB: 18, toB: 20 };
 
 		await applyHunkAction(appState, change, hunk, "stage");
@@ -571,7 +571,7 @@ describe("applyHunkAction error handling", () => {
 		expect(updatedFile).toBe("test.txt");
 		// The hunk anchors after line2 (HEAD offset 18). That offset sits on the
 		// changed-chunk end boundary and must map to the index offset AFTER DIFF
-		// (staged offset 17), matching the worktree order (line2, X, line3) and
+		// (staged offset 17), matching the working-tree order (line2, X, line3) and
 		// git add -p. Mapping it to the chunk start would insert X before DIFF.
 		expect(updatedContent).toBe("line0\nline1\nDIFF\nX\nline3\n");
 		expect(repository.refresh).toHaveBeenCalled();
@@ -605,8 +605,8 @@ describe("applyHunkAction error handling", () => {
 	});
 
 	it("discards an unstaged hunk in a combined change using the full-diff scope", async () => {
-		let updatedWorktreeFile = "";
-		let updatedWorktreeContent = "";
+		let updatedWorkingTreeFile = "";
+		let updatedWorkingTreeContent = "";
 		const getFileDiffMock = mock(async (filepath: string, options?: { staged?: boolean }) => {
 			expect(options).toBeUndefined();
 			return {
@@ -618,8 +618,8 @@ describe("applyHunkAction error handling", () => {
 		const { appState, repository } = createMockAppState({
 			getFileDiff: getFileDiffMock,
 			updateFileContent: mock(async (file: string, content: string) => {
-				updatedWorktreeFile = file;
-				updatedWorktreeContent = content;
+				updatedWorkingTreeFile = file;
+				updatedWorkingTreeContent = content;
 			})
 		});
 		const change = createTestChange({
@@ -632,8 +632,8 @@ describe("applyHunkAction error handling", () => {
 		const hunk: HunkRange = { fromA: 18, toA: 18, fromB: 18, toB: 20 };
 
 		await applyHunkAction(appState, change, hunk, "discard");
-		expect(updatedWorktreeFile).toBe("test.txt");
-		expect(updatedWorktreeContent).toBe("line0\nline1\nline2\nline3\n");
+		expect(updatedWorkingTreeFile).toBe("test.txt");
+		expect(updatedWorkingTreeContent).toBe("line0\nline1\nline2\nline3\n");
 		expect(repository.refresh).toHaveBeenCalled();
 		expect(repository.isBusy).toBe(false);
 	});
@@ -736,7 +736,7 @@ describe("VCS utilities (countLines, countDiffStats, diffCacheKey)", () => {
 
 describe("resolveDiffDetail", () => {
 	it("resolves staged diff correctly (HEAD vs Index)", () => {
-		const diff = resolveDiffDetail("head text", "staged text", "worktree text", { staged: true });
+		const diff = resolveDiffDetail("head text", "staged text", "working-tree text", { staged: true });
 		expect(diff).toEqual({
 			originalContent: "head text",
 			modifiedContent: "staged text",
@@ -745,28 +745,28 @@ describe("resolveDiffDetail", () => {
 	});
 
 	it("resolves unstaged diff with staged content base", () => {
-		const diff = resolveDiffDetail("head text", "staged text", "worktree text", { staged: false });
+		const diff = resolveDiffDetail("head text", "staged text", "working-tree text", { staged: false });
 		expect(diff).toEqual({
 			originalContent: "staged text",
-			modifiedContent: "worktree text",
+			modifiedContent: "working-tree text",
 			stagedContent: "staged text"
 		});
 	});
 
-	it("resolves unstaged diff with empty staged content (staged deletion recreated in worktree) without falling back to headContent", () => {
-		const diff = resolveDiffDetail("head text", "", "recreated worktree text", { staged: false });
+	it("resolves unstaged diff with empty staged content (staged deletion recreated in working tree) without falling back to headContent", () => {
+		const diff = resolveDiffDetail("head text", "", "recreated working-tree text", { staged: false });
 		expect(diff).toEqual({
 			originalContent: "",
-			modifiedContent: "recreated worktree text",
+			modifiedContent: "recreated working-tree text",
 			stagedContent: ""
 		});
 	});
 
 	it("resolves combined diff when options are omitted or not staged-scoped", () => {
-		const diff = resolveDiffDetail("head text", "staged text", "worktree text");
+		const diff = resolveDiffDetail("head text", "staged text", "working-tree text");
 		expect(diff).toEqual({
 			originalContent: "head text",
-			modifiedContent: "worktree text",
+			modifiedContent: "working-tree text",
 			stagedContent: "staged text"
 		});
 	});
