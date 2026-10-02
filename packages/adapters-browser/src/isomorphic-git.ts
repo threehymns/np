@@ -9,21 +9,21 @@ import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 
 const REPO_DIR = '/repo';
-const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
+const HEAVY_DIR_NAMES = new Set(['node_modules', '.svelte-kit']);
 
 /**
- * Whether `statusMatrix` should consider a worktree path at all.
+ * Whether `statusMatrix` should consider a working-tree path at all.
  *
  * The test is on whole path *segments*, not on substrings. A note called
- * `node_modules-is-fine.md` is an ordinary file in the vault this editor
+ * `node_modules-is-fine.md` is an ordinary file in the worktree this editor
  * targets, and a containment test silently drops it from the status matrix.
  * That is not cosmetic: `getStatus` then reports `isDirty: false`, and
  * `switchBranch` neither counts the file as a conflict nor snapshots it, so
  * the forced checkout overwrites the user's uncommitted edits with no error
  * and no rollback. Real git refuses the same checkout.
  *
- * This shares HEAVY_WORKTREE_DIRS with `readdir`, and deliberately nothing
- * more. `readdir` hides those directories only at the worktree root, and it
+ * This shares HEAVY_DIR_NAMES with `readdir`, and deliberately nothing
+ * more. `readdir` hides those directories only at the repo root, and it
  * must keep looking for `.git` there -- routing it through this predicate would
  * hide the git directory from the detection walk at `detect()` and no repository
  * would ever be found. Same vocabulary, two different questions.
@@ -33,7 +33,7 @@ function isUserPath(filepath: string): boolean {
 	// `.git` is a directory, never a user file; the others are the heavy
 	// build-output directories `git.walk` would otherwise descend into.
 	if (segments.includes('.git')) return false;
-	return !segments.some((segment) => HEAVY_WORKTREE_DIRS.has(segment));
+	return !segments.some((segment) => HEAVY_DIR_NAMES.has(segment));
 }
 
 /** The index mode git gives a symlink; its blob content is the target path, not text. */
@@ -60,11 +60,11 @@ function stageMode(recorded: number | undefined): number {
 
 /**
  * Whether a status row is a file whose deletion is staged but which has been
- * recreated in the worktree: still in HEAD (1), gone from the index (0), and
+ * recreated in the working tree: still in HEAD (1), gone from the index (0), and
  * present on disk (2).
  *
  * Real git reports that state as two porcelain entries, `D  f.txt` and `?? f.txt`.
- * `statusMatrix` folds it into the single row [f.txt, 1, 2, 0] — the worktree
+ * `statusMatrix` folds it into the single row [f.txt, 1, 2, 0] — the workdir
  * column is 2, "untracked", precisely because the path left the index, so the two
  * halves that matter are indistinguishable from a file that was never tracked at
  * all. Measured on a real repository.
@@ -230,9 +230,9 @@ class BrowserGitFS {
 		// Root-only, unlike `isUserPath`, which drops a heavy directory at any
 		// depth. `detect()` walks ancestors reading this, and hiding `.git` here
 		// would leave it unable to find a repository at all. See `isUserPath`.
-		const isWorktreeRoot = path.replace(/\/+$/, '') === REPO_DIR;
+		const isRepoRoot = path.replace(/\/+$/, '') === REPO_DIR;
 		for await (const name of (handle as FileSystemDirectoryHandle).keys()) {
-			if (isWorktreeRoot && HEAVY_WORKTREE_DIRS.has(name)) continue;
+			if (isRepoRoot && HEAVY_DIR_NAMES.has(name)) continue;
 			names.push(name);
 		}
 		return names;
@@ -554,20 +554,20 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 			// A status matrix of [1,1,1] means the path is clean in all three
 			// states, which is also exactly what a mode-only change looks like
-			// once File System Access has flattened the worktree's permission
+			// once File System Access has flattened the working tree's permission
 			// bits: isomorphic-git compares blob ids, and the executable bit
 			// does not alter the blob. So a staged mode never reaches
 			// `snapshots` and the switch drops it, in the index AND the
-			// worktree.
+			// working tree.
 			//
 			// This filter is not the only mode loss. A mode staged alongside a
 			// content change reports [1,2,2], does get snapshotted, and the
-			// index is then written correctly — but the worktree still comes
+			// index is then written correctly — but the working tree still comes
 			// out at 644, because the forced checkout rewrites the file at its
 			// HEAD mode and writeFileSafe writes bytes only.
 			//
 			// Neither is repairable in this file: the File System Access API
-			// exposes no permission bits and has no chmod, so a worktree mode
+			// exposes no permission bits and has no chmod, so a working-tree mode
 			// cannot be put back once lost. The behaviour is pinned in
 			// tests/contract/branch-switch.test.ts.
 			const dirtyRows = matrix.filter(([file, head, workdir, stage]) => {
@@ -600,9 +600,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 						// A snapshot with null content cannot restore the file after the
 						// forced checkout below, so a failed read blocks the switch
 						// instead of risking the user's changes. A vanished file (ENOENT)
-						// returns null from readWorktreeBytes so the restore unlinks it.
+						// returns null from readWorkingTreeBytes so the restore unlinks it.
 						try {
-							workdirContent = await this.readWorktreeBytes(filepath as string);
+							workdirContent = await this.readWorkingTreeBytes(filepath as string);
 						} catch (e) {
 							// Any non-ENOENT read failure is unreadable — the forced checkout
 							// would clobber it, so it blocks the switch.
@@ -651,7 +651,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		for (const snap of snapshots) {
 			if (snap.workdirContent !== null) continue;
 			try {
-				snap.workdirContent = await this.readWorktreeBytes(snap.filepath);
+				snap.workdirContent = await this.readWorkingTreeBytes(snap.filepath);
 			} catch (e) {
 				// Non-ENOENT read error: unreadable, so block rather than let the
 				// checkout clobber it.
@@ -708,7 +708,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			const isTrulyAbsent = async (): Promise<boolean> => {
 				let bytes: Uint8Array | null;
 				try {
-					bytes = await this.readWorktreeBytes(filepath);
+					bytes = await this.readWorkingTreeBytes(filepath);
 				} catch {
 					// Unreadable: assume present and keep it — deleting a path we
 					// cannot inspect risks losing data we cannot see.
@@ -744,9 +744,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				await this.fs!.promises.unlink(fullPath).catch(() => {});
 			};
 
-			// Restore index staging state without touching the worktree:
+			// Restore index staging state without touching the working tree:
 			// Writing staged blobs directly into git object storage and updating
-			// the index avoids bouncing content through the worktree via `git.add`,
+			// the index avoids bouncing content through the working tree via `git.add`,
 			// which would race with and overwrite concurrent local writes.
 			if (stagedContent) {
 				const oid = await git.writeBlob({
@@ -766,7 +766,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				await this.removeFromIndex(filepath);
 			}
 
-			// Restore worktree state:
+			// Restore working-tree state:
 			// If workdir had content, restore it. If workdir was absent/deleted,
 			// unlink checkout content only if no concurrent recreation occurred.
 			if (workdirContent !== null) {
@@ -897,11 +897,11 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		let workdirContent = '';
 		if (options?.staged !== true) {
 			try {
-				// EAFP: attempt reading worktree content; file may be deleted or missing
+				// EAFP: attempt reading working-tree content; file may be deleted or missing
 				const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
 				workdirContent = typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
 			} catch (e: any) {
-				// Only genuinely absent files yield empty worktree content;
+				// Only genuinely absent files yield empty working-tree content;
 				// anything else (permissions, I/O failures) must reach the caller.
 				// A directory is the one other case: `git status` lists an
 				// untracked symlink to a directory as `??`, so the UI can offer it
@@ -935,12 +935,12 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	async updateFileContent(filepath: string, content: string): Promise<void> {
 		if (!await this.ensureInitialized()) throw new Error('Git not initialized');
-		// Same reasoning as `updateIndexContent`, applied to the worktree. A bare
+		// Same reasoning as `updateIndexContent`, applied to the working tree. A bare
 		// write follows the link and overwrites the target -- a different, tracked
 		// file that the user never opened -- so the refusal is made first.
 		//
 		// The index entry's mode is again the only available signal, and that
-		// makes this slightly stricter than the worktree-based check the desktop
+		// makes this slightly stricter than the working-tree-based check the desktop
 		// adapter can afford. Here the link is followed on disk, so the entry
 		// describes the pre-write state and a link replaced by a regular file
 		// (mode 100644) is no longer detected. That case is a deliberate trade:
@@ -1108,7 +1108,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Remove a path from the index only, never touching the worktree. `force` is
+	 * Remove a path from the index only, never touching the working tree. `force` is
 	 * safe because the shim's lstat would otherwise throw for a missing file.
 	 */
 	private async removeFromIndex(filepath: string): Promise<void> {
@@ -1125,13 +1125,13 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (matrix.length > 0) {
 			const [,, workdir] = matrix[0];
 			if (workdir === 0) {
-				// Staging a deletion must not touch the worktree: the file may already
+				// Staging a deletion must not touch the working tree: the file may already
 				// be gone, which `git.remove` would fail on.
 				await this.removeFromIndex(filepath);
 				return;
 			}
 		}
-		await this.stageWorktreeFile(filepath);
+		await this.stageWorkingTreeFile(filepath);
 	}
 
 	async unstageFile(filepath: string): Promise<void> {
@@ -1163,7 +1163,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 	/**
 	 * The source path of a staged rename for `filepath` (the destination): another
-	 * path present in HEAD but removed from both the index and the worktree whose
+	 * path present in HEAD but removed from both the index and the working tree whose
 	 * HEAD content equals the destination's staged content. Null when the
 	 * destination is not a rename — the statusMatrix analogue of the desktop
 	 * engine's porcelain rename probe.
@@ -1191,8 +1191,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return null;
 	}
 
-	/** The worktree bytes of a path, or null when the file is absent; other read failures surface. */
-	private async readWorktreeBytes(filepath: string): Promise<Uint8Array | null> {
+	/** The working-tree bytes of a path, or null when the file is absent; other read failures surface. */
+	private async readWorkingTreeBytes(filepath: string): Promise<Uint8Array | null> {
 		try {
 			const buffer = await this.fs!.promises.readFile(`${this.dir}/${filepath}`);
 			return typeof buffer === 'string' ? new TextEncoder().encode(buffer) : new Uint8Array(buffer);
@@ -1202,9 +1202,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	/** The worktree text of a path, or null when the file is absent. */
-	private async readWorktreeText(filepath: string): Promise<string | null> {
-		const bytes = await this.readWorktreeBytes(filepath);
+	/** The working-tree text of a path, or null when the file is absent. */
+	private async readWorkingTreeText(filepath: string): Promise<string | null> {
+		const bytes = await this.readWorkingTreeBytes(filepath);
 		return bytes === null ? null : new TextDecoder().decode(bytes);
 	}
 
@@ -1266,7 +1266,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
-	/** Remove a worktree file; an already-absent file is a no-op, other failures surface. */
+	/** Remove a working-tree file; an already-absent file is a no-op, other failures surface. */
 	private async unlinkIfPresent(filepath: string): Promise<void> {
 		try {
 			await this.fs!.promises.unlink(`${this.dir}/${filepath}`);
@@ -1278,7 +1278,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	/**
 	 * Whether `content` matches the HEAD content of another path still tracked in
 	 * the index — the statusMatrix analogue of the desktop engine's porcelain copy
-	 * entries, used to keep a staged copy's worktree edits instead of cleaning them.
+	 * entries, used to keep a staged copy's working-tree edits instead of cleaning them.
 	 */
 	private async matchesHeadContentOfTrackedPath(matrix: [string, number, number, number][], filepath: string, content: string): Promise<boolean> {
 		let headCommit: string | null = null;
@@ -1300,17 +1300,17 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * Finds the tracked source of an unstaged working-tree rename whose destination is
 	 * `filepath`, or undefined when `filepath` is not such a destination.
 	 *
-	 * An unstaged worktree rename is invisible to git: the statusMatrix reports the
-	 * destination as untracked and the source as a worktree deletion that is still
+	 * An unstaged working-tree rename is invisible to git: the statusMatrix reports the
+	 * destination as untracked and the source as a working-tree deletion that is still
 	 * in the index. For this case, measured directly, the rows are
-	 * `[["moved.txt",0,2,0],["src.txt",1,0,1]]` — a `[path, head, worktree, stage]`
-	 * tuple where an untracked destination is `worktree === 2` with `stage === 0`,
-	 * and a worktree-deleted source still in the index is `worktree === 0` with
+	 * `[["moved.txt",0,2,0],["src.txt",1,0,1]]` — a `[path, head, workdir, stage]`
+	 * tuple where an untracked destination is `workdir === 2` with `stage === 0`,
+	 * and a working-tree-deleted source still in the index is `workdir === 0` with
 	 * `stage === 1` (isomorphic-git's stage numbers differ from git's; the
-	 * non-zero, non-worktree value is what marks it as still present in the index).
+	 * non-zero, non-workdir value is what marks it as still present in the index).
 	 *
 	 * The pair is recovered by content, exactly as the desktop engine does. A
 	 * candidate matches only when its index content is byte-identical to the
@@ -1323,17 +1323,17 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	private async findUnstagedRenameSource(matrix: [string, number, number, number][], filepath: string): Promise<string | undefined> {
 		const destination = matrix.find(([p]) => p === filepath);
 		if (!destination) return undefined;
-		const [, destHead, destWorktree, destStage] = destination;
-		// Untracked destination: absent from HEAD and the index, present in the worktree.
-		if (!(destHead === 0 && destStage === 0 && destWorktree !== 0)) return undefined;
+		const [, destHead, destWorkdir, destStage] = destination;
+		// Untracked destination: absent from HEAD and the index, present in the working tree.
+		if (!(destHead === 0 && destStage === 0 && destWorkdir !== 0)) return undefined;
 
-		const destinationText = await this.readWorktreeText(filepath);
+		const destinationText = await this.readWorkingTreeText(filepath);
 		if (destinationText === null) return undefined;
 
 		const matches: string[] = [];
-		for (const [candidate, , worktree, stage] of matrix) {
-			// Source candidate: missing from the worktree, still recorded in the index.
-			if (candidate === filepath || worktree !== 0 || stage === 0) continue;
+		for (const [candidate, , workdir, stage] of matrix) {
+			// Source candidate: missing from the working tree, still recorded in the index.
+			if (candidate === filepath || workdir !== 0 || stage === 0) continue;
 			const staged = await this.readStageEntry(candidate);
 			if (!staged) continue;
 			const stagedText = await this.readBlobText(staged.oid);
@@ -1354,7 +1354,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			// Still in HEAD, gone from the index, and present on disk: the user
 			// deleted the file, staged the deletion, and then recreated it.
 			// `statusMatrix` reports that as the single row [path, 1, 2, 0] — the
-			// worktree column is 2 (untracked) precisely because the path left the
+			// workdir column is 2 (untracked) precisely because the path left the
 			// index, so the two-entry `D` + `??` pair real git prints is invisible
 			// here. Unlinking it destroyed the only copy of content that is in
 			// neither the index nor HEAD.
@@ -1367,10 +1367,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (isResurrectedAfterStagedDelete(entry)) {
 				return;
 			}
-			// Unstaged scope: reset only the worktree copy from the index version; the
+			// Unstaged scope: reset only the working-tree copy from the index version; the
 			// index is never touched. A path absent from the index (untracked file or
-			// worktree-only rename) has no staged copy to restore from, so its worktree
-			// file is cleaned instead. An unstaged worktree rename is the case where
+			// working-tree-only rename) has no staged copy to restore from, so its working-tree
+			// file is cleaned instead. An unstaged working-tree rename is the case where
 			// cleaning the destination would also lose the tracked source, so restore
 			// the source from the index first — the recovery this engine always meant
 			// to perform, but which porcelain v1 / statusMatrix cannot express.
@@ -1396,7 +1396,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 
 		// A staged rename pairs the destination (staged addition) with a path removed
-		// from the index and worktree whose HEAD content matches the staged content —
+		// from the index and working tree whose HEAD content matches the staged content —
 		// the same pairing `git reset HEAD -- <source> <dest>` reverts on the desktop
 		// engine. The rename is reverted whole: the original path is restored from
 		// HEAD, the destination is removed from the index, and unstaged edits at the
@@ -1405,8 +1405,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		if (renameSource) {
 			const staged = await this.readStageEntry(filepath);
 			const stagedText = staged ? await this.readBlobText(staged.oid) : null;
-			const worktreeText = await this.readWorktreeText(filepath);
-			const hasEdits = stagedText !== null && worktreeText !== null && worktreeText !== stagedText;
+			const workingTreeText = await this.readWorkingTreeText(filepath);
+			const hasEdits = stagedText !== null && workingTreeText !== null && workingTreeText !== stagedText;
 			await git.checkout({
 				fs: this.fs!,
 				dir: this.dir,
@@ -1423,8 +1423,8 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 
 		const [, head] = entry;
 		if (head === 1) {
-			// Tracked path: restore index and worktree from HEAD. `git.checkout`
-			// silently removes worktree files absent from the ref, so it may only
+			// Tracked path: restore index and working tree from HEAD. `git.checkout`
+			// silently removes working-tree files absent from the ref, so it may only
 			// be used for paths that exist in HEAD.
 			await git.checkout({
 				fs: this.fs!,
@@ -1437,21 +1437,21 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 
 		// Absent from HEAD: an untracked file or a staged addition. Remove the
-		// index entry and clean the worktree copy. A staged addition whose
-		// worktree copy holds edits matching another path's HEAD content (a
+		// index entry and clean the working-tree copy. A staged addition whose
+		// working-tree copy holds edits matching another path's HEAD content (a
 		// staged copy) keeps those edits as an untracked file, mirroring the
 		// desktop engine's CM handling — the user's edits are never the engine's
 		// to delete.
 		const staged = await this.readStageEntry(filepath);
-		let keepWorktree = false;
+		let keepWorkingTree = false;
 		if (staged) {
 			const stagedText = await this.readBlobText(staged.oid);
-			const worktreeText = await this.readWorktreeText(filepath);
-			keepWorktree = stagedText !== null && worktreeText !== null && worktreeText !== stagedText
+			const workingTreeText = await this.readWorkingTreeText(filepath);
+			keepWorkingTree = stagedText !== null && workingTreeText !== null && workingTreeText !== stagedText
 				&& await this.matchesHeadContentOfTrackedPath(matrix, filepath, stagedText);
 			await this.removeFromIndex(filepath);
 		}
-		if (!keepWorktree) {
+		if (!keepWorkingTree) {
 			await this.unlinkIfPresent(filepath);
 		}
 	}
@@ -1464,18 +1464,18 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (isClean) continue;
 			if (workdir === 0) {
 				if (stage !== 0 || head !== 0) {
-					// Index-only removal: `git.remove` would also unlink the worktree
+					// Index-only removal: `git.remove` would also unlink the working-tree
 					// file, which fails when it is already gone.
 					await this.removeFromIndex(filepath as string);
 				}
 			} else {
-				await this.stageWorktreeFile(filepath as string);
+				await this.stageWorkingTreeFile(filepath as string);
 			}
 		}
 	}
 
 	/**
-	 * Stages a worktree file's current content into the index.
+	 * Stages a working-tree file's current content into the index.
 	 *
 	 * `git.add` derives the index mode from `stat().mode`, and `BrowserStats`
 	 * reports a hardcoded `0o100644` for every file because the File System Access
@@ -1494,7 +1494,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	 * The recorded mode is only inheritable while the new content is the same kind
 	 * of object. A `120000` entry's blob holds a link *target*, not a file body, so
 	 * keeping that mode over a regular file's bytes writes an entry git cannot
-	 * represent. `readWorktreeBytes` never returns a link — this platform cannot
+	 * represent. `readWorkingTreeBytes` never returns a link — this platform cannot
 	 * read one — so anything other than a regular-file mode is dropped, exactly as
 	 * `git.add` did.
 	 *
@@ -1507,10 +1507,10 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	 * blob that differs from the file on disk leaves the file permanently
 	 * staged-modified.
 	 */
-	private async stageWorktreeFile(filepath: string): Promise<void> {
+	private async stageWorkingTreeFile(filepath: string): Promise<void> {
 		const [staged, bytes] = await Promise.all([
 			this.readStageEntry(filepath),
-			this.readWorktreeBytes(filepath)
+			this.readWorkingTreeBytes(filepath)
 		]);
 		// `.gitignore` governs untracked paths only: once a path is in the index, a
 		// later matching rule does not stop further changes from being staged, which
@@ -1555,9 +1555,9 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 			if (isClean) continue;
 			if (resurrected.has(filepath as string)) continue;
 			if (head === 0) {
-				// Absent from HEAD: remove the worktree copy and the index entry. The
+				// Absent from HEAD: remove the working-tree copy and the index entry. The
 				// unlink tolerates an already-gone file and `removeFromIndex` never
-				// touches the worktree, but any real failure surfaces instead of being
+				// touches the working tree, but any real failure surfaces instead of being
 				// swallowed: a silent discardAll must not report success on failure.
 				await this.unlinkIfPresent(filepath as string);
 				await this.removeFromIndex(filepath as string);
