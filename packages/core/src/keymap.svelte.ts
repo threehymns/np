@@ -111,6 +111,27 @@ export function formatShortcutLabel(sequence: string): string {
 	}).join(' ');
 }
 
+/**
+ * The macOS modifier glyphs, mapped to the word form the modifier loop in
+ * `parseKeySequence` already understands. This is the inverse of the
+ * substitutions in `formatShortcutLabel`, and the reason the two cannot drift:
+ * the rewrite below is driven by these keys, so a glyph cannot be recognised
+ * without a word to rewrite it to.
+ *
+ * A keymap file is portable text, so this is deliberately *not* gated on
+ * platform. The word form already normalizes `cmd` to `ctrl` off mac, and the
+ * glyph must not become a second, platform-sensitive spelling of the same
+ * binding.
+ */
+const GLYPH_TO_MODIFIER: Record<string, string> = {
+	'⌘': 'cmd',
+	'⌃': 'ctrl',
+	'⌥': 'alt',
+	'⇧': 'shift',
+};
+
+const MODIFIER_GLYPH_RE = new RegExp(`[${Object.keys(GLYPH_TO_MODIFIER).join('')}]`, 'g');
+
 export function parseKeySequence(sequence: string): Keystroke[] {
 	const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
@@ -120,7 +141,17 @@ export function parseKeySequence(sequence: string): Keystroke[] {
 		let alt = false;
 		let shift = false;
 
-		const normalized = keystrokeStr.toLowerCase();
+		// Accept the macOS glyphs that `formatShortcutLabel` itself emits, so a user
+		// can hand-write the label they see in the menubar into their keymap JSON
+		// (ADR 0003: "Users must be able to override default keybindings via a JSON
+		// configuration file"). Without this, `⌘⇧P` parsed as a single literal key
+		// named "⌘⇧p" carrying no modifiers — a binding that could never fire.
+		const withWordedModifiers = keystrokeStr.replace(
+			MODIFIER_GLYPH_RE,
+			glyph => `${GLYPH_TO_MODIFIER[glyph]}+`
+		);
+
+		const normalized = withWordedModifiers.toLowerCase();
 		let parts: string[];
 		if (normalized.includes('+')) {
 			parts = normalized.split('+');
@@ -417,12 +448,16 @@ export class KeymapRegistry {
 			return true;
 		}
 
-		// If we were in a chord, but hit an invalid key, cancel the chord
+		// If we were in a chord, but hit an invalid key, abandon the chord.
+		// The chord is discarded, but the key that abandoned it is still the user's:
+		// consuming it here silently drops the first keystroke of whatever they do
+		// next. `AppShell` holds the only capture listener, so returning `false` here
+		// is a one-way door — nothing downstream will re-evaluate the event. Clear the
+		// buffer *first*, then re-dispatch: with an empty buffer this call cannot reach
+		// the abandon branch again, so the recursion is bounded at depth 2.
 		if (this.keyBuffer.length > 0) {
-			e.preventDefault();
-			e.stopPropagation();
 			this.keyBuffer = [];
-			return true;
+			return this.handleKeydown(e);
 		}
 
 		return false;
