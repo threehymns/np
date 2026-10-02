@@ -341,7 +341,7 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.getFileDiff('file.txt', { staged: true })).rejects.toThrow(/bad index file/);
 	});
 
-	it('getFileDiff propagates worktree read failures instead of returning an empty diff', async () => {
+	it('getFileDiff propagates working-tree read failures instead of returning an empty diff', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'show' && args[1] === 'HEAD:file.txt') {
 				return { code: 0, stdout: 'head content', stderr: '' };
@@ -359,7 +359,7 @@ describe('SpawnGitAdapter', () => {
 		await expect(adapter.getFileDiff('file.txt', { staged: false })).rejects.toThrow(/permission denied/);
 	});
 
-	it('getFileDiff skips git show commands and only reads worktree content for untracked files (status: "U")', async () => {
+	it('getFileDiff skips git show commands and only reads working-tree content for untracked files (status: "U")', async () => {
 		mockReadFile.mockImplementation(async () => new TextEncoder().encode('untracked disk content'));
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const diff = await adapter.getFileDiff('untracked.txt', { status: 'U' });
@@ -386,7 +386,7 @@ describe('SpawnGitAdapter', () => {
 		expect(headCalls.length).toBe(0);
 	});
 
-	it('getFileDiff reports the worktree content of a deleted-in-index file that is still on disk', async () => {
+	it('getFileDiff reports the working-tree content of a deleted-in-index file that is still on disk', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'show' && args[1] === 'HEAD:recreated.txt') {
 				return { code: 0, stdout: 'head content', stderr: '' };
@@ -415,7 +415,7 @@ describe('SpawnGitAdapter', () => {
 			return { code: 0, stdout: '', stderr: '' };
 		});
 		// A `D` status only says the index holds a deletion, so the adapter must
-		// confirm the file is really gone before reporting an empty worktree.
+		// confirm the file is really gone before reporting an empty working tree.
 		mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		const diff = await adapter.getFileDiff('deleted.txt', { status: 'D', staged: false });
@@ -714,9 +714,9 @@ describe('SpawnGitAdapter', () => {
 
 	it('discardAll shields a recreated file by excluding it from restore and clean', async () => {
 		// Porcelain v1 is `XY<space>PATH`, so a staged deletion with nothing left in
-		// the worktree is `D  src.txt` — X is the deletion, Y is an empty worktree
+		// the working tree is `D  src.txt` — X is the deletion, Y is an empty working-tree
 		// column, giving the space between them plus the separator. Alongside
-		// `?? src.txt` (present on disk) that is the state where the worktree copy
+		// `?? src.txt` (present on disk) that is the state where the working-tree copy
 		// exists in neither HEAD nor the index. The first status read is the
 		// pre-restore one; the second sees the staged deletion already discarded, so
 		// only the untracked entries are left.
