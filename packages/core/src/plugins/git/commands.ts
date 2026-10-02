@@ -70,8 +70,8 @@ function applyLineEndings(content: string, reference: string): string {
 /**
  * Splices [from, to] in the target Text document and restores the endings of
  * `reference`, the raw file content whose bytes the result will overwrite.
- * Index writes pass the index content as reference, worktree writes the
- * worktree content. Pairing them at one call site keeps that rule unmissable.
+ * Index writes pass the index content as reference, working-tree writes the
+ * working-tree content. Pairing them at one call site keeps that rule unmissable.
  */
 function splicePreservingEndings(
 	target: Text,
@@ -326,20 +326,20 @@ export function createGitCommands(
 }
 
 /**
- * Writes a discarded hunk's new worktree content; if that write fails,
+ * Writes a discarded hunk's new working-tree content; if that write fails,
  * restores the index to `stagedText` before rethrowing, so a half-applied
- * discard never leaves index and worktree describing different versions of
+ * discard never leaves index and working tree describing different versions of
  * the file. Callers must have already verified both adapter methods exist.
  */
 async function updateFileWithIndexRollback(
 	repo: NonNullable<WorkspaceLike['repository']>,
 	filepath: string,
-	newWorktreeContent: string,
+	newWorkingTreeContent: string,
 	stagedText: Text,
 	stagedContent: string
 ): Promise<void> {
 	try {
-		await repo.adapter.updateFileContent!(filepath, newWorktreeContent);
+		await repo.adapter.updateFileContent!(filepath, newWorkingTreeContent);
 	} catch (err) {
 		try {
 			await repo.adapter.updateIndexContent!(
@@ -347,7 +347,7 @@ async function updateFileWithIndexRollback(
 				applyLineEndings(stagedText.toString(), stagedContent)
 			);
 		} catch (rollbackErr) {
-			console.error('Failed to rollback index after worktree write failure:', rollbackErr);
+			console.error('Failed to rollback index after working-tree write failure:', rollbackErr);
 		}
 		throw err;
 	}
@@ -445,8 +445,8 @@ async function performHunkAction(
 			if (change.staged && !change.combined) {
 				// Staged-scope hunks live in HEAD-vs-index space (modText is the
 				// index), so discarding must also revert the hunk's mirror image
-				// in the worktree. Resolve the real worktree text first: writing
-				// a splice of the index over the worktree would destroy
+				// in the working tree. Resolve the real working-tree text first: writing
+				// a splice of the index over the working tree would destroy
 				// unrelated unstaged edits.
 				if (!repo.adapter.updateIndexContent) {
 					throw new Error('VCS adapter does not support updating index for hunk discard');
@@ -464,9 +464,9 @@ async function performHunkAction(
 				);
 
 				if (typeof wtContent !== 'string') {
-					// Worktree text unavailable: revert the index only. The
+					// Working-tree text unavailable: revert the index only. The
 					// discarded hunk resurfaces as an unstaged change instead of
-					// guessing at worktree bytes that were never read.
+					// guessing at working-tree bytes that were never read.
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 				} else {
 					const wtText = Text.of(wtContent.split(/\r?\n/));
@@ -475,7 +475,7 @@ async function performHunkAction(
 					const wtStartLine = wtText.lineAt(Math.min(wtRange.from, wtText.length)).number;
 					const wtEndLine = wtText.lineAt(Math.min(wtRange.to, wtText.length)).number;
 					// Unstaged edits inside the hunk's region cannot be reverted
-					// without destroying them; leave the worktree untouched so
+					// without destroying them; leave the working tree untouched so
 					// they survive as an unstaged change.
 					const overlapsUnstaged = unstagedChunks.some((uc: Chunk) => {
 						const ucStartLine = wtText.lineAt(Math.min(uc.fromB, wtText.length)).number;
@@ -486,7 +486,7 @@ async function performHunkAction(
 					await repo.adapter.updateIndexContent(change.filepath, newIndexContent);
 
 					if (!overlapsUnstaged) {
-						const newWorktreeContent = splicePreservingEndings(
+						const newWorkingTreeContent = splicePreservingEndings(
 							wtText,
 							wtRange.from,
 							wtRange.to,
@@ -496,7 +496,7 @@ async function performHunkAction(
 						await updateFileWithIndexRollback(
 							repo,
 							change.filepath,
-							newWorktreeContent,
+							newWorkingTreeContent,
 							stagedText,
 							stagedContent
 						);
@@ -514,7 +514,7 @@ async function performHunkAction(
 
 				if (isUnstaged) {
 					const indexRange = mapRange(hunk.fromA, hunk.toA, origText, stagedText);
-					const newWorktreeContent = splicePreservingEndings(
+					const newWorkingTreeContent = splicePreservingEndings(
 						modText,
 						hunk.fromB,
 						hunk.toB,
@@ -522,7 +522,7 @@ async function performHunkAction(
 						modContent
 					);
 
-					await repo.adapter.updateFileContent!(change.filepath, newWorktreeContent);
+					await repo.adapter.updateFileContent!(change.filepath, newWorkingTreeContent);
 				} else {
 					if (!repo.adapter.updateIndexContent) {
 						throw new Error('VCS adapter does not support updating index for hunk discard');
@@ -535,7 +535,7 @@ async function performHunkAction(
 						origHunkSlice,
 						stagedContent
 					);
-					const newWorktreeContent = splicePreservingEndings(
+					const newWorkingTreeContent = splicePreservingEndings(
 						modText,
 						hunk.fromB,
 						hunk.toB,
@@ -548,7 +548,7 @@ async function performHunkAction(
 						await updateFileWithIndexRollback(
 							repo,
 							change.filepath,
-							newWorktreeContent,
+							newWorkingTreeContent,
 							stagedText,
 							stagedContent
 						);

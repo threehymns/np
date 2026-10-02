@@ -26,7 +26,7 @@
 import { expect } from 'bun:test';
 import type { FileOrigin } from '@np/core';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
-import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit, worktreeContents } from './harness';
+import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit, workingTreeContents } from './harness';
 
 function adapterFor(repo: TestRepo): SpawnGitAdapter {
 	const origin: FileOrigin = { scheme: 'file', path: repo.path, name: 'repo' };
@@ -61,7 +61,7 @@ describe('getFileDiff: a deleted file that was recreated', () => {
 		const detail = await adapterFor(repo).getFileDiff('f.txt', { status });
 
 		expect(detail.modifiedContent).toBe('C\n');
-		expect(await worktreeContents(repo, 'f.txt')).toBe('C\n');
+		expect(await workingTreeContents(repo, 'f.txt')).toBe('C\n');
 	});
 
 	it('still reports an empty worktree for a file that really is gone', async () => {
@@ -70,7 +70,7 @@ describe('getFileDiff: a deleted file that was recreated', () => {
 		await repo.git(['rm', '-q', '-f', 'f.txt']);
 		const status = await uiStatusFor(repo, 'f.txt');
 		expect(status).toBe('D');
-		expect(await worktreeContents(repo, 'f.txt')).toBeNull();
+		expect(await workingTreeContents(repo, 'f.txt')).toBeNull();
 
 		const detail = await adapterFor(repo).getFileDiff('f.txt', { status });
 

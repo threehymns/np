@@ -17,7 +17,7 @@ import {
 	it,
 	lsFiles,
 	porcelainStatus,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 describe('contract harness', () => {
@@ -51,7 +51,7 @@ describe('contract harness', () => {
 		await a.git(['commit', '-m', 'commit in a only']);
 
 		expect(await b.read('a-only.txt')).toBeNull();
-		expect(await worktreeContents(b, 'a-only.txt')).toBeNull();
+		expect(await workingTreeContents(b, 'a-only.txt')).toBeNull();
 		expect(await lsFiles(b)).toEqual([]);
 		expect(await headAuthor(b)).toBeNull();
 		const statusB = await porcelainStatus(b);
@@ -77,7 +77,7 @@ describe('contract harness', () => {
 		await r.git(['add', 'tracked.txt']);
 
 		expect(await indexContents(r, 'tracked.txt')).toBe('worktree v1\n');
-		expect(await worktreeContents(r, 'tracked.txt')).toBe('worktree v1\n');
+		expect(await workingTreeContents(r, 'tracked.txt')).toBe('worktree v1\n');
 		expect(await lsFiles(r)).toEqual(['tracked.txt']);
 
 		let status = await porcelainStatus(r);
@@ -95,7 +95,7 @@ describe('contract harness', () => {
 		expect(untracked).toMatchObject({ x: '?', y: '?' });
 
 		expect(await indexContents(r, 'missing.txt')).toBeNull();
-		expect(await worktreeContents(r, 'missing.txt')).toBeNull();
+		expect(await workingTreeContents(r, 'missing.txt')).toBeNull();
 	});
 
 	it('reports the version floor skip reason with a clear message when below any floor', async () => {

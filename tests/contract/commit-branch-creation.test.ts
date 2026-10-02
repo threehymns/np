@@ -16,7 +16,7 @@ import {
 	porcelainStatus,
 	runGit,
 	TEST_IDENTITY,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 function origin(r: TestRepo): FileOrigin {
@@ -337,8 +337,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await adapter.getCurrentBranch()).toBe('feature/carry-forward');
 			expect(await currentBranch(r)).toBe('feature/carry-forward');
-			expect(await worktreeContents(r, 'tracked.txt')).toBe('modified content\n');
-			expect(await worktreeContents(r, 'untracked.txt')).toBe('untracked file\n');
+			expect(await workingTreeContents(r, 'tracked.txt')).toBe('modified content\n');
+			expect(await workingTreeContents(r, 'untracked.txt')).toBe('untracked file\n');
 		});
 
 		it('creates branches with nested slashes in the branch name', async () => {

@@ -13,7 +13,7 @@ export const DEFAULT_DIFF_CONFIG: DiffConfig = {
 export type SwitchResult =
 	| { status: 'switched' }
 	| { status: 'noop' }
-	| { status: 'blocked'; reason: 'conflict' | 'worktree' | 'unreadable'; files: string[] }
+	| { status: 'blocked'; reason: 'conflict' | 'dirty' | 'unreadable'; files: string[] }
 	| { status: 'error'; message: string };
 
 export interface VCSStatus {
@@ -77,7 +77,7 @@ export function fileDiffFromChange(change: GitChange): FileDiffDetail | null {
 
 /**
  * Resolve original, modified, and staged contents into a `FileDiffDetail`
- * based on the requested diff options (staged, unstaged, or combined HEAD-vs-worktree).
+ * based on the requested diff options (staged, unstaged, or combined HEAD-vs-working-tree).
  */
 export function resolveDiffDetail(
 	headContent: string,
