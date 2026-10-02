@@ -79,7 +79,7 @@ async function oneCommitWith(repo: TestRepo, names: string[]): Promise<void> {
 	await repo.git(['commit', '-m', 'odd names']);
 }
 
-/** Paths that do not name a real file in the worktree. */
+/** Paths that do not name a real file in the working tree. */
 async function unresolvable(paths: string[], repo: TestRepo): Promise<string[]> {
 	const bad: string[] = [];
 	for (const p of paths) {

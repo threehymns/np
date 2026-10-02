@@ -26,7 +26,7 @@ import { createTrackedRepo } from './harness';
  * `bun test` exits 0 when tests are skipped, so `it.skipIf(true, ...)` — or any
  * other spelling that drops a test from the run without a condition that could
  * ever lift — silently removes coverage forever. That is not hypothetical: a
- * hardcoded `it.skipIf(true, ...)` for the unstaged worktree rename sat in
+ * hardcoded `it.skipIf(true, ...)` for the unstaged working-tree rename sat in
  * `discard-operations.test.ts` from 2026-08-18, hiding a real data-loss bug in
  * both engines the whole time. This gate is what would have caught it.
  *

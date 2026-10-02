@@ -71,20 +71,20 @@ describe('contract harness', () => {
 		expect(await headAuthor(r)).toEqual(TEST_IDENTITY);
 	});
 
-	it('oracle helpers report index contents, worktree contents, and porcelain status', async () => {
+	it('oracle helpers report index contents, working-tree contents, and porcelain status', async () => {
 		const r = await createTrackedRepo();
-		await r.write('tracked.txt', 'worktree v1\n');
+		await r.write('tracked.txt', 'working tree v1\n');
 		await r.git(['add', 'tracked.txt']);
 
-		expect(await indexContents(r, 'tracked.txt')).toBe('worktree v1\n');
-		expect(await workingTreeContents(r, 'tracked.txt')).toBe('worktree v1\n');
+		expect(await indexContents(r, 'tracked.txt')).toBe('working tree v1\n');
+		expect(await workingTreeContents(r, 'tracked.txt')).toBe('working tree v1\n');
 		expect(await lsFiles(r)).toEqual(['tracked.txt']);
 
 		let status = await porcelainStatus(r);
 		expect(status).toHaveLength(1);
 		expect(status[0]).toMatchObject({ x: 'A', y: ' ', path: 'tracked.txt' });
 
-		await r.write('tracked.txt', 'worktree v2\n');
+		await r.write('tracked.txt', 'working tree v2\n');
 		await r.write('untracked.txt', 'new\n');
 
 		status = await porcelainStatus(r);

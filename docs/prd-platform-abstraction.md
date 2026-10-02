@@ -80,7 +80,7 @@ Any document whose `origin.scheme` is `"git"` is routed to a `GitStorage` provid
 SwitchResult
   = { status: 'switched' }
   | { status: 'noop' }
-  | { status: 'blocked', reason: 'conflict' | 'worktree', files: string[] }
+  | { status: 'blocked', reason: 'conflict' | 'dirty', files: string[] }
   | { status: 'error', message: string }
 ```
 
@@ -92,15 +92,15 @@ The `IsomorphicGitAdapter.switchBranch` implementation follows this pre / during
 2. **Checkout**: Run `git.checkout({ ref: branchName, ... })` which blasts the working tree and index.
 3. **Restore**: For each snapshotted file — write the working tree content back and re-add it to the index if it was originally staged, preserving the full three-way split. If a genuinely conflicting file is detected, abort and re-checkout the original branch.
 
-Blocker errors beyond the sets that can be identified (either by worktree or conflict) are surfaced as `{ status: 'error', message: string }`.
+Blocker errors beyond the sets that can be identified (either by dirty or conflict) are surfaced as `{ status: 'error', message: string }`.
 
 ### VCSAdapter: `detect(rootPath)` replaces workspace-level `.git` probing
 
 The `VCSAdapter` interface gains a `detect(rootPath: string): Promise<boolean>` method. `Workspace` calls `vcsAdapter.detect(rootOrigin.path)` after a root is folder-selected, instead of `rootHandle.getDirectoryHandle('.git')`. The `IsomorphicGitAdapter` checks for `.git` by probing its filesystem shim; the `SimpleGitAdapter` (desktop) runs `git rev-parse --is-inside-work-tree`. Note: While the desktop adapter uses the CLI for writes, it should use programmatic reads (e.g. via `isomorphic-git`) for performance-sensitive UI tasks like gutters and blob fetching.
 
-### VCSAdapter: `HeavyWorktreeIgnorer` refactored away from the adapter boundary
+### VCSAdapter: `HeavyDirIgnorer` refactored away from the adapter boundary
 
-The heavy-worktree directory set (`node_modules`, `.svelte-kit`) was in the adapter's scan logic because the adapter held a handle to the root. With path-based scanning, the adapter only receives file paths as flat strings, so the ignore-filter is applied at the scan layer, not the adapter layer.
+The heavy-dir directory set (`node_modules`, `.svelte-kit`) was in the adapter's scan logic because the adapter held a handle to the root. With path-based scanning, the adapter only receives file paths as flat strings, so the ignore-filter is applied at the scan layer, not the adapter layer.
 
 ### Persistence: abstracted behind `SessionPersistence` interface
 
@@ -188,9 +188,9 @@ The current `VCSAdapter` has many implementations of `canCheckoutBranch` in the 
 
 During `Workspace.restoreSession()`, the `rootOrigin` must be resolved and the permission granted *before* `projectTree.scan(rootOrigin)` and `vcsAdapter.detect(rootOrigin.path)` are called. If permission is not yet available, the tree and repo should enter a `loading` state rather than reading `null` paths.
 
-### `HeavyWorktreeIgnorer` boundary shift
+### `HeavyDirIgnorer` boundary shift
 
-The `HeavyWorktreeIgnorer` (`['node_modules', '.svelte-kit']`) was inline in the adapter allowing handle-based traversal. In the path-based model the same logic should move into the tree-scanner (`ProjectTree.scan` method); the adapter never sees directory handles.
+The `HeavyDirIgnorer` (`['node_modules', '.svelte-kit']`) was inline in the adapter allowing handle-based traversal. In the path-based model the same logic should move into the tree-scanner (`ProjectTree.scan` method); the adapter never sees directory handles.
 
 ### `NTK` and import aliases
 

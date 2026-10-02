@@ -21,6 +21,11 @@ The visual interface for interacting with a Document's content, powered by CodeM
 
 ## Workspace
 The orchestrator of multiple open Documents, managing tabs, focus, and the active session.
+- **Workspace**: The root of a window (tab/session orchestrator). Note: the `Workspace` class currently also owns the folder on disk, its repository, and file tree ("owns the root"); the Window/Project split is tracked as follow-up work, not implemented here. _Avoid_: vault.
+- **Project**: A folder opened for editing, with its repository and file tree; several may be open in one Workspace (target model, not yet a type). _Avoid_: vault.
+- **Worktree**: The local or remote files belonging to a Project (registered container, git-worktree(1) sense). _Avoid_: vault; do not use for on-disk state.
+- **Root**: The folder path a Project owns (persistence-layer `root-folder`, recent-folders, "Open Folder" label stay). _Avoid_: vault.
+- Git vocabulary: `worktree` (registered container, incl. git `--worktree` flags which stay verbatim) vs `working tree` (HEAD/index/working-tree state) must stay distinguishable; three-state phrasing naming HEAD+index+working tree together is correct as-is.
 
 ## Command Palette
 A searchable dialog interface allowing the user to search and run registered actions across the application.
@@ -51,7 +56,7 @@ A searchable dialog interface allowing the user to search and run registered act
 ## Version Control
 - **VCSAdapter**: The interface through which the app performs version-control operations, abstracting the underlying engine (system git, isomorphic-git) behind one contract. _Avoid_: git adapter, SimpleGitAdapter
 - **Carry-Forward**: The property of a branch switch that preserves modified and staged files instead of overwriting them. _Avoid_: auto-merge, preserve
-- **Hunk Action**: A partial-file edit applied by text-splicing a single diff hunk (stage, unstage, or discard), requiring direct index/worktree writes beyond file-level git commands.
+- **Hunk Action**: A partial-file edit applied by text-splicing a single diff hunk (stage, unstage, or discard), requiring direct index/working-tree writes beyond file-level git commands.
 
 ## Testing
 - **Contract Test**: A behavior test that exercises a module through its public interface against a real engine (system git, isomorphic-git) in throwaway repositories, asserting semantic outcomes (contents, status, branch) rather than command construction. _Avoid_: integration test, end-to-end test
