@@ -72,7 +72,7 @@ describe("#149 embed size badges + image click", () => {
 		expect(badges(sizeBadgePlugin, state)).toEqual([]);
 	});
 
-	it("image click verdict: external -> external open, vault-relative -> never create", () => {
+	it("image click verdict: external -> external open, worktree-relative -> never create", () => {
 		const ext = imgState("![x](https://example.com/i.png)");
 		const pos = ext.doc.line(1).from + 6;
 		expect(decideImageClick(ext, pos)).toEqual({
@@ -83,10 +83,10 @@ describe("#149 embed size badges + image click", () => {
 
 		const rel = imgState("![[note.png]]");
 		// WikiLink embeds are handled by the wikilink path, so a bare rel image Markdown
-		const relIm = imgState("![x](vault/img.png)");
+		const relIm = imgState("![x](worktree/img.png)");
 		expect(decideImageClick(relIm, 6)).toEqual({
 			kind: "image",
-			dest: "vault/img.png",
+			dest: "worktree/img.png",
 			external: false,
 		});
 

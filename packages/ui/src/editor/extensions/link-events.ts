@@ -151,7 +151,7 @@ export function decideLinkMousedown(
 
 /**
  * Pure click verdict for Markdown images (`![alt](dest)`): external URLs open
- * externally; vault-relative paths navigate without ever creating a file.
+ * externally; worktree-relative paths navigate without ever creating a file.
  */
 export function decideImageClick(
 	state: EditorState,
@@ -268,7 +268,7 @@ export const linkHandlers = EditorView.domEventHandlers({
 			return true;
 		}
 		if (image.kind === "image") {
-			// vault-relative: navigate, never create
+			// worktree-relative: navigate, never create
 			const workspace = view.state.facet(workspaceFacet);
 			const currentDoc = view.state.facet(currentDocFacet);
 			if (workspace) {
