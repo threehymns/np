@@ -81,7 +81,7 @@ async function stageEditsToBoth(repo: TestRepo): Promise<void> {
 	await repo.git(['add', '-A']);
 }
 
-/** The index/worktree status letters for `filepath`, or undefined when unchanged. */
+/** The index/working-tree status letters for `filepath`, or undefined when unchanged. */
 async function xy(repo: TestRepo, filepath: string): Promise<string | undefined> {
 	const entry = (await porcelainStatus(repo)).find(e => e.path === filepath);
 	return entry ? `${entry.x}${entry.y}` : undefined;
@@ -140,19 +140,19 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		expect(await xy(repo, PLAIN)).toBe('M ');
 	});
 
-	it('discarding unstaged edits in a magic-named file preserves other worktree edits', async () => {
+	it('discarding unstaged edits in a magic-named file preserves other working-tree edits', async () => {
 		const repo = await repoWithTrackedMagicFile();
 		await stageEditsToBoth(repo);
-		// Now both also differ from the index in the worktree.
-		await repo.write(MAGIC_NAME, 'magic worktree 2\n');
-		await repo.write(PLAIN, 'plain worktree 2\n');
+		// Now both also differ from the index in the working tree.
+		await repo.write(MAGIC_NAME, 'magic working tree 2\n');
+		await repo.write(PLAIN, 'plain working tree 2\n');
 
 		await adapterFor(repo).discardChanges(MAGIC_NAME, { staged: false });
 
-		// The magic file's worktree copy is back to its staged version...
+		// The magic file's working-tree copy is back to its staged version...
 		expect(await workingTreeContents(repo, MAGIC_NAME)).toBe('magic edited\n');
-		// ...and the plain file's worktree edit is untouched.
-		expect(await workingTreeContents(repo, PLAIN)).toBe('plain worktree 2\n');
+		// ...and the plain file's working-tree edit is untouched.
+		expect(await workingTreeContents(repo, PLAIN)).toBe('plain working tree 2\n');
 	});
 
 	it('unstageFile unstages only the named magic-named file', async () => {

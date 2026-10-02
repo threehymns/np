@@ -8,7 +8,7 @@
  *     ?? f.txt
  *
  * The `IsomorphicGitAdapter` folds both into the single `statusMatrix` row
- * `[f.txt, 1, 2, 0]`: still in HEAD, "untracked" in the worktree (2 — because
+ * `[f.txt, 1, 2, 0]`: still in HEAD, "untracked" in the working tree (2 — because
  * the path left the index), and gone from the index (0). That row is exactly
  * what `isResurrectedAfterStagedDelete` already recognises elsewhere in the
  * same file, so the state is known and identified — it is just not applied in
@@ -99,7 +99,7 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			// recreate indistinguishable from a file the user staged for addition.
 			expect(unstaged!.status).toBe('U');
 			// The count converges with it, for the same root cause: an untracked file
-			// has no HEAD blob to diff against, so both engines count the worktree
+			// has no HEAD blob to diff against, so both engines count the working tree
 			// file's lines. Before the fix the browser engine's row was labelled 'A',
 			// kept out of its counting branch, and reported 0.
 			expect(unstaged!.additions).toBe(1);
@@ -121,7 +121,7 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			expect(staged).toBeDefined();
 			expect(staged!.staged).toBe(true);
 			expect(staged!.status).toBe('A');
-			// Nothing unstaged: a real addition has no worktree delta, so a leaked
+			// Nothing unstaged: a real addition has no working tree delta, so a leaked
 			// unstaged row here is exactly the failure this boundary exists to catch.
 			expect(changes.find(c => c.filepath === 'added.txt' && !c.staged)).toBeUndefined();
 		});
@@ -154,7 +154,7 @@ describe('getChanges: a staged deletion whose file was recreated', () => {
 			expect(staged).toBeDefined();
 			expect(staged!.status).toBe('D');
 			expect(await repo.read('f.txt')).toBeNull();
-			// The worktree copy is gone, so there is no recreate to report. An unstaged
+			// The working-tree copy is gone, so there is no recreate to report. An unstaged
 			// row here would be the fix leaking past the state it names.
 			expect(changes.find(c => c.filepath === 'f.txt' && !c.staged)).toBeUndefined();
 		});

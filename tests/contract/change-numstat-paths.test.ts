@@ -121,7 +121,7 @@ describe('getChanges reports line counts for unusual pathnames', () => {
 	});
 
 	it('reports the true counts for an unstaged name containing a newline', async () => {
-		// The unstaged side reads `diff --numstat` (worktree vs index), a
+		// The unstaged side reads `diff --numstat` (working tree vs index), a
 		// separate invocation from the staged side, so it needs its own proof.
 		const repo = await createTrackedRepo();
 		try {
@@ -446,7 +446,7 @@ describe('getChanges reports line counts for unusual pathnames', () => {
 			// One line became three in the index...
 			expect(staged!.additions).toBe(3);
 			expect(staged!.deletions).toBe(1);
-			// ...and two more lines were added to the worktree after staging.
+			// ...and two more lines were added to the working tree after staging.
 			expect(unstaged!.additions).toBe(2);
 			expect(unstaged!.deletions).toBe(0);
 		} finally {

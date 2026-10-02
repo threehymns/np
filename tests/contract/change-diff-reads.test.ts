@@ -266,7 +266,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			const adapter = engine.adapter(r);
 
 			// `git rm --cached` removes the index entry entirely, so porcelain reports the
-			// staged delete and the recreated worktree file as two separate entries (D + ??).
+			// staged delete and the recreated working-tree file as two separate entries (D + ??).
 			const porcelain = await porcelainStatus(r);
 			expect(porcelain).toEqual([
 				{ x: 'D', y: ' ', path: 'README.md' },
@@ -428,13 +428,13 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 		expect(combinedDiff.modifiedContent).toBe(`${SRC_CONTENT}more\n`);
 	});
 
-	it('reports a worktree-only move as a delete plus an untracked file, without a rename baseline', async () => {
+	it('reports a working-tree-only move as a delete plus an untracked file, without a rename baseline', async () => {
 		const r = await createTrackedRepo();
 		await baseRepo(r);
 		await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
 		const adapter = spawnEngine.adapter(r);
 
-		// git status never emits ' R' for worktree moves (verified empirically): the move
+		// git status never emits ' R' for working-tree moves (verified empirically): the move
 		// surfaces as a tracked deletion plus an untracked addition, so no rename origin
 		// can be recovered for the diff baseline.
 		const porcelain = await porcelainStatus(r);
@@ -645,7 +645,7 @@ describe('IsomorphicGitAdapter — engine-specific read contracts', () => {
 		expect(changes.every(c => c.additions === 0 && c.deletions === 0)).toBe(true);
 	});
 
-	it('represents a worktree rename as delete+add and resolves the deleted HEAD blob as baseline', async () => {
+	it('represents a working-tree rename as delete+add and resolves the deleted HEAD blob as baseline', async () => {
 		const r = await createTrackedRepo();
 		await baseRepo(r);
 		await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
@@ -661,7 +661,7 @@ describe('IsomorphicGitAdapter — engine-specific read contracts', () => {
 		expect(combinedDiff.originalContent).toBe(SRC_CONTENT);
 		expect(combinedDiff.modifiedContent).toBe(SRC_CONTENT);
 
-		// The rename resolver pairs the worktree blob with the deleted HEAD blob, so even
+		// The rename resolver pairs the working-tree blob with the deleted HEAD blob, so even
 		// the unstaged scope gets the pre-move content as its baseline.
 		const unstagedDiff = await adapter.getFileDiff('moved.txt', { staged: false });
 		expect(unstagedDiff.originalContent).toBe(SRC_CONTENT);

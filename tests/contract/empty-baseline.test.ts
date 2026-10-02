@@ -34,7 +34,7 @@
  * case only, and is not a durability claim about a diff cached across a status
  * change.
  *
- * The staged/unstaged split (`AM`) and the A/D (staged-add-deleted-from-worktree)
+ * The staged/unstaged split (`AM`) and the A/D (staged-add-deleted-from-working-tree)
  * shapes are driven through the REAL change pipeline — `getChanges` then the
  * `combineChangesByFilepath` reduction the UI applies — so the options pinned
  * here are the ones a caller actually sends, not hand-written combinations.
@@ -146,8 +146,8 @@ function diffHunks(original: string, modified: string): HunkRange[] {
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — the empty baseline for untracked and added paths`, () => {
 		// U: the path is in no commit and no index entry, so BOTH the original and
-		// staged sides are '' and the worktree file is the only real content.
-		it('reports an untracked file as all-new: empty original, empty staged, real worktree', async () => {
+		// staged sides are '' and the working-tree file is the only real content.
+		it('reports an untracked file as all-new: empty original, empty staged, real working tree', async () => {
 			const r = await createTrackedRepo();
 			await seedCommit(r);
 			await r.write('untracked.txt', 'brand new\n');
@@ -171,7 +171,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 		// The load-bearing consequence: the empty original is the baseline a Hunk
 		// Action splices against, and the result must land in the index verbatim.
-		it('stages an untracked file whole, writing the worktree content to the index exactly', async () => {
+		it('stages an untracked file whole, writing the working-tree content to the index exactly', async () => {
 			const r = await createTrackedRepo();
 			await seedCommit(r);
 			const content = 'alpha\nbeta\ngamma\n';
@@ -189,14 +189,14 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await applyHunkAction(appState, change, hunks[0], 'stage');
 
-			// The index now holds exactly the worktree bytes, and nothing else moved.
+			// The index now holds exactly the working-tree bytes, and nothing else moved.
 			expect(await indexContents(r, 'untracked.txt')).toBe(content);
 			expect(await workingTreeContents(r, 'untracked.txt')).toBe(content);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: ' ', path: 'untracked.txt' }]);
 		});
 
 		// A (staged-only, a new file added to the index): HEAD has no such path, so
-		// the original side is ''. The staged (index) and worktree sides are real.
+		// the original side is ''. The staged (index) and working tree sides are real.
 		// This is the options object `getChanges` itself produces for a staged add.
 		it('reports a staged addition as all-new: empty original against the real index', async () => {
 			const r = await createTrackedRepo();
@@ -207,7 +207,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			const adapter = engine.adapter(r);
 
 			// Precondition: HEAD has no such path, the index holds the staged blob,
-			// and the worktree holds a further edit. runGit returns stdout verbatim,
+			// and the working tree holds a further edit. runGit returns stdout verbatim,
 			// so the trailing newline is part of the content.
 			expect((await runGit(r.path, r.env, ['cat-file', '-e', 'HEAD:added.txt'])).code).not.toBe(0);
 			expect(await indexContents(r, 'added.txt')).toBe('staged version\n');
@@ -227,7 +227,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(staged.modifiedContent).toBe('staged version\n');
 		});
 
-		// A/D: a staged addition whose worktree copy is gone. The staging must be a
+		// A/D: a staged addition whose working-tree copy is gone. The staging must be a
 		// plain `rm`, not `git rm` — `git rm` also drops the index entry, which
 		// leaves the path out of porcelain entirely and is NOT the A/D case.
 		//
@@ -236,7 +236,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		// (status 'A', no `staged` key) is what reaches `getFileDiff`. Driving that
 		// real pipeline is what makes this a contract rather than a shape the UI
 		// cannot produce.
-		it('reports a staged addition deleted from the worktree as empty-original with the index retained', async () => {
+		it('reports a staged addition deleted from the working tree as empty-original with the index retained', async () => {
 			const r = await createTrackedRepo();
 			await seedCommit(r);
 			await r.write('gone.txt', 'was here\n');
@@ -286,7 +286,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await applyHunkAction(appState, change, hunks[0], 'unstage');
 
-			// The index entry is now empty and the worktree is untouched. The index
+			// The index entry is now empty and the working tree is untouched. The index
 			// holds '' (an empty blob), not a deleted path.
 			expect(await indexContents(r, 'added.txt')).toBe('');
 			expect(await workingTreeContents(r, 'added.txt')).toBe('one\ntwo\nthree\n');

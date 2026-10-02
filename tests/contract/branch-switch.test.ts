@@ -42,7 +42,7 @@ interface Engine {
 	name: string;
 	adapter(r: TestRepo): BranchSwitching;
 	/**
-	 * Whether this engine's worktree can carry a POSIX mode at all.
+	 * Whether this engine's working tree can carry a POSIX mode at all.
 	 *
 	 * The browser engine's `GitFileAccess` is a File System Access API handle:
 	 * it exposes a name, a MIME type and bytes, and no permission bits. There is
@@ -106,7 +106,7 @@ async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
  * observes the same surface a user would: the mode of the file they are about
  * to run, not the mode an engine reports about it.
  */
-async function worktreeMode(r: TestRepo, relPath: string): Promise<number | null> {
+async function workingTreeMode(r: TestRepo, relPath: string): Promise<number | null> {
 	try {
 		return (await stat(path.join(r.path, relPath))).mode & 0o7777;
 	} catch {
@@ -120,18 +120,18 @@ for (const engine of ENGINES) {
 			it('reports no-op when switching to the current branch and changes nothing', async () => {
 				const r = await createTrackedRepo();
 				await commitFiles(r, 'initial', { 'file.txt': 'base content\n' });
-				await r.write('file.txt', 'dirty worktree\n');
+				await r.write('file.txt', 'dirty working tree\n');
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('main');
 
 				expect(res).toEqual({ status: 'noop' });
 				expect(await currentBranch(r)).toBe('main');
-				expect(await workingTreeContents(r, 'file.txt')).toBe('dirty worktree\n');
+				expect(await workingTreeContents(r, 'file.txt')).toBe('dirty working tree\n');
 				expect(await indexContents(r, 'file.txt')).toBe('base content\n');
 			});
 
-			it('switches cleanly between branches and updates worktree to match target branch', async () => {
+			it('switches cleanly between branches and updates working tree to match target branch', async () => {
 				const r = await createTrackedRepo();
 				await commitFiles(r, 'initial', { 'common.txt': 'base\n', 'feature-only.txt': 'v1\n' });
 				await createBranch(r, 'feature');
@@ -265,14 +265,14 @@ for (const engine of ENGINES) {
 				// Stage an edit, then make further unstaged edit
 				await r.write('common.txt', 'staged version\n');
 				await r.git(['add', 'common.txt']);
-				await r.write('common.txt', 'worktree unstaged version\n');
+				await r.write('common.txt', 'working tree unstaged version\n');
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('feature');
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await workingTreeContents(r, 'common.txt')).toBe('worktree unstaged version\n');
+				expect(await workingTreeContents(r, 'common.txt')).toBe('working tree unstaged version\n');
 				expect(await indexContents(r, 'common.txt')).toBe('staged version\n');
 
 				const status = await porcelainStatus(r);
@@ -346,7 +346,7 @@ for (const engine of ENGINES) {
 				// 3. Staged + unstaged (both)
 				await r.write('mod-both.txt', 'staged part\n');
 				await r.git(['add', 'mod-both.txt']);
-				await r.write('mod-both.txt', 'worktree part\n');
+				await r.write('mod-both.txt', 'working tree part\n');
 				// 4. Staged delete
 				await r.git(['rm', 'del-staged.txt']);
 				// 5. Untracked file
@@ -367,7 +367,7 @@ for (const engine of ENGINES) {
 				expect(await workingTreeContents(r, 'mod-staged.txt')).toBe('staged change\n');
 				expect(await indexContents(r, 'mod-staged.txt')).toBe('staged change\n');
 
-				expect(await workingTreeContents(r, 'mod-both.txt')).toBe('worktree part\n');
+				expect(await workingTreeContents(r, 'mod-both.txt')).toBe('working tree part\n');
 				expect(await indexContents(r, 'mod-both.txt')).toBe('staged part\n');
 
 				expect(await workingTreeContents(r, 'del-staged.txt')).toBeNull();
@@ -404,7 +404,7 @@ for (const engine of ENGINES) {
 					files: ['conflict.txt']
 				});
 
-				// Safety check: branch did NOT change, worktree did NOT lose work
+				// Safety check: branch did NOT change, working tree did NOT lose work
 				expect(await currentBranch(r)).toBe('main');
 				expect(await workingTreeContents(r, 'conflict.txt')).toBe('local uncommitted work\n');
 				expect(await indexContents(r, 'conflict.txt')).toBe('base\n');
@@ -531,7 +531,7 @@ for (const engine of ENGINES) {
 				await commitFiles(r, 'feature commit', { 'c1.txt': 'feat1\n', 'c2.txt': 'feat2\n' });
 				await checkoutBranch(r, 'main');
 
-				// Dirty all six files in the worktree.
+				// Dirty all six files in the working tree.
 				for (let i = 1; i <= 4; i++) await r.write(`ok${i}.txt`, `local${i}\n`);
 				await r.write('c1.txt', 'dirty1\n');
 				await r.write('c2.txt', 'dirty2\n');
@@ -638,14 +638,14 @@ for (const engine of ENGINES) {
 
 				// The user marks the script executable and stages that, changing
 				// nothing else. Staging the mode (rather than only chmod-ing the
-				// worktree) is what puts the path into the snapshot at all: a
-				// worktree-only mode never reaches the index, so the case would
+				// working tree) is what puts the path into the snapshot at all: a
+				// working-tree-only mode never reaches the index, so the case would
 				// never be exercised.
 				chmodSync(path.join(r.path, 'run.sh'), 0o755);
 				const add = await r.git(['add', 'run.sh']);
 				if (add.code !== 0) throw new Error(add.stderr);
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('feature');
@@ -654,7 +654,7 @@ for (const engine of ENGINES) {
 				// Both surfaces must agree after the switch, or the app reports a
 				// clean file that the user cannot run.
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 			});
 
 			it.skipIf(
@@ -686,7 +686,7 @@ for (const engine of ENGINES) {
 				expect(res).toEqual({ status: 'switched' });
 				expect(await workingTreeContents(r, 'run.sh')).toBe('#!/bin/sh\necho changed\n');
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 			});
 		});
 
