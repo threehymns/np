@@ -83,51 +83,18 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async init(rootPath?: string): Promise<void> {
 		const targetPath = rootPath ?? this.rootOrigin.path;
-		// `git init` is a documented no-op on a repository that already exists: it
-		// neither reinitializes the work tree nor moves HEAD. So choosing a branch
-		// name is ours to do only where we are the ones creating the repository.
-		const alreadyExisted = await this.isRepository(targetPath);
+		// Deliberately bare: git chooses the initial branch from
+		// `init.defaultBranch` (falling back to its compiled default), and
+		// `git init` is a documented no-op on a repository that already
+		// exists -- it neither reinitializes the work tree nor moves HEAD.
+		// Pinning a branch here would override a default the user deliberately
+		// configured, and costs extra spawns on every initialization.
+		// IsomorphicGitAdapter is not the user's local git, so the engines are
+		// not expected to agree beyond their own defaults.
 		const res = await this.gitRunner(targetPath, ['init']);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to initialize git repository at ${targetPath}`);
 		}
-		if (alreadyExisted) {
-			// Repointing HEAD here would silently rename the branch the user chose
-			// when they ran `git init` themselves, and in a repository that has
-			// commits it would strand all of them on a branch the working tree is no
-			// longer on. An existing repository is left exactly as `git init` left it,
-			// which is also what `IsomorphicGitAdapter` does.
-			return;
-		}
-		// Pin the initial branch to `main` so the engines agree. `IsomorphicGitAdapter`
-		// hardcodes `defaultBranch: "main"`, while a bare `git init` falls back to
-		// git's own default -- `master` unless the user set `init.defaultBranch` --
-		// so a repository created on the desktop engine was invisible to the web one.
-		//
-		// This is done with `symbolic-ref` rather than `git init --initial-branch`
-		// because that flag only exists from git 2.28, while this adapter supports
-		// GIT_FLOOR 2.23 (docs/vcs-contract-gate.md). `symbolic-ref` works on every
-		// supported version, and the contract harness's own createTestRepo already
-		// relies on it for the same reason.
-		const ref = await this.gitRunner(targetPath, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-		if (ref.code !== 0) {
-			throw new Error(ref.stderr || `Failed to set the initial branch at ${targetPath}`);
-		}
-	}
-
-	/**
-	 * Whether `path` already sits inside a git repository.
-	 *
-	 * `rev-parse --git-dir` resolves in any directory inside a work tree and fails
-	 * everywhere else, which is the same line `git init` itself draws: it creates a
-	 * repository where there is none, and leaves one alone where there already is
-	 * one. Deliberately not `rev-parse --verify HEAD`, which cannot tell an existing
-	 * but empty repository -- an unborn HEAD, the case where a user has staged work
-	 * and not committed it -- from a directory that is not a repository at all.
-	 */
-	private async isRepository(path: string): Promise<boolean> {
-		const res = await this.gitRunner(path, ['rev-parse', '--git-dir']);
-		return res.code === 0;
 	}
 
 	private static readonly PATH_NOT_FOUND_MARKERS = [

@@ -820,50 +820,41 @@ describe('SpawnGitAdapter', () => {
 		 * so "honours the argument" and "ignores it" are indistinguishable against
 		 * real git. That leaves argument routing -- the case the gate keeps mock
 		 * tests for. Everything else `init()` does is pinned there against both
-		 * real engines, including the branch it picks and the fact that it never
-		 * moves the HEAD of a repository that already exists.
+		 * real engines: a bare `git init` that defers the branch choice to git
+		 * itself and never moves the HEAD of a repository that already exists.
 		 */
 
 		/**
-		 * Default mock for the new-repo path: `rev-parse --git-dir` finds no
-		 * repository, so `init` goes on to create one and pin its branch.
+		 * Default mock: every git invocation succeeds. `init()` is a single
+		 * bare `git init`, so there is no branch-pinning branch to set up.
 		 */
-		const mockFreshRepo = (stdout = 'Initialized empty Git repository') => {
+		const mockInitCommands = () => {
 			const commands: Array<{ workingDir: string; args: string[] }> = [];
 			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
 				commands.push({ workingDir, args });
-				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
-				return { code: 0, stdout, stderr: '' };
+				return { code: 0, stdout: '', stderr: '' };
 			});
 			return commands;
 		};
 
 		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
-			const commands = mockFreshRepo();
+			const commands = mockInitCommands();
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await adapter.init();
 
-			// A newly created repository is pinned to `main` so it matches the
-			// IsomorphicGitAdapter, which hardcodes defaultBranch: "main".
-			expect(commands).toEqual([
-				{ workingDir: '/test/repo', args: ['rev-parse', '--git-dir'] },
-				{ workingDir: '/test/repo', args: ['init'] },
-				{ workingDir: '/test/repo', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
-			]);
+			// Bare `git init`: git picks the initial branch from
+			// `init.defaultBranch`, so there is nothing further to assert here.
+			expect(commands).toEqual([{ workingDir: '/test/repo', args: ['init'] }]);
 		});
 
 		it('initializes repository with explicit rootPath when provided', async () => {
-			const commands = mockFreshRepo();
+			const commands = mockInitCommands();
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await adapter.init('/custom/repo/path');
 
-			expect(commands).toEqual([
-				{ workingDir: '/custom/repo/path', args: ['rev-parse', '--git-dir'] },
-				{ workingDir: '/custom/repo/path', args: ['init'] },
-				{ workingDir: '/custom/repo/path', args: ['symbolic-ref', 'HEAD', 'refs/heads/main'] }
-			]);
+			expect(commands).toEqual([{ workingDir: '/custom/repo/path', args: ['init'] }]);
 		});
 
 		it('throws when git init fails', async () => {
@@ -876,20 +867,6 @@ describe('SpawnGitAdapter', () => {
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');
-		});
-
-		it('throws when the initial branch cannot be pinned', async () => {
-			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-				// `init` must succeed so the symbolic-ref branch is actually reached.
-				if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
-				if (args[0] === 'symbolic-ref') {
-					return { code: 1, stdout: '', stderr: 'fatal: cannot update HEAD' };
-				}
-				return { code: 0, stdout: '', stderr: '' };
-			});
-
-			const adapter = new SpawnGitAdapter(rootOrigin);
-			await expect(adapter.init()).rejects.toThrow('fatal: cannot update HEAD');
 		});
 	});
 });

@@ -6,9 +6,11 @@ import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter
 import { NodeDirectoryHandle } from './node-fs-handle';
 import {
 	TestRepo,
+	atLeastGit,
 	createTrackedDirectory,
 	currentBranch,
 	describe,
+	gitVersion,
 	indexContents,
 	it,
 	nodeFileAccess,
@@ -18,19 +20,18 @@ import {
 /**
  * `init()` under contract.
  *
- * This is the only `VCSAdapter` method that had no contract coverage, and the
- * measurement in `validation/init-default-branch-probe.txt` shows why that gap
- * mattered: the two engines picked different initial branches. `SpawnGitAdapter`
- * ran a bare `git init`, which falls back to git's built-in default when
- * `init.defaultBranch` is unset -- so a repository initialized from the desktop
- * landed on `master`, while `IsomorphicGitAdapter` hardcodes
- * `defaultBranch: "main"`. The suite's own `createTestRepo` had been papering
- * over this with an extra `git symbolic-ref HEAD refs/heads/main`, which is
- * itself evidence the divergence was real and had to be worked around.
+ * Each engine uses its own default for a new repository, and neither invents
+ * one for a repository that already exists. `SpawnGitAdapter` runs a bare
+ * `git init`, so the initial branch is whatever the user's git would pick:
+ * `init.defaultBranch` when configured, otherwise git's compiled fallback.
+ * `IsomorphicGitAdapter` is not the user's local git -- it cannot read
+ * `~/.gitconfig` -- so it carries its own `defaultBranch: "main"`.
  *
- * These tests pin the *semantic* outcome (a repository exists, on `main`, and it
- * is a working repository that can be committed to) rather than the command
- * string, per ADR 0004.
+ * These tests pin the *semantic* outcome (a repository exists, it is usable,
+ * and re-initialization never moves HEAD) rather than the command string, per
+ * ADR 0004. The suite's own `createTestRepo` still pins its throwaway
+ * repositories to `main` via `symbolic-ref`: that is the harness choosing
+ * determinism for every other test file, not product behavior.
  */
 
 /** The init surface under contract. */
@@ -43,10 +44,13 @@ interface InitSurface {
 interface Engine {
 	name: string;
 	adapter(r: TestRepo): InitSurface;
+	/** True when `init()` defers the initial branch to the user's git config. */
+	defersToGitConfig: boolean;
 }
 
 const spawnEngine: Engine = {
 	name: 'SpawnGitAdapter (real git)',
+	defersToGitConfig: true,
 	adapter(r) {
 		return new SpawnGitAdapter(
 			{ scheme: 'file', path: r.path, name: 'repo' },
@@ -58,6 +62,7 @@ const spawnEngine: Engine = {
 
 const isomorphicEngine: Engine = {
 	name: 'IsomorphicGitAdapter (isomorphic-git over node fs)',
+	defersToGitConfig: false,
 	adapter(r) {
 		const repoOrigin: FileOrigin = { scheme: 'browser', path: r.path, name: 'repo' };
 		browserHandleRegistry.register(toURI(repoOrigin), new NodeDirectoryHandle('repo', r.path));
@@ -67,17 +72,57 @@ const isomorphicEngine: Engine = {
 
 const engines: Engine[] = [spawnEngine, isomorphicEngine];
 
+const gitVer = await gitVersion();
+// `init.defaultBranch` is only honored by git >= 2.28; below that the config
+// is silently ignored and this case would assert a branch git never promised.
+const belowDefaultBranchFloor = !atLeastGit(gitVer, { major: 2, minor: 28 });
+
 describe('init()', () => {
 	for (const engine of engines) {
 		describe(engine.name, () => {
-			it('creates a repository on the "main" branch, matching the other engine', async () => {
-				const repo = await createTrackedDirectory();
-				const adapter = engine.adapter(repo);
+			if (engine.defersToGitConfig) {
+				it('creates a repository on git\'s own default branch', async () => {
+					const repo = await createTrackedDirectory();
+					const adapter = engine.adapter(repo);
 
-				await adapter.init(repo.path);
+					await adapter.init(repo.path);
+					const adapterBranch = await currentBranch(repo);
+					expect(adapterBranch).not.toBeNull();
 
-				expect(await currentBranch(repo)).toBe('main');
-			});
+					// Oracle: what a bare `git init` picks in this same
+					// environment, so the test tracks git rather than a name.
+					const oracle = await createTrackedDirectory();
+					const init = await oracle.git(['init', '-q']);
+					expect(init.code).toBe(0);
+					expect(adapterBranch).toBe(await currentBranch(oracle));
+				});
+
+				it.skipIf(
+					belowDefaultBranchFloor,
+					'requires git >= 2.28 for init.defaultBranch (found ' + gitVer.raw + ')'
+				)('honours init.defaultBranch when the user configured one', async () => {
+					const repo = await createTrackedDirectory();
+					// Isolated HOME plus a pinned GIT_CONFIG_GLOBAL, so this
+					// cannot leak past the test.
+					const config = await repo.git(['config', '--global', 'init.defaultBranch', 'trunk']);
+					expect(config.code).toBe(0);
+
+					await engine.adapter(repo).init(repo.path);
+
+					expect(await currentBranch(repo)).toBe('trunk');
+				});
+			} else {
+				it('creates a repository on the "main" branch', async () => {
+					const repo = await createTrackedDirectory();
+					const adapter = engine.adapter(repo);
+
+					await adapter.init(repo.path);
+
+					// Its own default, not the user's git config, which it
+					// cannot see from the browser.
+					expect(await currentBranch(repo)).toBe('main');
+				});
+			}
 
 			it('leaves a repository that detect() recognizes as a work tree', async () => {
 				const repo = await createTrackedDirectory();
@@ -94,7 +139,9 @@ describe('init()', () => {
 
 				await adapter.init(repo.path);
 
-				expect(await adapter.getCurrentBranch()).toBe('main');
+				const branch = await currentBranch(repo);
+				expect(branch).not.toBeNull();
+				expect(await adapter.getCurrentBranch()).toBe(branch);
 			});
 
 			it('produces a repository that can actually be committed to', async () => {
@@ -102,13 +149,14 @@ describe('init()', () => {
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
+				const branch = await currentBranch(repo);
 				await repo.write('file.txt', 'content\n');
 				await repo.git(['add', 'file.txt']);
 				const commit = await repo.git(['commit', '-m', 'first']);
 
 				expect(commit.stderr).toBe('');
 				expect(commit.code).toBe(0);
-				expect(await currentBranch(repo)).toBe('main');
+				expect(await currentBranch(repo)).toBe(branch);
 			});
 
 			it('is idempotent: init() on an existing repository preserves its history', async () => {
@@ -116,6 +164,7 @@ describe('init()', () => {
 				const adapter = engine.adapter(repo);
 
 				await adapter.init(repo.path);
+				const branch = await currentBranch(repo);
 				await repo.write('file.txt', 'content\n');
 				await repo.git(['add', 'file.txt']);
 				await repo.git(['commit', '-m', 'first']);
@@ -123,7 +172,7 @@ describe('init()', () => {
 				// Re-initializing an existing repository must not destroy the commit.
 				await adapter.init(repo.path);
 
-				expect(await currentBranch(repo)).toBe('main');
+				expect(await currentBranch(repo)).toBe(branch);
 				const log = await repo.git(['log', '--oneline']);
 				expect(log.stdout).toContain('first');
 			});
