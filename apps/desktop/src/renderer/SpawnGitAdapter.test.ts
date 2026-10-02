@@ -811,25 +811,45 @@ describe('SpawnGitAdapter', () => {
 	});
 
 	describe('init', () => {
-		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
-			const commands: Array<{ workingDir: string; args: string[] }> = [];
-			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
-				commands.push({ workingDir, args });
-				return { code: 0, stdout: 'Initialized empty Git repository', stderr: '' };
-			});
+		/**
+		 * Which working directory `init()` runs git in.
+		 *
+		 * Kept as mocks, against the gate's pruning rule, because no contract test
+		 * can observe it: every test in `tests/contract/repo-init.test.ts` passes an
+		 * explicit `rootPath` that happens to be the same path as `rootOrigin.path`,
+		 * so "honours the argument" and "ignores it" are indistinguishable against
+		 * real git. That leaves argument routing -- the case the gate keeps mock
+		 * tests for. Everything else `init()` does is pinned there against both
+		 * real engines: a bare `git init` that defers the branch choice to git
+		 * itself and never moves the HEAD of a repository that already exists.
+		 */
 
-			const adapter = new SpawnGitAdapter(rootOrigin);
-			await adapter.init();
-
-			expect(commands).toEqual([{ workingDir: '/test/repo', args: ['init'] }]);
-		});
-
-		it('initializes repository with explicit rootPath when provided', async () => {
+		/**
+		 * Default mock: every git invocation succeeds. `init()` is a single
+		 * bare `git init`, so there is no branch-pinning branch to set up.
+		 */
+		const mockInitCommands = () => {
 			const commands: Array<{ workingDir: string; args: string[] }> = [];
 			mockGitRun.mockImplementation(async (workingDir: string, args: string[]) => {
 				commands.push({ workingDir, args });
 				return { code: 0, stdout: '', stderr: '' };
 			});
+			return commands;
+		};
+
+		it('initializes repository using rootOrigin.path when no rootPath is provided', async () => {
+			const commands = mockInitCommands();
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			await adapter.init();
+
+			// Bare `git init`: git picks the initial branch from
+			// `init.defaultBranch`, so there is nothing further to assert here.
+			expect(commands).toEqual([{ workingDir: '/test/repo', args: ['init'] }]);
+		});
+
+		it('initializes repository with explicit rootPath when provided', async () => {
+			const commands = mockInitCommands();
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await adapter.init('/custom/repo/path');
@@ -838,11 +858,12 @@ describe('SpawnGitAdapter', () => {
 		});
 
 		it('throws when git init fails', async () => {
-			mockGitRun.mockImplementation(async () => ({
-				code: 1,
-				stdout: '',
-				stderr: 'fatal: cannot mkdir .git: Permission denied'
-			}));
+			mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'init') {
+					return { code: 1, stdout: '', stderr: 'fatal: cannot mkdir .git: Permission denied' };
+				}
+				return { code: 128, stdout: '', stderr: '' };
+			});
 
 			const adapter = new SpawnGitAdapter(rootOrigin);
 			await expect(adapter.init()).rejects.toThrow('fatal: cannot mkdir .git: Permission denied');

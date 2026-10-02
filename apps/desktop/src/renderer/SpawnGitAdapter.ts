@@ -119,6 +119,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	async init(rootPath?: string): Promise<void> {
 		const targetPath = rootPath ?? this.rootOrigin.path;
+		// Deliberately bare: git chooses the initial branch from
+		// `init.defaultBranch` (falling back to its compiled default), and
+		// `git init` is a documented no-op on a repository that already
+		// exists -- it neither reinitializes the work tree nor moves HEAD.
+		// Pinning a branch here would override a default the user deliberately
+		// configured, and costs extra spawns on every initialization.
+		// IsomorphicGitAdapter is not the user's local git, so the engines are
+		// not expected to agree beyond their own defaults.
 		const res = await this.gitRunner(targetPath, ['init']);
 		if (res.code !== 0) {
 			throw new Error(res.stderr || `Failed to initialize git repository at ${targetPath}`);

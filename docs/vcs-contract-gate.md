@@ -50,6 +50,7 @@ The contract suite in [`tests/contract/`](../tests/contract) exercises the entir
 
 | Area | Contract Test File | Key Behaviors Verified |
 | :--- | :--- | :--- |
+| **Repository Creation** | [`repo-init.test.ts`](../tests/contract/repo-init.test.ts) | `init` creating a repository on each engine's own default branch (Spawn defers to git's `init.defaultBranch`, Isomorphic uses `main`), the new repository being detectable, reportable through `getCurrentBranch` and committable, idempotence on an existing repository, and `init` never moving the HEAD of a repository that already exists (with or without commits) |
 | **Change & Diff Reads** | [`change-diff-reads.test.ts`](../tests/contract/change-diff-reads.test.ts) | Untracked, tracked, deleted, modified, renamed, copied, mixed staging states, diff reconstruction on both engines |
 | **Recreated-After-Staged-Delete Status** | [`recreated-file-status.test.ts`](../tests/contract/recreated-file-status.test.ts) | `getChanges` reports the recreate as untracked `U` with a line count on both engines, and the adjacent boundaries (genuine staged addition, plain untracked, staged deletion not recreated) keep their own statuses |
 | **Metadata Reads** | [`metadata-reads.test.ts`](../tests/contract/metadata-reads.test.ts) | `getCurrentBranch`, `getBranches`, `getCommits` (author, date, message, file lists, pagination, empty commits), `getUserConfig` |
