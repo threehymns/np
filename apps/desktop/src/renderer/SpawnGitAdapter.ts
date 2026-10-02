@@ -11,7 +11,7 @@ export interface GitRunResult {
 /** A function that runs git in a working directory, returning code + captured output. */
 export type GitRunner = (workingDir: string, args: string[]) => Promise<GitRunResult>;
 
-/** File operations the adapter needs beyond git itself: worktree reads and temp-file writes. */
+/** File operations the adapter needs beyond git itself: working-tree reads and temp-file writes. */
 export interface GitFileAccess {
 	readFile(path: string): Promise<Uint8Array | string>;
 	writeFile(path: string, content: string): Promise<void>;
@@ -317,7 +317,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (res.code !== 0) {
 			// An unborn HEAD (no commits yet) cannot resolve 'HEAD' as a revision
 			// (older git rejects the explicit reset outright; newer git accepts it),
-			// so remove the index entries directly, leaving the worktree untouched —
+			// so remove the index entries directly, leaving the working tree untouched —
 			// the same outcome reset produces once a first commit exists. The message
 			// alone is not proof of an unborn HEAD: a broken HEAD on a repo with
 			// commits emits the same error, so the fallback only runs when the
@@ -333,7 +333,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		}
 	}
 
-	private async getRenameEntry(filepath: string): Promise<{ origPath?: string; hasWorktreeEdits: boolean; isCopy: boolean } | null> {
+	private async getRenameEntry(filepath: string): Promise<{ origPath?: string; hasUnstagedEdits: boolean; isCopy: boolean } | null> {
 		const statusRes = await this.runGit(['status', '--porcelain=v1', '-z', '-uall']);
 		if (statusRes.code === 0 && statusRes.stdout) {
 			const entries = this.parseStatusEntries(statusRes.stdout);
@@ -344,7 +344,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				// no source path is returned, only the isCopy flag.
 				return {
 					origPath: match.origPath,
-					hasWorktreeEdits: match.y === 'M',
+					hasUnstagedEdits: match.y === 'M',
 					isCopy: match.x === 'C' || match.y === 'C'
 				};
 			}
@@ -366,16 +366,16 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	/**
 	 * The paths whose deletion is staged but which have since been recreated in the
-	 * worktree, read from an already-parsed porcelain v1 listing.
+	 * working tree, read from an already-parsed porcelain v1 listing.
 	 *
 	 * Git reports that state as two entries for the same path: `D  f.txt` (the
-	 * staged deletion, with an empty worktree column) alongside `?? f.txt` (present
+	 * staged deletion, with an empty working-tree column) alongside `?? f.txt` (present
 	 * on disk). Together they mean the user deleted the file, staged the deletion,
-	 * and then wrote a new copy over it. The worktree copy's content is in neither
+	 * and then wrote a new copy over it. The working-tree copy's content is in neither
 	 * the index nor HEAD, so nothing else in the repository can restore it.
 	 *
 	 * Both entries are required, and the deletion must be in the *index* column: a
-	 * plain worktree deletion (` D`) plus an untracked path of the same name has
+	 * plain working-tree deletion (` D`) plus an untracked path of the same name has
 	 * the same shape here but is not this state.
 	 */
 	private findResurrectedAfterStagedDelete(entries: Array<{ x: string; y: string; filepath: string }>): string[] {
@@ -392,19 +392,19 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Finds the tracked source of an unstaged worktree rename whose destination is
+	 * Finds the tracked source of a rename with unstaged edits whose destination is
 	 * `filepath`, or undefined when `filepath` is not such a destination.
 	 *
-	 * An unstaged worktree rename is invisible to git: porcelain v1 reports the
-	 * destination as an untracked file and the source as a worktree deletion, and
+	 * A rename with unstaged edits is invisible to git: porcelain v1 reports the
+	 * destination as an untracked file and the source as a working-tree deletion, and
 	 * rename detection does not help because it only pairs content between two
-	 * commits, not between the index and the worktree. Verified directly:
+	 * commits, not between the index and the working tree. Verified directly:
 	 * `git status --porcelain=v1 -uall --find-renames` still prints ` D src.txt` /
 	 * `?? moved.txt`, and `git diff --find-renames` is empty because the index
 	 * equals HEAD.
 	 *
 	 * So the pair is recovered by content instead: candidates are paths git reports
-	 * as worktree-deleted *and* still present in the index, and a candidate matches
+	 * as working-tree-deleted *and* still present in the index, and a candidate matches
 	 * only when its index content is byte-identical to the destination.
 	 *
 	 * Byte-identical is necessary but not sufficient to identify a source. Two
@@ -447,7 +447,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (options?.staged === false) {
 			// A file whose deletion is staged but which has been recreated holds
 			// content in neither the index nor HEAD, and git's own model calls that
-			// worktree copy untracked, so there are no unstaged changes to revert and
+			// working-tree copy untracked, so there are no unstaged changes to revert and
 			// the only way to act on it is to delete it. Both entries below would
 			// destroy the only copy: `restore` cannot reach the path (it left the
 			// index), and the resulting "pathspec did not match" error is what leads
@@ -456,16 +456,16 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if ((await this.readResurrectedAfterStagedDelete()).includes(filepath)) {
 				return;
 			}
-			// Unstaged scope: reset only the worktree copy to the index version. If the
-			// destination path is not in the index (e.g. an unstaged worktree rename),
+			// Unstaged scope: reset only the working-tree copy to the index version. If the
+			// destination path is not in the index (e.g. a rename with unstaged edits),
 			// restore the original source path from the index and clean the destination.
 			const res = await this.runGit(['restore', '--worktree', '--', literalPathspec(filepath)]);
 			if (res.code !== 0) {
 				if (!this.isPathNotFoundError(res.stderr)) {
 					throw new Error(res.stderr || `Failed to discard changes for ${filepath}`);
 				}
-				// An unstaged worktree rename is not representable in porcelain v1: git
-				// reports it as a worktree deletion plus an untracked file, never as a
+				// A rename with unstaged edits is not representable in porcelain v1: git
+				// reports it as a working-tree deletion plus an untracked file, never as a
 				// rename pair, so `resolveOrigPath` cannot find a source and the
 				// recovery below never ran. Discarding the destination therefore left
 				// the tracked source deleted too, destroying a file git still knows
@@ -474,7 +474,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				//
 				// Pair the untracked destination back to a tracked source by content: git
 				// itself pairs renames the same way. The source must still be missing
-				// from the worktree and present in the index, so an unrelated deletion
+				// from the working tree and present in the index, so an unrelated deletion
 				// that merely happens to hold identical content is never restored over.
 				const source = await this.findUnstagedRenameSource(filepath);
 				if (source) {
@@ -493,14 +493,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 			// Staged copy: unstage the destination only — the source file is never
 			// touched. `checkout HEAD -- dest` fails because the destination is absent
 			// from HEAD, so a plain reset removes the copy from the index. A copy whose
-			// destination also holds unstaged edits (CM) keeps its worktree copy after
+			// destination also holds unstaged edits (CM) keeps its working-tree copy after
 			// the reset: it is left in place instead of being cleaned away with the
 			// user's edits in it.
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', literalPathspec(filepath)]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
-			if (!renameEntry.hasWorktreeEdits) {
+			if (!renameEntry.hasUnstagedEdits) {
 				await this.cleanIfPresent(filepath);
 			}
 			return;
@@ -510,9 +510,9 @@ export class SpawnGitAdapter implements VCSAdapter {
 		if (origPath && origPath !== filepath) {
 			// Staged rename reported by git itself: revert the whole rename. `checkout HEAD -- newPath`
 			// fails because the new path is absent from HEAD, so restore the original path from
-			// HEAD in index and worktree and remove the new path, instead of dropping the
+			// HEAD in index and working tree and remove the new path, instead of dropping the
 			// original tracked file.
-			const preserveDestination = renameEntry.hasWorktreeEdits;
+			const preserveDestination = renameEntry.hasUnstagedEdits;
 			const resetRes = await this.runGit(['reset', 'HEAD', '--', literalPathspec(origPath), literalPathspec(filepath)]);
 			if (resetRes.code !== 0) {
 				throw new Error(resetRes.stderr || `Failed to discard changes for ${filepath}`);
@@ -522,7 +522,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 				throw new Error(checkoutRes.stderr || `Failed to discard changes for ${filepath}`);
 			}
 			// An RM rename (staged rename plus unstaged edits at the destination) keeps its
-			// worktree copy: after the reset it is untracked, so it is left in place instead
+			// working-tree copy: after the reset it is untracked, so it is left in place instead
 			// of being cleaned away with the user's edits in it.
 			if (!preserveDestination) {
 				await this.cleanIfPresent(filepath);
@@ -559,7 +559,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const res = await this.runGit(['restore', '--staged', '.']);
 		if (res.code !== 0) {
 			// Unborn HEAD: `git restore --staged` cannot resolve its default source.
-			// Empty the index with `rm --cached` instead, leaving the worktree
+			// Empty the index with `rm --cached` instead, leaving the working tree
 			// untouched; a trailing "did not match" means nothing was staged. The
 			// marker also fires for a broken HEAD on a repo with commits, so the
 			// fallback only runs when the repository is genuinely commit-less.
@@ -585,7 +585,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const resurrected = new Set(await this.readResurrectedAfterStagedDelete());
 
 		// Unstage and restore everything except those paths, so a resurrected file
-		// keeps its staged deletion and its worktree copy.
+		// keeps its staged deletion and its working-tree copy.
 		const restoreArgs = ['restore', '--staged', '--worktree', '.'];
 		for (const filepath of resurrected) {
 			restoreArgs.push(`:(top,exclude,literal)${filepath}`);
@@ -825,7 +825,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	private static readonly EMPTY_STAT = { additions: 0, deletions: 0 };
 
-	/** How many untracked worktree files getChanges reads per concurrent batch. */
+	/** How many untracked working-tree files getChanges reads per concurrent batch. */
 	private static readonly UNTRACKED_READ_CONCURRENCY = 8;
 
 	async getChanges(): Promise<GitChange[]> {
@@ -931,8 +931,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 		};
 	}
 
-	// EAFP: attempt reading worktree content; a deleted/missing file is a genuine empty case
-	private async readWorktreeContent(filepath: string): Promise<string> {
+	// EAFP: attempt reading working-tree content; a deleted/missing file is a genuine empty case
+	private async readWorkingTreeContent(filepath: string): Promise<string> {
 		try {
 			const buffer = await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 			return typeof buffer === 'string' ? buffer : new TextDecoder().decode(buffer);
@@ -953,14 +953,14 @@ export class SpawnGitAdapter implements VCSAdapter {
 	}
 
 	/**
-	 * Whether a path currently exists in the worktree.
+	 * Whether a path currently exists in the working tree.
 	 *
 	 * Used to check the premise behind a porcelain `D` status, which describes the
 	 * index rather than the disk. Any failure other than "not found" is reported as
 	 * existing, so an unreadable-but-present file is read (and its read error
 	 * surfaces) instead of being silently reported as empty.
 	 */
-	private async worktreeFileExists(filepath: string): Promise<boolean> {
+	private async workingTreeFileExists(filepath: string): Promise<boolean> {
 		try {
 			await this.fileAccess.readFile(this.rootOrigin.path + '/' + filepath);
 			return true;
@@ -973,39 +973,39 @@ export class SpawnGitAdapter implements VCSAdapter {
 	async getFileDiff(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail> {
 		// Optimization: If the file is untracked ('U'), it has no HEAD or index objects.
 		if (options?.status === 'U') {
-			const worktreeContent = options.staged !== true ? await this.readWorktreeContent(filepath) : '';
-			return resolveDiffDetail('', '', worktreeContent, options);
+			const workingTreeContent = options.staged !== true ? await this.readWorkingTreeContent(filepath) : '';
+			return resolveDiffDetail('', '', workingTreeContent, options);
 		}
 
 		// Optimization: If a file is added ('A'), HEAD is guaranteed empty.
 		if (options?.status === 'A') {
-			const worktreeContent = options?.staged !== true ? await this.readWorktreeContent(filepath) : '';
+			const workingTreeContent = options?.staged !== true ? await this.readWorkingTreeContent(filepath) : '';
 			const indexObj = await this.readGitObject(`:${filepath}`);
-			return resolveDiffDetail('', indexObj ?? '', worktreeContent, options);
+			return resolveDiffDetail('', indexObj ?? '', workingTreeContent, options);
 		}
 
-		// Optimization: If file was deleted ('D') in worktree (unstaged or combined), skip disk read.
+		// Optimization: If file was deleted ('D') in the working tree (unstaged or combined), skip disk read.
 		//
 		// A porcelain status of `D` means "the index holds a deletion", NOT "the file
 		// is gone from disk". Delete a file, stage the deletion, then recreate it,
 		// and git reports both `D  f.txt` and `?? f.txt`; the UI combines those into
 		// one entry whose status is `D` (see `combineChangesByFilepath`). Trusting
-		// `D` unconditionally therefore reports the worktree as empty while it holds
+		// `D` unconditionally therefore reports the working tree as empty while it holds
 		// real content, and the next "discard" writes HEAD content back over that
 		// file — unrecoverable loss of work that was never staged or committed.
 		//
-		// So the worktree is read unless the status says the index holds a deletion
-		// AND the file is genuinely absent. `readWorktreeContent` returns '' for a
+		// So the working tree is read unless the status says the index holds a deletion
+		// AND the file is genuinely absent. `readWorkingTreeContent` returns '' for a
 		// missing file, so a file that vanished between the status listing and this
 		// read still yields '' without a second probe.
 		const deletedInIndex = options?.status === 'D' && options?.staged !== true;
-		const worktreeContent =
-			options?.staged === true ? '' : deletedInIndex && !(await this.worktreeFileExists(filepath)) ? '' : await this.readWorktreeContent(filepath);
+		const workingTreeContent =
+			options?.staged === true ? '' : deletedInIndex && !(await this.workingTreeFileExists(filepath)) ? '' : await this.readWorkingTreeContent(filepath);
 
 		const origPath = (await this.resolveOrigPath(filepath)) || filepath;
 		const { headContent, indexContent } = await this.readHeadAndIndex(filepath, origPath);
 
-		return resolveDiffDetail(headContent, indexContent, worktreeContent, options);
+		return resolveDiffDetail(headContent, indexContent, workingTreeContent, options);
 	}
 
 	/**
