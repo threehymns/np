@@ -192,12 +192,12 @@ describe("wikilinkAutocompletion", () => {
 				{
 					kind: "file",
 					name: "Note A.md",
-					origin: { scheme: "file", path: "/vault/Note A.md", name: "Note A.md" },
+					origin: { scheme: "file", path: "/worktree/Note A.md", name: "Note A.md" },
 				},
 				{
 					kind: "file",
 					name: "Research.md",
-					origin: { scheme: "file", path: "/vault/Research.md", name: "Research.md" },
+					origin: { scheme: "file", path: "/worktree/Research.md", name: "Research.md" },
 				},
 			],
 		},
