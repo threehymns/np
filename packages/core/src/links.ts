@@ -547,7 +547,7 @@ export function findBlockLine(content: string, blockId: string): number | null {
 /**
  * Recursively searches storage for a file named targetName or targetWithExt.
  */
-export async function searchVaultForFile(
+export async function searchWorktreeForFile(
 	storage: Storage,
 	dirOrigin: FileOrigin,
 	targetName: string,
@@ -573,7 +573,7 @@ export async function searchVaultForFile(
 					return entry.origin;
 				}
 			} else if (entry.kind === 'directory') {
-				const found = await searchVaultForFile(
+				const found = await searchWorktreeForFile(
 					storage,
 					entry.origin,
 					targetName,
@@ -622,7 +622,7 @@ export async function resolveTargetOrigin(
 
 			// 1. Direct path relative to workspace root
 			// An escaping path costs this step only — steps 2 and 3 can still resolve
-			// the link inside the vault, and refusing the whole candidate would turn a
+			// the link inside the worktree, and refusing the whole candidate would turn a
 			// refused read into a dead link.
 			const rootCandidatePath = resolveWithinRoot(rootPath, rootPath, stripped);
 			if (rootCandidatePath !== null) {
@@ -666,15 +666,15 @@ export async function resolveTargetOrigin(
 				}
 			}
 
-			// 3. Vault-wide search
-			const vaultFound = await searchVaultForFile(
+			// 3. Worktree-wide search
+			const worktreeFound = await searchWorktreeForFile(
 				workspace.storage,
 				workspace.rootOrigin,
 				candidateName,
 				candidate
 			);
-			if (vaultFound) {
-				return vaultFound;
+			if (worktreeFound) {
+				return worktreeFound;
 			}
 		}
 
@@ -693,7 +693,7 @@ export async function resolveTargetOrigin(
 			hasMdExtension || hasExplicitExtension
 				? normalizedTarget
 				: `${normalizedTarget}.md`;
-		// Reject traversal outside the vault (e.g. [[../outside]]) before creating.
+		// Reject traversal outside the worktree (e.g. [[../outside]]) before creating.
 		const newPath = resolveWithinRoot(rootPath, rootPath, createTarget.replace(/^\//, ''));
 		if (newPath === null) {
 			return null;
@@ -712,7 +712,7 @@ export async function resolveTargetOrigin(
 }
 
 /**
- * Normalizes a POSIX-style vault path, resolving `.` and `..` segments.
+ * Normalizes a POSIX-style worktree path, resolving `.` and `..` segments.
  *
  * Matches what the filesystem does to a path before opening it, which is why
  * containment is checked against the result and never against the raw link
@@ -738,12 +738,12 @@ export function normalizePosixPath(path: string): string {
 
 /**
  * Resolves a link target against a base directory inside the workspace and
- * returns the path to read, or null when the resolved path leaves the vault.
+ * returns the path to read, or null when the resolved path leaves the worktree.
  *
  * Every path handed to storage is built by concatenating a base directory with
  * the target, and a target keeps its `..` segments: the only thing stripped is
  * one leading slash, so `[[../secret.txt]]` would otherwise reach storage as
- * `/vault/../secret.txt` and be resolved by the filesystem underneath us. So
+ * `/worktree/../secret.txt` and be resolved by the filesystem underneath us. So
  * resolve FIRST, then require containment — a string-prefix test against an
  * unresolved path is meaningless.
  *
@@ -756,7 +756,7 @@ function resolveWithinRoot(rootPath: string, baseDir: string, target: string): s
 }
 
 /**
- * Checks that a normalized candidate path stays beneath the vault root.
+ * Checks that a normalized candidate path stays beneath the worktree root.
  *
  * PRECONDITION: `candidatePath` must already be resolved by `normalizePosixPath`
  * (a prefix test against an unresolved path is meaningless), and the check is
