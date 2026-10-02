@@ -414,16 +414,22 @@ export async function resolveTargetOrigin(
 			const stripped = candidate.replace(/^\//, '');
 
 			// 1. Direct path relative to workspace root
-			const directRootOrigin: FileOrigin = {
-				scheme,
-				path: `${rootPath}/${stripped}`,
-				name: candidateName,
-			};
-			try {
-				await workspace.storage.readFile(directRootOrigin);
-				return directRootOrigin;
-			} catch {
-				// Not found directly at root
+			// An escaping path costs this step only — steps 2 and 3 can still resolve
+			// the link inside the vault, and refusing the whole candidate would turn a
+			// refused read into a dead link.
+			const rootCandidatePath = resolveWithinRoot(rootPath, rootPath, stripped);
+			if (rootCandidatePath !== null) {
+				const directRootOrigin: FileOrigin = {
+					scheme,
+					path: rootCandidatePath,
+					name: candidateName,
+				};
+				try {
+					await workspace.storage.readFile(directRootOrigin);
+					return directRootOrigin;
+				} catch {
+					// Not found directly at root
+				}
 			}
 
 			// 2. Path relative to current note directory
@@ -432,16 +438,23 @@ export async function resolveTargetOrigin(
 				const lastSlash = currentDocPath.lastIndexOf('/');
 				if (lastSlash !== -1) {
 					const currentDir = currentDocPath.slice(0, lastSlash);
-					const relOrigin: FileOrigin = {
-						scheme,
-						path: `${currentDir}/${stripped}`,
-						name: candidateName,
-					};
-					try {
-						await workspace.storage.readFile(relOrigin);
-						return relOrigin;
-					} catch {
-						// Not found relative to current file
+					const currentDirCandidatePath = resolveWithinRoot(
+						rootPath,
+						currentDir,
+						stripped
+					);
+					if (currentDirCandidatePath !== null) {
+						const currentDirOrigin: FileOrigin = {
+							scheme,
+							path: currentDirCandidatePath,
+							name: candidateName,
+						};
+						try {
+							await workspace.storage.readFile(currentDirOrigin);
+							return currentDirOrigin;
+						} catch {
+							// Not found relative to current file
+						}
 					}
 				}
 			}
@@ -473,11 +486,9 @@ export async function resolveTargetOrigin(
 			hasMdExtension || hasExplicitExtension
 				? normalizedTarget
 				: `${normalizedTarget}.md`;
-		const newPath = normalizePosixPath(
-			`${rootPath}/${createTarget.replace(/^\//, '')}`
-		);
 		// Reject traversal outside the vault (e.g. [[../outside]]) before creating.
-		if (!isWithinPath(newPath, rootPath)) {
+		const newPath = resolveWithinRoot(rootPath, rootPath, createTarget.replace(/^\//, ''));
+		if (newPath === null) {
 			return null;
 		}
 		const newOrigin: FileOrigin = {
@@ -495,8 +506,12 @@ export async function resolveTargetOrigin(
 
 /**
  * Normalizes a POSIX-style vault path, resolving `.` and `..` segments.
+ *
+ * Matches what the filesystem does to a path before opening it, which is why
+ * containment is checked against the result and never against the raw link
+ * target.
  */
-function normalizePosixPath(path: string): string {
+export function normalizePosixPath(path: string): string {
 	const isAbsolute = path.startsWith('/');
 	const stack: string[] = [];
 	for (const part of path.split('/')) {
@@ -515,7 +530,32 @@ function normalizePosixPath(path: string): string {
 }
 
 /**
+ * Resolves a link target against a base directory inside the workspace and
+ * returns the path to read, or null when the resolved path leaves the vault.
+ *
+ * Every path handed to storage is built by concatenating a base directory with
+ * the target, and a target keeps its `..` segments: the only thing stripped is
+ * one leading slash, so `[[../secret.txt]]` would otherwise reach storage as
+ * `/vault/../secret.txt` and be resolved by the filesystem underneath us. So
+ * resolve FIRST, then require containment — a string-prefix test against an
+ * unresolved path is meaningless.
+ *
+ * One function for every read and create site, so the order cannot drift
+ * between them. See isWithinPath for the check's precondition.
+ */
+function resolveWithinRoot(rootPath: string, baseDir: string, target: string): string | null {
+	const resolved = normalizePosixPath(`${baseDir}/${target}`);
+	return isWithinPath(resolved, rootPath) ? resolved : null;
+}
+
+/**
  * Checks that a normalized candidate path stays beneath the vault root.
+ *
+ * PRECONDITION: `candidatePath` must already be resolved by `normalizePosixPath`
+ * (a prefix test against an unresolved path is meaningless), and the check is
+ * LEXICAL — it does not follow symlinks, so a link inside the root that points
+ * outside it still passes here and is then read through the link. Containment
+ * therefore holds for `..` traversal, not for symlinked paths.
  */
 function isWithinPath(candidatePath: string, rootPath: string): boolean {
 	const root = rootPath.replace(/\/$/, '') || '/';

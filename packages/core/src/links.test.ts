@@ -1,5 +1,6 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, beforeAll, beforeEach, mock } from "bun:test";
+import { posix } from "node:path";
 import { createMockStorage } from "../../../tests/mock-storage";
 import { toURI, type FileOrigin } from "./storage";
 
@@ -7,6 +8,7 @@ let parseInternalLink: any;
 let findHeadingLine: any;
 let findBlockLine: any;
 let openInternalLink: any;
+let normalizePosixPath: any;
 let Workspace: any;
 let MemorySessionPersistence: any;
 
@@ -69,6 +71,7 @@ beforeAll(async () => {
 	findHeadingLine = linksMod.findHeadingLine;
 	findBlockLine = linksMod.findBlockLine;
 	openInternalLink = linksMod.openInternalLink;
+	normalizePosixPath = linksMod.normalizePosixPath;
 
 	const workspaceMod = await import("./workspace.svelte");
 	Workspace = workspaceMod.Workspace;
@@ -356,5 +359,264 @@ describe("openInternalLink resolution in Workspace", () => {
 		);
 		expect(resultDoc).toBeNull();
 		expect(storage.files.has("file:///vault/Missing Image.png")).toBe(false);
+	});
+});
+
+/**
+ * task-012 — vault containment on the READ path.
+ *
+ * `isWithinPath` guarded only the create step. The two read steps built
+ * `${rootPath}/${stripped}` and handed it straight to `storage.readFile`, where
+ * `stripped` is `candidate.replace(/^\//, '')` — one leading slash, nothing else.
+ * The desktop chain has no normalizer of its own (ElectronStorage -> preload ->
+ * the main process's `fs:readFile`), and Node resolves `..` itself. So
+ * `[[../secret.txt]]` opened a file outside the vault and rendered its contents
+ * in the editor.
+ *
+ * IMPORTANT — the storage below resolves `..` on lookup, and it has to. The
+ * in-memory `createMemoryStorage` above keys files by their raw URI, so a lookup
+ * of `/vault/../secret.txt` misses and the traversal *appears* blocked. That would
+ * be a test passing for the wrong reason: it would prove the mock is strict, not
+ * that the code is safe. The real backend is not strict, so the fake has to
+ * resolve paths the way the filesystem does.
+ *
+ * It resolves them with `normalizePosixPath` — the same function production
+ * uses — so the fake cannot quietly drift from the code it is standing in for.
+ * That sharing is only safe because the normalizer's own behaviour is pinned
+ * against Node's resolver below: if the two ever disagreed, the fake would
+ * resolve paths production would not, and a traversal could look blocked (or
+ * look open) for the wrong reason.
+ */
+function createResolvingStorage(files: Record<string, string>) {
+	// Key by the RESOLVED path, so a traversing lookup finds the outside file.
+	const byResolved = new Map<string, string>();
+	for (const [path, content] of Object.entries(files)) {
+		byResolved.set(normalizePosixPath(path), content);
+	}
+	const readPaths: string[] = [];
+	const mockBase = createMockStorage();
+	return {
+		...mockBase,
+		readPaths,
+		files: byResolved,
+		readFile: mock(async (origin: FileOrigin) => {
+			readPaths.push(origin.path);
+			const key = normalizePosixPath(origin.path);
+			if (!byResolved.has(key)) throw new Error(`File not found: ${origin.path}`);
+			return byResolved.get(key)!;
+		}),
+		saveFile: mock(async (content: string, origin?: FileOrigin) => {
+			if (!origin) return null;
+			byResolved.set(normalizePosixPath(origin.path), content);
+			return origin;
+		}),
+		readDirectory: mock(async (origin: FileOrigin) => {
+			const prefix = normalizePosixPath(origin.path) + "/";
+			const entries: any[] = [];
+			for (const [path, _content] of byResolved) {
+				if (!path.startsWith(prefix)) continue;
+				const rest = path.slice(prefix.length);
+				const slash = rest.indexOf("/");
+				const name = slash === -1 ? rest : rest.slice(0, slash);
+				if (entries.some((e) => e.name === name)) continue;
+				entries.push({
+					name,
+					kind: slash === -1 ? "file" : "directory",
+					origin: { scheme: origin.scheme, path: prefix + name, name },
+				});
+			}
+			return entries;
+		}),
+	};
+}
+
+describe("normalizePosixPath", () => {
+	// The containment tests below stand in for the filesystem using this function,
+	// so it is pinned to Node's own resolver instead of to a second hand-written
+	// copy of the same rule. Absolute paths only: the normalizer keeps a relative
+	// path relative, while posix.resolve anchors it to the cwd.
+	const CASES = [
+		"/vault/Note A.md",
+		"/vault/../secret.txt",
+		"/vault/a/b/../../Note A.md",
+		"/vault/a/b/../../../etc/passwd",
+		"/vault/./Projects/Note B.md",
+		"/vault//Projects///Note B.md",
+		"/vault/Projects/../Note A.md",
+		"/",
+	];
+
+	it("resolves a path exactly as the filesystem would", () => {
+		for (const path of CASES) {
+			expect(normalizePosixPath(path)).toBe(posix.resolve(path));
+		}
+	});
+
+	it("keeps a relative path relative, rather than anchoring it to the cwd", () => {
+		expect(normalizePosixPath("a/b/../../c.md")).toBe("c.md");
+		expect(normalizePosixPath("../c.md")).toBe("../c.md");
+	});
+});
+
+describe("vault containment when following a link (task-012)", () => {
+	let storage: any;
+	let workspace: any;
+
+	beforeEach(async () => {
+		storage = createResolvingStorage({
+			"/vault/Note A.md": "# Note A\n",
+			"/vault/Projects/Note B.md": "# Note B\n",
+			// A note nested two folders down, so links are followed from a
+			// currentDoc whose directory is deeper than the vault root.
+			"/vault/a/b/deep.md": "# deep\n",
+			// Outside the vault, one level up — the shape of ~/.ssh/id_rsa or a
+			// config file sitting next to the notes folder.
+			"/secret.txt": "SUPER-SECRET-VALUE-abc123",
+		});
+		workspace = new Workspace(
+			storage,
+			() => ({} as any),
+			new MemorySessionPersistence()
+		);
+		workspace.rootOrigin = { scheme: "file", path: "/vault", name: "vault" };
+		await workspace.projectTree.scan(workspace.rootOrigin);
+	});
+
+	// --- RED: the defect ---
+
+	it("refuses to open a file outside the vault via a traversing link", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+	});
+
+	it("never reads outside the vault for a traversing link", async () => {
+		await openInternalLink(workspace, null, "[[../secret.txt]]", { allowCreate: false });
+		const escaped = storage.readPaths.filter(
+			(p: string) => !normalizePosixPath(p).startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
+	it("refuses a traversing embed too", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "![[../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+	});
+
+	it("refuses a traversal that climbs several levels", async () => {
+		const resultDoc = await openInternalLink(
+			workspace,
+			null,
+			"[[../../../../etc/passwd]]",
+			{ allowCreate: false }
+		);
+		expect(resultDoc).toBeNull();
+	});
+
+	it("refuses a traversal from a note nested below the vault root", async () => {
+		// The single-level `..` cases above all pass currentDoc = null, which never
+		// runs the current-note-directory step. From a nested note the same escape is
+		// reachable through that step too, so it needs its own case.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+		const escaped = storage.readPaths.filter(
+			(p: string) => !p.startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
+	it("refuses a traversal from a note AT the vault root, where its folder is empty", async () => {
+		// A note in the vault root has no parent folder, so the current-note-directory
+		// step resolves the target against an empty base and would reach the
+		// filesystem root (`/${target}`) rather than the vault. Step 1 already covers
+		// this note's folder, so refusing the step costs nothing.
+		const atRoot = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/Note A.md",
+			name: "Note A.md",
+		});
+		const resultDoc = await openInternalLink(workspace, atRoot!, "[[../../secret.txt]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc).toBeNull();
+		const escaped = storage.readPaths.filter(
+			(p: string) => !p.startsWith("/vault/")
+		);
+		expect(escaped).toEqual([]);
+	});
+
+	// --- CONTROLS: must keep working, so the fix cannot be "reject any `..`" ---
+
+	it("still opens a note inside the vault (control)", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[Note A]]");
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note A.md");
+	});
+
+	it("still opens a nested note by its path (control)", async () => {
+		const resultDoc = await openInternalLink(workspace, null, "[[Projects/Note B]]");
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note B.md");
+	});
+
+	it("still allows a `..` that resolves back INSIDE the vault (control)", async () => {
+		const resultDoc = await openInternalLink(
+			workspace,
+			null,
+			"[[Projects/../Note A.md]]",
+			{ allowCreate: false }
+		);
+		expect(resultDoc).not.toBeNull();
+		expect(resultDoc?.fileName).toBe("Note A.md");
+	});
+
+	it("still refuses a traversing CREATE (the guard that already existed, control)", async () => {
+		// The create-path guard (in resolveTargetOrigin's step 4) already blocked
+		// this. If the new read-path guard regressed it, this is what would catch it.
+		const resultDoc = await openInternalLink(workspace, null, "[[../escaped.md]]");
+		expect(resultDoc).toBeNull();
+		expect(storage.files.has("/escaped.md")).toBe(false);
+	});
+
+	// --- CONTROLS: an escaping step must cost only THAT step, not the whole link ---
+
+	it("still resolves a `..` that escapes root-relative but lands inside the vault from the note's own folder", async () => {
+		// `/vault/../../Note A.md` escapes (step 1), but from a note in /vault/a/b the
+		// same link resolves to `/vault/Note A.md` (step 2), which is inside the vault
+		// and exists. Refusing the whole link because step 1 escaped loses this.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../../Note A.md]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc?.origin?.path).toBe("/vault/Note A.md");
+	});
+
+	it("still falls back to the vault-wide search when both explicit steps escape", async () => {
+		// Step 1 -> `/Note A.md` (escapes). Step 2 -> `/vault/a/Note A.md` (inside, but
+		// no such file). Step 3 finds `/vault/Note A.md` by name. The vault-wide search
+		// is bounded by the tree walk, so it can only ever return an in-vault origin.
+		const deep = await workspace.openFile({
+			scheme: "file",
+			path: "/vault/a/b/deep.md",
+			name: "deep.md",
+		});
+		const resultDoc = await openInternalLink(workspace, deep!, "[[../Note A.md]]", {
+			allowCreate: false,
+		});
+		expect(resultDoc?.origin?.path).toBe("/vault/Note A.md");
 	});
 });
