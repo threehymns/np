@@ -11,6 +11,31 @@ import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 const REPO_DIR = '/repo';
 const HEAVY_WORKTREE_DIRS = new Set(['node_modules', '.svelte-kit']);
 
+/**
+ * Whether `statusMatrix` should consider a worktree path at all.
+ *
+ * The test is on whole path *segments*, not on substrings. A note called
+ * `node_modules-is-fine.md` is an ordinary file in the vault this editor
+ * targets, and a containment test silently drops it from the status matrix.
+ * That is not cosmetic: `getStatus` then reports `isDirty: false`, and
+ * `switchBranch` neither counts the file as a conflict nor snapshots it, so
+ * the forced checkout overwrites the user's uncommitted edits with no error
+ * and no rollback. Real git refuses the same checkout.
+ *
+ * This shares HEAVY_WORKTREE_DIRS with `readdir`, and deliberately nothing
+ * more. `readdir` hides those directories only at the worktree root, and it
+ * must keep looking for `.git` there -- routing it through this predicate would
+ * hide the git directory from the detection walk at `detect()` and no repository
+ * would ever be found. Same vocabulary, two different questions.
+ */
+function isUserPath(filepath: string): boolean {
+	const segments = filepath.split('/');
+	// `.git` is a directory, never a user file; the others are the heavy
+	// build-output directories `git.walk` would otherwise descend into.
+	if (segments.includes('.git')) return false;
+	return !segments.some((segment) => HEAVY_WORKTREE_DIRS.has(segment));
+}
+
 /** The index mode git gives a symlink; its blob content is the target path, not text. */
 const SYMLINK_MODE = 0o120000;
 
@@ -202,6 +227,9 @@ class BrowserGitFS {
 		}
 
 		const names: string[] = [];
+		// Root-only, unlike `isUserPath`, which drops a heavy directory at any
+		// depth. `detect()` walks ancestors reading this, and hiding `.git` here
+		// would leave it unable to find a repository at all. See `isUserPath`.
 		const isWorktreeRoot = path.replace(/\/+$/, '') === REPO_DIR;
 		for await (const name of (handle as FileSystemDirectoryHandle).keys()) {
 			if (isWorktreeRoot && HEAVY_WORKTREE_DIRS.has(name)) continue;
@@ -368,7 +396,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		return await git.statusMatrix({
 			fs: this.fs!,
 			dir: this.dir,
-			filter: f => !f.includes('node_modules') && !f.includes('.svelte-kit') && !f.includes('.git/')
+			filter: isUserPath
 		});
 	}
 
@@ -1196,6 +1224,26 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 	}
 
 	/**
+	 * Whether git's `core.autocrlf` asks for CRLF to be normalised on commit.
+	 *
+	 * git parses the setting as a boolean, so it accepts four spellings of true
+	 * case-insensitively, plus an `input` third state that is not a boolean but
+	 * still normalises on commit. Measured against git 2.55.0 by running the
+	 * contract test for each spelling against SpawnGitAdapter, which shells out
+	 * to that binary: every spelling below is git's own verdict, not a reading
+	 * of its documentation.
+	 *
+	 * An unrecognised value is deliberately treated as "do not normalise": real
+	 * git refuses to run at all, but throwing here would turn one bad config line
+	 * into an inability to stage anything.
+	 */
+	private static autocrlfNormalises(value: unknown): boolean {
+		if (typeof value !== 'string') return false;
+		const setting = value.toLowerCase();
+		return setting === 'true' || setting === 'yes' || setting === 'on' || setting === '1' || setting === 'input';
+	}
+
+	/**
 	 * CRLF to LF for the staged blob, but only where `core.autocrlf` asks for it
 	 * and only for a file that is valid UTF-8 to begin with: a binary file is
 	 * committed byte-for-byte, as on the desktop engine.
@@ -1207,7 +1255,7 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		} catch (e) {
 			return bytes;
 		}
-		if (autocrlf !== true && autocrlf !== 'true') return bytes;
+		if (!IsomorphicGitAdapter.autocrlfNormalises(autocrlf)) return bytes;
 		try {
 			return new TextEncoder().encode(
 				new TextDecoder('utf8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n')

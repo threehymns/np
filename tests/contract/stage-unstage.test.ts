@@ -80,6 +80,41 @@ async function commitAll(r: TestRepo, message: string): Promise<void> {
 	if (res.code !== 0) throw new Error(res.stderr);
 }
 
+const CRLF_WORKTREE = 'line1\r\nline2\r\n';
+
+/**
+ * A fresh base repository whose `core.autocrlf` is set to `autocrlf` (`null`
+ * leaves it unmentioned), holding a CRLF file in the worktree, staged through
+ * `adapter.stageAll()`.
+ *
+ * Every line-ending case differs only in that one config value, so they share
+ * the fixture. Resolves the repository, the adapter, the resulting index
+ * contents and the worktree copy, so a caller asserts on the outcome rather
+ * than re-deriving it. Returns the repository because one case has to read the
+ * index back with the config line removed first.
+ */
+async function stageCrlfWithAutocrlf(
+	engine: Engine,
+	autocrlf: string | null
+): Promise<{ repo: TestRepo; adapter: StageUnstage; staged: string | null; worktree: string }> {
+	const r = await createTrackedRepo();
+	await baseRepo(r);
+	await r.git(['config', 'user.name', TEST_IDENTITY.name]);
+	await r.git(['config', 'user.email', TEST_IDENTITY.email]);
+	if (autocrlf !== null) await r.git(['config', 'core.autocrlf', autocrlf]);
+	const adapter = engine.adapter(r);
+	await writeFile(path.join(r.path, 'crlf.txt'), CRLF_WORKTREE);
+
+	await adapter.stageAll();
+
+	return {
+		repo: r,
+		adapter,
+		staged: await indexContents(r, 'crlf.txt'),
+		worktree: await worktreeContents(r, 'crlf.txt')
+	};
+}
+
 const HELLO_V0 = 'const a = 1;\nconst b = 2;\n';
 const HELLO_V1 = 'const a = 1;\nconst b = 3;\n';
 const SRC_CONTENT = 'shared\n';
@@ -668,26 +703,70 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'secret.txt')).toBe('now it may be committed\n');
 		});
 
-		it('normalises CRLF to LF when core.autocrlf is set, like real git', async () => {
-			// Staging must honour the repository's own line-ending configuration.
-			// Committing raw CRLF into a repository configured for autocrlf diverges
-			// the browser engine from the desktop engine on the same repository and
-			// shows a whole-file diff to every collaborator.
-			const r = await createTrackedRepo();
-			await baseRepo(r);
-			await r.git(['config', 'user.name', TEST_IDENTITY.name]);
-			await r.git(['config', 'user.email', TEST_IDENTITY.email]);
-			await r.git(['config', 'core.autocrlf', 'true']);
-			const adapter = engine.adapter(r);
-			await writeFile(path.join(r.path, 'crlf.txt'), 'line1\r\nline2\r\n');
+		it('normalises CRLF to LF for every core.autocrlf value git treats as true, like real git', async () => {
+			// git_config_bool accepts four spellings of true, case-insensitively, and
+			// `core.autocrlf` has a third state (`input`) that is not a boolean at all
+			// but still normalises on commit. The desktop engine in this same loop
+			// shells out to git 2.55.0, which already agrees with every case here: the
+			// assertions are git's, not a reading of its documentation.
+			//
+			// `input` is the spelling to lead with: it is the one git's own docs now
+			// recommend for cross-platform repos, so it is the one a user is most
+			// likely to have.
+			const NORMALISING: string[] = ['true', 'yes', 'on', '1', 'TRUE', 'On', 'input', 'INPUT'];
+			for (const value of NORMALISING) {
+				const { staged, worktree } = await stageCrlfWithAutocrlf(engine, value);
 
-			await adapter.stageAll();
-
-			expect(await indexContents(r, 'crlf.txt')).toBe('line1\nline2\n');
-			// The worktree copy is untouched: normalisation applies to what is
-			// committed, never to the user's file on disk.
-			expect(await worktreeContents(r, 'crlf.txt')).toBe('line1\r\nline2\r\n');
+				expect(staged, `autocrlf=${value}`).toBe('line1\nline2\n');
+				// The worktree copy is untouched: normalisation applies to what is
+				// committed, never to the user's file on disk.
+				expect(worktree, `autocrlf=${value}`).toBe(CRLF_WORKTREE);
+			}
 		});
+
+		it('leaves CRLF alone for every core.autocrlf value git treats as false', async () => {
+			// The fix for `input` must not over-correct into normalising on the way
+			// in: `false` and its spellings mean exactly what they say, and the
+			// empty string is git's own "unset" form.
+			for (const value of ['false', 'no', 'off', '0', 'FALSE', 'Off', '']) {
+				const { staged } = await stageCrlfWithAutocrlf(engine, value);
+
+				expect(staged, `autocrlf=${value}`).toBe(CRLF_WORKTREE);
+			}
+		});
+
+		it('does not normalise line endings when core.autocrlf is unset', async () => {
+			// The default, on a repository that never mentions the setting.
+			const { staged } = await stageCrlfWithAutocrlf(engine, null);
+
+			expect(staged).toBe(CRLF_WORKTREE);
+		});
+
+		// Scoped to the engine that owns the degrade, by identity rather than by
+		// display name. The desktop engine has no degrade to assert: it shells out
+		// to git, and git's own behaviour on a value it rejects is to refuse —
+		// "fatal: bad boolean config value 'bogus' for 'core.autocrlf'", exit 128.
+		// That refusal is the thing the browser engine deliberately does not copy.
+		if (engine === isomorphicEngine) {
+			it('degrades to no normalisation for a core.autocrlf value git rejects outright', async () => {
+				// The one requirement with no red test until now: that an
+				// unrecognised value must not throw. Throwing would turn a single
+				// bad config line into an inability to stage anything at all, which
+				// is a strictly worse failure than staging CRLF unchanged.
+				const { repo, staged, worktree } = await stageCrlfWithAutocrlf(engine, 'bogus');
+
+				// git refuses *every* command while that config line is bad —
+				// including `git show :path`, which is how the index is normally
+				// read back. Removing the line first does not change what was
+				// staged: unsetting `core.autocrlf` does not rewrite the index, and
+				// `show :path` prints the staged blob verbatim.
+				await repo.git(['config', '--unset', 'core.autocrlf']);
+
+				expect(await indexContents(repo, 'crlf.txt')).toBe(CRLF_WORKTREE);
+				expect(worktree).toBe(CRLF_WORKTREE);
+				expect(staged).toBe(null);
+			});
+		}
 
 		it('stages a binary file byte-for-byte', async () => {
 			// Staging writes the blob itself, so the bytes that reach the index are

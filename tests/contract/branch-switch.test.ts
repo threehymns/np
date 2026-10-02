@@ -689,5 +689,130 @@ for (const engine of ENGINES) {
 				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
 			});
 		});
+
+		// A tracked path is hidden or shown by the status matrix's `filter`, which
+		// must decide on whole path *segments*. Testing containment instead
+		// ("does this path contain the string node_modules") silently drops
+		// ordinary notes whose name merely mentions the word. Those paths then
+		// never reach `snapshots` in switchBranch, so the forced checkout
+		// overwrites them with no error and no rollback, and getStatus reports
+		// isDirty:false while they are dirty.
+		describe('status filter matches whole path segments', () => {
+			// Scoped to the engine that owns the filter, compared by identity: the
+			// desktop engine shells out to git, which already matches whole path
+			// segments (and refuses the checkout below outright), so there is
+			// nothing to assert there. Matching on `engine.name` instead would
+			// void this whole block the first time a display string is reworded,
+			// silently leaving a data-loss regression unguarded.
+			if (engine === isomorphicEngine) {
+				it('preserves a dirty tracked file whose name merely mentions node_modules', async () => {
+					const r = await createTrackedRepo();
+					const NOTE = 'notes/node_modules-is-fine.md';
+					// `common.txt` is identical on both branches and left clean, so it
+					// cannot mask the outcome: NOTE is the only dirty, conflicting
+					// path in this switch. That matters because the conflict check
+					// in switchBranch iterates `getStatus().uncommittedFiles` — the
+					// same filtered matrix — so a hidden file is neither snapshotted
+					// nor counted as a conflict. The switch proceeds and the forced
+					// checkout overwrites the edit.
+					await commitFiles(r, 'initial', { [NOTE]: 'base\n', 'common.txt': 'base\n' });
+					await createBranch(r, 'feature');
+
+					await checkoutBranch(r, 'feature');
+					await commitFiles(r, 'feature commit', { [NOTE]: 'feature version\n' });
+					await checkoutBranch(r, 'main');
+
+					await r.write(NOTE, 'LOCAL UNCOMMITTED\n');
+
+					const adp = engine.adapter(r);
+					const res = await adp.switchBranch('feature');
+
+					// The invariant is that the user's edit survives, not that the
+					// switch reports a particular verdict.
+					expect(await worktreeContents(r, NOTE)).toBe('LOCAL UNCOMMITTED\n');
+					// And if it did report a clean switch, the file must not have
+					// been silently clobbered — assert the status is honest too.
+					if (res.status === 'switched') {
+						expect(await currentBranch(r)).toBe('feature');
+					} else {
+						expect(res.status).toBe('blocked');
+					}
+				});
+
+				it('reports a dirty tracked file whose name merely mentions node_modules', async () => {
+					const r = await createTrackedRepo();
+					const NOTE = 'docs/node_modules-explained.md';
+					await commitFiles(r, 'initial', { [NOTE]: 'base\n' });
+
+					const adp = engine.adapter(r);
+					expect((await adp.getStatus()).isDirty).toBe(false);
+
+					await r.write(NOTE, 'edited\n');
+					const status = await adp.getStatus();
+					expect(status.isDirty).toBe(true);
+					expect(status.uncommittedFiles).toContain(NOTE);
+				});
+
+				it('still hides paths that are genuinely inside a heavy directory', async () => {
+					// Depth matters here, and getting it wrong makes the test vacuous.
+					// `BrowserGitFS.readdir` already hides a root-level `node_modules`
+					// before the walk reaches the filter, so asserting on
+					// `node_modules/left-pad/index.js` proved nothing: the file never
+					// became a candidate. These two sit *below* a directory, where the
+					// filter is the only thing that can drop them.
+					const r = await createTrackedRepo();
+					await commitFiles(r, 'initial', { 'common.txt': 'base\n' });
+					await r.write('notes/node_modules/deep/x.md', 'x\n');
+					await r.write('docs/.svelte-kit/notes/thing.md', 'thing\n');
+					// And a control the filter must leave alone: without it, "these
+					// paths are absent" would also hold on an empty matrix.
+					await r.write('notes/ordinary.md', 'ordinary\n');
+
+					const adp = engine.adapter(r);
+					const status = await adp.getStatus();
+					// The point of the filter is that the adapter never surfaces a
+					// path inside node_modules or .svelte-kit as user content. This
+					// is the half the substring form got right, and it must not regress.
+					expect(status.uncommittedFiles ?? []).not.toContain('notes/node_modules/deep/x.md');
+					expect(status.uncommittedFiles ?? []).not.toContain('docs/.svelte-kit/notes/thing.md');
+					expect(status.uncommittedFiles ?? []).toContain('notes/ordinary.md');
+				});
+
+				it('reports a dirty tracked file whose name merely mentions .svelte-kit', async () => {
+					// The same substring trap as `node_modules`, reached through the
+					// other heavy directory: `.svelte-kit-notes.md` is a note about
+					// SvelteKit, and the containment test swallowed it.
+					const r = await createTrackedRepo();
+					const NOTE = 'notes/.svelte-kit-notes.md';
+					await commitFiles(r, 'initial', { [NOTE]: 'base\n' });
+
+					const adp = engine.adapter(r);
+					expect((await adp.getStatus()).isDirty).toBe(false);
+
+					await r.write(NOTE, 'edited\n');
+					const status = await adp.getStatus();
+					expect(status.isDirty).toBe(true);
+					expect(status.uncommittedFiles).toContain(NOTE);
+				});
+
+				it('reports .gitignore, whose name starts with .git but is not the git directory', async () => {
+					// `.git` is a whole-segment name in the filter, so the mistake
+					// available here is matching it as a prefix. `.gitignore` is an
+					// ordinary user file that git tracks like any other, and every
+					// rule the filter applies has to keep it visible.
+					const r = await createTrackedRepo();
+					await commitFiles(r, 'initial', { 'common.txt': 'base\n' });
+
+					const adp = engine.adapter(r);
+					await r.write('.gitignore', 'dist\n');
+					await r.write('notes/.gitignore', 'dist\n');
+
+					const status = await adp.getStatus();
+					expect(status.isDirty).toBe(true);
+					expect(status.uncommittedFiles).toContain('.gitignore');
+					expect(status.uncommittedFiles).toContain('notes/.gitignore');
+				});
+			}
+		});
 	});
 }
