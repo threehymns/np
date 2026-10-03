@@ -20,9 +20,11 @@ The visual interface for interacting with a Document's content, powered by CodeM
 - **Extension**: A modular piece of functionality added to the Editor (e.g., list renumbering, checkbox toggling).
 
 ## Workspace
-The window state: the open documents and tabs, the active tab, a pending close, and recent
-folders — plus exactly one **Project**. It owns no folder, repository, permission, or file tree
-itself; all of those live on its Project. One Project per Workspace.
+The window state: the open documents and tabs, the active tab, and a pending close — plus
+exactly one **Project**. It owns no folder, repository, permission, or file tree itself; all
+of those live on its Project. One Project per Workspace. Window-scoped session persistence
+(recent folders, root folder) is driven from Workspace, while per-folder state lives on its
+Project keyed by folder URI.
 - _Avoid_: tab, vault
 
 ## Project

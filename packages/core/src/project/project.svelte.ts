@@ -48,14 +48,6 @@ export class Project {
 	}
 
 	/**
-	 * Alias kept while consumers migrate from `workspace.projectTree`.
-	 * Prefer `projectTree`.
-	 */
-	get tree(): ProjectTree {
-		return this.projectTree;
-	}
-
-	/**
 	 * Per-folder session persistence pass-throughs (#254). Same keys, same
 	 * format, no key change: each delegates to `this.persistence` with the
 	 * identical folderUri the caller derived, so existing sessions load

@@ -27,12 +27,12 @@ function makeVcsFactory(): (root: FileOrigin) => VCSAdapter {
 
 /**
  * #251 pin: Project is the single owner of the scheme-and-prefix coverage
- * rule. Workspace.coversOrigin/relativePath are deprecated forwarders with
- * no logic of their own — if this test fails because Workspace disagrees
- * with Project, behaviour moved and must be reported, not absorbed.
+ * rule. Workspace exposes no coverage API after #253 — single ownership by
+ * absence. If this test fails because Workspace regrows coversOrigin or
+ * relativePath, behaviour moved and must be reported, not absorbed.
  */
 describe("Project coverage single ownership (#251)", () => {
-	it("pins the scheme-and-prefix rule on Project with Workspace delegating", () => {
+	it("pins the scheme-and-prefix rule on Project with Workspace exposing no coverage API", () => {
 		const root: FileOrigin = { scheme: "file", path: "/proj", name: "proj" };
 		const project = new ProjectClass(createMockStorage(), makeVcsFactory(), new MemorySessionPersistence());
 		project.rootOrigin = root;
@@ -54,16 +54,10 @@ describe("Project coverage single ownership (#251)", () => {
 		// Prefix sibling is not covered (/proj2 must not match /proj).
 		expect(project.coversOrigin({ scheme: "file", path: "/proj2/a.md", name: "a.md" })).toBe(false);
 
-		// Workspace delegates with identical results — no second implementation.
+		// Workspace exposes no coverage API after #253 — single ownership by
+		// absence; all coverage flows through ws.project.
 		const ws = new WorkspaceClass(createMockStorage(), makeVcsFactory(), new MemorySessionPersistence());
-		ws.project.rootOrigin = root;
-		ws.project.hasRootPermission = true;
-		expect(ws.project.coversOrigin({ scheme: "file", path: "/proj/a.md", name: "a.md" })).toBe(
-			project.coversOrigin({ scheme: "file", path: "/proj/a.md", name: "a.md" })
-		);
-		expect(ws.project.relativePath(root)).toBe(project.relativePath(root));
-		expect(ws.project.relativePath({ scheme: "file", path: "/proj2/a.md", name: "a.md" })).toBe(
-			project.relativePath({ scheme: "file", path: "/proj2/a.md", name: "a.md" })
-		);
+		expect((ws as any).coversOrigin).toBeUndefined();
+		expect((ws as any).relativePath).toBeUndefined();
 	});
 });
