@@ -1,16 +1,29 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
-	import type { GitChange, FileDiffDetail } from '@np/core';
+	import type { GitChange, FileDiffDetail, DocumentSession } from '@np/core';
 	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
-	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
-	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
-	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
+	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate, highlightSpecialChars, drawSelection, highlightActiveLine } from "@codemirror/view";
+	import { EditorState, Annotation, Compartment, EditorSelection, Text, Transaction, RangeSetBuilder } from "@codemirror/state";
+	import { syntaxHighlighting, foldedRanges, indentOnInput, bracketMatching, type LanguageDescription } from "@codemirror/language";
+	import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
+	import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+	import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+	import { vim, getCM } from "@replit/codemirror-vim";
 	import { MergeView, unifiedMergeView, Chunk, getChunks } from "@codemirror/merge";
-	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
+	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange } from '../editor/index';
 	import Button from './ui/button/button.svelte';
+	import {
+		findBoundDocument,
+		ensureSplitDocument,
+		isSplitWorkingCopyEditable,
+		isOriginalOnly,
+		computeLiveHunks,
+		resolveSplitRightContent,
+		isDiffHeaderDirty
+	} from './diff-split-binding.js';
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -187,7 +200,19 @@
 		);
 	}
 
-	type ViewEntry = { inline?: EditorView; split?: MergeView };
+	type ViewEntry = { inline?: EditorView; split?: MergeView | EditorView };
+
+	// A split slot holds either the MergeView (ordinary files) or the single
+	// read-only Original pane view (deleted files, #272). Unwrap to the
+	// focusable EditorViews in b-then-a order.
+	function splitPanes(split: MergeView | EditorView | undefined): EditorView[] {
+		if (!split) return [];
+		if ('a' in split && 'b' in split) {
+			const merge = split as MergeView;
+			return [merge.b, merge.a].filter(Boolean) as EditorView[];
+		}
+		return [split as EditorView];
+	}
 
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, ViewEntry>();
@@ -265,7 +290,12 @@
 	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
 		if (mode === 'split') {
 			const split = views?.split;
-			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
+			if (split && 'a' in split && 'b' in split) {
+				const merge = split as MergeView;
+				return preferSide === 'a' ? (merge.a || merge.b) : (merge.b || merge.a);
+			}
+			// Deleted files register their single Original pane here (#272).
+			return split as EditorView | undefined;
 		}
 		return views?.inline;
 	}
@@ -335,6 +365,12 @@
 		}
 	}
 
+	function splitSideOf(views: ViewEntry | undefined, v: EditorView): 'a' | 'b' {
+		const split = views?.split;
+		if (split && 'a' in split && (split as MergeView).a === v) return 'a';
+		return 'b';
+	}
+
 	function createFileNavKeymap(filepath: string) {
 		return keymap.of([
 			{
@@ -342,8 +378,7 @@
 				run: (v) => {
 					if (isAtBufferBoundary(v, 'down')) {
 						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'down', side);
+						navigateFromFileEditor(filepath, 'down', splitSideOf(views, v));
 						return true;
 					}
 					return false;
@@ -354,8 +389,7 @@
 				run: (v) => {
 					if (isAtBufferBoundary(v, 'up')) {
 						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'up', side);
+						navigateFromFileEditor(filepath, 'up', splitSideOf(views, v));
 						return true;
 					}
 					return false;
@@ -446,6 +480,72 @@
 		fireReadyResolvers(filepath);
 	}
 
+	// Shared-Document binding for the Working-copy pane (#269 split, #270
+	// inline). Both modes edit the same Document an Editor tab shows; rules
+	// live in diff-split-binding.ts, this component only wires workspace
+	// state. The `split*` names predate inline support and cover both modes.
+	const splitBoundDocIds = new Map<string, string>();
+	let lastFocusedDiffFilepath = $state<string | null>(null);
+	// Tags working-copy pane dispatches that replay external Document state
+	// (tab keystrokes) so the updateListeners below never route them back as
+	// new edits. Mirrors Editor.svelte's syncAnnotation.
+	const splitSyncAnnotation = Annotation.define<boolean>();
+
+	function findSplitDoc(filepath: string) {
+		return findBoundDocument(
+			appState.workspace.documents,
+			splitBoundDocIds,
+			appState.workspace.project.rootOrigin,
+			filepath
+		);
+	}
+
+	// Pane -> Document: keystrokes become ordinary in-memory edits on the
+	// shared Document via the canonical keystroke path.
+	function handleSplitDocChange(filepath: string, text: string) {
+		const doc = findSplitDoc(filepath);
+		if (doc && text !== doc.content) {
+			appState.workspace.updateDocumentContent(doc, text);
+		}
+	}
+
+	// Ensure a shared Document exists for every visible diff file, reusing
+	// the open one when present. Creation reads the already-loaded git
+	// snapshot (content == baseline, so clean) and opens no tab; files
+	// whose diff has not loaded yet bind on the refresh that delivers it.
+	$effect(() => {
+		const files = activeChanges;
+		const root = appState.workspace.project.rootOrigin;
+		if (!root) return;
+		const workspace = appState.workspace;
+		const scope = {
+			documents: workspace.documents,
+			storage: workspace.project.storage,
+			rootOrigin: root,
+			coversOrigin: (origin: Parameters<typeof workspace.project.coversOrigin>[0]) =>
+				workspace.project.coversOrigin(origin)
+		};
+		for (const file of files) {
+			const detail = resolveFileDiff(file);
+			ensureSplitDocument(scope, splitBoundDocIds, file, detail?.modifiedContent ?? file.modifiedContent);
+		}
+	});
+
+	// Publish the save target for the focused diff file so file.save /
+	// file.saveAs with focus in the diff pane (shortcut or command) route
+	// through the standard save path for that Document. Falls back to the
+	// panel-selected file when nothing was focused yet. Cleared on unmount;
+	// the diff tab unmounts when inactive, so this never hijacks tab saves.
+	$effect(() => {
+		const focused = lastFocusedDiffFilepath;
+		const activeFile = repo?.activeDiffFile?.filepath;
+		const target = focused ?? activeFile ?? null;
+		appState.activeDiffDocument = target ? findSplitDoc(target) : undefined;
+		return () => {
+			appState.activeDiffDocument = undefined;
+		};
+	});
+
 	// Silent sync for scroll-past / cursor-focus / header-focus paths.
 	// These must update the Git panel highlight WITHOUT triggering the
 	// activeDiffFile reveal effect (expand + snap-to-top). Only explicit
@@ -488,18 +588,29 @@
 		return () => view.dom.removeEventListener('focusin', onFocusIn);
 	}
 
-	// Svelte action to initialize CodeMirror editor for inline unified diff
+	// Svelte action to initialize CodeMirror editor for inline unified diff.
+	// The unified editor is the Working-copy pane in inline mode (#270): it
+	// edits the same shared Document as the split b-pane. Removed
+	// (original-only) lines render as uneditable CodeMirror widgets above the
+	// working-copy text, so they hold no doc positions and can never receive
+	// keystrokes; the editable doc holds working-copy text only, and the
+	// Original side (originalDoc) is never dispatched to from here.
+	// Deleted files in split mode reuse this as their single read-only
+	// Original pane (#272) via `registerAs: 'split'`; inline mode always
+	// registers as inline.
 	function setupEditor(
 		node: HTMLDivElement,
 		options: {
-			content: string; // modified content
+			content: string; // Document-driven working-copy content
 			originalContent: string;
-			readOnly: boolean;
+			editable: boolean;
+			onDocChange?: (newVal: string) => void;
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
+			registerAs?: 'inline' | 'split';
 		}
 	) {
 		let view: EditorView | undefined;
@@ -509,6 +620,8 @@
 		const wrapCompartment = new Compartment();
 		const diffCompartment = new Compartment();
 		const hunkCompartment = new Compartment();
+		const readOnlyCompartment = new Compartment();
+		let inlineEditable = options.editable;
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -516,7 +629,10 @@
 			const state = EditorState.create({
 				doc: currentOptions.content,
 				extensions: [
-					EditorState.readOnly.of(currentOptions.readOnly),
+					// Working-copy pane: editable when bound to the shared
+					// Document (#270). Removed lines stay non-editable as
+					// widgets regardless of this toggle.
+					readOnlyCompartment.of(EditorState.readOnly.of(!currentOptions.editable)),
 					diffCompartment.of(
 						unifiedMergeView({
 							original: currentOptions.originalContent,
@@ -532,6 +648,19 @@
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
 					diffTheme,
+					EditorView.updateListener.of((update) => {
+						// Pane -> Document: keystrokes become ordinary
+						// in-memory edits on the shared Document via the
+						// canonical keystroke path. Sync-tagged transactions
+						// (Document -> pane replays below) never echo back.
+						if (
+							update.docChanged &&
+							!update.transactions.some((tr) => tr.annotation(splitSyncAnnotation)) &&
+							currentOptions.onDocChange
+						) {
+							currentOptions.onDocChange(update.state.doc.toString());
+						}
+					}),
 					createFileNavKeymap(options.filepath),
 					cursorSyncExtension(() => currentOptions.filepath),
 					wrapCompartment.of(currentOptions.wrap ? EditorView.lineWrapping : [])
@@ -543,7 +672,11 @@
 				parent: node
 			});
 			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
-			registerEditorView(currentOptions.filepath, { inline: view });
+			if (currentOptions.registerAs === 'split') {
+				registerEditorView(currentOptions.filepath, { split: view });
+			} else {
+				registerEditorView(currentOptions.filepath, { inline: view });
+			}
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view, () => currentOptions.filepath);
@@ -562,6 +695,14 @@
 						effects.push(
 							wrapCompartment.reconfigure(
 								currentOptions.wrap ? EditorView.lineWrapping : []
+							)
+						);
+					}
+					if (currentOptions.editable !== inlineEditable) {
+						inlineEditable = currentOptions.editable;
+						effects.push(
+							readOnlyCompartment.reconfigure(
+								EditorState.readOnly.of(!inlineEditable)
 							)
 						);
 					}
@@ -586,16 +727,40 @@
 					}
 
 					if (hasDocChange || effects.length > 0) {
+						// Document -> pane sync (e.g. tab keystrokes): tagged
+						// so the updateListener above never routes it back,
+						// kept out of the pane's undo history, with selection
+						// and scroll preserved. Snapshot refreshes never reach
+						// this branch: content is driven by Document content,
+						// not the git snapshot.
+						const insert = currentOptions.content;
+						const sel = view.state.selection;
+						const clamped = EditorSelection.create(
+							sel.ranges.map((r) =>
+								EditorSelection.range(Math.min(r.anchor, insert.length), Math.min(r.head, insert.length))
+							),
+							sel.mainIndex
+						);
+						const prevTop = view.scrollDOM.scrollTop;
+						const prevLeft = view.scrollDOM.scrollLeft;
 						view.dispatch({
 							changes: hasDocChange
 								? {
 										from: 0,
 										to: view.state.doc.length,
-										insert: currentOptions.content
+										insert
 								  }
 								: undefined,
-							effects: effects.length > 0 ? effects : undefined
+							selection: hasDocChange ? clamped : undefined,
+							effects: effects.length > 0 ? effects : undefined,
+							annotations: hasDocChange
+								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
+								: undefined
 						});
+						if (hasDocChange) {
+							view.scrollDOM.scrollTop = prevTop;
+							view.scrollDOM.scrollLeft = prevLeft;
+						}
 					}
 				}
 			},
@@ -603,17 +768,29 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				untrackCursorFocus?.();
+				const slot = currentOptions.registerAs === 'split' ? 'split' : 'inline';
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
-					delete existing.inline;
-					if (!existing.split) editorViews.delete(currentOptions.filepath);
+					delete existing[slot];
+					if (!existing.inline && !existing.split) editorViews.delete(currentOptions.filepath);
 				}
-				// The inline view is gone: settle its waiters now instead of
+				// The view is gone: settle its slot's waiters now instead of
 				// leaving them for the backstop or a stale registration.
-				abortResolvers(currentOptions.filepath, 'inline');
+				abortResolvers(currentOptions.filepath, slot);
 				view?.destroy();
 			}
 		};
+	}
+
+	// Identity key for the Working-copy pane language (#271): the bound
+	// Document's detected language (honors user override) plus the registry
+	// revision, so enabling a language refreshes the pane even when the
+	// resolved description reference is unchanged.
+	function paneLanguageKey(
+		docLanguage: LanguageDescription | null,
+		languageRevision: number | undefined
+	): string {
+		return `${docLanguage?.name ?? '∅'}::${languageRevision ?? 0}`;
 	}
 
 	// Svelte action to initialize CodeMirror MergeView (Split View)
@@ -627,6 +804,11 @@
 			wrap: boolean;
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
+			editable: boolean;
+			vimEnabled: boolean;
+			docLanguage: LanguageDescription | null;
+			languageRevision: number | undefined;
+			boundDoc: DocumentSession | undefined;
 			onDocChange?: (newVal: string) => void;
 		}
 	) {
@@ -634,10 +816,45 @@
 		let currentOptions = options;
 		let cleanupSync: (() => void) | undefined;
 		let untrackCursorFocus: (() => void) | undefined;
+		let untrackPaneFocus: (() => void) | undefined;
+		let detachVimMode: (() => void) | undefined;
 		let disposed = false;
+		let bEditable = options.editable;
+		let bVimEnabled = options.vimEnabled;
+		let bLangKey = paneLanguageKey(options.docLanguage, options.languageRevision);
+		let bBoundDoc = options.boundDoc;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
 		const hunkCompartmentB = new Compartment();
+		const readOnlyCompartmentB = new Compartment();
+		// Working-copy pane parity compartments (#271). Each pane owns its
+		// instances so per-file languages never fight: the Original (a) pane
+		// stays bare and read-only, only the b-pane gets editor behavior.
+		const vimCompartmentB = new Compartment();
+		const languageCompartmentB = new Compartment();
+		const facetCompartmentB = new Compartment();
+
+		// (Re)attach the vim-mode-change bridge for the focused b-pane so
+		// app-level vim bindings track normal/insert/visual like a tab.
+		function syncPaneVimModeListener() {
+			detachVimMode?.();
+			detachVimMode = undefined;
+			if (!currentOptions.vimEnabled || !view || disposed) return;
+			const cm = getCM(view.b) as any;
+			if (!cm) return;
+			const handler = (args: any) => {
+				if (view?.b.hasFocus) appState.keymaps.setContext('vim_mode', args.mode);
+			};
+			cm.on('vim-mode-change', handler);
+			detachVimMode = () => cm.off('vim-mode-change', handler);
+		}
+
+		function readPaneVimMode(v: EditorView): 'normal' | 'insert' | 'visual' {
+			const state: any = (getCM(v) as any)?.state?.vim;
+			if (state?.insertMode) return 'insert';
+			if (state?.visualMode) return 'visual';
+			return 'normal';
+		}
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -659,15 +876,49 @@
 				b: {
 					doc: currentOptions.rightContent,
 					extensions: [
-						EditorState.readOnly.of(true),
+						// Working-copy pane: editable when bound to the shared
+						// Document (#269). The a-pane above stays read-only.
+						readOnlyCompartmentB.of(EditorState.readOnly.of(!currentOptions.editable)),
 						hunkCompartmentB.of(
 							createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 						),
-						...langExtensions,
+						// Editor parity for the Working-copy pane only (#271):
+						// independent undo history, vim bindings, completions
+						// with workspace context, detected language, and tab
+						// keybindings. Each MergeView b-pane is its own
+						// EditorView, so history() is inherently per-view.
+						vimCompartmentB.of(currentOptions.vimEnabled ? vim() : []),
+						languageCompartmentB.of(langExtensions),
+						facetCompartmentB.of([
+							workspaceFacet.of(appState.workspace),
+							currentDocFacet.of(currentOptions.boundDoc ?? null)
+						]),
+						history(),
+						autocompletion(),
+						indentOnInput(),
+						bracketMatching(),
+						closeBrackets(),
+						highlightSpecialChars(),
+						drawSelection(),
+						highlightActiveLine(),
+						highlightSelectionMatches(),
+						EditorState.allowMultipleSelections.of(true),
+						keymap.of([
+							...closeBracketsKeymap,
+							...defaultKeymap,
+							...searchKeymap,
+							...historyKeymap,
+							{ key: "Tab", run: smartIndent("more") },
+							{ key: "Shift-Tab", run: smartIndent("less") }
+						]),
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
 						EditorView.updateListener.of((update) => {
-							if (update.docChanged && currentOptions.onDocChange) {
+							if (
+								update.docChanged &&
+								!update.transactions.some((tr) => tr.annotation(splitSyncAnnotation)) &&
+								currentOptions.onDocChange
+							) {
 								currentOptions.onDocChange(update.state.doc.toString());
 							}
 						}),
@@ -729,6 +980,36 @@
 				untrackA();
 				untrackB();
 			};
+			// Focused Working-copy pane publishes itself as the active editor
+			// (#271) so edit.* commands (undo/redo/cut/copy/paste/find/...)
+			// target it; the read-only a-pane never publishes. Identity
+			// checks mirror the activeDiffNavigator cleanup.
+			const paneDom = view.b.dom;
+			const onPaneFocusIn = () => {
+				if (disposed || !currentOptions.editable) return;
+				appState.activeEditorView = view!.b;
+				if (currentOptions.vimEnabled) {
+					appState.keymaps.setContext('vim_mode', readPaneVimMode(view!.b));
+					if (appState.prefs.vimSyncClipboard) {
+						void syncVimRegistersFromClipboard();
+					}
+				}
+			};
+			const onPaneFocusOut = () => {
+				if (appState.activeEditorView === view?.b) {
+					appState.activeEditorView = undefined;
+				}
+				if (currentOptions.vimEnabled) {
+					appState.keymaps.setContext('vim_mode', 'normal');
+				}
+			};
+			paneDom.addEventListener('focusin', onPaneFocusIn);
+			paneDom.addEventListener('focusout', onPaneFocusOut);
+			untrackPaneFocus = () => {
+				paneDom.removeEventListener('focusin', onPaneFocusIn);
+				paneDom.removeEventListener('focusout', onPaneFocusOut);
+			};
+			syncPaneVimModeListener();
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
@@ -772,6 +1053,51 @@
 							)
 						);
 					}
+					if (currentOptions.editable !== bEditable) {
+						bEditable = currentOptions.editable;
+						effectsB.push(
+							readOnlyCompartmentB.reconfigure(
+								EditorState.readOnly.of(!bEditable)
+							)
+						);
+						// A pane that just went read-only stops being an edit
+						// target for the shared edit.* commands.
+						if (!bEditable && appState.activeEditorView === view.b) {
+							appState.activeEditorView = undefined;
+						}
+					}
+					let vimToggled = false;
+					if (currentOptions.vimEnabled !== bVimEnabled) {
+						bVimEnabled = currentOptions.vimEnabled;
+						effectsB.push(
+							vimCompartmentB.reconfigure(bVimEnabled ? vim() : [])
+						);
+						vimToggled = true;
+					}
+					if (currentOptions.boundDoc !== bBoundDoc) {
+						bBoundDoc = currentOptions.boundDoc;
+						effectsB.push(
+							facetCompartmentB.reconfigure([
+								workspaceFacet.of(appState.workspace),
+								currentDocFacet.of(bBoundDoc ?? null)
+							])
+						);
+					}
+					const langKey = paneLanguageKey(currentOptions.docLanguage, currentOptions.languageRevision);
+					if (langKey !== bLangKey) {
+						bLangKey = langKey;
+						const nextDesc = currentOptions.docLanguage;
+						const requestedKey = langKey;
+						void getLanguageExtensions(nextDesc).then((langExtensions) => {
+							if (disposed || !view) return;
+							// Only apply when no newer language request has
+							// superseded this one while the load was in flight.
+							if (bLangKey !== requestedKey) return;
+							view.b.dispatch({
+								effects: languageCompartmentB.reconfigure(langExtensions)
+							});
+						});
+					}
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effectsB.push(
 							hunkCompartmentB.reconfigure(
@@ -780,16 +1106,49 @@
 						);
 					}
 					if (hasRightDocChange || effectsB.length > 0) {
+						// Document -> pane sync (e.g. tab keystrokes): the
+						// pane already holds pane-side keystrokes (rightContent
+						// is Document-driven, so those are no-ops here), and
+						// external syncs stay out of the pane's undo history
+						// with selection and scroll preserved. Snapshot
+						// refreshes never reach this branch: rightContent is
+						// driven by Document content, not the git snapshot.
+						// The sync is a minimal hunk (not a full replacement)
+						// so tab keystrokes map through — rather than wipe —
+						// the pane's independent undo history (#271).
+						const insert = currentOptions.rightContent;
+						const sel = view.b.state.selection;
+						const clamped = EditorSelection.create(
+							sel.ranges.map((r) =>
+								EditorSelection.range(Math.min(r.anchor, insert.length), Math.min(r.head, insert.length))
+							),
+							sel.mainIndex
+						);
+						const prevTop = view.b.scrollDOM.scrollTop;
+						const prevLeft = view.b.scrollDOM.scrollLeft;
+						const syncChange = hasRightDocChange
+							? (minimalTextChange(rightDoc, insert) ?? {
+									from: 0,
+									to: view.b.state.doc.length,
+									insert
+								})
+							: undefined;
 						view.b.dispatch({
-							changes: hasRightDocChange
-								? {
-										from: 0,
-										to: view.b.state.doc.length,
-										insert: currentOptions.rightContent
-								  }
-								: undefined,
-							effects: effectsB.length > 0 ? effectsB : undefined
+							changes: syncChange,
+							selection: hasRightDocChange ? clamped : undefined,
+							effects: effectsB.length > 0 ? effectsB : undefined,
+							annotations: hasRightDocChange
+								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
+								: undefined
 						});
+						if (hasRightDocChange) {
+							view.b.scrollDOM.scrollTop = prevTop;
+							view.b.scrollDOM.scrollLeft = prevLeft;
+						}
+						// Re-bridge vim-mode changes after the new vim
+						// configuration above has applied (getCM reads the
+						// post-dispatch state).
+						if (vimToggled) syncPaneVimModeListener();
 					}
 				}
 			},
@@ -798,6 +1157,12 @@
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
 				untrackCursorFocus?.();
+				untrackPaneFocus?.();
+				detachVimMode?.();
+				detachVimMode = undefined;
+				if (view && appState.activeEditorView === view.b) {
+					appState.activeEditorView = undefined;
+				}
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.split;
@@ -860,6 +1225,15 @@
 			appState.keymaps.setContext('editor', undefined);
 			appState.keymaps.setContext('vim_mode', undefined);
 		};
+	});
+
+	// Keep global vim clipboard sync armed while the diff is mounted, so
+	// vim yanks in the Working-copy pane sync even when no tab Editor is
+	// mounted to run its own effect (idempotent with Editor.svelte's).
+	$effect(() => {
+		const vimEnabled = appState.prefs.vimMode;
+		const syncClipboard = appState.prefs.vimSyncClipboard;
+		setupVimClipboardSync(vimEnabled && syncClipboard);
 	});
 
 	// Publish hunk navigation for the core diff.nextHunk / diff.prevHunk
@@ -1082,16 +1456,24 @@
 		posB: number;
 	}
 
-	// Compute all hunks across expanded active changes as a $derived signal (skipping collapsed files)
+	// Compute all hunks across expanded active changes as a $derived signal (skipping collapsed files).
+	// Hunks derive from the live working-copy text — the bound Document when
+	// one exists, so unsaved pane edits move navigation with the typing —
+	// against the freshly loaded base snapshot (#272). A version-control
+	// refresh replaces the snapshot (new original/staged sides) while the
+	// Document keeps the edits, and this re-derives around them.
 	let allHunks = $derived.by(() => {
 		const list: HunkTarget[] = [];
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
 			const diff = resolveFileDiff(change);
-			if (!diff || (!diff.originalContent && !diff.modifiedContent)) return;
+			if (!diff) return;
+			const bound = findSplitDoc(change.filepath);
+			const effectiveModified = bound ? bound.content : diff.modifiedContent;
+			if (!diff.originalContent && !effectiveModified) return;
 
-			const { hunks } = getOrComputeDiffHunks(diff, change.staged);
+			const hunks = computeLiveHunks(diff.originalContent, effectiveModified);
 			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
@@ -1107,14 +1489,14 @@
 	let lastTargetHunkIndex = $state<number>(-1);
 
 	function getActiveCursorLocation(): { filepath: string; pos: number } | null {
-		// Check focused editor first (checking both split.a and split.b)
+		// Check focused editor first (both split panes, or the single
+		// Original pane of a deleted file).
 		for (const [filepath, views] of editorViews.entries()) {
 			if (viewMode === 'split' && views.split) {
-				if (views.split.b.hasFocus) {
-					return { filepath, pos: views.split.b.state.selection.main.head };
-				}
-				if (views.split.a.hasFocus) {
-					return { filepath, pos: views.split.a.state.selection.main.head };
+				for (const pane of splitPanes(views.split)) {
+					if (pane.hasFocus) {
+						return { filepath, pos: pane.state.selection.main.head };
+					}
 				}
 			} else if (views.inline && views.inline.hasFocus) {
 				return { filepath, pos: views.inline.state.selection.main.head };
@@ -1125,8 +1507,9 @@
 		if (activeFile) {
 			const views = editorViews.get(activeFile);
 			if (viewMode === 'split' && views?.split) {
-				const ed = views.split.b.hasFocus ? views.split.b : (views.split.a.hasFocus ? views.split.a : views.split.b);
-				return { filepath: activeFile, pos: ed.state.selection.main.head };
+				const panes = splitPanes(views.split);
+				const ed = panes.find((p) => p.hasFocus) ?? panes[0];
+				if (ed) return { filepath: activeFile, pos: ed.state.selection.main.head };
 			} else if (views?.inline) {
 				return { filepath: activeFile, pos: views.inline.state.selection.main.head };
 			}
@@ -1384,7 +1767,12 @@
 		{:else}
 			{#each activeChanges as fileChange (fileChange.filepath + '-' + fileChange.staged)}
 				{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
-				<div class="flex flex-col bg-background" id="diff-file-{fileChange.filepath}">
+				{@const headerDoc = findSplitDoc(fileChange.filepath)}
+				<div
+					class="flex flex-col bg-background"
+					id="diff-file-{fileChange.filepath}"
+					onfocusin={() => { lastFocusedDiffFilepath = fileChange.filepath; }}
+				>
 					<!-- File Header inside multibuffer -->
 					<div class="sticky top-0 z-10 bg-background pt-2 pb-1 px-2">
 						<div
@@ -1448,6 +1836,13 @@
 								</span>
 							</div>
 							<div class="flex items-center gap-1.5 text-[9px] font-bold">
+								{#if isDiffHeaderDirty(headerDoc)}
+									<span
+										class="inline-block size-1.5 rounded-full bg-foreground/60"
+										title="Unsaved changes"
+										aria-label="Unsaved changes"
+									></span>
+								{/if}
 								{#if fileChange.additions > 0}
 									<span class="text-emerald-500 font-bold">+{fileChange.additions}</span>
 								{/if}
@@ -1470,12 +1865,14 @@
 									stagedContent: diff.stagedContent
 								}}
 								{#if viewMode === 'inline'}
-									<!-- Inline View: Single Editor showing unified diff of the whole file -->
+									<!-- Inline View: unified Working-copy editor over the shared Document -->
+									{@const inlineDoc = findSplitDoc(fileChange.filepath)}
 									<div class="flex-1 overflow-hidden bg-background">
 										<div use:setupEditor={{
-											content: diff.modifiedContent,
+											content: resolveSplitRightContent(inlineDoc, diff.modifiedContent),
 											originalContent: diff.originalContent,
-											readOnly: true,
+											editable: isSplitWorkingCopyEditable(fileChange.status, inlineDoc),
+											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text),
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
 											wrap: appState.prefs.wordWrap,
@@ -1484,18 +1881,43 @@
 										}}></div>
 									</div>
 								{:else}
-									<!-- Split View: Side-by-side MergeView of the whole file -->
+									<!-- Split View: Side-by-side MergeView of the whole file.
+									     Deleted files render the Original pane only (#272):
+									     no working-copy surface, nothing to type into. -->
+									{@const splitDoc = findSplitDoc(fileChange.filepath)}
+									{#if isOriginalOnly(fileChange.status)}
+										<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
+											<div use:setupEditor={{
+											content: diff.originalContent,
+											originalContent: diff.originalContent,
+											editable: false,
+											filepath: fileChange.filepath,
+												fileChange: effectiveChange,
+												wrap: appState.prefs.wordWrap,
+												hunks: diff.hunks,
+												unstagedChunks: diff.unstagedChunks,
+												registerAs: 'split'
+											}}></div>
+										</div>
+									{:else}
 									<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
 										<div use:setupMergeView={{
 											leftContent: diff.originalContent,
-											rightContent: diff.modifiedContent,
+											rightContent: resolveSplitRightContent(splitDoc, diff.modifiedContent),
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
 											wrap: appState.prefs.wordWrap,
 											hunks: diff.hunks,
-											unstagedChunks: diff.unstagedChunks
+											unstagedChunks: diff.unstagedChunks,
+											editable: isSplitWorkingCopyEditable(fileChange.status, splitDoc),
+											vimEnabled: appState.prefs.vimMode,
+											docLanguage: splitDoc?.language ?? LanguageSupport.getLanguageForFile(fileChange.filepath),
+											languageRevision: appState.plugins?.languageRevision,
+											boundDoc: splitDoc,
+											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)
 										}}></div>
 									</div>
+									{/if}
 								{/if}
 							{:else}
 								<div class="flex items-center justify-center p-6 text-muted-foreground text-xs font-mono">
