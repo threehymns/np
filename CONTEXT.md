@@ -70,6 +70,8 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Reload**: Rebuilding a registry from its current transforms, for example after a plugin refreshes its underlying data.
 - **Reactivation**: Dropping one plugin's transforms and running its new code after the plugin is added, edited, removed, enabled, or disabled, then rebuilding affected registries.
 - **Event**: A record that something happened, offered for observation only. Subscribers cannot mutate, veto, or fail the operation.
+- **Language Server**: An external process speaking the Language Server Protocol for one or more languages: completions, hover, diagnostics, navigation. Managed by the LSP plugin, never by the host directly.
+- **LSP Descriptor**: A plugin contribution describing how to start and scope a Language Server: its command, arguments, root markers, and the languages it serves. _Avoid_: Server Descriptor (unscoped; a future headless server will need the bare word).
 - **Hook**: Participation in a running host operation through before/after phases. Before-hooks run sequentially in activation order and may modify inputs or cancel with a reason.
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
 - **Snippet Pack**: A plugin's set of trigger/body/description records registered for one language, composed into the completion config by the host. Bodies are plain text — no placeholders, no snippet variables. _Avoid_: completion contribution, snippet contribution type, templates
