@@ -10,6 +10,11 @@ export const DEFAULT_DIFF_CONFIG: DiffConfig = {
 	timeout: 500
 };
 
+/**
+ * Blocked-switch reasons: `dirty` (uncommitted changes blocked the switch),
+ * `conflict` (a dirty path also differs between HEAD and the target),
+ * `unreadable` (a dirty file could not be read for a safe snapshot).
+ */
 export type SwitchResult =
 	| { status: 'switched' }
 	| { status: 'noop' }

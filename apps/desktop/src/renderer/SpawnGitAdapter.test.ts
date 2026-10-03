@@ -806,7 +806,7 @@ describe('SpawnGitAdapter', () => {
 		const res = await adapter.switchBranch('feature');
 		// Same expectation as the contract test 'blocks switch when local
 		// untracked file collides with target branch tracked file'. #69 owns
-		// any future `worktree` vs `conflict` reason harmonization.
+		// any future `dirty` vs `conflict` reason harmonization.
 		expect(res).toEqual({ status: 'blocked', reason: 'conflict', files: ['untracked.txt'] });
 	});
 
