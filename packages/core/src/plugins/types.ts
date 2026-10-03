@@ -19,6 +19,11 @@ import type {
 	SnippetTransform,
 	RegisteredSnippet
 } from './completions';
+import type {
+	LspDescriptorContribution,
+	LspTransform,
+	RegisteredLspDescriptor
+} from './lsp-descriptors';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -315,6 +320,21 @@ export interface PluginHostInterface {
 	getSnippets(): RegisteredSnippet[];
 	getSnippetsForLanguage(language: string): RegisteredSnippet[];
 	readonly snippetRevision: number;
+
+	// Server descriptor registry (spec #263). A sibling data registry: a plugin
+	// declares the command, arguments, ordered root markers, and served
+	// languages of a language server, and the host rebuilds the records from
+	// plugin transforms so any number of plugins can serve any registered
+	// language. All client machinery belongs to the plugin (ADR 0019).
+	registerLspDescriptor(pluginId: string, contribution: LspDescriptorContribution): void;
+	registerLspDescriptors(pluginId: string, contributions: readonly LspDescriptorContribution[]): void;
+	registerLspDescriptorTransform(pluginId: string, transform: LspTransform): void;
+	removePluginLspDescriptors(pluginId: string): void;
+	rebuildLspDescriptors(): void;
+	refreshLspDescriptors(): void;
+	getLspDescriptors(): RegisteredLspDescriptor[];
+	getLspDescriptorsForLanguage(language: string): RegisteredLspDescriptor[];
+	readonly lspRevision: number;
 
 	// Document text changes go through a host document-edit operation
 	// applied as one undo transaction with revision checks.

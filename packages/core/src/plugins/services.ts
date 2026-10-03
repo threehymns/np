@@ -16,6 +16,9 @@
  *   absent, matching the pre-plugin behavior of dialog-less contexts.
  * - `diffNavigator`: published by the app composer (AppState). Provider for
  *   the currently mounted diff view's hunk navigator, if any.
+ * - `lsp:transport`: published by the desktop app. Process spawning and one
+ *   filesystem question, the two capabilities a neutral host cannot have
+ *   itself; see {@link LspTransport}.
  */
 
 import type { FileOrigin } from '../storage';
@@ -56,6 +59,69 @@ export const WORKSPACE_SERVICE_KEY = 'workspace';
 export const DIALOGS_SERVICE_KEY = 'dialogs';
 export const DIFF_NAVIGATOR_SERVICE_KEY = 'diffNavigator';
 export const PLUGIN_UI_LOADER_SERVICE_KEY = 'plugin-ui-loader';
+export const LSP_TRANSPORT_SERVICE_KEY = 'lsp:transport';
+
+/**
+ * Language-server transport seam (spec #263, ADR 0019).
+ *
+ * Everything the LSP plugin needs that `@np/core` cannot have for itself is
+ * named here and nothing else: spawning a process, and asking the filesystem
+ * whether a root marker exists. The host owns the *capability names*, never the
+ * implementation — the desktop app supplies both over IPC (spec #263 keeps web
+ * out of scope, so a web build simply publishes nothing), and the plugin
+ * degrades to "no LSP" when the service is absent. That is what lets a real
+ * process and a real filesystem be tested without either leaking into neutral
+ * core, and it is the same provider/consumer-by-key arrangement as the `git:
+ * ui-components` precedent.
+ */
+export interface LspSpawnOptions {
+	readonly command: string;
+	readonly args: readonly string[];
+	/** The resolved project root. Servers inherit it as their working directory. */
+	readonly cwd: string;
+}
+
+/** Byte sink. A string chunk is encoded as UTF-8 by the transport. */
+export interface LspWritableStream {
+	write(chunk: Uint8Array | string): void;
+	/** Closes the sink. Servers treat end-of-input as "the client is gone". */
+	end(): void;
+}
+
+/**
+ * Byte source. Exposed as a subscribe function rather than a Node or DOM event
+ * target so neither platform's stream type leaks into the plugin's contract.
+ */
+export interface LspReadableStream {
+	/** Subscribes to chunks and returns the unsubscribe function. */
+	onData(listener: (chunk: Uint8Array) => void): () => void;
+}
+
+export interface LspProcessExit {
+	readonly code: number | null;
+	readonly signal: string | null;
+	/** Why it died, when the transport knows more than an exit code does. */
+	readonly error?: string;
+}
+
+/** One running server: its pipes, its pid, and its termination. */
+export interface LspProcess {
+	/** Reported so a disable can assert the process is actually gone. */
+	readonly pid?: number;
+	readonly stdin: LspWritableStream;
+	readonly stdout: LspReadableStream;
+	readonly stderr: LspReadableStream;
+	/** Settles once the process has exited, by exit code or by signal. */
+	readonly exit: Promise<LspProcessExit>;
+	/** Terminates the process. Must be safe to call more than once. */
+	kill(): void;
+}
+
+export interface LspTransport {
+	/** Whether a root marker exists at an absolute path. */
+	fileExists(path: string): Promise<boolean>;
+	spawn(options: LspSpawnOptions): LspProcess;
+}
 
 export interface PluginUILoader {
 	load(pluginId: string): Promise<void>;

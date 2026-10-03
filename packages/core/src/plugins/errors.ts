@@ -390,3 +390,49 @@ export class DuplicateSnippetIdError extends Error {
 		this.incomingPluginId = incomingPluginId;
 	}
 }
+
+/**
+ * Actionable diagnostic error thrown when two plugins claim one server
+ * descriptor ID. The ID is the registry key, so a collision cannot be resolved
+ * the way a language-name collision can: silently dropping one claim would
+ * start a server nobody asked for against files the other one also serves.
+ */
+export class DuplicateLspDescriptorIdError extends Error {
+	readonly descriptorId: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(descriptorId: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Duplicate language server descriptor ID "${descriptorId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every server descriptor must declare a unique "id". Rename the descriptor ID, or narrow one of the two descriptors' ` +
+				`"languages" so they no longer claim the same files.`
+		);
+		this.name = 'DuplicateLspDescriptorIdError';
+		this.descriptorId = descriptorId;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
+	}
+}
+
+/**
+ * Actionable diagnostic error thrown when more than one descriptor claims one
+ * file. Descoders are deliberately not ranked: two servers indexing the same
+ * file is a configuration fault, and picking a winner silently would leave the
+ * user with a server whose answers depend on registration order.
+ */
+export class ConflictingLspDescriptorError extends Error {
+	readonly filePath: string;
+	readonly descriptorIds: readonly string[];
+
+	constructor(filePath: string, descriptorIds: readonly string[]) {
+		super(
+			`Language server descriptors ${descriptorIds.map((id) => `"${id}"`).join(' and ')} both claim "${filePath}".\n` +
+				`Action: Narrow one descriptor's "languages" (or remove it) so exactly one descriptor serves each file. ` +
+				`No server was started for this file because the choice would have been arbitrary.`
+		);
+		this.name = 'ConflictingLspDescriptorError';
+		this.filePath = filePath;
+		this.descriptorIds = [...descriptorIds];
+	}
+}

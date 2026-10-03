@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import { spawn } from 'child_process';
+import type { ChildProcessWithoutNullStreams } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
@@ -17,6 +19,38 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let configWatcher: ConfigWatcher | null = null;
+
+/**
+ * Language-server child processes (spec #263).
+ *
+ * Servers are long-lived streams, so they cannot ride the request/response
+ * `git:run` handler: the renderer opens one process and then reads bytes until
+ * it exits. Every chunk crosses as a `Uint8Array`, never as a string, precisely
+ * so a multi-byte UTF-8 character that a pipe read split in half stays intact —
+ * decoding either side of the boundary would insert U+FFFD into a source file
+ * the server is about to parse (the same trap `git:run` documents below).
+ *
+ * The protocol's own `Content-Length` framing is the client's business, in
+ * `@np/core`; main forwards bytes without interpreting them.
+ */
+const lspProcesses = new Map<string, ChildProcessWithoutNullStreams>();
+
+function sendToRenderer(channel: string, ...args: unknown[]): void {
+	if (!mainWindow || mainWindow.isDestroyed()) return;
+	mainWindow.webContents.send(channel, ...args);
+}
+
+function killLspProcess(processId: string): void {
+	const child = lspProcesses.get(processId);
+	if (!child) return;
+	lspProcesses.delete(processId);
+	if (child.exitCode === null && child.signalCode === null) child.kill();
+}
+
+/** Quitting with a server still running would leave an orphan nobody can stop. */
+function killAllLspProcesses(): void {
+	for (const processId of [...lspProcesses.keys()]) killLspProcess(processId);
+}
 
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
@@ -130,6 +164,7 @@ app.on('before-quit', (e) => {
 			}
 		} finally {
 			sessionPersistence.flushSync();
+			killAllLspProcesses();
 			if (configWatcher) {
 				configWatcher.close();
 				configWatcher = null;
@@ -309,6 +344,60 @@ function registerIpcHandlers() {
 				});
 			});
 		});
+	});
+
+	// Root-marker probe for the LSP transport: whether a marker exists at an
+	// absolute path. Resolved as a boolean here so the renderer never learns what
+	// a marker is.
+	ipcMain.handle('fs:exists', async (_, filePath: string) => {
+		try {
+			const stat = await fs.stat(filePath);
+			return stat.isFile();
+		} catch {
+			return false;
+		}
+	});
+
+	ipcMain.handle('lsp:spawn', async (_event, command: string, args: string[], cwd: string) => {
+		try {
+			const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+			const processId = randomUUID();
+			lspProcesses.set(processId, child);
+			child.on('error', (err) => {
+				lspProcesses.delete(processId);
+				sendToRenderer('lsp:exit', { processId, code: -1, signal: null, error: err.message });
+			});
+			child.on('close', (code, signal) => {
+				lspProcesses.delete(processId);
+				sendToRenderer('lsp:exit', { processId, code: code ?? -1, signal: signal ?? null });
+			});
+			// Bytes, not strings: see the note above `lspProcesses`.
+			child.stdout.on('data', (chunk: Buffer) => sendToRenderer('lsp:stdout', { processId, chunk: new Uint8Array(chunk) }));
+			child.stderr.on('data', (chunk: Buffer) => sendToRenderer('lsp:stderr', { processId, chunk: new Uint8Array(chunk) }));
+			child.stdin.on('error', () => {
+				// A server that closed its stdin makes further writes fail. The exit
+				// handler reports the death; an unhandled EPIPE here would bury it.
+			});
+			return { processId, pid: child.pid ?? null };
+		} catch (err) {
+			throw new Error(`Failed to start language server "${command}": ${(err as Error).message}`);
+		}
+	});
+
+	ipcMain.on('lsp:write', (_event, processId: string, chunk: Uint8Array) => {
+		const child = lspProcesses.get(processId);
+		if (!child) return;
+		child.stdin.write(Buffer.from(chunk));
+	});
+
+	ipcMain.on('lsp:end', (_event, processId: string) => {
+		const child = lspProcesses.get(processId);
+		if (!child) return;
+		child.stdin.end();
+	});
+
+	ipcMain.handle('lsp:kill', async (_event, processId: string) => {
+		killLspProcess(processId);
 	});
 
 	// Persistence handlers

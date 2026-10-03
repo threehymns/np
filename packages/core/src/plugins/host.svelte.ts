@@ -132,6 +132,15 @@ import {
 	type SnippetTransformEntry,
 	type RegisteredSnippet
 } from './completions';
+import {
+	createAddLspDescriptorsTransform,
+	rebuildLspDescriptors as rebuildLspDescriptorRegistry,
+	getLspDescriptorsForLanguage as filterLspDescriptorsForLanguage,
+	type LspDescriptorContribution,
+	type LspTransform,
+	type LspTransformEntry,
+	type RegisteredLspDescriptor
+} from './lsp-descriptors';
 import { languages as seededBaseLanguages } from '@codemirror/language-data';
 import { syncActiveLanguageDescriptions } from '../editor/language.svelte';
 
@@ -162,7 +171,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision registerSnippet registerSnippets registerSnippetTransform removePluginSnippets rebuildSnippets refreshSnippets getSnippets getSnippetsForLanguage snippetRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision registerSnippet registerSnippets registerSnippetTransform removePluginSnippets rebuildSnippets refreshSnippets getSnippets getSnippetsForLanguage snippetRevision registerLspDescriptor registerLspDescriptors registerLspDescriptorTransform removePluginLspDescriptors rebuildLspDescriptors refreshLspDescriptors getLspDescriptors getLspDescriptorsForLanguage lspRevision applyDocumentEdit '.split(/\s+/)
 );
 
 /**
@@ -311,6 +320,14 @@ export class PluginHost implements PluginHostInterface {
 	snippetRevision = $state(0);
 	private snippetTransforms: SnippetTransformEntry[] = [];
 	private registeredSnippets: RegisteredSnippet[] = [];
+
+	// Server descriptor registry (spec #263). A third sibling data registry with
+	// no seeded base: plugin transforms replay from empty in activation order.
+	// Every rebuild bumps lspRevision so a running server can re-read the
+	// registry after an enable, a disable, or a refresh.
+	lspRevision = $state(0);
+	private lspDescriptorTransforms: LspTransformEntry[] = [];
+	private registeredLspDescriptors: RegisteredLspDescriptor[] = [];
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -468,6 +485,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginIcons(id);
 		this.removePluginLanguages(id);
 		this.removePluginSnippets(id);
+		this.removePluginLspDescriptors(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -1923,6 +1941,7 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildEditorContributions();
 			this.rebuildLanguagesInternal();
 			this.rebuildSnippetsInternal();
+			this.rebuildLspDescriptorsInternal();
 			this.attachedKeymapRegistry?.rebuild();
 			this.attachedIconRegistry?.rebuild();
 		} catch (error) {
@@ -1938,6 +1957,7 @@ export class PluginHost implements PluginHostInterface {
 			this.removePluginIcons(id);
 			this.removePluginLanguages(id);
 			this.removePluginSnippets(id);
+			this.removePluginLspDescriptors(id);
 			const cleanup = this.cleanups.get(id);
 			if (cleanup) {
 				try {
@@ -2004,6 +2024,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginIcons(id);
 		this.removePluginLanguages(id);
 		this.removePluginSnippets(id);
+		this.removePluginLspDescriptors(id);
 
 		// Execute cleanup if present
 		const cleanup = this.cleanups.get(id);
@@ -2239,6 +2260,70 @@ export class PluginHost implements PluginHostInterface {
 
 	getSnippetsForLanguage(language: string): RegisteredSnippet[] {
 		return filterSnippetsForLanguage(this.registeredSnippets, language);
+	}
+
+	// -------------------------------------------------------------------------
+	// Server descriptor registry (spec #263)
+	// -------------------------------------------------------------------------
+
+	private orderedLspDescriptorTransforms(
+		transforms: readonly LspTransformEntry[] = this.lspDescriptorTransforms
+	): LspTransformEntry[] {
+		const byOwner = new SvelteMap<string, LspTransformEntry[]>();
+		for (const entry of transforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) {
+				list.push(entry);
+			} else {
+				byOwner.set(entry.pluginId, [entry]);
+			}
+		}
+		// No core owner, like snippets: descriptors are contributed, never seeded.
+		const orderedOwners = this.orderedRegistryOwners(Array.from(byOwner.keys()), () => false);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
+	}
+
+	private rebuildLspDescriptorsInternal(): void {
+		this.registeredLspDescriptors = rebuildLspDescriptorRegistry(
+			this.orderedLspDescriptorTransforms()
+		);
+		this.lspRevision++;
+	}
+
+	registerLspDescriptor(pluginId: string, contribution: LspDescriptorContribution): void {
+		this.registerLspDescriptors(pluginId, [contribution]);
+	}
+
+	registerLspDescriptors(pluginId: string, contributions: readonly LspDescriptorContribution[]): void {
+		this.registerLspDescriptorTransform(pluginId, createAddLspDescriptorsTransform(contributions));
+	}
+
+	registerLspDescriptorTransform(pluginId: string, transform: LspTransform): void {
+		this.lspDescriptorTransforms = [...this.lspDescriptorTransforms, { pluginId, transform }];
+		this.rebuildLspDescriptorsInternal();
+	}
+
+	removePluginLspDescriptors(pluginId: string): void {
+		const kept = this.lspDescriptorTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length === this.lspDescriptorTransforms.length) return;
+		this.lspDescriptorTransforms = kept;
+		this.rebuildLspDescriptorsInternal();
+	}
+
+	rebuildLspDescriptors(): void {
+		this.rebuildLspDescriptorsInternal();
+	}
+
+	refreshLspDescriptors(): void {
+		this.rebuildLspDescriptorsInternal();
+	}
+
+	getLspDescriptors(): RegisteredLspDescriptor[] {
+		return [...this.registeredLspDescriptors];
+	}
+
+	getLspDescriptorsForLanguage(language: string): RegisteredLspDescriptor[] {
+		return filterLspDescriptorsForLanguage(this.registeredLspDescriptors, language);
 	}
 
 	attachKeymapRegistryInternal(registry: KeymapRegistry): void {
