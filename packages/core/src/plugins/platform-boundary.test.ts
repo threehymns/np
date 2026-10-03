@@ -126,6 +126,7 @@ describe('Platform separation static boundary', () => {
 			'events.ts',
 			'errors.ts',
 			'languages.ts',
+			'language-scope.ts',
 			'git/index.ts',
 			'git/commands.ts',
 			'git/lifecycle.ts',

@@ -141,9 +141,121 @@ describe("bufferWordCompletions — explicit trigger", () => {
 });
 
 describe("bufferWordCompletions — automatic trigger", () => {
-	it("stays silent on a typing trigger in Markdown prose", () => {
-		const doc = "The kettle whistles.\nkettl";
+	it("stays silent on a typing trigger in Markdown prose at every prefix length", () => {
+		// The prefix runs from one to six characters against `kettle`, so the
+		// sweep crosses the default minimum of three: prose is quiet on both
+		// sides of it.
 		const source = bufferWordCompletions({ languageName: "Markdown" });
+
+		for (let typed = 1; typed <= 6; typed++) {
+			const doc = `Kettles whistle loudly every morning\n${"kettle".slice(0, typed)}`;
+
+			expect(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			).toBeNull();
+		}
+	});
+
+	it("offers words on a typing trigger in a code file past the minimum length", async () => {
+		const support = await codeSupport("JavaScript");
+		const doc = "const totalCount = 1;\ntotal";
+		const source = bufferWordCompletions({ languageName: "javascript" });
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [support],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("offers nothing on a typing trigger below the minimum length", async () => {
+		const support = await codeSupport("JavaScript");
+		// Two characters typed against `counterValue`: under the default of three.
+		const doc = "let counterValue = 1;\nco";
+		const source = bufferWordCompletions({ languageName: "javascript" });
+
+		expect(
+			query(source, {
+				doc,
+				pos: doc.length,
+				explicit: false,
+				extensions: [support],
+			}),
+		).toBeNull();
+	});
+
+	it("follows the minimum length into the automatic trigger threshold", async () => {
+		const support = await codeSupport("JavaScript");
+		const doc = "let counterValue = 1;\nco";
+		const source = bufferWordCompletions({
+			languageName: "javascript",
+			readSettings: () => ({ minWordLength: 2, words: "enabled" }),
+		});
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [support],
+				}),
+			),
+		).toEqual(["counterValue"]);
+	});
+
+	it("stays silent on a typing trigger in any language when words are disabled", async () => {
+		const support = await codeSupport("JavaScript");
+		const doc = "const totalCount = 1;\ntotal";
+		const source = bufferWordCompletions({
+			languageName: "javascript",
+			readSettings: () => ({ minWordLength: 3, words: "disabled" }),
+		});
+
+		expect(
+			query(source, {
+				doc,
+				pos: doc.length,
+				explicit: false,
+				extensions: [support],
+			}),
+		).toBeNull();
+	});
+
+	it("still answers the explicit trigger when words are disabled", async () => {
+		const support = await codeSupport("JavaScript");
+		const doc = "const totalCount = 1;\ntotal";
+		const source = bufferWordCompletions({
+			languageName: "javascript",
+			readSettings: () => ({ minWordLength: 3, words: "disabled" }),
+		});
+
+		// Off means quiet, not unavailable.
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: true,
+					extensions: [support],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("identifies Markdown prose by language identity, case-insensitively", () => {
+		const doc = "Kettles whistle\nkettl";
+		const source = bufferWordCompletions({ languageName: "mArKdOwN" });
 
 		expect(
 			query(source, {
@@ -155,19 +267,20 @@ describe("bufferWordCompletions — automatic trigger", () => {
 		).toBeNull();
 	});
 
-	it("stays silent on a typing trigger in a code file", async () => {
-		const support = await codeSupport("JavaScript");
-		const doc = "const totalCount = 1;\ntotal";
-		const source = bufferWordCompletions({ languageName: "javascript" });
+	it("treats a document with no language as not prose", () => {
+		const doc = "Kettles whistle\nkettl";
+		const source = bufferWordCompletions({ languageName: null });
 
 		expect(
-			query(source, {
-				doc,
-				pos: doc.length,
-				explicit: false,
-				extensions: [support],
-			}),
-		).toBeNull();
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [],
+				}),
+			),
+		).toEqual(["Kettles"]);
 	});
 });
 
@@ -301,7 +414,7 @@ describe("bufferWordCompletions — injected settings", () => {
 			languageName: "Markdown",
 			readSettings: () => {
 				calls++;
-				return { minWordLength: 3 };
+				return { minWordLength: 3, words: "enabled" };
 			},
 		});
 
@@ -318,7 +431,7 @@ describe("bufferWordCompletions — injected settings", () => {
 	});
 
 	it("picks up a settings change without rebuilding the source", () => {
-		let settings: BufferWordSettings = { minWordLength: 10 };
+		let settings: BufferWordSettings = { minWordLength: 10, words: "enabled" };
 		const source = bufferWordCompletions({
 			languageName: "Markdown",
 			readSettings: () => settings,
@@ -333,7 +446,7 @@ describe("bufferWordCompletions — injected settings", () => {
 		});
 		expect(labels(before)).toEqual([]);
 
-		settings = { minWordLength: 4 };
+		settings = { minWordLength: 4, words: "enabled" };
 
 		const after = query(source, {
 			doc,
