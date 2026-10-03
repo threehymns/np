@@ -275,7 +275,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// present on the target appears in the diff, and getStatus() reports
 		// untracked files in uncommittedFiles, so the intersection catches them
 		// (see contract test 'blocks switch when local untracked file collides
-		// with target branch tracked file'). #69 owns any future `worktree` vs
+		// with target branch tracked file'). #69 owns any future `dirty` vs
 		// `conflict` reason harmonization.
 			const diffRes = await this.runGit(['diff', '--name-only', '-z', 'HEAD', branchName]);
 			if (diffRes.code !== 0) {
@@ -344,6 +344,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 				// no source path is returned, only the isCopy flag.
 				return {
 					origPath: match.origPath,
+					// `y` is the porcelain v1 Y (unstaged) column: a staged-only
+					// change reads as false here, which is why the name says unstaged.
 					hasUnstagedEdits: match.y === 'M',
 					isCopy: match.x === 'C' || match.y === 'C'
 				};

@@ -335,7 +335,7 @@ describe("applyHunkAction error handling", () => {
 					// index vs working tree: unrelated unstaged edit on line 3
 					return {
 						originalContent: "HEAD1\nB1\nHEAD3\n",
-						modifiedContent: "HEAD1\nB1\nWORKINGTREE3\n",
+						modifiedContent: "HEAD1\nB1\nWORKING_TREE3\n",
 						stagedContent: "HEAD1\nB1\nHEAD3\n"
 					};
 				}
@@ -358,8 +358,8 @@ describe("applyHunkAction error handling", () => {
 		await applyHunkAction(appState, change, hunk, "discard");
 		expect(updatedIndexContent).toBe("HEAD1\nHEAD2\nHEAD3\n");
 		expect(workingTreeWriteCount).toBe(1);
-		// The unstaged WORKINGTREE3 edit must survive; only the hunk's line reverts.
-		expect(updatedWorkingTreeContent).toBe("HEAD1\nHEAD2\nWORKINGTREE3\n");
+		// The unstaged WORKING_TREE3 edit must survive; only the hunk's line reverts.
+		expect(updatedWorkingTreeContent).toBe("HEAD1\nHEAD2\nWORKING_TREE3\n");
 	});
 
 	it("leaves the working tree untouched when an unstaged edit overlaps the discarded staged hunk", async () => {

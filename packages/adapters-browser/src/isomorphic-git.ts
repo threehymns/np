@@ -9,7 +9,7 @@ import { browserHandleRegistry } from './storage';
 import { resolveRenamedHeadContent, isENOENT } from './rename-resolver';
 
 const REPO_DIR = '/repo';
-const HEAVY_DIR_NAMES = new Set(['node_modules', '.svelte-kit']);
+const HEAVY_SCAN_DIRS = new Set(['node_modules', '.svelte-kit']);
 
 /**
  * Whether `statusMatrix` should consider a working-tree path at all.
@@ -22,8 +22,8 @@ const HEAVY_DIR_NAMES = new Set(['node_modules', '.svelte-kit']);
  * the forced checkout overwrites the user's uncommitted edits with no error
  * and no rollback. Real git refuses the same checkout.
  *
- * This shares HEAVY_DIR_NAMES with `readdir`, and deliberately nothing
- * more. `readdir` hides those directories only at the repo root, and it
+ * This shares HEAVY_SCAN_DIRS with `readdir`, and deliberately nothing
+ * more. `readdir` hides those directories only at the scan root, and it
  * must keep looking for `.git` there -- routing it through this predicate would
  * hide the git directory from the detection walk at `detect()` and no repository
  * would ever be found. Same vocabulary, two different questions.
@@ -33,7 +33,7 @@ function isUserPath(filepath: string): boolean {
 	// `.git` is a directory, never a user file; the others are the heavy
 	// build-output directories `git.walk` would otherwise descend into.
 	if (segments.includes('.git')) return false;
-	return !segments.some((segment) => HEAVY_DIR_NAMES.has(segment));
+	return !segments.some((segment) => HEAVY_SCAN_DIRS.has(segment));
 }
 
 /** The index mode git gives a symlink; its blob content is the target path, not text. */
@@ -230,9 +230,9 @@ class BrowserGitFS {
 		// Root-only, unlike `isUserPath`, which drops a heavy directory at any
 		// depth. `detect()` walks ancestors reading this, and hiding `.git` here
 		// would leave it unable to find a repository at all. See `isUserPath`.
-		const isRepoRoot = path.replace(/\/+$/, '') === REPO_DIR;
+		const isScanRoot = path.replace(/\/+$/, '') === REPO_DIR;
 		for await (const name of (handle as FileSystemDirectoryHandle).keys()) {
-			if (isRepoRoot && HEAVY_DIR_NAMES.has(name)) continue;
+			if (isScanRoot && HEAVY_SCAN_DIRS.has(name)) continue;
 			names.push(name);
 		}
 		return names;
