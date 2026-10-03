@@ -22,6 +22,9 @@ export class Workspace {
 	activeTabId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	project: Project;
+	// NOTE (#254): recent-folders history reads window-scoped but is
+	// per-folder-ambiguous; correct with one Project, revisitable when a
+	// second Project exists. Stays on Workspace by design.
 	recentFolders = $state<FileOrigin[]>([]);
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
@@ -220,7 +223,7 @@ export class Workspace {
 		const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 		const serializedDocs = this.serializeTabs();
 
-		await this.project.persistence.saveOpenFiles(serializedDocs, folderUri);
+		await this.project.saveOpenFiles(serializedDocs, folderUri);
 	}
 
 	constructor(
@@ -271,7 +274,7 @@ export class Workspace {
 			$effect(() => {
 				if (this.isRestoring) return;
 				const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
-				this.project.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+				this.project.saveActiveDocumentId(this.activeTabId, folderUri);
 				untrack(() => {
 					void this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
 				});
@@ -279,13 +282,17 @@ export class Workspace {
 
 			$effect(() => {
 				if (this.isRestoring) return;
-				// Persist root folder
+				// NOTE (#254): root-folder save reads window-scoped but is
+				// per-folder-ambiguous; correct with one Project, revisitable
+				// when a second Project exists. Left in place by design.
 				this.project.persistence.saveRootFolder(this.project.rootOrigin ? $state.snapshot(this.project.rootOrigin) : null);
 			});
 
 			$effect(() => {
 				if (this.isRestoring) return;
-				// Persist recent folders
+				// NOTE (#254): recent-folders history reads window-scoped but is
+				// per-folder-ambiguous; correct with one Project, revisitable
+				// when a second Project exists. Left in place by design.
 				this.project.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
 			});
 		});
@@ -720,15 +727,15 @@ export class Workspace {
 	async saveFolderState(folderUri: string) {
 		const serializedDocs = this.serializeTabs();
 
-		await this.project.persistence.saveOpenFiles(serializedDocs, folderUri);
-		await this.project.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+		await this.project.saveOpenFiles(serializedDocs, folderUri);
+		await this.project.saveActiveDocumentId(this.activeTabId, folderUri);
 	}
 
 	async loadFolderState(folderUri: string) {
 		this.pendingDiffRestore.clear();
 		try {
-			const origins = await this.project.persistence.loadOpenFiles(folderUri);
-			const activeId = await this.project.persistence.loadActiveDocumentId(folderUri);
+			const origins = await this.project.loadOpenFiles(folderUri);
+			const activeId = await this.project.loadActiveDocumentId(folderUri);
 
 			if (origins && origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
@@ -832,6 +839,10 @@ export class Workspace {
 			}
 
 			try {
+				// NOTE (#254): root-folder + recent-folders load reads
+				// window-scoped but is per-folder-ambiguous; correct with one
+				// Project, revisitable when a second Project exists. Left in
+				// place by design — no key change.
 				const all = await this.project.persistence.loadAll();
 				
 				const rootOrigin: FileOrigin | null = all.rootFolder || null;

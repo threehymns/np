@@ -1,5 +1,5 @@
 import type { FileOrigin, Storage } from '../storage';
-import type { SessionPersistence } from '../persistence';
+import type { SerializedDocument, SessionPersistence } from '../persistence';
 import type { VCSAdapter } from './vcs';
 import { Worktree } from './worktree.svelte';
 import { ProjectTree } from './tree.svelte';
@@ -53,6 +53,29 @@ export class Project {
 	 */
 	get tree(): ProjectTree {
 		return this.projectTree;
+	}
+
+	/**
+	 * Per-folder session persistence pass-throughs (#254). Same keys, same
+	 * format, no key change: each delegates to `this.persistence` with the
+	 * identical folderUri the caller derived, so existing sessions load
+	 * unchanged. Expanded paths need no duplicate here — the tree already
+	 * calls them through the Project (`project.persistence`, same folder URI).
+	 */
+	saveOpenFiles(docs: SerializedDocument[], folderUri?: string): Promise<void> {
+		return this.persistence.saveOpenFiles(docs, folderUri);
+	}
+
+	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]> {
+		return this.persistence.loadOpenFiles(folderUri);
+	}
+
+	saveActiveDocumentId(id: string, folderUri?: string): Promise<void> {
+		return this.persistence.saveActiveDocumentId(id, folderUri);
+	}
+
+	loadActiveDocumentId(folderUri?: string): Promise<string | null> {
+		return this.persistence.loadActiveDocumentId(folderUri);
 	}
 
 	get rootOrigin(): FileOrigin | null {
