@@ -1,3 +1,4 @@
+import "../../../../../tests/contract/rune-setup";
 import { describe, it, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { LanguageSupport } from "@codemirror/language";
@@ -8,9 +9,11 @@ import {
 	CompletionContext,
 	type Completion,
 	type CompletionResult,
+	type CompletionSource,
 } from "@codemirror/autocomplete";
 import {
 	bufferWordCompletions,
+	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
 } from "./buffer-words";
 import { WikiLinkExtension, workspaceFacet, currentDocFacet } from "./wikilinks";
@@ -199,7 +202,7 @@ describe("bufferWordCompletions — automatic trigger", () => {
 		const doc = "let counterValue = 1;\nco";
 		const source = bufferWordCompletions({
 			languageName: "javascript",
-			readSettings: () => ({ minWordLength: 2, words: "enabled" }),
+			readSettings: () => ({ ...DEFAULT_BUFFER_WORD_SETTINGS, minWordLength: 2 }),
 		});
 
 		expect(
@@ -219,7 +222,7 @@ describe("bufferWordCompletions — automatic trigger", () => {
 		const doc = "const totalCount = 1;\ntotal";
 		const source = bufferWordCompletions({
 			languageName: "javascript",
-			readSettings: () => ({ minWordLength: 3, words: "disabled" }),
+			readSettings: () => ({ ...DEFAULT_BUFFER_WORD_SETTINGS, words: "disabled" }),
 		});
 
 		expect(
@@ -237,7 +240,7 @@ describe("bufferWordCompletions — automatic trigger", () => {
 		const doc = "const totalCount = 1;\ntotal";
 		const source = bufferWordCompletions({
 			languageName: "javascript",
-			readSettings: () => ({ minWordLength: 3, words: "disabled" }),
+			readSettings: () => ({ ...DEFAULT_BUFFER_WORD_SETTINGS, words: "disabled" }),
 		});
 
 		// Off means quiet, not unavailable.
@@ -281,6 +284,66 @@ describe("bufferWordCompletions — automatic trigger", () => {
 				}),
 			),
 		).toEqual(["Kettles"]);
+	});
+});
+
+describe("bufferWordCompletions — the prose override", () => {
+	/** Two characters against `kettle`, under the default minimum of three. */
+	const doc = "Kettles whistle loudly\nke";
+	const source = (settings: Partial<BufferWordSettings>) =>
+		bufferWordCompletions({
+			languageName: "Markdown",
+			readSettings: () => ({ ...DEFAULT_BUFFER_WORD_SETTINGS, ...settings }),
+		});
+	const typing = (buffered: CompletionSource) =>
+		query(buffered, {
+			doc,
+			pos: doc.length,
+			explicit: false,
+			extensions: [markdownExtension],
+		});
+
+	it("keeps prose quiet with no per-language override, and quiet again for an explicit 'disabled'", () => {
+		expect(typing(source({}))).toBeNull();
+		expect(typing(source({ wordsOverridden: true, words: "disabled" }))).toBeNull();
+	});
+
+	it("lets an explicit 'enabled' override give prose automatic words", () => {
+		const doc = "Kettles whistle loudly\nkettl";
+		const result = query(source({ wordsOverridden: true, words: "enabled" }), {
+			doc,
+			pos: doc.length,
+			explicit: false,
+			extensions: [markdownExtension],
+		});
+
+		expect(labels(result)).toEqual(["Kettles"]);
+	});
+
+	it("still needs the minimum typed length once prose is overridden", () => {
+		// The override changes *whether* prose speaks, not the threshold that
+		// governs when.
+		expect(typing(source({ wordsOverridden: true, words: "enabled" }))).toBeNull();
+	});
+
+	it("leaves the explicit trigger answering either way", () => {
+		for (const settings of [
+			{},
+			{ wordsOverridden: true, words: "enabled" as const },
+			{ wordsOverridden: true, words: "disabled" as const },
+		]) {
+			const doc = "Kettles whistle loudly\nkettl";
+			expect(
+				labels(
+					query(source(settings), {
+						doc,
+						pos: doc.length,
+						explicit: true,
+						extensions: [markdownExtension],
+					}),
+				),
+			).toEqual(["Kettles"]);
+		}
 	});
 });
 
@@ -374,8 +437,10 @@ describe("bufferWordCompletions — vocabulary", () => {
 		).toEqual(["_private$field"]);
 	});
 
-	it("drops tokens shorter than the minimum length", () => {
-		const doc = "be ab abc abcd\nab";
+	it("offers a word shorter than the minimum, because the minimum is a trigger threshold", () => {
+		// The setting is about when words fire on their own. On the explicit
+		// path the user asked, so a one-letter token is a legitimate offer.
+		const doc = "a b cd\nb";
 		const source = bufferWordCompletions({ languageName: "Markdown" });
 
 		expect(
@@ -387,7 +452,7 @@ describe("bufferWordCompletions — vocabulary", () => {
 					extensions: [markdownExtension],
 				}),
 			),
-		).toEqual(["abc", "abcd"]);
+		).toEqual(["b"]);
 	});
 
 	it("splits non-word characters out of prose tokens", () => {
@@ -414,7 +479,7 @@ describe("bufferWordCompletions — injected settings", () => {
 			languageName: "Markdown",
 			readSettings: () => {
 				calls++;
-				return { minWordLength: 3, words: "enabled" };
+				return DEFAULT_BUFFER_WORD_SETTINGS;
 			},
 		});
 
@@ -430,31 +495,40 @@ describe("bufferWordCompletions — injected settings", () => {
 		expect(calls).toBe(3);
 	});
 
-	it("picks up a settings change without rebuilding the source", () => {
-		let settings: BufferWordSettings = { minWordLength: 10, words: "enabled" };
+	it("picks up a settings change without rebuilding the source", async () => {
+		// The threshold is the automatic trigger's, so it is exercised there.
+		const support = await codeSupport("JavaScript");
+		let settings: BufferWordSettings = {
+			...DEFAULT_BUFFER_WORD_SETTINGS,
+			minWordLength: 10,
+		};
 		const source = bufferWordCompletions({
-			languageName: "Markdown",
+			languageName: "javascript",
 			readSettings: () => settings,
 		});
-		const doc = "kettle kettlepot\nkettl";
+		const doc = "const kettlepot = 1;\nkettl";
 
-		const before = query(source, {
-			doc,
-			pos: doc.length,
-			explicit: true,
-			extensions: [markdownExtension],
-		});
-		expect(labels(before)).toEqual([]);
+		expect(
+			query(source, {
+				doc,
+				pos: doc.length,
+				explicit: false,
+				extensions: [support],
+			}),
+		).toBeNull();
 
-		settings = { minWordLength: 4, words: "enabled" };
+		settings = { ...DEFAULT_BUFFER_WORD_SETTINGS, minWordLength: 4 };
 
-		const after = query(source, {
-			doc,
-			pos: doc.length,
-			explicit: true,
-			extensions: [markdownExtension],
-		});
-		expect(labels(after)).toEqual(["kettle", "kettlepot"]);
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [support],
+				}),
+			),
+		).toEqual(["kettlepot"]);
 	});
 });
 

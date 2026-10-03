@@ -606,7 +606,7 @@
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Words</Label>
-											<p class="text-[10px] text-muted-foreground">Offer words from this document while typing. Off silences the automatic trigger only</p>
+											<p class="text-[10px] text-muted-foreground">Offer words from this document while typing. Off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on</p>
 											<select
 												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
 												value={appState.prefs.completionWords}
@@ -622,7 +622,7 @@
 
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Minimum Word Length</Label>
-											<p class="text-[10px] text-muted-foreground">Shortest word offered, and the shortest typed prefix that summons suggestions while typing</p>
+											<p class="text-[10px] text-muted-foreground">Shortest typed prefix that summons suggestions while typing</p>
 											<input
 												type="number"
 												min="1"
@@ -636,8 +636,7 @@
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Per-Language Overrides</Label>
 											<p class="text-[10px] text-muted-foreground">
-												Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is
-												ignored here.
+												Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here
 											</p>
 											<textarea
 												bind:value={languageOverridesDraft}

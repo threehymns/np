@@ -191,6 +191,36 @@ export function rebuildSettingSchemas(
 }
 
 /**
+ * The two states of `editor.words`. `'disabled'` silences the typing trigger
+ * only — the explicit one keeps answering.
+ *
+ * Declared here, next to the schema that validates against it, so the
+ * buffer-word source on the other side of the package boundary reads one
+ * union rather than restating it under a second name.
+ */
+export type CompletionWordsMode = 'enabled' | 'disabled';
+
+/**
+ * Documented defaults for the `editor` completion keys (spec #259).
+ *
+ * These three values are the ones the schema validates a stored setting
+ * against, so the schema is where they are defined. The schema, the
+ * `Preferences` snapshot and the buffer-word source all read them from here:
+ * a default written in three places is a default that drifts, and the drift
+ * is invisible until a user sees a different number than the documentation
+ * promises.
+ */
+export const EDITOR_COMPLETION_DEFAULTS: {
+	readonly words: CompletionWordsMode;
+	readonly minWordLength: number;
+	readonly automaticCompletions: boolean;
+} = {
+	words: 'enabled',
+	minWordLength: 3,
+	automaticCompletions: true
+};
+
+/**
  * Standard Zed-aligned Editor settings schema.
  */
 export const EDITOR_SCHEMA: SettingNamespaceSchema = {
@@ -240,45 +270,46 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			control: 'toggle',
 			alias: 'vimSyncClipboard'
 		},
+		/**
+		 * The four completion keys below are the `editor` category's
+		 * hand-written half: `SettingsModal.svelte` filters the `editor`
+		 * namespace out of the generated sections and builds these controls by
+		 * hand, so a `control` hint here would never be dispatched. They carry
+		 * no hint for that reason — declaring one would document a UI that does
+		 * not exist. Title and description are the contract, and the markup
+		 * spells them out word for word.
+		 */
 		words: {
 			type: 'string',
-			default: 'enabled',
+			default: EDITOR_COMPLETION_DEFAULTS.words,
 			title: 'Words',
-			description: 'Offer words from the current document while typing. Off silences automatic suggestions; the explicit trigger still answers',
-			enum: ['enabled', 'disabled'],
-			control: 'select'
+			description: 'Offer words from this document while typing. Off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on',
+			enum: ['enabled', 'disabled']
 		},
 		min_word_length: {
 			type: 'number',
-			default: 3,
+			default: EDITOR_COMPLETION_DEFAULTS.minWordLength,
 			title: 'Minimum Word Length',
-			description: 'Shortest word offered, and the shortest typed prefix that summons suggestions while typing',
-			minimum: 1,
-			control: 'input'
+			description: 'Shortest typed prefix that summons suggestions while typing',
+			minimum: 1
 		},
 		automatic_completions: {
 			type: 'boolean',
-			default: true,
+			default: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
 			title: 'Automatic Completions',
-			description: 'Show suggestions while typing. Off leaves the explicit trigger working',
-			control: 'toggle'
+			description: 'Suggest while typing. Off keeps Ctrl-Space working'
 		},
 		/**
 		 * Per-language overrides for the keys above, keyed by language name and
-		 * matched case-insensitively. Read by `resolveLanguageScoped`, which
+		 * matched case-insensitively. Read by `scopeForLanguage`, which
 		 * deliberately ignores `automatic_completions`: that one is the global
 		 * popup toggle, and scoping it would contradict what it is for.
-		 *
-		 * The control is a raw JSON box, like every other object setting: the
-		 * proper control is a per-language list, which is a settings-UI project
-		 * of its own.
 		 */
 		languages: {
 			type: 'object',
 			default: {},
-			title: 'Per-Language Completions',
-			description: 'Per-language overrides, e.g. { "Markdown": { "words": "disabled" } }',
-			control: 'json'
+			title: 'Per-Language Overrides',
+			description: 'Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here'
 		}
 	}
 };

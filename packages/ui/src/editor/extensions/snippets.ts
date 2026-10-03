@@ -34,7 +34,13 @@ export const SNIPPETS_RANK_BELOW_NOTE_SOURCES = -10_000;
 const SNIPPET_COMPLETION_TYPE = "keyword";
 
 export interface SnippetSourceOptions {
-	/** Every registered snippet; language filtering happens per query. */
+	/**
+	 * Every registered snippet; language filtering happens per query.
+	 *
+	 * Deliberately unfiltered at the boundary: a caller that filtered first
+	 * would have to repeat the same join, and a source that can answer "not my
+	 * language" is one the editor can hand the whole registry to.
+	 */
 	readonly snippets: readonly RegisteredSnippet[];
 	/**
 	 * Name of the language the editor currently holds. A snippet joins on a

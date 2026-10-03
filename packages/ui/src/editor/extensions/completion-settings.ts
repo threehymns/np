@@ -1,4 +1,4 @@
-import { resolveLanguageScoped } from "@np/core";
+import { scopeForLanguage } from "@np/core";
 import {
 	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
@@ -35,7 +35,9 @@ export type SettingReader = (namespace: string, key: string) => unknown;
  * The base object is keyed by *setting name*, not by the source's own field
  * names, because the override map is: `{ "Markdown": { "words": "disabled" } }`
  * only folds over a base spelled `{ words: ... }`. Normalizing to the source's
- * own names happens on the way out.
+ * own names happens on the way out, and the fold's key list travels out with
+ * it so prose silence stays a default the user can reverse — by naming `words`
+ * specifically, not merely by having a Markdown entry at all.
  */
 export function readBufferWordSettings(
 	read: SettingReader,
@@ -46,22 +48,23 @@ export function readBufferWordSettings(
 		min_word_length: read(COMPLETION_SETTINGS_NAMESPACE, MIN_WORD_LENGTH_SETTING),
 	};
 
-	const scoped = resolveLanguageScoped(
+	const scoped = scopeForLanguage(
 		editorLevel,
 		read(COMPLETION_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
 		languageName,
 	);
 
 	return {
-		words: scoped.words === "disabled" ? "disabled" : "enabled",
+		words: scoped.value.words === "disabled" ? "disabled" : "enabled",
 		// A value the schema already rejected, or one hand-edited past it, is
 		// narrowed back to the documented default. The threshold itself is
 		// normalized once more by the policy, which is the only place that reads
 		// it as a length.
 		minWordLength:
-			typeof scoped.min_word_length === "number"
-				? scoped.min_word_length
+			typeof scoped.value.min_word_length === "number"
+				? scoped.value.min_word_length
 				: DEFAULT_BUFFER_WORD_SETTINGS.minWordLength,
+		wordsOverridden: scoped.keys.includes(WORDS_SETTING),
 	};
 }
 

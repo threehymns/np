@@ -34,8 +34,10 @@ export interface SnippetContribution {
 
 /**
  * A materialized snippet with its owning plugin. `owner` is bound by
- * {@link rebuildSnippets} from the transform entry, never by the plugin, so
- * it stays truthful when ownership moves on replay.
+ * {@link rebuildSnippets} — stamped from the transform entry when the
+ * transform claims the record with an empty owner, and preserved when it
+ * re-emits one that already carries an owner — never by the plugin itself,
+ * so it stays truthful when ownership moves on replay.
  */
 export interface RegisteredSnippet {
 	readonly id: string;
@@ -85,12 +87,22 @@ export function createAddSnippetsTransform(
  * Replays transforms from an empty initial value (ADR 0012), in the owner
  * order the host computes, binding each materialized record's owner.
  *
+ * Ownership follows `rebuildLanguages` exactly: a record that arrives with an
+ * empty owner is being claimed by the transform that emitted it and is
+ * stamped with that plugin, while a record that already carries an owner
+ * keeps it. Preserving the pre-bound owner is what makes a refresh
+ * transform safe — one that re-emits a record it did not change, with a new
+ * object identity, stays the original plugin's record instead of being
+ * re-attributed to whoever ran last (and, worse, tripping the duplicate
+ * check below against the plugin that actually wrote it).
+ *
  * An ID may be claimed by exactly one owner: the ID is the registry key, so
- * the later transform would otherwise silently replace the earlier plugin's
- * trigger and nothing would report why the snippet disappeared. Entries a
- * transform leaves untouched are skipped, so a duplicate is only ever raised
- * when a plugin actually writes the ID. Disabling a plugin drops its
- * transforms, which releases its IDs for the next replay.
+ * a later claim would otherwise silently replace the earlier plugin's trigger
+ * and nothing would report why the snippet disappeared. Entries a transform
+ * leaves untouched — same identity, or the same already-owned record — are
+ * never treated as a claim, so a duplicate is only ever raised when a plugin
+ * actually claims the ID. Disabling a plugin drops its transforms, which
+ * releases its IDs for the next replay.
  */
 export function rebuildSnippets(transforms: readonly SnippetTransformEntry[]): RegisteredSnippet[] {
 	let state = new Map<string, RegisteredSnippet>();
@@ -105,12 +117,17 @@ export function rebuildSnippets(transforms: readonly SnippetTransformEntry[]): R
 				next.set(id, snippet);
 				continue;
 			}
+			const owned: RegisteredSnippet =
+				snippet.owner === ''
+					? { ...snippet, owner: entry.pluginId }
+					: { ...snippet, owner: snippet.owner || entry.pluginId };
+
 			const previousOwner = owners.get(id);
-			if (previousOwner !== undefined && previousOwner !== entry.pluginId) {
-				throw new DuplicateSnippetIdError(id, previousOwner, entry.pluginId);
+			if (previousOwner !== undefined && previousOwner !== owned.owner) {
+				throw new DuplicateSnippetIdError(id, previousOwner, owned.owner);
 			}
-			owners.set(id, entry.pluginId);
-			next.set(id, { ...snippet, owner: entry.pluginId });
+			owners.set(id, owned.owner);
+			next.set(id, owned);
 		}
 
 		for (const id of state.keys()) {

@@ -240,13 +240,19 @@ const markdownTableTheme = {
  * the popup machinery present in the editor's very first state rather than
  * appearing a tick later; the editor component's completion effect
  * reconfigures the compartment with the real language and the real settings.
+ *
+ * Takes the mount-time `vimEnabled` so the very first keymap is already the
+ * modal one — a bound Enter in the first state would eat a newline typed
+ * before the effect lands.
  */
-const INITIAL_COMPLETION_EXTENSIONS = completionCompartmentExtensions({
-	language: null,
-	languageName: null,
-	snippets: [],
-	automaticCompletions: true,
-});
+const initialCompletionExtensions = (vimEnabled: boolean): Extension[] =>
+	completionCompartmentExtensions({
+		language: null,
+		languageName: null,
+		snippets: [],
+		automaticCompletions: true,
+		vimEnabled,
+	});
 
 export function createEditorExtensions(options: {
 	wrapCompartment: Compartment;
@@ -296,7 +302,7 @@ export function createEditorExtensions(options: {
 		// instead of reordering it. The same compartment carries
 		// `autocompletion()`, which is the only lever the global popup toggle
 		// has over the language-provided sources.
-		completionCompartment.of(INITIAL_COMPLETION_EXTENSIONS),
+		completionCompartment.of(initialCompletionExtensions(vimEnabled)),
 		vimCompartment.of(vimEnabled ? vim() : []),
 		...resolvedPluginExtensions,
 		highlightSpecialChars(),

@@ -107,6 +107,21 @@ describe("snippetCompletions", () => {
 
 		expect(appliedDoc(result!.options[0], state, 0, 2)).toBe(body);
 	});
+
+	it("inserts a `$`-carrying body literally rather than treating it as a variable", () => {
+		// Svelte's own `$` syntax is legal in a body; a snippet variable is not
+		// part of the contract, so nothing may interpret one. `insertCompletionText`
+		// is plain text, so the store reference lands as typed.
+		const body = "{$store}";
+		const state = EditorState.create({ doc: "sto", selection: { anchor: 3 } });
+		const result = query([snippet("a", "storeauto", { body })], {
+			languageName: "svelte",
+			doc: "sto",
+		});
+
+		expect(result!.options.map((o) => o.label)).toEqual(["storeauto"]);
+		expect(appliedDoc(result!.options[0], state, 0, 3)).toBe(body);
+	});
 });
 
 describe("the Svelte snippet pack", () => {

@@ -1,14 +1,17 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, beforeAll, afterAll, mock } from "bun:test";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
-import { LanguageDescription } from "@codemirror/language";
+import { EditorView, keymap, type KeyBinding } from "@codemirror/view";
+import { LanguageDescription, type Language } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
 	CompletionContext,
-	autocompletion,
+	completionStatus,
+	currentCompletions,
 	startCompletion,
 	type Completion,
 	type CompletionResult,
+	type CompletionSource,
 } from "@codemirror/autocomplete";
 import { workspaceFacet, currentDocFacet } from "./extensions/wikilinks";
 import {
@@ -50,6 +53,8 @@ function scopedSettingReader(
 let getLanguageExtensions: (desc: LanguageDescription | null) => Promise<Extension[]>;
 let resolveActiveLanguage: (desc: LanguageDescription | null) => Promise<any>;
 
+let installedDom = false;
+
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
 		SvelteMap: Map,
@@ -61,6 +66,13 @@ beforeAll(async () => {
 	(globalThis as Record<string, unknown>).window = {
 		matchMedia: () => ({ matches: false }),
 	};
+	// The ranked-order assertion needs a mounted view (see `popoverOrder`), which
+	// needs a DOM. This is the same minimal stub `html.test.ts` installs, kept
+	// here because nothing else in this suite touches the DOM.
+	if (typeof (globalThis as Record<string, unknown>).document === "undefined") {
+		installMinimalDom();
+		installedDom = true;
+	}
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	resolveActiveLanguage = mod.resolveActiveLanguage;
@@ -68,7 +80,113 @@ beforeAll(async () => {
 
 afterAll(() => {
 	delete (globalThis as Record<string, unknown>).window;
+	if (installedDom) delete (globalThis as Record<string, unknown>).document;
 });
+
+/**
+ * The smallest `document`/`window` an `EditorView` will mount against. Every
+ * member here was added in response to a real throw from the view, the
+ * tooltip, or the completion machinery.
+ */
+function installMinimalDom(): void {
+	class MockElement {
+		tagName: string;
+		style: Record<string, any> = {};
+		childNodes: any[] = [];
+		attributes: any[] = [];
+		dataset: Record<string, string> = {};
+		classList = { add: () => {}, remove: () => {}, contains: () => false };
+		ownerDocument: any;
+		parentNode: any = null;
+		offsetWidth = 100;
+		offsetHeight = 20;
+		clientWidth = 100;
+		clientHeight = 20;
+		textContent = "";
+		constructor(tag = "DIV") {
+			this.tagName = tag.toUpperCase();
+			this.ownerDocument = (globalThis as any).document;
+		}
+		setAttribute() {}
+		getAttribute() { return null; }
+		removeAttribute() {}
+		appendChild(child: any) {
+			this.childNodes.push(child);
+			child.parentNode = this;
+			return child;
+		}
+		insertBefore(child: any) { return this.appendChild(child); }
+		removeChild(child: any) { this.childNodes = this.childNodes.filter((c) => c !== child); }
+		remove() { this.parentNode = null; }
+		addEventListener() {}
+		removeEventListener() {}
+		contains() { return false; }
+		getBoundingClientRect() {
+			return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 };
+		}
+		querySelectorAll() { return []; }
+	}
+
+	const document = {
+		head: new MockElement("HEAD"),
+		body: new MockElement("BODY"),
+		createElement: (tag: string) => new MockElement(tag),
+		createDocumentFragment: () => new MockElement("FRAGMENT"),
+		createTextNode: (text: string) => ({
+			nodeValue: text,
+			ownerDocument: (globalThis as any).document,
+		}),
+		createRange: () => ({
+			setStart() {},
+			setEnd() {},
+			getBoundingClientRect: () => ({ top: 0, left: 0 }),
+		}),
+		hasFocus: () => false,
+		defaultView: undefined as any,
+		addEventListener: () => {},
+		removeEventListener: () => {},
+		getSelection: () => null,
+		insertBefore: (child: any) => child,
+		elementFromPoint: () => null,
+	};
+	const view = {
+		getComputedStyle: () => ({ getPropertyValue: () => "", direction: "ltr" }),
+		requestAnimationFrame: () => 0,
+		cancelAnimationFrame: () => {},
+		addEventListener: () => {},
+		removeEventListener: () => {},
+	};
+
+	(globalThis as any).document = document;
+	(globalThis as any).window = {
+		...(globalThis as any).window,
+		document,
+		...view,
+		matchMedia: () => ({
+			matches: false,
+			addListener: () => {},
+			removeListener: () => {},
+		}),
+	};
+	// The view resolves its window through `document.defaultView`, which has to
+	// be the window above rather than whatever was there before.
+	document.defaultView = (globalThis as any).window;
+	(globalThis as any).MutationObserver = class {
+		observe() {}
+		disconnect() {}
+		takeRecords() { return []; }
+	};
+	(globalThis as any).ResizeObserver = class {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	};
+	(globalThis as any).Range = class {};
+	(globalThis as any).Window = class Window {};
+	(globalThis as any).requestAnimationFrame = () => 0;
+	(globalThis as any).cancelAnimationFrame = () => {};
+	(globalThis as any).getComputedStyle = view.getComputedStyle;
+}
 
 const mockWorkspace: any = {
 	project: {
@@ -114,16 +232,17 @@ async function composedExtensions(
 		snippets?: readonly RegisteredSnippet[];
 		settings?: Partial<BufferWordSettings>;
 		automaticCompletions?: boolean;
+		recorder?: QueryRecorder;
 	} = {},
 ): Promise<Extension[]> {
 	const languageCompartment = new Compartment();
 	const completionCompartment = new Compartment();
-	const language = await resolveActiveLanguage(desc);
+	const language: Language = await resolveActiveLanguage(desc);
 	const settings: BufferWordSettings = {
 		...DEFAULT_BUFFER_WORD_SETTINGS,
 		...opts.settings,
 	};
-	const completion =
+	const host =
 		opts.words === false
 			? []
 			: completionCompartmentExtensions({
@@ -138,7 +257,11 @@ async function composedExtensions(
 		workspaceFacet.of(mockWorkspace),
 		currentDocFacet.of(mockCurrentDoc),
 		languageCompartment.of(await getLanguageExtensions(desc)),
-		completionCompartment.of(completion),
+		completionCompartment.of(
+			opts.recorder
+				? [...host, language.data.of({ autocomplete: opts.recorder.source })]
+				: host,
+		),
 	];
 }
 
@@ -167,24 +290,26 @@ function offeredLabels(
 }
 
 /**
- * Offer labels in the order CodeMirror's popover would show them. CodeMirror
- * sorts on `fuzzy score + boost` descending; every option in these fixtures
- * is the same shape of match for the same typed prefix, so the fuzzy score is
- * equal and the boost alone decides. The index breaks ties so note options
- * keep the order the note sources produced them in.
+ * Records how CodeMirror queried every source, through the one place the
+ * library tells a source what kind of trigger woke it: the `explicit` flag on
+ * the public `CompletionContext`. A source that returns `null` contributes no
+ * offers, so a recorder never disturbs the labels the other assertions read.
  */
-function rankedLabels(
-	state: EditorState,
-	pos: number,
-	explicit: boolean,
-): string[] {
-	return offeredOptions(state, pos, explicit)
-		.map((option, index) => ({
-			label: option.label,
-			key: (option.boost ?? COMPLETION_RANK_TIERS.noteSources) * 1000 - index,
-		}))
-		.sort((a, b) => b.key - a.key)
-		.map((entry) => entry.label);
+interface QueryRecorder {
+	readonly source: CompletionSource;
+	/** The `explicit` flag of each query, in the order they arrived. */
+	readonly flags: boolean[];
+}
+
+function queryRecorder(): QueryRecorder {
+	const flags: boolean[] = [];
+	return {
+		flags,
+		source: (context) => {
+			flags.push(context.explicit);
+			return null;
+		},
+	};
 }
 
 /**
@@ -203,6 +328,66 @@ function offeredWordLabels(
 		.map((o) => o.label);
 }
 
+/** Which rank tier an offered option belongs to, by the type its source set. */
+function tierOf(option: Completion): "note" | "snippet" | "word" {
+	if (option.type === "keyword") return "snippet";
+	if (option.type === "text") return "word";
+	return "note";
+}
+
+/**
+ * Mounts the state, wakes the chain the way a keystroke or the explicit
+ * trigger would, and reports what the library settled on.
+ *
+ * A source is only ever *called* by the completion view plugin, so observing
+ * how CodeMirror asks its sources — whether it asks at all, and whether it
+ * marks the question explicit — needs a mounted view. `completionStatus` and
+ * `currentCompletions` are the public readings of that; nothing here reaches
+ * past them. This is the only place in the file that needs a view: every other
+ * assertion reads offers through a `CompletionContext`, which needs no DOM.
+ */
+async function driveCompletion(
+	state: EditorState,
+	recorder: QueryRecorder,
+	trigger: "typing" | "explicit",
+): Promise<{
+	status: "active" | "pending" | null;
+	queries: boolean[];
+	options: Completion[];
+}> {
+	const view = new EditorView({
+		state,
+		parent: (globalThis as any).document.createElement("div"),
+	});
+	try {
+		if (trigger === "explicit") {
+			expect(startCompletion(view)).toBe(true);
+		} else {
+			view.dispatch({ userEvent: "input.type" });
+		}
+		// The machinery debounces a wake-up and answers through a promise, so a
+		// headless run has to let both queues drain. `completionStatus` is the
+		// public "still asking" signal.
+		for (let waited = 0; waited < 2_000; waited += 20) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			if (completionStatus(view.state) !== "pending") break;
+		}
+		return {
+			status: completionStatus(view.state),
+			queries: [...recorder.flags],
+			options: [...currentCompletions(view.state)],
+		};
+	} finally {
+		view.destroy();
+	}
+}
+
+/** The ranked popover as `label:tier`, which is the order a reader would see. */
+async function rankedPopover(state: EditorState): Promise<string[]> {
+	const { options } = await driveCompletion(state, queryRecorder(), "explicit");
+	return options.map((option) => `${option.label}:${tierOf(option)}`);
+}
+
 function markdownState(
 	doc: string,
 	opts: {
@@ -210,6 +395,7 @@ function markdownState(
 		snippets?: readonly RegisteredSnippet[];
 		settings?: Partial<BufferWordSettings>;
 		automaticCompletions?: boolean;
+		recorder?: QueryRecorder;
 	} = {},
 ): Promise<EditorState> {
 	return composedExtensions(description("Markdown"), opts).then((extensions) =>
@@ -217,47 +403,9 @@ function markdownState(
 	);
 }
 
-/**
- * Which of the language's completion sources CodeMirror would query.
- *
- * `active` is the completion state field's own bookkeeping: an inactive source
- * is never queried, so a pending one means exactly "this trigger summons an
- * offer". The field has no public accessor without an `EditorView`, and
- * `autocompletion()` publishes it as the second entry of the array it returns,
- * so it is taken from there — nothing here reaches into CodeMirror's internals
- * beyond that.
- */
-function activeSources(state: EditorState): { pending: number; explicit: boolean } {
-	const field = (autocompletion() as unknown as Record<string, unknown>[])[1];
-	const completion = state.field(field as never) as unknown as {
-		active: { state: number; explicit: boolean }[];
-	};
-	return {
-		pending: completion.active.filter((source) => source.state !== 0).length,
-		explicit: completion.active.every((source) => source.explicit),
-	};
-}
-
 /** The state a single keystroke leaves behind. */
 function afterTyping(state: EditorState): EditorState {
 	return state.update({ userEvent: "input.type" }).state;
-}
-
-/**
- * The state the explicit trigger leaves behind, using the real
- * `startCompletion` effect dispatched through a stub view. The toggle is not
- * supposed to touch this path, so it must go through the library's own effect
- * rather than a hand-rolled flag.
- */
-function afterExplicitTrigger(state: EditorState): EditorState {
-	let effects: unknown;
-	startCompletion({
-		state,
-		dispatch: (spec: { effects: unknown }) => {
-			effects = spec.effects;
-		},
-	} as never);
-	return state.update({ effects: [effects as never] }).state;
 }
 
 /**
@@ -407,7 +555,48 @@ describe("completion composition — Markdown", () => {
 		expect(readBufferWordSettings(read, "TypeScript")).toEqual({
 			words: "enabled",
 			minWordLength: 3,
+			wordsOverridden: false,
 		});
+	});
+
+	it("lets an explicit per-language 'enabled' override make prose answer automatically", async () => {
+		const read = scopedSettingReader({ Markdown: { words: "enabled" } });
+		const doc = "Notes about widgets\n\nNot";
+		const quiet = await markdownState(doc);
+		const overridden = await markdownState(doc, {
+			settings: readBufferWordSettings(read, "Markdown"),
+		});
+
+		// Prose silence is a default, not a rule: the settings UI offers this
+		// exact edit, so it has to do what it says. 'Not' is three characters,
+		// past the minimum, and the buffer holds "Notes".
+		expect(offeredOptions(quiet, doc.length, false)).toEqual([]);
+		expect(offeredWordLabels(overridden, doc.length, false)).toEqual(["Notes"]);
+	});
+
+	it("keeps prose quiet for an explicit 'disabled' override, as for no override", async () => {
+		const read = scopedSettingReader({ Markdown: { words: "disabled" } });
+		const doc = "Notes about widgets\n\nNot";
+		const state = await markdownState(doc, {
+			settings: readBufferWordSettings(read, "Markdown"),
+		});
+
+		expect(offeredOptions(state, doc.length, false)).toEqual([]);
+		// Quiet, not unavailable: the explicit trigger still answers.
+		expect(offeredLabels(state, doc.length, true)).toEqual(["Notes"]);
+	});
+
+	it("keeps prose quiet for an override that tuned only the threshold", async () => {
+		// A Markdown entry that says nothing about `words` is not a vote on it,
+		// however much of a Markdown entry it is.
+		const read = scopedSettingReader({ Markdown: { min_word_length: 2 } });
+		const doc = "Notes about widgets\n\nNot";
+		const state = await markdownState(doc, {
+			settings: readBufferWordSettings(read, "Markdown"),
+		});
+
+		expect(readBufferWordSettings(read, "Markdown").wordsOverridden).toBe(false);
+		expect(offeredOptions(state, doc.length, false)).toEqual([]);
 	});
 });
 
@@ -492,6 +681,19 @@ describe("completion composition — code files", () => {
 });
 
 describe("completion composition — snippet source", () => {
+	/** Applies an option to a fake view and returns the resulting document. */
+	function appliedDoc(
+		option: Completion,
+		state: EditorState,
+		from: number,
+		to: number,
+	): string {
+		let spec: any = null;
+		const view = { state, dispatch: (next: any) => (spec = next) };
+		option.apply!(view as never, option, from, to);
+		return state.update(spec).state.doc.toString();
+	}
+
 	it("offers a registered trigger with its body as the inserted text", async () => {
 		const body = "{#each items as item}\n\t\n{/each}";
 		const doc = "ea";
@@ -503,9 +705,9 @@ describe("completion composition — snippet source", () => {
 		expect(options.map((o) => o.label)).toEqual(["each"]);
 		expect(options[0].detail).toBe("each description");
 		expect(options[0].type).toBe("keyword");
-		// The match range is the trigger itself, so accepting replaces the
-		// typed prefix rather than inserting in front of it.
-		expect(options[0].apply).toBeDefined();
+		// The match range is the trigger itself, so accepting replaces the typed
+		// prefix rather than inserting in front of it: "ea" becomes the body.
+		expect(appliedDoc(options[0], state, 0, doc.length)).toBe(body);
 	});
 
 	it("answers a typing trigger as well as the explicit one", async () => {
@@ -556,9 +758,10 @@ describe("completion composition — snippet source", () => {
 		expect(note).toBeDefined();
 		expect(words.length).toBe(1);
 
-		expect(note.boost ?? COMPLETION_RANK_TIERS.noteSources).toBe(
-			COMPLETION_RANK_TIERS.noteSources,
-		);
+		// The note sources carry no boost at all. `toBeUndefined` rather than a
+		// defaulting `?? 0`: the point is that nothing boosts them, so this fails
+		// if a boost is ever added to the note tier.
+		expect(note.boost).toBeUndefined();
 		expect(snippetOption.boost).toBe(COMPLETION_RANK_TIERS.snippets);
 		expect(words[0].boost).toBe(COMPLETION_RANK_TIERS.words);
 		expect(COMPLETION_RANK_TIERS.noteSources).toBeGreaterThan(
@@ -572,11 +775,14 @@ describe("completion composition — snippet source", () => {
 		expect(COMPLETION_RANK_TIERS.snippets).toBeLessThan(fuzzyFloor);
 		expect(COMPLETION_RANK_TIERS.words).toBeLessThan(fuzzyFloor);
 
-		expect(rankedLabels(state, doc.length, true)).toEqual([
-			"Note A",
-			"Notebook",
-			"Notebook",
-			"notes",
+		// And the order those boosts are supposed to produce, as the popover
+		// actually renders it: note first, then the exact snippet trigger, then
+		// the words.
+		expect(await rankedPopover(state)).toEqual([
+			"Note A:note",
+			"Notebook:snippet",
+			"Notebook:word",
+			"notes:word",
 		]);
 	});
 
@@ -610,56 +816,133 @@ describe("completion composition — snippet source", () => {
 	it("adds no snippet offer on a typing trigger while the popup toggle is off, and still answers the explicit one", async () => {
 		const doc = "ea";
 		const pack = [snippet("each", "each")];
-		const on = await markdownState(doc, { snippets: pack });
+		const onQueries = queryRecorder();
+		const offQueries = queryRecorder();
+		const on = await markdownState(doc, { snippets: pack, recorder: onQueries });
 		const off = await markdownState(doc, {
 			snippets: pack,
 			automaticCompletions: false,
+			recorder: offQueries,
 		});
 
 		// The toggle is the whole gate, so the snippet source itself is
-		// unchanged — only whether CodeMirror wakes it on the keystroke.
-		expect(activeSources(afterTyping(on)).pending).toBeGreaterThan(0);
-		expect(activeSources(afterTyping(off)).pending).toBe(0);
+		// unchanged — only whether CodeMirror wakes it on the keystroke. A woken
+		// source is called, so the recorder shows it: one automatic query with
+		// the toggle on, none at all with it off.
+		const onRun = await driveCompletion(on, onQueries, "typing");
+		expect(onRun.status).toBe("active");
+		expect(onRun.queries).toEqual([false]);
 
-		// And the trigger that asked for them still gets them.
-		const activation = activeSources(afterExplicitTrigger(off));
-		expect(activation.pending).toBeGreaterThan(0);
-		expect(activation.explicit).toBe(true);
-		expect(offeredLabels(off, doc.length, true)).toEqual(["each"]);
+		const offRun = await driveCompletion(off, offQueries, "typing");
+		expect(offRun.status).toBeNull();
+		expect(offRun.queries).toEqual([]);
+		expect(offRun.options).toEqual([]);
+
+		// And the trigger that asked for them still gets them, told explicitly.
+		const triggered = await driveCompletion(off, offQueries, "explicit");
+		expect(triggered.status).toBe("active");
+		expect(triggered.queries).toEqual([true]);
+		expect(triggered.options.map((option) => option.label)).toEqual(["each"]);
+	});
+});
+
+describe("completion composition — modal editing", () => {
+	/**
+	 * The bindings CodeMirror will consult, read through the public `keymap`
+	 * facet with the compartment's content installed. `autocompletion()`
+	 * contributes its own keymap through `keymap.computeN`, so the bundled
+	 * Enter binding shows up here exactly as it would in a real editor.
+	 */
+	function bindingsFor(vimEnabled: boolean): readonly KeyBinding[] {
+		// `keymap.computeN` contributes its value as one array element, so the
+		// facet reads one level nested.
+		return EditorState.create({
+			extensions: completionCompartmentExtensions({
+				language: null,
+				languageName: null,
+				snippets: [],
+				automaticCompletions: true,
+				vimEnabled,
+			}),
+		}).facet(keymap).flat();
+	}
+
+	it("binds Enter to acceptCompletion when vim is off", () => {
+		const keys = bindingsFor(false).map((binding) => binding.key);
+
+		expect(keys).toContain("Enter");
+		expect(keys).not.toContain("Ctrl-y");
+		// The explicit trigger stays where it was either way.
+		expect(keys).toContain("Ctrl-Space");
+	});
+
+	it("unbinds Enter and binds Ctrl-y when vim is on", () => {
+		const keys = bindingsFor(true).map((binding) => binding.key);
+
+		// Under vim, Enter belongs to the mode: a completion must never consume
+		// the keystroke a vim insert-mode user means as a newline. Ctrl-y is
+		// vim's canonical accept, and the trigger key is untouched.
+		expect(keys).not.toContain("Enter");
+		expect(keys).toContain("Ctrl-y");
+		expect(keys).toContain("Ctrl-Space");
+		// Everything else the bundled keymap had is kept, in order, so nothing
+		// else moves. The mac-only bindings carry no `key`, which is why this
+		// compares sequences rather than sets.
+		const withoutVim = bindingsFor(false).map((binding) => binding.key);
+		expect(keys.filter((key) => key !== "Ctrl-y")).toEqual(
+			withoutVim.filter((key) => key !== "Enter"),
+		);
 	});
 });
 
 describe("completion composition — the global popup toggle", () => {
 	it("stops every automatic offer when off, tables and wikilinks included", async () => {
-		const on = await markdownState("Intro\n| See [[Not");
+		const queries = queryRecorder();
+		const on = await markdownState("Intro\n| See [[Not", { recorder: queries });
 		const off = await markdownState("Intro\n| See [[Not", {
 			automaticCompletions: false,
 		});
 
 		// The note sources are the ones the toggle has to reach: they are
-		// registered through the language-data facet, not through our chain.
-		expect(activeSources(afterTyping(on)).pending).toBeGreaterThan(0);
-		expect(activeSources(afterTyping(off)).pending).toBe(0);
+		// registered through the language-data facet, not through our chain. The
+		// recorder answers "is any source being asked", which is the claim, and
+		// the popover it produced is the effect.
+		const onRun = await driveCompletion(on, queries, "typing");
+		expect(onRun.status).toBe("active");
+		expect(onRun.queries.length).toBeGreaterThan(0);
+		expect(onRun.options.map((option) => option.label)).toEqual(["Note A"]);
+
+		const offRun = await driveCompletion(off, queryRecorder(), "typing");
+		expect(offRun.status).toBeNull();
+		expect(offRun.options).toEqual([]);
 	});
 
 	it("still answers the explicit trigger when off", async () => {
 		const doc = "Intro\n| See [[Not";
-		const state = await markdownState(doc, { automaticCompletions: false });
+		const queries = queryRecorder();
+		const state = await markdownState(doc, {
+			automaticCompletions: false,
+			recorder: queries,
+		});
 
-		const activation = activeSources(afterExplicitTrigger(state));
 		// Every source the language registered wakes up on the explicit effect,
-		// and each one is told it was asked for explicitly.
-		expect(activation.pending).toBeGreaterThan(0);
-		expect(activation.explicit).toBe(true);
+		// and each one is told through the public `CompletionContext` that it was
+		// asked for explicitly rather than by typing.
+		const run = await driveCompletion(state, queries, "explicit");
+		expect(run.status).toBe("active");
+		expect(run.queries.length).toBeGreaterThan(0);
+		expect(run.queries.every((explicit) => explicit)).toBe(true);
 		// And the offers themselves are unchanged by the toggle.
-		expect(offeredLabels(state, state.doc.length, true)).toEqual(
-			offeredLabels(await markdownState(doc), state.doc.length, true),
+		expect(run.options.map((option) => option.label)).toEqual(
+			(await driveCompletion(await markdownState(doc), queryRecorder(), "explicit")).options.map(
+				(option) => option.label,
+			),
 		);
 	});
 
 	it("leaves the automatic trigger alone when on", async () => {
 		const state = await markdownState("Notes about widgets\n\nNot");
 
-		expect(activeSources(afterTyping(state)).pending).toBeGreaterThan(0);
+		expect(completionStatus(afterTyping(state))).not.toBeNull();
 	});
 });

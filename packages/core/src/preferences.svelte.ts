@@ -1,6 +1,8 @@
 import {
 	SettingsManager,
 	FileWorkspaceSettingsStorage,
+	EDITOR_COMPLETION_DEFAULTS,
+	type CompletionWordsMode,
 	type ResolvedSetting,
 	type SettingDiagnostic,
 	type SettingScope
@@ -15,11 +17,11 @@ export type Theme =
 export type AppearanceMode = 'light' | 'dark' | 'system';
 
 /**
- * Whether automatic word offers are permitted. `'disabled'` silences the
- * typing trigger only — the explicit one keeps answering. Mirrors
- * `BufferWordMode` in `@np/ui`, which is where it is consumed.
+ * Whether automatic word offers are permitted. Declared with the schema that
+ * validates it and re-exported here, so the public name keeps working while
+ * there is exactly one union for the concept.
  */
-export type CompletionWordsMode = 'enabled' | 'disabled';
+export type { CompletionWordsMode } from './plugins/settings';
 
 export interface PreferenceStorage {
 	getItem(key: string): string | null;
@@ -44,9 +46,9 @@ const DEFAULTS = {
 	vimSyncClipboard: true,
 	tabSize: 2,
 	lineNumbers: true,
-	completionWords: 'enabled' as CompletionWordsMode,
-	minWordLength: 3,
-	automaticCompletions: true,
+	completionWords: EDITOR_COMPLETION_DEFAULTS.words,
+	minWordLength: EDITOR_COMPLETION_DEFAULTS.minWordLength,
+	automaticCompletions: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
 	zoom: 100,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,

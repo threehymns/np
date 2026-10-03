@@ -4,9 +4,7 @@ import type {
 	CompletionResult,
 	CompletionSource,
 } from "@codemirror/autocomplete";
-
-/** Whether automatic word offers are permitted at all. */
-export type BufferWordMode = "enabled" | "disabled";
+import { EDITOR_COMPLETION_DEFAULTS, type CompletionWordsMode } from "@np/core";
 
 /**
  * Per-query knobs for the buffer-word source. Read through an injected reader
@@ -15,29 +13,30 @@ export type BufferWordMode = "enabled" | "disabled";
  */
 export interface BufferWordSettings {
 	/**
-	 * Shortest word the source deals in, enforced at both ends.
-	 *
-	 * On the automatic path it is a *trigger* threshold: the typed prefix must
-	 * already reach this length before a popover appears, so the popup never
-	 * interrupts the first characters of a word. On the explicit path the user
-	 * asked, so it is only a *vocabulary* floor: candidates shorter than it are
-	 * not offered.
-	 *
-	 * The two readings are the same question — how short a word may be and
-	 * still be a completion — asked of the two words involved: the one being
-	 * typed and the one being offered. Neither is ever allowed below it.
+	 * Shortest typed prefix before words trigger *automatically*. It says
+	 * nothing about the vocabulary: on the explicit path the user asked, so
+	 * every word-shaped token in the document that extends what they typed is
+	 * offered however short it is — `fo` + Ctrl-Space completes `for`.
 	 */
 	readonly minWordLength: number;
 	/**
 	 * Gates automatic offers only. `'disabled'` means quiet, not unavailable:
 	 * the explicit trigger still answers, in every language.
 	 */
-	readonly words: BufferWordMode;
+	readonly words: CompletionWordsMode;
+	/**
+	 * Whether {@link words} came from this language's own `editor.languages`
+	 * entry rather than from the editor-level value. Needed because prose
+	 * silence is a *default* an explicit override may reverse, and both cases
+	 * arrive here as the same `'enabled'`.
+	 */
+	readonly wordsOverridden: boolean;
 }
 
 export const DEFAULT_BUFFER_WORD_SETTINGS: BufferWordSettings = {
-	minWordLength: 3,
-	words: "enabled",
+	minWordLength: EDITOR_COMPLETION_DEFAULTS.minWordLength,
+	words: EDITOR_COMPLETION_DEFAULTS.words,
+	wordsOverridden: false,
 };
 
 /**
@@ -60,7 +59,7 @@ const BUFFER_WORD_PATTERN = /[A-Za-z_$][A-Za-z0-9_$]*/g;
 export interface BufferWordPolicy {
 	/** Whether a typing trigger may offer words, as opposed to an explicit one. */
 	readonly automatic: boolean;
-	/** Shortest word admitted to the vocabulary and to the automatic trigger. */
+	/** Shortest typed prefix that may summon words automatically. */
 	readonly minWordLength: number;
 }
 
@@ -88,10 +87,13 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
  * Two independent brakes on the automatic path, and neither of them touches
  * the explicit one:
  *
- * - Markdown prose is always quiet on a typing trigger. A note is prose being
- *   written, not code being recalled, and words fire constantly while writing.
- *   #259 asks for silence here; the explicit trigger stays available so prose
- *   is never worse off than before.
+ * - Markdown prose is quiet on a typing trigger by default. A note is prose
+ *   being written, not code being recalled, and words fire constantly while
+ *   writing. #259 asks for that silence; the explicit trigger stays available
+ *   so prose is never worse off than before. It is a *default*, not a hard
+ *   rule: a `{ "Markdown": { "words": "enabled" } }` entry in `editor.languages`
+ *   reverses it, because the settings UI offers exactly that edit and an edit
+ *   that does nothing is worse than no edit at all.
  * - `words: 'disabled'` silences the automatic path in every language. Off
  *   means quiet, not unavailable.
  */
@@ -99,8 +101,9 @@ export function resolveBufferWordPolicy(
 	languageName: string | null,
 	settings: BufferWordSettings,
 ): BufferWordPolicy {
+	const proseQuiet = isMarkdownProse(languageName) && !settings.wordsOverridden;
 	return {
-		automatic: settings.words !== "disabled" && !isMarkdownProse(languageName),
+		automatic: settings.words !== "disabled" && !proseQuiet,
 		minWordLength: normalizeMinWordLength(settings.minWordLength),
 	};
 }
@@ -134,11 +137,12 @@ function staticDefaultSettings(): BufferWordSettings {
  *
  * Offered on the explicit trigger in every language and file type, and on a
  * typing trigger wherever {@link resolveBufferWordPolicy} allows it — code
- * files only, and only past the minimum word length.
+ * files only, and only past the minimum *typed* length.
  *
  * The vocabulary is the open document and nothing else: there is no index
  * behind it, so every query re-reads `context.state.doc` and no staleness rule
- * is needed.
+ * is needed. It carries no length floor, because the setting is a trigger
+ * threshold and not a vocabulary rule.
  */
 export function bufferWordCompletions(
 	options: BufferWordSourceOptions,
@@ -160,11 +164,9 @@ export function bufferWordCompletions(
 		}
 
 		const prefix = typed.text.toLowerCase();
-		const labels = bufferVocabulary(
-			context.state.doc.toString(),
-			typed.from,
-			policy.minWordLength,
-		).filter((label) => label.toLowerCase().startsWith(prefix));
+		const labels = bufferVocabulary(context.state.doc.toString(), typed.from).filter((label) =>
+			label.toLowerCase().startsWith(prefix),
+		);
 
 		if (labels.length === 0) return null;
 
@@ -190,11 +192,7 @@ export function bufferWordCompletions(
  * corpus behind it, so frequency would make the list jump as the file grows.
  * The token under the cursor is skipped: it is the prefix being typed.
  */
-function bufferVocabulary(
-	text: string,
-	typedFrom: number,
-	minWordLength: number,
-): string[] {
+function bufferVocabulary(text: string, typedFrom: number): string[] {
 	const seen = new Set<string>();
 	const labels: string[] = [];
 	// matchAll clones the pattern, so the shared regex keeps its position.
@@ -202,7 +200,7 @@ function bufferVocabulary(
 		const start = match.index;
 		if (start === typedFrom) continue;
 		const label = match[0];
-		if (label.length < minWordLength || seen.has(label)) continue;
+		if (seen.has(label)) continue;
 		seen.add(label);
 		labels.push(label);
 	}
