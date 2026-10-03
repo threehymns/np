@@ -1,6 +1,8 @@
+import { Text } from "@codemirror/state";
+import { Chunk } from "@codemirror/merge";
 import { DocumentSession } from "../../../core/src/document.svelte";
 import { toURI, type FileOrigin, type Storage } from "../../../core/src/storage";
-import type { GitChange } from "../../../core/src/project/vcs";
+import { DEFAULT_DIFF_CONFIG, type GitChange } from "../../../core/src/project/vcs";
 
 /**
  * Shared-Document binding for the split Diff Viewer Working-copy pane
@@ -60,6 +62,31 @@ export function isSplitWorkingCopyEditable(
 ): boolean {
 	if (status === "D") return false;
 	return boundDoc !== undefined;
+}
+
+/**
+ * Deleted files render the Original pane only (issue #272): there is no
+ * working-copy surface to type into, so no binding and no b-pane.
+ */
+export function isOriginalOnly(status: GitChange["status"]): boolean {
+	return status === "D";
+}
+
+/**
+ * Display/navigation hunks of the base snapshot against live working-copy
+ * text (issue #272). A version-control refresh replaces the snapshot's
+ * original/staged sides while the bound Document keeps unsaved pane edits,
+ * so hunks re-derive around Document content instead of going stale — and
+ * typing above a hunk shifts the hunks below it. Unbound callers pass the
+ * snapshot's modified content, which reduces to the stored diff.
+ */
+export function computeLiveHunks(
+	originalContent: string,
+	effectiveModifiedContent: string
+): readonly Chunk[] {
+	const origText = Text.of(originalContent.split(/\r?\n/));
+	const modText = Text.of(effectiveModifiedContent.split(/\r?\n/));
+	return Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG);
 }
 
 /**

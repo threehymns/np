@@ -7,6 +7,8 @@ import {
 	originForDiffFilepath,
 	findBoundDocument,
 	isSplitWorkingCopyEditable,
+	isOriginalOnly,
+	computeLiveHunks,
 	resolveSplitRightContent,
 	isDiffHeaderDirty,
 	ensureSplitDocument
@@ -27,6 +29,14 @@ function makeChange(filepath: string, status: "M" | "A" | "D" | "U" = "M") {
 		deletions: 0,
 		diff: "",
 		staged: false
+	};
+}
+
+function makeCombinedChange(filepath: string) {
+	return {
+		...makeChange(filepath, "M"),
+		staged: false,
+		combined: true
 	};
 }
 
@@ -179,6 +189,85 @@ describe("diff split Working-copy binding (#269)", () => {
 			const storage = createMockStorage();
 			const scope = { documents: [] as DocumentSession[], storage, rootOrigin: null, coversOrigin: () => false };
 			expect(ensureSplitDocument(scope, new Map(), makeChange("src/a.ts"), "x")).toBeUndefined();
+		});
+
+		it("binds untracked files from working-tree content (editable)", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("new.txt", "U"), "draft content\n");
+			expect(doc).toBeDefined();
+			expect(doc!.content).toBe("draft content\n");
+			expect(isSplitWorkingCopyEditable("U", doc)).toBe(true);
+		});
+
+		it("binds combined staged-plus-unstaged files without touching the index", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeCombinedChange("src/a.ts"), "working tree\n");
+			expect(doc).toBeDefined();
+			// Binding only creates the working-tree Document; the module owns
+			// no adapter and performs no index write, so typing through it can
+			// only ever land in working-tree content.
+			expect(isSplitWorkingCopyEditable("M", doc)).toBe(true);
+			expect(ids.get("src/a.ts")).toBe(doc!.id);
+		});
+
+		it("keeps unsaved pane edits when a refresh delivers a new snapshot", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n")!;
+			doc.content = "unsaved pane edits\n";
+			// A refresh cleared the diff cache and re-fetched: same filepath,
+			// new snapshot object. The bound Document (and its edits) win.
+			const rebound = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n");
+			expect(rebound).toBe(doc);
+			expect(rebound!.content).toBe("unsaved pane edits\n");
+			expect(resolveSplitRightContent(rebound, "base working tree\n")).toBe("unsaved pane edits\n");
+		});
+	});
+
+	describe("isOriginalOnly (deleted files, #272)", () => {
+		it("renders the Original pane only for deleted files", () => {
+			expect(isOriginalOnly("D")).toBe(true);
+		});
+
+		it("keeps the working-copy surface for every other status", () => {
+			for (const status of ["M", "A", "U"] as const) {
+				expect(isOriginalOnly(status)).toBe(false);
+			}
+		});
+	});
+
+	describe("computeLiveHunks (refresh-safe display hunks, #272)", () => {
+		it("reports no hunks for identical content", () => {
+			expect(computeLiveHunks("a\nb\n", "a\nb\n")).toHaveLength(0);
+		});
+
+		it("reports no hunks for the empty-baseline fallback (empty vs empty)", () => {
+			expect(computeLiveHunks("", "")).toHaveLength(0);
+		});
+
+		it("derives hunks from live Document content, not the stored snapshot", () => {
+			const original = "line1\nline2\nline3\n";
+			const snapshot = "line1\nline2\nline3\n";
+			const edited = "line1\nline2 edited\nline3\n";
+			// Snapshot is clean: no hunks.
+			expect(computeLiveHunks(original, snapshot)).toHaveLength(0);
+			// The same base against unsaved pane edits: one hunk, positioned
+			// in the live text.
+			const live = computeLiveHunks(original, edited);
+			expect(live).toHaveLength(1);
+			expect(live[0].fromB).toBeLessThan(live[0].toB);
+		});
+
+		it("shifts hunks below an edit above them", () => {
+			const original = "a\nb\nc\nd\ne\nf\ng\nh\n";
+			const before = computeLiveHunks(original, original.replace("g\n", "G edited\n"));
+			// Insert two lines at the top: the hunk around the g edit moves down.
+			const after = computeLiveHunks(original, "x\ny\n" + original.replace("g\n", "G edited\n"));
+			expect(before).toHaveLength(1);
+			const lastAfter = after[after.length - 1];
+			expect(lastAfter.fromB).toBeGreaterThan(before[0].fromB);
 		});
 	});
 });

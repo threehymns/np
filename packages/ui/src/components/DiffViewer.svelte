@@ -19,6 +19,8 @@
 		findBoundDocument,
 		ensureSplitDocument,
 		isSplitWorkingCopyEditable,
+		isOriginalOnly,
+		computeLiveHunks,
 		resolveSplitRightContent,
 		isDiffHeaderDirty
 	} from './diff-split-binding.js';
@@ -198,7 +200,19 @@
 		);
 	}
 
-	type ViewEntry = { inline?: EditorView; split?: MergeView };
+	type ViewEntry = { inline?: EditorView; split?: MergeView | EditorView };
+
+	// A split slot holds either the MergeView (ordinary files) or the single
+	// read-only Original pane view (deleted files, #272). Unwrap to the
+	// focusable EditorViews in b-then-a order.
+	function splitPanes(split: MergeView | EditorView | undefined): EditorView[] {
+		if (!split) return [];
+		if ('a' in split && 'b' in split) {
+			const merge = split as MergeView;
+			return [merge.b, merge.a].filter(Boolean) as EditorView[];
+		}
+		return [split as EditorView];
+	}
 
 	// Map to track active EditorView or MergeView per filepath
 	let editorViews = new Map<string, ViewEntry>();
@@ -276,7 +290,12 @@
 	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
 		if (mode === 'split') {
 			const split = views?.split;
-			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
+			if (split && 'a' in split && 'b' in split) {
+				const merge = split as MergeView;
+				return preferSide === 'a' ? (merge.a || merge.b) : (merge.b || merge.a);
+			}
+			// Deleted files register their single Original pane here (#272).
+			return split as EditorView | undefined;
 		}
 		return views?.inline;
 	}
@@ -346,6 +365,12 @@
 		}
 	}
 
+	function splitSideOf(views: ViewEntry | undefined, v: EditorView): 'a' | 'b' {
+		const split = views?.split;
+		if (split && 'a' in split && (split as MergeView).a === v) return 'a';
+		return 'b';
+	}
+
 	function createFileNavKeymap(filepath: string) {
 		return keymap.of([
 			{
@@ -353,8 +378,7 @@
 				run: (v) => {
 					if (isAtBufferBoundary(v, 'down')) {
 						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'down', side);
+						navigateFromFileEditor(filepath, 'down', splitSideOf(views, v));
 						return true;
 					}
 					return false;
@@ -365,8 +389,7 @@
 				run: (v) => {
 					if (isAtBufferBoundary(v, 'up')) {
 						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'up', side);
+						navigateFromFileEditor(filepath, 'up', splitSideOf(views, v));
 						return true;
 					}
 					return false;
@@ -572,6 +595,9 @@
 	// working-copy text, so they hold no doc positions and can never receive
 	// keystrokes; the editable doc holds working-copy text only, and the
 	// Original side (originalDoc) is never dispatched to from here.
+	// Deleted files in split mode reuse this as their single read-only
+	// Original pane (#272) via `registerAs: 'split'`; inline mode always
+	// registers as inline.
 	function setupEditor(
 		node: HTMLDivElement,
 		options: {
@@ -584,6 +610,7 @@
 			wrap: boolean;
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
+			registerAs?: 'inline' | 'split';
 		}
 	) {
 		let view: EditorView | undefined;
@@ -645,7 +672,11 @@
 				parent: node
 			});
 			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
-			registerEditorView(currentOptions.filepath, { inline: view });
+			if (currentOptions.registerAs === 'split') {
+				registerEditorView(currentOptions.filepath, { split: view });
+			} else {
+				registerEditorView(currentOptions.filepath, { inline: view });
+			}
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view, () => currentOptions.filepath);
@@ -737,14 +768,15 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				untrackCursorFocus?.();
+				const slot = currentOptions.registerAs === 'split' ? 'split' : 'inline';
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
-					delete existing.inline;
-					if (!existing.split) editorViews.delete(currentOptions.filepath);
+					delete existing[slot];
+					if (!existing.inline && !existing.split) editorViews.delete(currentOptions.filepath);
 				}
-				// The inline view is gone: settle its waiters now instead of
+				// The view is gone: settle its slot's waiters now instead of
 				// leaving them for the backstop or a stale registration.
-				abortResolvers(currentOptions.filepath, 'inline');
+				abortResolvers(currentOptions.filepath, slot);
 				view?.destroy();
 			}
 		};
@@ -1424,16 +1456,24 @@
 		posB: number;
 	}
 
-	// Compute all hunks across expanded active changes as a $derived signal (skipping collapsed files)
+	// Compute all hunks across expanded active changes as a $derived signal (skipping collapsed files).
+	// Hunks derive from the live working-copy text — the bound Document when
+	// one exists, so unsaved pane edits move navigation with the typing —
+	// against the freshly loaded base snapshot (#272). A version-control
+	// refresh replaces the snapshot (new original/staged sides) while the
+	// Document keeps the edits, and this re-derives around them.
 	let allHunks = $derived.by(() => {
 		const list: HunkTarget[] = [];
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
 			const diff = resolveFileDiff(change);
-			if (!diff || (!diff.originalContent && !diff.modifiedContent)) return;
+			if (!diff) return;
+			const bound = findSplitDoc(change.filepath);
+			const effectiveModified = bound ? bound.content : diff.modifiedContent;
+			if (!diff.originalContent && !effectiveModified) return;
 
-			const { hunks } = getOrComputeDiffHunks(diff, change.staged);
+			const hunks = computeLiveHunks(diff.originalContent, effectiveModified);
 			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
@@ -1449,14 +1489,14 @@
 	let lastTargetHunkIndex = $state<number>(-1);
 
 	function getActiveCursorLocation(): { filepath: string; pos: number } | null {
-		// Check focused editor first (checking both split.a and split.b)
+		// Check focused editor first (both split panes, or the single
+		// Original pane of a deleted file).
 		for (const [filepath, views] of editorViews.entries()) {
 			if (viewMode === 'split' && views.split) {
-				if (views.split.b.hasFocus) {
-					return { filepath, pos: views.split.b.state.selection.main.head };
-				}
-				if (views.split.a.hasFocus) {
-					return { filepath, pos: views.split.a.state.selection.main.head };
+				for (const pane of splitPanes(views.split)) {
+					if (pane.hasFocus) {
+						return { filepath, pos: pane.state.selection.main.head };
+					}
 				}
 			} else if (views.inline && views.inline.hasFocus) {
 				return { filepath, pos: views.inline.state.selection.main.head };
@@ -1467,8 +1507,9 @@
 		if (activeFile) {
 			const views = editorViews.get(activeFile);
 			if (viewMode === 'split' && views?.split) {
-				const ed = views.split.b.hasFocus ? views.split.b : (views.split.a.hasFocus ? views.split.a : views.split.b);
-				return { filepath: activeFile, pos: ed.state.selection.main.head };
+				const panes = splitPanes(views.split);
+				const ed = panes.find((p) => p.hasFocus) ?? panes[0];
+				if (ed) return { filepath: activeFile, pos: ed.state.selection.main.head };
 			} else if (views?.inline) {
 				return { filepath: activeFile, pos: views.inline.state.selection.main.head };
 			}
@@ -1840,8 +1881,25 @@
 										}}></div>
 									</div>
 								{:else}
-									<!-- Split View: Side-by-side MergeView of the whole file -->
+									<!-- Split View: Side-by-side MergeView of the whole file.
+									     Deleted files render the Original pane only (#272):
+									     no working-copy surface, nothing to type into. -->
 									{@const splitDoc = findSplitDoc(fileChange.filepath)}
+									{#if isOriginalOnly(fileChange.status)}
+										<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
+											<div use:setupEditor={{
+											content: diff.originalContent,
+											originalContent: diff.originalContent,
+											editable: false,
+											filepath: fileChange.filepath,
+												fileChange: effectiveChange,
+												wrap: appState.prefs.wordWrap,
+												hunks: diff.hunks,
+												unstagedChunks: diff.unstagedChunks,
+												registerAs: 'split'
+											}}></div>
+										</div>
+									{:else}
 									<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
 										<div use:setupMergeView={{
 											leftContent: diff.originalContent,
@@ -1859,6 +1917,7 @@
 											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)
 										}}></div>
 									</div>
+									{/if}
 								{/if}
 							{:else}
 								<div class="flex items-center justify-center p-6 text-muted-foreground text-xs font-mono">
