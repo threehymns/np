@@ -40,6 +40,7 @@ describe("Editor plugin contribution composition and reconfiguration", () => {
 		const host = new PluginHost({ platform: "desktop" });
 		const wrapCompartment = new Compartment();
 		const languageCompartment = new Compartment();
+		const completionCompartment = new Compartment();
 		const vimCompartment = new Compartment();
 
 		const entries: EditorContributionEntry[] = [
@@ -56,6 +57,7 @@ describe("Editor plugin contribution composition and reconfiguration", () => {
 		const extensions = createEditorExtensions({
 			wrapCompartment,
 			languageCompartment,
+			completionCompartment,
 			vimCompartment,
 			editorCompartments: host.editorCompartments,
 			pluginContributions: entries,
@@ -100,6 +102,7 @@ describe("Editor plugin contribution composition and reconfiguration", () => {
 		const host = new PluginHost({ platform: "desktop" });
 		const wrapCompartment = new Compartment();
 		const languageCompartment = new Compartment();
+		const completionCompartment = new Compartment();
 		const vimCompartment = new Compartment();
 
 		const entries: EditorContributionEntry[] = [
@@ -116,6 +119,7 @@ describe("Editor plugin contribution composition and reconfiguration", () => {
 		const extensions = createEditorExtensions({
 			wrapCompartment,
 			languageCompartment,
+			completionCompartment,
 			vimCompartment,
 			editorCompartments: host.editorCompartments,
 			pluginContributions: entries,
