@@ -35,8 +35,21 @@ describe("readBufferWordSettings", () => {
 		expect(readBufferWordSettings(readerFor(), "Markdown")).toEqual({
 			words: "enabled",
 			minWordLength: 3,
+			wordsOverridden: false,
 		});
-		expect(DEFAULT_BUFFER_WORD_SETTINGS).toEqual({ words: "enabled", minWordLength: 3 });
+		expect(DEFAULT_BUFFER_WORD_SETTINGS).toEqual({
+			words: "enabled",
+			minWordLength: 3,
+			wordsOverridden: false,
+		});
+		// One default, one home: the source's fallback is the schema's number,
+		// not a second copy of it that could drift.
+		expect(DEFAULT_BUFFER_WORD_SETTINGS.minWordLength).toBe(
+			EDITOR_SCHEMA.properties.min_word_length.default,
+		);
+		expect(DEFAULT_BUFFER_WORD_SETTINGS.words).toBe(
+			EDITOR_SCHEMA.properties.words.default,
+		);
 	});
 
 	it("reads the editor-level values once stored", () => {
@@ -45,6 +58,7 @@ describe("readBufferWordSettings", () => {
 		expect(readBufferWordSettings(read, "TypeScript")).toEqual({
 			words: "disabled",
 			minWordLength: 5,
+			wordsOverridden: false,
 		});
 	});
 
@@ -59,20 +73,38 @@ describe("readBufferWordSettings", () => {
 		expect(readBufferWordSettings(read, "Markdown")).toEqual({
 			words: "disabled",
 			minWordLength: 3,
+			wordsOverridden: true,
 		});
 		expect(readBufferWordSettings(read, "TypeScript")).toEqual({
 			words: "enabled",
 			minWordLength: 2,
+			wordsOverridden: false,
 		});
 		// Anything unnamed keeps the editor-level value.
 		expect(readBufferWordSettings(read, "Rust")).toEqual({
 			words: "enabled",
 			minWordLength: 3,
+			wordsOverridden: false,
 		});
 		expect(readBufferWordSettings(read, null)).toEqual({
 			words: "enabled",
 			minWordLength: 3,
+			wordsOverridden: false,
 		});
+	});
+
+	it("reports an override that says nothing as no opinion", () => {
+		// The flag exists so prose silence can tell "unset" from "disabled"; an
+		// override carrying only `min_word_length` did not rule on `words`, so it
+		// must not read as permission to speak.
+		const read = readerFor({ languages: { Markdown: { min_word_length: 5 } } });
+
+		expect(readBufferWordSettings(read, "Markdown")).toEqual({
+			words: "enabled",
+			minWordLength: 5,
+			wordsOverridden: false,
+		});
+		expect(readBufferWordSettings(readerFor(), "Markdown").wordsOverridden).toBe(false);
 	});
 
 	it("lets a language override shadow the editor-level value", () => {
@@ -83,6 +115,9 @@ describe("readBufferWordSettings", () => {
 
 		expect(readBufferWordSettings(read, "TypeScript").words).toBe("enabled");
 		expect(readBufferWordSettings(read, "Markdown").words).toBe("disabled");
+		// A disabled editor-level value is not an override: prose stays quiet
+		// and the flag stays false for the language that did not ask.
+		expect(readBufferWordSettings(read, "Markdown").wordsOverridden).toBe(false);
 	});
 
 	it("degrades to the editor-level values for a malformed override map", () => {
@@ -94,10 +129,13 @@ describe("readBufferWordSettings", () => {
 
 			// The schema already refuses to store a non-object map, so reaching
 			// the resolver with one means the document was hand-edited past
-			// validation. It must cost the overrides and nothing else.
+			// validation. It must cost the overrides and nothing else — and the
+			// override flag has to go with them, or prose would read the
+			// hand-edited map as permission to speak.
 			expect(readBufferWordSettings(read, "Markdown")).toEqual({
 				words: "enabled",
 				minWordLength: 3,
+				wordsOverridden: false,
 			});
 		}
 	});

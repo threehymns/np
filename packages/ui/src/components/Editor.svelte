@@ -31,6 +31,7 @@
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
 	let pendingScrollGen = 0;
+	let completionChainGen = 0;
 	const wrapCompartment = new Compartment();
 	const languageCompartment = new Compartment();
 	// Sits after the language compartment so word completions append to the note
@@ -319,37 +320,46 @@
 	// doc.language for the same reason the language compartment above does, the
 	// settings revision because the global popup toggle lives in
 	// `autocompletion({ activateOnTyping })` — the only lever that reaches the
-	// language-provided sources, and the snippet revision so enabling, disabling
-	// or refreshing a plugin pack rebuilds the chain instead of leaving the
-	// previous triggers behind. The word source reads its own settings per
-	// query, so a per-language override needs no reconfiguration of its own.
+	// language-provided sources — and `prefs.vimMode` because the modal
+	// keymap (`Ctrl-y` instead of Enter) lives in the same compartment. The
+	// snippet revision so enabling, disabling or refreshing a plugin pack
+	// rebuilds the chain instead of leaving the previous triggers behind. The
+	// word source reads its own settings per query, so a per-language override
+	// needs no reconfiguration of its own.
 	$effect(() => {
 		const _langRev = appState.plugins?.languageRevision;
 		const _settingsRev = appState.prefs.settingsVersion;
 		const _snippetRev = appState.plugins?.snippetRevision;
+		const vimEnabled = appState.prefs.vimMode;
 		const lang = doc.language;
 		const languageName = lang?.name ?? null;
-		const snippets = languageName
-			? (appState.plugins?.getSnippetsForLanguage(languageName) ?? [])
-			: [];
+		// The source filters the whole registry itself, so handing it every
+		// registered snippet is one read rather than a read plus a filter that
+		// says the same thing.
+		const snippets = appState.plugins?.getSnippets() ?? [];
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
+			// Language loading is async, so two runs can be in flight at once.
+			// The generation makes the loser a no-op instead of letting it land
+			// last and hand the editor back the previous language's chain.
+			const gen = ++completionChainGen;
+			const targetView = view;
 			resolveActiveLanguage(lang).then((language) => {
-				if (view) {
-					view.dispatch({
-						effects: completionCompartment.reconfigure(
-							completionCompartmentExtensions({
-								language,
-								languageName,
-								snippets,
-								automaticCompletions: readAutomaticCompletions(readSetting),
-								readSettings: () =>
-									readBufferWordSettings(readSetting, languageName),
-							}),
-						),
-					});
-				}
+				if (gen !== completionChainGen || targetView !== view) return;
+				targetView.dispatch({
+					effects: completionCompartment.reconfigure(
+						completionCompartmentExtensions({
+							language,
+							languageName,
+							snippets,
+							vimEnabled,
+							automaticCompletions: readAutomaticCompletions(readSetting),
+							readSettings: () =>
+								readBufferWordSettings(readSetting, languageName),
+						}),
+					),
+				});
 			});
 		}
 	});

@@ -14,8 +14,9 @@ function svelteSnippets(): SnippetContribution[] {
 }
 
 function tsSnippets(): SnippetContribution[] {
+	// Plain body, per `SnippetContribution.body`: no `$1`, no tab stops.
 	return [
-		{ id: 'log', language: 'typescript', trigger: 'log', body: 'console.log($1);', description: 'Log' }
+		{ id: 'log', language: 'typescript', trigger: 'log', body: 'console.log(value);', description: 'Log' }
 	];
 }
 
@@ -63,17 +64,17 @@ describe('Snippet contribution interface (#262)', () => {
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
-	it('reaches plugin code through the host proxy, not just through the host', async () => {
+it('reaches plugin code through the host proxy, not just through the host', async () => {
 		// The proxy allow-list is hand-written: a member missing from it makes
 		// plugin code throw UnknownPluginHostMethodError at activation.
 		const host = new PluginHost();
 		let viaProxy: PluginHostInterface | null = null;
 		host.register({
 			manifest: { id: 'probe', name: 'Probe', version: 0 },
-			setup: (received) => {
-				viaProxy = received;
-				received.registerSnippets('probe', svelteSnippets());
-			}
+				setup: (received) => {
+					viaProxy = received;
+					received.registerSnippets('probe', svelteSnippets());
+				}
 		});
 		await host.activate('probe');
 
@@ -81,11 +82,54 @@ describe('Snippet contribution interface (#262)', () => {
 		expect(pluginHost.getSnippets()).toHaveLength(1);
 		expect(pluginHost.getSnippetsForLanguage('SVELTE')).toHaveLength(1);
 		expect(pluginHost.snippetRevision).toBeGreaterThan(0);
-		expect(() => pluginHost.refreshSnippets()).not.toThrow();
-		expect(() => pluginHost.rebuildSnippets()).not.toThrow();
+		// A reload must be lossless: same records, same owners, no duplicates,
+		// and the revision bumped so the editor rebuilds its chain.
+		const before = shape(host);
+		const revisionBefore = pluginHost.snippetRevision;
+		pluginHost.refreshSnippets();
+		expect(shape(host)).toEqual(before);
+		expect(host.getSnippets().map((s) => s.owner)).toEqual(['probe']);
+		expect(pluginHost.snippetRevision).toBeGreaterThan(revisionBefore);
 		pluginHost.removePluginSnippets('probe');
 		expect(pluginHost.getSnippets()).toEqual([]);
 		await host.deactivate('probe');
+	});
+
+	it('reloads the same records without duplicate errors, even when a refresh transform re-emits them', () => {
+		// The failure mode this guards: a refresh transform that rebuilds every
+		// record with a fresh object identity looks like a fresh claim. Ownership
+		// must follow the record, not the transform that ran last — otherwise a
+		// reload either mis-attributes the record or raises a duplicate error
+		// against the plugin that actually wrote it.
+		const host = new PluginHost();
+		host.registerSnippets('plug-a', svelteSnippets());
+		const before = host.getSnippets();
+
+		host.registerSnippetTransform('refresh', (previous) =>
+			new Map([...previous].map(([id, snippet]) => [id, { ...snippet }]))
+		);
+		expect(() => host.refreshSnippets()).not.toThrow();
+
+		const after = host.getSnippets();
+		expect(after).toEqual(before);
+		expect(after.map((s) => s.owner)).toEqual(['plug-a']);
+
+		// And it stays stable across repeated refreshes.
+		host.rebuildSnippets();
+		expect(host.getSnippets()).toEqual(before);
+		expect(() => host.refreshSnippets()).not.toThrow();
+		expect(host.getSnippets().map((s) => s.owner)).toEqual(['plug-a']);
+	});
+
+	it('still reports a genuine second claim of one id', () => {
+		const host = new PluginHost();
+		host.registerSnippets('plug-a', svelteSnippets());
+
+		expect(() =>
+			host.registerSnippets('plug-b', [
+				{ id: 'each', language: 'svelte', trigger: 'each', body: 'b', description: 'B' }
+			])
+		).toThrow(DuplicateSnippetIdError);
 	});
 
 	it('binds the owner to the registering plugin, not to the contribution', () => {
@@ -157,6 +201,19 @@ describe('Snippet contribution interface (#262)', () => {
 });
 
 describe('Snippet registry replay', () => {
+	it('carries the body through the registry verbatim, expanding nothing', () => {
+		// `SnippetContribution.body` is plain text: no placeholders, no snippet
+		// variables. Nothing expands it today, and this is the assertion that
+		// keeps that true — a `$1` reaching the document would be a placeholder
+		// the contract never promised to handle.
+		const host = new PluginHost();
+		host.registerSnippets('plug-a', tsSnippets());
+
+		const [snippet] = host.getSnippets();
+		expect(snippet.body).toBe('console.log(value);');
+		expect(snippet.body).not.toContain('$1');
+	});
+
 	it('replays from empty: remove-one and refresh match a clean build', async () => {
 		const build = async () => {
 			const h = new PluginHost();
