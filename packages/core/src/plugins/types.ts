@@ -14,6 +14,11 @@ import type {
 	LanguageTransform,
 	RegisteredLanguage
 } from './languages';
+import type {
+	SnippetContribution,
+	SnippetTransform,
+	RegisteredSnippet
+} from './completions';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -296,6 +301,20 @@ export interface PluginHostInterface {
 	getLanguageForFile(filename: string): RegisteredLanguage | null;
 	getLanguageConflicts(): LanguageConflict[];
 	readonly languageRevision: number;
+
+	// Snippet registry (spec #194). A sibling data registry: plugins declare
+	// typed triggers with plain-text bodies joined on a registered language,
+	// and the host rebuilds them from plugin transforms so the editor can turn
+	// the current language's records into a completion source.
+	registerSnippet(pluginId: string, contribution: SnippetContribution): void;
+	registerSnippets(pluginId: string, contributions: readonly SnippetContribution[]): void;
+	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void;
+	removePluginSnippets(pluginId: string): void;
+	rebuildSnippets(): void;
+	refreshSnippets(): void;
+	getSnippets(): RegisteredSnippet[];
+	getSnippetsForLanguage(language: string): RegisteredSnippet[];
+	readonly snippetRevision: number;
 
 	// Document text changes go through a host document-edit operation
 	// applied as one undo transaction with revision checks.

@@ -316,16 +316,22 @@
 	// language one because a source registered there appends to the language's
 	// own autocomplete chain rather than replacing it (`override` would drop
 	// the table and wikilink sources). Reads the language revision with
-	// doc.language for the same reason the language compartment above does, and
-	// the settings revision because the global popup toggle lives in
+	// doc.language for the same reason the language compartment above does, the
+	// settings revision because the global popup toggle lives in
 	// `autocompletion({ activateOnTyping })` — the only lever that reaches the
-	// language-provided sources. The word source reads its own settings per
+	// language-provided sources, and the snippet revision so enabling, disabling
+	// or refreshing a plugin pack rebuilds the chain instead of leaving the
+	// previous triggers behind. The word source reads its own settings per
 	// query, so a per-language override needs no reconfiguration of its own.
 	$effect(() => {
 		const _langRev = appState.plugins?.languageRevision;
 		const _settingsRev = appState.prefs.settingsVersion;
+		const _snippetRev = appState.plugins?.snippetRevision;
 		const lang = doc.language;
 		const languageName = lang?.name ?? null;
+		const snippets = languageName
+			? (appState.plugins?.getSnippetsForLanguage(languageName) ?? [])
+			: [];
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -336,6 +342,7 @@
 							completionCompartmentExtensions({
 								language,
 								languageName,
+								snippets,
 								automaticCompletions: readAutomaticCompletions(readSetting),
 								readSettings: () =>
 									readBufferWordSettings(readSetting, languageName),
