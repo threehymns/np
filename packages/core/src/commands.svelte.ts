@@ -5,7 +5,7 @@ import { Chunk } from "@codemirror/merge";
 import type { AppState } from "./state.svelte";
 
 import { transformer } from "./transformer";
-import { allLanguages } from "./editor/language.svelte";
+import { getActiveLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import { DEFAULT_DIFF_CONFIG } from "./project/vcs";
 import {
@@ -764,28 +764,9 @@ export function registerCoreCommands(appState: AppState) {
 						appState.commandPalette.reset();
 					}
 				},
-				...allLanguages.map(lang => {
+				...getActiveLanguages().map(lang => {
 					const isCurrent = currentDoc.userLanguageOverride === lang.name ||
 						(currentDoc.userLanguageOverride === null && currentDoc.language?.name === lang.name);
-
-					let packageId = '';
-					const nameMap: Record<string, string> = {
-						"C++": "@codemirror/lang-cpp",
-						"HTML": "@codemirror/lang-html",
-						"Java": "@codemirror/lang-java",
-						"JavaScript": "@codemirror/lang-javascript",
-						"TypeScript": "@codemirror/lang-javascript",
-						"JSX": "@codemirror/lang-javascript",
-						"TSX": "@codemirror/lang-javascript",
-						"JSON": "@codemirror/lang-json",
-						"Markdown": "@codemirror/lang-markdown",
-						"Python": "@codemirror/lang-python",
-						"Rust": "@codemirror/lang-rust",
-						"SQL": "@codemirror/lang-sql",
-						"Svelte": "@replit/codemirror-lang-svelte",
-						"CSS": "@codemirror/lang-css",
-					};
-					packageId = nameMap[lang.name] || `@codemirror/lang-${lang.name.toLowerCase()}`;
 
 					return {
 						id: lang.name,

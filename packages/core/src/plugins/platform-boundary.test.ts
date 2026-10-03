@@ -72,7 +72,7 @@ describe('Platform separation static boundary', () => {
 	});
 
 	it('keeps the bundled manifests platform-neutral on disk', () => {
-		for (const file of ['git/manifest.ts']) {
+		for (const file of ['git/manifest.ts', 'svelte-language/manifest.ts']) {
 			const filePath = join(import.meta.dir, file);
 			const result = checkManifestFile(filePath);
 			expect(result.valid).toBe(true);
@@ -89,6 +89,7 @@ describe('Platform separation static boundary', () => {
 		);
 
 		expect(coreEntry).not.toMatch(/from ['"]\.\/git\/(?:index|gutter|ui)['"]/);
+		expect(coreEntry).not.toMatch(/from ['"]\.\/svelte-language\/index['"]/);
 		expect(uiBridge).not.toMatch(/from ['"]\.\/git(?:\/index)?['"]/);
 		expect(uiBridge).toMatch(/import\(['"]\.\/git['"]\)/);
 	});
@@ -124,13 +125,17 @@ describe('Platform separation static boundary', () => {
 			'editor.ts',
 			'events.ts',
 			'errors.ts',
+			'languages.ts',
 			'git/index.ts',
 			'git/commands.ts',
 			'git/lifecycle.ts',
 			'git/gutter.ts',
 			'git/ui.ts',
 			'git/registration.ts',
-			'git/manifest.ts'
+			'git/manifest.ts',
+			'svelte-language/index.ts',
+			'svelte-language/registration.ts',
+			'svelte-language/manifest.ts'
 		];
 		const offenders: string[] = [];
 		for (const file of neutralModules) {

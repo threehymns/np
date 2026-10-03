@@ -64,7 +64,7 @@ if (CodeMirror && CodeMirror.prototype) {
 	}
 }
 
-import { allLanguages } from "@np/core";
+import { getActiveLanguages } from "@np/core";
 import { markdownHighlight } from "./extensions/highlight";
 import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
@@ -122,7 +122,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 		// GFM, WikiLinkExtension) and must be the sole language.
 		return [
 			markdown({
-				codeLanguages: allLanguages as any,
+				codeLanguages: getActiveLanguages() as any,
 				extensions: markdownFeatureConfigs,
 			}),
 			markdownLanguage.data.of({
@@ -311,7 +311,7 @@ export * from "./extensions/html";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
-export { allLanguages, LanguageSupport } from "@np/core";
+export { allLanguages, getActiveLanguages, LanguageSupport } from "@np/core";
 export { SelectionState, selectionState } from "@np/core";
 
 let originalMethods: Map<any, { setText: any; pushText: any }> = new Map();
