@@ -92,6 +92,7 @@ export class LspLogStore {
 	private readonly buffers = new Map<string, LspLogEntry[]>();
 	private nextSequence = 0;
 	private dropped = 0;
+	private readonly listeners = new Set<() => void>();
 
 	constructor(private readonly capacityPerServer: number = DEFAULT_LOG_CAPACITY_PER_SERVER) {}
 
@@ -101,6 +102,7 @@ export class LspLogStore {
 		const result = appendCapped(existing, entry, this.capacityPerServer);
 		this.buffers.set(entry.server, result.entries);
 		this.dropped += result.dropped;
+		this.notify();
 		return entry;
 	}
 
@@ -147,9 +149,11 @@ export class LspLogStore {
 		if (server === undefined) {
 			this.buffers.clear();
 			this.dropped = 0;
+			this.notify();
 			return;
 		}
 		this.buffers.delete(server);
+		this.notify();
 	}
 
 	/** Entries the cap discarded, so a truncated buffer never reads as complete. */
@@ -160,6 +164,22 @@ export class LspLogStore {
 	/** Bumped on every append and clear, so a view can re-read without polling. */
 	get revision(): number {
 		return this.nextSequence;
+	}
+
+	/**
+	 * Notified whenever a buffer changes, so the Logs tab re-reads instead of
+	 * polling. Pure data and plain callbacks on purpose: the store must not need
+	 * a rune to be observable.
+	 */
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => {
+			this.listeners.delete(listener);
+		};
+	}
+
+	private notify(): void {
+		for (const listener of [...this.listeners]) listener();
 	}
 }
 

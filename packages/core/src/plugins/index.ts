@@ -34,3 +34,13 @@ export { manifest as svelteLanguageManifest } from './svelte-language/manifest';
 export { svelteLanguageRegistration } from './svelte-language/registration';
 export { manifest as lspManifest } from './lsp/manifest';
 export { lspRegistration } from './lsp/registration';
+// Types only: the UI layer's LSP components read the plugin's own services and
+// render its status rows, and type-only exports keep the implementation — the
+// client, the process and the buffers — behind the plugin's lazy import.
+export type {
+	LspRuntime,
+	LspServerState,
+	LspServerStatus
+} from './lsp/lifecycle';
+export type { LspLogStore, LspLogEntry, LspLogKind, LspLogLevel } from './lsp/logs';
+export type { LspServerStatusRow, LspStatusDetail } from './lsp/status';

@@ -20,6 +20,9 @@
  *                   reachable on a server that *is* running
  *   --stderr <text> write a line to stderr on startup (multi-byte by default)
  *   --echo-text     include a multi-byte string in the `initialize` reply
+ *   --diagnostics   publish one error and one warning for every document that
+ *                   is opened or changed, which is the notification the
+ *                   diagnostics slice renders
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
  * without making the suite slow: a `textDocument/completion` that arrives later
@@ -31,6 +34,7 @@ interface StubOptions {
 	delayMs: number;
 	stderr: string | null;
 	echoText: boolean;
+	diagnostics: boolean;
 }
 
 function readOption(argv: string[], name: string): string | undefined {
@@ -48,7 +52,8 @@ function parseOptions(argv: string[]): StubOptions {
 				: 'answer',
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
-		echoText: argv.includes('--echo-text')
+		echoText: argv.includes('--echo-text'),
+		diagnostics: argv.includes('--diagnostics')
 	};
 }
 
@@ -220,9 +225,13 @@ function handle(message: JsonRpcMessage): void {
 		return;
 	}
 	if (options.mode === 'silent') return;
-	if (message.method === 'textDocument/didOpen') {
-		const text = (message.params as { textDocument?: { text?: string } } | undefined)?.textDocument?.text;
-		process.stderr.write(`stub server: opened a document of ${text?.length ?? 0} chars\n`);
+	if (message.method === 'textDocument/didOpen' || message.method === 'textDocument/didChange') {
+		const document = (message.params as { textDocument?: { uri?: string; text?: string } } | undefined)
+			?.textDocument;
+		if (options.diagnostics) publishDiagnostics(document?.uri);
+		if (message.method === 'textDocument/didOpen') {
+			process.stderr.write(`stub server: opened a document of ${document?.text?.length ?? 0} chars\n`);
+		}
 		return;
 	}
 	if (message.method === 'textDocument/completion') {
@@ -307,6 +316,37 @@ function completionRange(message: JsonRpcMessage, back: number): {
 	const line = typeof position?.line === 'number' ? position.line : 0;
 	const at = typeof position?.character === 'number' ? position.character : 0;
 	return { line, character: Math.max(0, at - back) };
+}
+
+/**
+ * One error on the first line and one warning on the second, at fixed offsets,
+ * so a test can assert exact marks rather than "something was marked". Chunked
+ * like every other reply: a notification is framed exactly like a request, and
+ * the framing is what is under test.
+ */
+function publishDiagnostics(uri: string | undefined): void {
+	if (!uri) return;
+	send({
+		method: 'textDocument/publishDiagnostics',
+		params: {
+			uri,
+			diagnostics: [
+				{
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+					severity: 1,
+					code: 2304,
+					source: 'stub',
+					message: 'stub server: cannot find name'
+				},
+				{
+					range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } },
+					severity: 2,
+					source: 'stub',
+					message: 'stub server: unused variable'
+				}
+			]
+		}
+	}, true);
 }
 
 process.stdout.on('error', () => {

@@ -4,8 +4,10 @@ import type { PluginHostInterface } from '../types';
 import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
 import { parseServerCompletions, type ServerCompletionList } from './completions';
+import { parsePublishDiagnostics, type LspDiagnosticsStore } from './diagnostics';
 import type { LspLogStore } from './logs';
 import { dirnameOf, findProjectRoot, toFileUri } from './root';
+import { toServerStatusRows, type LspServerStatusRow } from './status';
 import { resolveLspTransport } from './transport';
 
 /**
@@ -89,6 +91,11 @@ export interface LspRuntimeOptions {
 	readonly pluginId: string;
 	readonly logs: LspLogStore;
 	/**
+	 * Where server findings are filed. Optional because a runtime with nowhere to
+	 * put diagnostics is a working runtime: the notification is simply dropped.
+	 */
+	readonly diagnostics?: LspDiagnosticsStore;
+	/**
 	 * Overrides the transport service. This is the injection seam tests use;
 	 * without it the seam is resolved from `LSP_TRANSPORT_SERVICE_KEY` on every
 	 * use, so an app that publishes it late still gets it.
@@ -139,6 +146,8 @@ export class LspRuntime {
 	 * on disk do not, and the registry's own revision counter says so.
 	 */
 	private readonly resolvedTargets = new Map<string, { revision: number; target: LspTarget | null }>();
+	private readonly statusListeners = new Set<() => void>();
+	private statusRevision = 0;
 	private disposed = false;
 
 	constructor(private readonly options: LspRuntimeOptions) {}
@@ -152,6 +161,34 @@ export class LspRuntime {
 			state: entry.state,
 			pid: entry.client?.pid
 		}));
+	}
+
+	/**
+	 * The status menu's rows: the same running state, plus the details slot that
+	 * the version and memory follow-ups will fill. Reads the same table the
+	 * lifecycle tests assert, so the menu cannot report a state the runtime does
+	 * not hold.
+	 */
+	getStatusRows(): LspServerStatusRow[] {
+		return toServerStatusRows(this.getServers());
+	}
+
+	/**
+	 * Notified when the server set or any server's state changes. A plain
+	 * callback rather than a rune: the runtime is process code and stays usable
+	 * without a Svelte compiler, and the UI layer owns the reactivity that reads
+	 * it.
+	 */
+	subscribe(listener: () => void): () => void {
+		this.statusListeners.add(listener);
+		return () => {
+			this.statusListeners.delete(listener);
+		};
+	}
+
+	/** Bumped on every status change, so a consumer can notice without subscribing. */
+	get revision(): number {
+		return this.statusRevision;
 	}
 
 	/**
@@ -343,6 +380,7 @@ export class LspRuntime {
 		this.openDocuments.clear();
 		this.documentServers.clear();
 		this.resolvedTargets.clear();
+		this.statusChanged();
 	}
 
 	/** The memoized target for a file, re-resolved whenever the registry moves. */
@@ -461,6 +499,9 @@ export class LspRuntime {
 			stoppedByUser: false
 		};
 		this.servers.set(server, entry);
+		// The menu shows a starting server as such, so the status changes as soon
+		// as the entry exists rather than when the handshake comes back.
+		this.statusChanged();
 
 		// Re-resolved here rather than handed in: `resolveTarget` and the start
 		// are separated by the root walk, and a transport published in between
@@ -469,6 +510,7 @@ export class LspRuntime {
 		if (!transport) {
 			entry.state = 'failed';
 			this.log(entry, 'info', `No LSP transport is published, so "${server}" cannot start.`);
+			this.statusChanged();
 			return entry;
 		}
 		// Named `serverProcess`, not `process`: a local named after the global
@@ -486,7 +528,8 @@ export class LspRuntime {
 				process: serverProcess,
 				server,
 				logs: this.options.logs,
-				initializeTimeoutMs: this.options.initializeTimeoutMs
+				initializeTimeoutMs: this.options.initializeTimeoutMs,
+				onNotification: (method, params) => this.onNotification(server, method, params)
 			});
 			entry.client = client;
 			await client.initialize({
@@ -502,6 +545,7 @@ export class LspRuntime {
 				return entry;
 			}
 			entry.state = 'running';
+			this.statusChanged();
 			this.log(
 				entry,
 				'info',
@@ -515,6 +559,7 @@ export class LspRuntime {
 			entry.client?.dispose();
 			entry.client = undefined;
 			spawnedProcess?.kill();
+			this.statusChanged();
 			this.log(entry, 'error', `Failed to start ${descriptor.command}: ${describe(error)}`);
 		}
 		return entry;
@@ -542,11 +587,29 @@ export class LspRuntime {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
+		// Whatever this server reported describes a process that is no longer
+		// watching, and a restart that kept them would look like it did nothing.
+		this.options.diagnostics?.dropServer(entry.server);
+		this.statusChanged();
 		if (!client) return;
 		// The handshake is best-effort; a server that ignores `shutdown` is still
 		// killed inside `stop()`, which is what keeps a disable orphan-free.
 		await client.stop();
 		this.log(entry, 'info', `Stopped at ${entry.root}.`);
+	}
+
+	/**
+	 * Server-to-client notification. Only diagnostics are consumed here; every
+	 * other notification stays in the protocol trace, which is the whole of what
+	 * an unhandled one is good for. The parser is total over JSON — anything it
+	 * cannot use comes back as null — so nothing here can fail the document or
+	 * the server.
+	 */
+	private onNotification(server: string, method: string, params: unknown): void {
+		if (method !== 'textDocument/publishDiagnostics') return;
+		const report = parsePublishDiagnostics(server, params);
+		if (!report) return;
+		this.options.diagnostics?.publish(report);
 	}
 
 	private log(entry: RunningServer, level: 'info' | 'warn' | 'error', message: string): void {
@@ -556,6 +619,11 @@ export class LspRuntime {
 			level,
 			message
 		});
+	}
+
+	private statusChanged(): void {
+		this.statusRevision++;
+		for (const listener of [...this.statusListeners]) listener();
 	}
 
 	private reportContained(what: string, error: unknown): void {

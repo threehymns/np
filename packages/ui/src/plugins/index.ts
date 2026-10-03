@@ -2,6 +2,7 @@ import type { PluginHostInterface } from '@np/core';
 import {
 	gitManifest,
 	gitRegistration,
+	lspManifest,
 	lspRegistration,
 	svelteLanguageRegistration,
 	PLUGIN_UI_LOADER_SERVICE_KEY,
@@ -32,6 +33,11 @@ export function registerPluginUiLoader(host: PluginHostInterface): void {
 				case gitManifest.id: {
 					const { provideGitUIComponents } = await import('./git');
 					provideGitUIComponents(host);
+					return;
+				}
+				case lspManifest.id: {
+					const { provideLspUIComponents } = await import('./lsp');
+					provideLspUIComponents(host);
 					return;
 				}
 				default:

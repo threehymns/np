@@ -45,6 +45,19 @@ export interface ProjectLike {
 
 export interface WorkspaceLike {
 	readonly project: ProjectLike;
+	/**
+	 * The document the active tab is showing, or nothing when the active tab is
+	 * not a document. Optional so a test double stays a workspace without
+	 * having to know the question exists.
+	 *
+	 * Read structurally and for one reason: the mounted editor view is not
+	 * plugin surface (ADR 0016), so this is the one generic answer to "which file
+	 * is being edited" a plugin can get without a new host method.
+	 */
+	readonly activeDocument?: {
+		readonly id: string;
+		readonly origin: { readonly path?: string } | null;
+	} | null;
 	tabs: Array<{
 		id: string;
 		type: 'document' | 'diff';

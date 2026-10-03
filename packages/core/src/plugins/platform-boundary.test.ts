@@ -148,12 +148,17 @@ describe('Platform separation static boundary', () => {
 			'svelte-language/manifest.ts',
 			'lsp/index.ts',
 			'lsp/client.ts',
-			'lsp/completions.ts',
+'lsp/completions.ts',
+			'lsp/commands.ts',
 			'lsp/descriptors.ts',
+			'lsp/diagnostic-decorations.ts',
+			'lsp/diagnostics.ts',
 			'lsp/lifecycle.ts',
 			'lsp/logs.ts',
 			'lsp/root.ts',
+			'lsp/status.ts',
 			'lsp/transport.ts',
+			'lsp/ui.ts',
 			'lsp/registration.ts',
 			'lsp/manifest.ts'
 		];

@@ -119,6 +119,13 @@ export interface LspClientOptions {
 	 * document it will never be able to answer.
 	 */
 	readonly initializeTimeoutMs?: number;
+	/**
+	 * Server-to-client notifications, which carry no id and expect no reply.
+	 * Diagnostics arrive this way. A notification the caller does not handle is
+	 * still recorded in the protocol trace, so nothing is lost by having no
+	 * listener at all.
+	 */
+	readonly onNotification?: (method: string, params: unknown) => void;
 }
 
 export class LspRequestError extends Error {
@@ -318,6 +325,13 @@ export class LspClient {
 					level: 'error',
 					message: `Discarded an unparseable message: ${body.slice(0, 200)}`
 				});
+				continue;
+			}
+			if (
+				typeof message.method === 'string' &&
+				(message.id === undefined || message.id === null)
+			) {
+				this.options.onNotification?.(message.method, message.params);
 				continue;
 			}
 			if (typeof message.id === 'number' && (message.result !== undefined || message.error !== undefined)) {
