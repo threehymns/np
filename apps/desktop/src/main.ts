@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
+import { resolveLanguageServerCommand } from './LspCommandResolver.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -358,9 +359,27 @@ function registerIpcHandlers() {
 		}
 	});
 
-	ipcMain.handle('lsp:spawn', async (_event, command: string, args: string[], cwd: string) => {
+	ipcMain.handle('lsp:resolveCommand', async (_event, command: string) => {
+		return resolveLanguageServerCommand(command, app.getAppPath());
+	});
+
+	ipcMain.handle('lsp:spawn', async (
+		_event,
+		plan: { command: string; args: string[]; env?: Record<string, string> },
+		args: string[],
+		cwd: string
+	) => {
 		try {
-			const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+			// The plan was minted by `lsp:resolveCommand` rather than assembled by
+			// the renderer, so a descriptor naming `vtsls` becomes a path in exactly
+			// one place (see LspCommandResolver). The environment is merged here
+			// rather than replaced: a server inherits the app's PATH and locale and
+			// gains the one variable the bundled candidate needs.
+			const child = spawn(plan.command, [...plan.args, ...args], {
+				cwd,
+				stdio: ['pipe', 'pipe', 'pipe'],
+				env: { ...process.env, ...plan.env }
+			});
 			const processId = randomUUID();
 			lspProcesses.set(processId, child);
 			child.on('error', (err) => {
@@ -380,7 +399,9 @@ function registerIpcHandlers() {
 			});
 			return { processId, pid: child.pid ?? null };
 		} catch (err) {
-			throw new Error(`Failed to start language server "${command}": ${(err as Error).message}`);
+			throw new Error(
+				`Failed to start language server "${plan.command}": ${(err as Error).message}`
+			);
 		}
 	});
 

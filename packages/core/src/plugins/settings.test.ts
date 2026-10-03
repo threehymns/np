@@ -427,12 +427,12 @@ describe('Editor completion settings (#261)', () => {
 
 		// Resolved from the schema, not from a stored value: these are the
 		// numbers the acceptance criteria name.
-		expect(prefs.resolve('editor', 'words').value).toBe('enabled');
+		expect(prefs.resolve('editor', 'words').value).toBe('fallback');
 		expect(prefs.resolve('editor', 'min_word_length').value).toBe(3);
 		expect(prefs.resolve('editor', 'automatic_completions').value).toBe(true);
 		expect(prefs.resolve('editor', 'languages').value).toEqual({});
 
-		expect(prefs.completionWords).toBe('enabled');
+		expect(prefs.completionWords).toBe('fallback');
 		expect(prefs.minWordLength).toBe(3);
 		expect(prefs.automaticCompletions).toBe(true);
 		expect(storage.setItemCalls.length).toBe(0);
@@ -484,7 +484,7 @@ describe('Editor completion settings (#261)', () => {
 		});
 		const prefs = new Preferences(storage);
 
-		expect(prefs.completionWords).toBe('enabled');
+		expect(prefs.completionWords).toBe('fallback');
 		expect(prefs.minWordLength).toBe(3);
 		expect(prefs.diagnostics.some((d) => d.key === 'words')).toBe(true);
 		expect(prefs.diagnostics.some((d) => d.key === 'min_word_length')).toBe(true);
@@ -501,7 +501,7 @@ describe('Editor completion settings (#261)', () => {
 
 		expect(prefs.get('editor', 'languages')).toEqual({ Markdown: { words: 'disabled' } });
 		// Editor-level values are untouched by a language override.
-		expect(prefs.completionWords).toBe('enabled');
+		expect(prefs.completionWords).toBe('fallback');
 		expect(prefs.minWordLength).toBe(3);
 	});
 
@@ -509,7 +509,7 @@ describe('Editor completion settings (#261)', () => {
 		const properties = EDITOR_SCHEMA.properties;
 
 		expect(properties.words.type).toBe('string');
-		expect(properties.words.enum).toEqual(['enabled', 'disabled']);
+		expect(properties.words.enum).toEqual(['enabled', 'fallback', 'disabled']);
 		expect(properties.min_word_length.type).toBe('number');
 		expect(properties.min_word_length.minimum).toBe(1);
 		expect(properties.automatic_completions.type).toBe('boolean');

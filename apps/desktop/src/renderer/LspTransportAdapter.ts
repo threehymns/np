@@ -26,7 +26,12 @@ import {
  */
 interface ElectronLspBridge {
 	fileExists(path: string): Promise<boolean>;
-	spawnLspServer(command: string, args: string[], cwd: string): Promise<{ processId: string; pid: number | null }>;
+	resolveLspCommand(command: string): Promise<ResolvedLspCommand>;
+	spawnLspServer(
+		plan: ResolvedLspCommand,
+		args: string[],
+		cwd: string
+	): Promise<{ processId: string; pid: number | null }>;
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
@@ -35,6 +40,19 @@ interface ElectronLspBridge {
 		onStderr: (processId: string, chunk: Uint8Array) => void;
 		onExit: (exit: { processId: string; code: number; signal: string | null; error?: string }) => void;
 	}): () => void;
+}
+
+/**
+ * A spawn plan the main process minted. The renderer hands it straight back
+ * rather than assembling a command of its own, so `vtsls` becomes a path in
+ * exactly one place (spec #263).
+ */
+interface ResolvedLspCommand {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly env: Record<string, string>;
+	readonly source: 'bundled' | 'path';
+	readonly script?: string;
 }
 
 export interface LspBridgeHost {
@@ -193,8 +211,14 @@ export function createElectronLspTransport(host: LspBridgeHost = defaultBridgeHo
 		fileExists: (path) => bridge.fileExists(path),
 		spawn(options): LspProcess {
 			const process = new IpcLspProcess(bridge, router);
+			// The declared command is resolved first: `vtsls` is a name, and the
+			// plan that runs is the packaged dependency if there is one and the
+			// name itself otherwise (see LspCommandResolver). A resolution that
+			// fails is reported as an exit rather than swallowed, so a missing
+			// server reaches the log instead of becoming a silent one.
 			void bridge
-				.spawnLspServer(options.command, [...options.args], options.cwd)
+				.resolveLspCommand(options.command)
+				.then((plan) => bridge.spawnLspServer(plan, [...options.args], options.cwd))
 				.then((spawned) => process.attach(spawned.processId, spawned.pid))
 				// A spawn that never produced a process is reported as an exit, so
 				// the client's wait on `exit` resolves instead of hanging on a pid

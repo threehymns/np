@@ -9,6 +9,12 @@ import {
 	type BufferWordSettings,
 } from "./buffer-words";
 import { snippetCompletions, SNIPPETS_RANK_BELOW_NOTE_SOURCES } from "./snippets";
+import {
+	serverCompletions,
+	SERVER_RANKS_WITH_NOTE_SOURCES,
+	type ServerCompletionSettings,
+	type ServerCompletionSourceOptions,
+} from "./server-completions";
 
 /**
  * The completion bindings minus Enter, plus vim's own accept key.
@@ -37,11 +43,17 @@ export interface CompletionChainOptions {
 	/** Registered snippets for any language; each source filters its own. */
 	readonly snippets: readonly RegisteredSnippet[];
 	readonly readSettings?: () => BufferWordSettings;
+	/**
+	 * Server completions, or null when nothing serves this document. Everything
+	 * but the settings reader is optional: the fetch, the language and the
+	 * coordinator come from here.
+	 */
+	readonly server?: ServerCompletionSourceOptions | null;
 }
 
 /**
  * The host-owned chain that follows the note sources the language compartment
- * already registers: snippets, then buffer words.
+ * already registers: server items, then snippets, then buffer words.
  *
  * Each source is a separate input on the language's `data` facet, in list
  * order. Separate inputs rather than one merged source, because CodeMirror
@@ -55,13 +67,25 @@ export interface CompletionChainOptions {
  * order, which decides which source's result is consulted first and which
  * options are offered before the popover re-ranks them; the boost decides the
  * popover order itself, because CodeMirror re-sorts every source's options
- * together on `fuzzy score + boost`. The three rank tiers are asserted together
+ * together on `fuzzy score + boost`. The four rank tiers are asserted together
  * in `completion-composition.test.ts`.
+ *
+ * The server source leads the chain for one reason beyond ordering: it records
+ * its query before it returns the promise, so the buffer-word source — asked
+ * immediately after, in the same pass — can wait on that exact query and decide
+ * `words: 'fallback'` against a real answer instead of a guess. Moving it below
+ * the words source would break the fallback silently, which is why the comment
+ * is here and not only on the coordinator.
  */
 function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 	const { language } = options;
 	if (!language) return [];
+	const server =
+		options.server === null || options.server === undefined
+			? null
+			: serverCompletions({ ...options.server, languageName: options.languageName });
 	return [
+		...(server === null ? [] : [server.source]),
 		snippetCompletions({
 			snippets: options.snippets,
 			languageName: options.languageName,
@@ -69,18 +93,26 @@ function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 		bufferWordCompletions({
 			languageName: options.languageName,
 			readSettings: options.readSettings,
+			server: server?.coordinator ?? null,
 		}),
 	].map((source) => language.data.of({ autocomplete: source }));
 }
 
 /**
- * The three rank tiers every source in the chain sits on, in popover order.
+ * The four rank tiers every source in the chain sits on, in popover order.
  * Exported so the composition suite asserts the tiers against these values
  * rather than restating the numbers.
  */
 export const COMPLETION_RANK_TIERS = {
 	/** The note sources carry no boost at all; they rank first at 0. */
 	noteSources: 0,
+	/**
+	 * Server items tie the note tier on purpose. A boost below it would put them
+	 * unconditionally behind the notes, which is a stronger claim than #263
+	 * makes; tying means a server item is ordered against a note by how well its
+	 * label matches, and both sit above every other tier.
+	 */
+	server: SERVER_RANKS_WITH_NOTE_SOURCES,
 	snippets: SNIPPETS_RANK_BELOW_NOTE_SOURCES,
 	words: WORDS_RANK_BELOW_EVERY_SOURCE,
 } as const;
@@ -96,7 +128,7 @@ export interface CompletionCompartmentOptions extends CompletionChainOptions {
 	 * dispatches its own effect rather than relying on typing
 	 * (`@codemirror/autocomplete/dist/index.js`, `ActiveSource.update` reads
 	 * the flag only for the `input.type` path). The snippet source needs no gate
-	 * of its own for the same reason.
+	 * of its own for the same reason, and neither does the server source.
 	 */
 	readonly automaticCompletions: boolean;
 	/**

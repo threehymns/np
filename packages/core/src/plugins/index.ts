@@ -16,6 +16,18 @@ export * from './languages';
 export * from './language-scope';
 export * from './completions';
 export * from './lsp-descriptors';
+export * from './lsp/completions';
+export * from './lsp/logs';
+export {
+	LspRuntime,
+	LSP_RUNTIME_SERVICE_KEY,
+	lspServerKey,
+	type LspCompletionOutcome,
+	type LspCompletionRequest,
+	type LspDocumentInput,
+	type LspServerState,
+	type LspServerStatus
+} from './lsp/lifecycle';
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
 export { manifest as svelteLanguageManifest } from './svelte-language/manifest';

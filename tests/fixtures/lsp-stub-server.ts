@@ -15,15 +15,19 @@
  *   --mode fail     exit immediately with a code, so a failed start is reachable
  *   --mode no-shutdown  answer everything but ignore `shutdown`, so the client
  *                   has to kill the process to avoid an orphan
+ *   --mode fail-completion  answer the handshake, then refuse every
+ *                   `textDocument/completion`, so a request-level failure is
+ *                   reachable on a server that *is* running
  *   --stderr <text> write a line to stderr on startup (multi-byte by default)
  *   --echo-text     include a multi-byte string in the `initialize` reply
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
- * without making the suite slow.
+ * without making the suite slow: a `textDocument/completion` that arrives later
+ * than the fetch timeout is the #265 timeout path.
  */
 
 interface StubOptions {
-	mode: 'answer' | 'silent' | 'fail' | 'no-shutdown';
+	mode: 'answer' | 'silent' | 'fail' | 'no-shutdown' | 'fail-completion';
 	delayMs: number;
 	stderr: string | null;
 	echoText: boolean;
@@ -39,7 +43,9 @@ function parseOptions(argv: string[]): StubOptions {
 	const delay = readOption(argv, 'delay-ms');
 	return {
 		mode:
-			mode === 'silent' || mode === 'fail' || mode === 'no-shutdown' ? mode : 'answer',
+			mode === 'silent' || mode === 'fail' || mode === 'no-shutdown' || mode === 'fail-completion'
+				? mode
+				: 'answer',
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text')
@@ -185,7 +191,13 @@ function handle(message: JsonRpcMessage): void {
 				{
 					id: message.id,
 					result: {
-						capabilities: { textDocumentSync: 1 },
+						capabilities: {
+							textDocumentSync: 1,
+							// Declared so the reply describes the server this really is:
+							// one that answers completions and would need a resolve
+							// round trip for documentation.
+							completionProvider: { resolveProvider: true, triggerCharacters: ['.'] }
+						},
 						serverInfo: { name: 'stub-ls', version: '0.0.0' },
 						// Echoed so a test can read the resolved root straight out of the
 						// protocol rather than trusting the side that resolved it.
@@ -213,9 +225,88 @@ function handle(message: JsonRpcMessage): void {
 		process.stderr.write(`stub server: opened a document of ${text?.length ?? 0} chars\n`);
 		return;
 	}
+	if (message.method === 'textDocument/completion') {
+		if (options.mode === 'fail-completion') {
+			// A running server that refuses one method: the JSON-RPC error path,
+			// which is a different failure from a server that never started.
+			delayed(() =>
+				send({
+					id: message.id,
+					error: { code: -32603, message: 'stub server: completions are unavailable' }
+				})
+			);
+			return;
+		}
+		// A real `CompletionList` with the three fields the source reads:
+		// a signature in `detail`, JSDoc in `documentation`, and the range the
+		// server would replace. `isIncomplete` stays false so the popover keeps
+		// this list until the user moves off the word.
+		delayed(() =>
+			send({
+				id: message.id,
+				result: {
+					isIncomplete: false,
+					items: [
+						{
+							label: 'Widget',
+							kind: 7,
+							detail: '(class) Widget',
+							documentation: { kind: 'markdown', value: 'A thing with an id and a label.' },
+							insertText: 'Widget',
+							textEdit: {
+								range: {
+									start: completionRange(message, 5),
+									end: completionRange(message, 0)
+								},
+								newText: 'Widget'
+							}
+						},
+						{
+							label: 'WidgetFactory',
+							kind: 7,
+							detail: '(class) WidgetFactory',
+							documentation: 'Builds widgets.',
+							insertText: 'WidgetFactory'
+						},
+						{
+							label: 'widgetId',
+							kind: 6,
+							detail: '(property) string widgetId',
+							insertText: 'widgetId'
+						}
+					]
+				}
+			})
+		);
+		return;
+	}
 	if (typeof message.id === 'number' || typeof message.id === 'string') {
 		delayed(() => send({ id: message.id, result: {} }));
 	}
+}
+
+/**
+ * The range the stub answers with: deliberately *wider* than the typed suffix,
+ * so the two `lsp_insert_mode` values are distinguishable in a test.
+ *
+ * A real server narrows this to the expression it recognised — `wid` inside
+ * `obj.wid` — which happens to coincide with the suffix and would leave
+ * `replace_range` indistinguishable from `replace_suffix`. Reaching five
+ * characters back covers `= wid` in `const widgetId = wid`, so accepting an item
+ * under `replace_range` visibly eats text the user did not type and
+ * `replace_suffix` visibly does not. The start is derived from the request, so a
+ * test can point the request anywhere and still get a well-formed range.
+ */
+function completionRange(message: JsonRpcMessage, back: number): {
+	line: number;
+	character: number;
+} {
+	const position = (
+		message.params as { position?: { line?: number; character?: number } } | undefined
+	)?.position;
+	const line = typeof position?.line === 'number' ? position.line : 0;
+	const at = typeof position?.character === 'number' ? position.character : 0;
+	return { line, character: Math.max(0, at - back) };
 }
 
 process.stdout.on('error', () => {

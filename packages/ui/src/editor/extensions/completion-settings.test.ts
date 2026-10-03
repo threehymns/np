@@ -33,12 +33,12 @@ function readerFor(
 describe("readBufferWordSettings", () => {
 	it("reads the schema defaults for an editor with nothing stored", () => {
 		expect(readBufferWordSettings(readerFor(), "Markdown")).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 3,
 			wordsOverridden: false,
 		});
 		expect(DEFAULT_BUFFER_WORD_SETTINGS).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 3,
 			wordsOverridden: false,
 		});
@@ -76,18 +76,18 @@ describe("readBufferWordSettings", () => {
 			wordsOverridden: true,
 		});
 		expect(readBufferWordSettings(read, "TypeScript")).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 2,
 			wordsOverridden: false,
 		});
 		// Anything unnamed keeps the editor-level value.
 		expect(readBufferWordSettings(read, "Rust")).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 3,
 			wordsOverridden: false,
 		});
 		expect(readBufferWordSettings(read, null)).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 3,
 			wordsOverridden: false,
 		});
@@ -100,7 +100,7 @@ describe("readBufferWordSettings", () => {
 		const read = readerFor({ languages: { Markdown: { min_word_length: 5 } } });
 
 		expect(readBufferWordSettings(read, "Markdown")).toEqual({
-			words: "enabled",
+			words: "fallback",
 			minWordLength: 5,
 			wordsOverridden: false,
 		});
@@ -133,21 +133,21 @@ describe("readBufferWordSettings", () => {
 			// override flag has to go with them, or prose would read the
 			// hand-edited map as permission to speak.
 			expect(readBufferWordSettings(read, "Markdown")).toEqual({
-				words: "enabled",
+				words: "fallback",
 				minWordLength: 3,
 				wordsOverridden: false,
 			});
 		}
 	});
 
-	it("never reports words as anything but the two schema values", () => {
+	it("never reports words as anything but the three schema values", () => {
 		// An invalid stored enum keeps the schema default; a hand-edited value
 		// that reached the reader anyway must not read as 'disabled'.
 		const read = readerFor();
 		const overridden: SettingReader = (namespace, key) =>
 			key === "words" ? "sometimes" : read(namespace, key);
 
-		expect(readBufferWordSettings(overridden, "TypeScript").words).toBe("enabled");
+		expect(readBufferWordSettings(overridden, "TypeScript").words).toBe("fallback");
 	});
 });
 

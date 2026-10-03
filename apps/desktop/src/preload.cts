@@ -15,8 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	renameEntry: (oldPath: string, newName: string) => ipcRenderer.invoke('fs:renameEntry', oldPath, newName),
 	gitRun: (workingDir: string, args: string[]) => ipcRenderer.invoke('git:run', workingDir, args),
 	fileExists: (path: string) => ipcRenderer.invoke('fs:exists', path),
-	spawnLspServer: (command: string, args: string[], cwd: string) =>
-		ipcRenderer.invoke('lsp:spawn', command, args, cwd),
+	resolveLspCommand: (command: string) => ipcRenderer.invoke('lsp:resolveCommand', command),
+	spawnLspServer: (
+		plan: { command: string; args: string[]; env: Record<string, string> },
+		args: string[],
+		cwd: string
+	) => ipcRenderer.invoke('lsp:spawn', plan, args, cwd),
 	writeLspServer: (processId: string, chunk: Uint8Array) =>
 		ipcRenderer.send('lsp:write', processId, chunk),
 	endLspServer: (processId: string) => ipcRenderer.send('lsp:end', processId),

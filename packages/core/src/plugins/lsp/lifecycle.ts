@@ -3,6 +3,7 @@ import { WORKSPACE_SERVICE_KEY, type LspTransport, type WorkspaceLike } from '..
 import type { PluginHostInterface } from '../types';
 import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
+import { parseServerCompletions, type ServerCompletionList } from './completions';
 import type { LspLogStore } from './logs';
 import { dirnameOf, findProjectRoot, toFileUri } from './root';
 import { resolveLspTransport } from './transport';
@@ -34,12 +35,44 @@ export interface LspDocumentInput {
 	readonly content: string;
 	/**
 	 * Language identity when the app already resolved one (a manual language
-	 * switch). Falls back to resolving the filename through the registry.
+	 * switch). Falls back to resolving the filename through the registry. This is
+	 * the registry's **display name**, which is what a descriptor joins on; the
+	 * protocol's `languageId` is derived from the filename separately.
 	 */
 	readonly language?: string | null;
 }
 
 export type LspServerState = 'starting' | 'running' | 'stopped' | 'failed';
+
+/**
+ * One completion query, as the editor states it.
+ *
+ * `line` is zero-based and `character` is a UTF-16 offset within that line,
+ * which is what the protocol specifies and what CodeMirror positions already
+ * are — so no coordinate translation belongs here. `timeoutMs` is the
+ * `lsp_fetch_timeout_ms` bound and `undefined` means *no bound*, which is the
+ * setting's own default of `0` expressed rather than a separate sentinel.
+ */
+export interface LspCompletionRequest extends LspDocumentInput {
+	/** Zero-based line of the cursor. */
+	readonly line: number;
+	/** UTF-16 offset of the cursor within that line. */
+	readonly character: number;
+	readonly timeoutMs?: number;
+}
+
+/**
+ * What one completion query produced, and the three-way answer
+ * `words: 'fallback'` is decided on.
+ *
+ * `'inactive'` is not a failure: nothing was ever meant to answer, and words
+ * answering there is the pre-#263 behaviour rather than a degradation.
+ * `'unavailable'` is a failure, and is the case words exist behind.
+ */
+export type LspCompletionOutcome =
+	| { readonly state: 'inactive'; readonly reason: string }
+	| { readonly state: 'serving'; readonly list: ServerCompletionList }
+	| { readonly state: 'unavailable'; readonly server: string; readonly reason: string };
 
 export interface LspServerStatus {
 	readonly server: string;
@@ -140,40 +173,121 @@ export class LspRuntime {
 			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
 			if (entry.state !== 'running' || !entry.client) return server;
 
-			const uri = toFileUri(path);
-			const languageId = this.languageIdFor(input);
-			const existing = this.openDocuments.get(uri);
-			if (existing) {
-				existing.content = input.content;
-				existing.version++;
-				this.documentServers.set(uri, server);
-				entry.client.notify('textDocument/didChange', {
-					textDocument: { uri, version: existing.version },
-					contentChanges: [{ text: input.content }]
-				});
-				return server;
-			}
-			const document: OpenDocument = {
-				uri,
-				languageId,
-				content: input.content,
-				version: 1
-			};
-			this.openDocuments.set(uri, document);
-			this.documentServers.set(uri, server);
-			entry.client.notify('textDocument/didOpen', {
-				textDocument: {
-					uri,
-					languageId,
-					version: document.version,
-					text: input.content
-				}
-			});
+			this.syncDocument(entry, { ...input, path });
 			return server;
 		} catch (error) {
 			this.reportContained('document sync', error);
 			return null;
 		}
+	}
+
+	/**
+	 * One `textDocument/completion` round trip for a position, carrying the
+	 * outcome the buffer-word source's `fallback` mode is decided on.
+	 *
+	 * The three states are the whole point of this method. `'inactive'` means
+	 * nothing is meant to answer here — no descriptor claims the language, no
+	 * transport exists, or the runtime is shutting down — and words answer
+	 * exactly as they did before any server existed. `'serving'` means a server
+	 * answered, and `'unavailable'` means one was there and could not deliver.
+	 * Collapsing the last two would make a wedged server indistinguishable from
+	 * a file nothing serves, which is exactly the silence spec #263 asks words
+	 * to replace.
+	 *
+	 * Contained like every entry point here: document work arrives as an event
+	 * (ADR 0013) and cannot throw back at the editor, so a failed request is
+	 * recorded and returned rather than raised.
+	 */
+	async fetchCompletions(input: LspCompletionRequest): Promise<LspCompletionOutcome> {
+		if (this.disposed) {
+			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
+		}
+		const path = input.path;
+		if (!path) {
+			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
+		}
+		const document = { ...input, path };
+		let server = 'lsp';
+		try {
+			const target = await this.targetFor(document);
+			if (!target) {
+				return { state: 'inactive', reason: 'No language server claims this document.' };
+			}
+			server = lspServerKey(target.descriptor.id, target.root);
+			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
+			if (entry.state !== 'running' || !entry.client) {
+				return {
+					state: 'unavailable',
+					server,
+					reason: `Server "${server}" is ${entry.state}, so it cannot answer.`
+				};
+			}
+			this.syncDocument(entry, document);
+			const result = await entry.client.request(
+				'textDocument/completion',
+				{
+					textDocument: { uri: toFileUri(path) },
+					position: { line: input.line, character: input.character }
+				},
+				input.timeoutMs
+			);
+			return { state: 'serving', list: parseServerCompletions(result) };
+		} catch (error) {
+			// Logged as well as returned. Words appearing behind a failed request is
+			// indistinguishable from words working, from the outside, so the reason
+			// has to be somewhere the Logs tab (#266) can show it.
+			const reason = describe(error);
+			this.options.logs.append({
+				server,
+				kind: 'server',
+				level: 'warn',
+				message: `Completion request failed, so words answer instead: ${reason}`
+			});
+			return { state: 'unavailable', server, reason };
+		}
+	}
+
+	/**
+	 * Sends the document's current text to one running server: `didOpen` the
+	 * first time, full-content `didChange` after that (ADR 0019).
+	 *
+	 * Identical text is not resent. Two paths reach this — the document lifecycle
+	 * event and a completion query — and a keystroke produces both, so without this
+	 * every keystroke would send the whole document twice and bump the version
+	 * twice for one change.
+	 */
+	private syncDocument(entry: RunningServer, input: LspDocumentInput & { path: string }): void {
+		const client = entry.client;
+		if (!client) return;
+		const uri = toFileUri(input.path);
+		const existing = this.openDocuments.get(uri);
+		if (existing) {
+			if (existing.content === input.content) return;
+			existing.content = input.content;
+			existing.version++;
+			this.documentServers.set(uri, entry.server);
+			client.notify('textDocument/didChange', {
+				textDocument: { uri, version: existing.version },
+				contentChanges: [{ text: input.content }]
+			});
+			return;
+		}
+		const document: OpenDocument = {
+			uri,
+			languageId: this.languageIdFor(input),
+			content: input.content,
+			version: 1
+		};
+		this.openDocuments.set(uri, document);
+		this.documentServers.set(uri, entry.server);
+		client.notify('textDocument/didOpen', {
+			textDocument: {
+				uri,
+				languageId: document.languageId,
+				version: document.version,
+				text: document.content
+			}
+		});
 	}
 
 	/**
@@ -289,10 +403,22 @@ export class LspRuntime {
 	}
 
 	/**
-	 * The protocol's `languageId` is lowercased. The registry publishes display
-	 * names (`TypeScript`), while every server in the ecosystem keys off the
-	 * lowercased extension id (`typescript`), so passing the display name
-	 * through would silently select the wrong grammar on the server side.
+	 * The protocol's `languageId`, which is the *lowercased registry name*.
+	 *
+	 * The registry publishes display names (`TypeScript`), while every server in
+	 * the ecosystem keys off a language id (`typescript`), so passing the name
+	 * through unlowercased would select the wrong grammar on the server side.
+	 *
+	 * Known gap, recorded rather than papered over: for the abbreviated names the
+	 * registry does publish — `TSX` and `JSX` — this produces `tsx`/`jsx`, and
+	 * the TypeScript server answers to `typescriptreact`/`javascriptreact`
+	 * instead. Nothing in the registry carries those ids: `@codemirror/
+	 * language-data` lists `typescript` as an *alias* of `TypeScript` and
+	 * declares `TSX` with `extensions: ["tsx"]`, so neither list contains the
+	 * protocol's spelling. Deriving it needs the descriptor to say which id maps
+	 * to which served name, which is new descriptor surface and therefore its own
+	 * change; until then a `.tsx` file is served by one server and synced with the
+	 * id that server may not recognise.
 	 */
 	private languageIdFor(input: LspDocumentInput): string {
 		const language =

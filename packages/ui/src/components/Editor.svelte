@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -11,6 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
+	import { LSP_RUNTIME_SERVICE_KEY, LspRuntime, type LspCompletionRequest } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -324,8 +325,8 @@
 	// keymap (`Ctrl-y` instead of Enter) lives in the same compartment. The
 	// snippet revision so enabling, disabling or refreshing a plugin pack
 	// rebuilds the chain instead of leaving the previous triggers behind. The
-	// word source reads its own settings per query, so a per-language override
-	// needs no reconfiguration of its own.
+	// word and server sources read their own settings per query, so a
+	// per-language override needs no reconfiguration of its own.
 	$effect(() => {
 		const _langRev = appState.plugins?.languageRevision;
 		const _settingsRev = appState.prefs.settingsVersion;
@@ -337,6 +338,11 @@
 		// registered snippet is one read rather than a read plus a filter that
 		// says the same thing.
 		const snippets = appState.plugins?.getSnippets() ?? [];
+		// The LSP plugin publishes its runtime as a service (ADR 0019). Absent on
+		// web and while the plugin is disabled, which is the same "no server here"
+		// answer a language nothing serves gives — so the chain simply carries no
+		// server source and words behave exactly as they did before #263.
+		const lspRuntime = appState.plugins?.getService<LspRuntime>(LSP_RUNTIME_SERVICE_KEY);
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -357,6 +363,13 @@
 							automaticCompletions: readAutomaticCompletions(readSetting),
 							readSettings: () =>
 								readBufferWordSettings(readSetting, languageName),
+							server: lspRuntime
+								? {
+										fetch: (request: LspCompletionRequest) => lspRuntime.fetchCompletions(request),
+										readSettings: () =>
+											readServerCompletionSettings(readSetting, languageName),
+									}
+								: null,
 						}),
 					),
 				});

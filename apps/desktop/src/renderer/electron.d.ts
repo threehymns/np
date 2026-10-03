@@ -1,3 +1,16 @@
+/**
+ * A spawn plan the main process minted. It is passed back verbatim rather than
+ * rebuilt by the renderer, so the only thing the renderer chooses is which
+ * descriptor command to ask about.
+ */
+export interface ResolvedLspCommand {
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	source: 'bundled' | 'path';
+	script?: string;
+}
+
 export interface ElectronAPI {
 	openFile(): Promise<{ path: string; name: string } | null>;
 	openDirectory(): Promise<{ path: string; name: string } | null>;
@@ -12,7 +25,18 @@ export interface ElectronAPI {
 	renameEntry(oldPath: string, newName: string): Promise<string>;
 	gitRun(workingDir: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
 	fileExists(path: string): Promise<boolean>;
-	spawnLspServer(command: string, args: string[], cwd: string): Promise<{ processId: string; pid: number | null }>;
+	/**
+	 * Resolves a declared server command against the packaged dependency and
+	 * then against PATH, in the main process (spec #263). Returns a spawn plan
+	 * rather than a bare path because the bundled candidate is a Node script and
+	 * needs both an interpreter and an environment to run.
+	 */
+	resolveLspCommand(command: string): Promise<ResolvedLspCommand>;
+	spawnLspServer(
+		plan: ResolvedLspCommand,
+		args: string[],
+		cwd: string
+	): Promise<{ processId: string; pid: number | null }>;
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;

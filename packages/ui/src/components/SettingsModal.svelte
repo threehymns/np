@@ -209,6 +209,38 @@
 		}
 	}
 
+	/**
+	 * The four server settings have no `_data` field in `Preferences` — nothing
+	 * in the editor reads them synchronously — so their values come from the
+	 * resolver through `settingsVersion`, which is the reactive handle for a
+	 * resolved setting. Declared here rather than in the markup so the markup
+	 * reads as markup.
+	 */
+	const serverLsp = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		return appState.prefs.get('editor', 'lsp') !== false;
+	});
+	const serverFetchTimeoutMs = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		const value = appState.prefs.get('editor', 'lsp_fetch_timeout_ms');
+		return typeof value === 'number' ? value : 0;
+	});
+	const serverInsertMode = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		const value = appState.prefs.get('editor', 'lsp_insert_mode');
+		return value === 'replace_range' ? 'replace_range' : 'replace_suffix';
+	});
+	const showCompletionDocumentation = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		return appState.prefs.get('editor', 'show_completion_documentation') !== false;
+	});
+
+	function setServerFetchTimeoutMs(raw: string) {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) return;
+		appState.prefs.set('editor', 'lsp_fetch_timeout_ms', Math.max(0, Math.trunc(parsed)), appState.prefs.activeScope);
+	}
+
 	const allCommands = $derived(appState.commands.getAll());
 	const filteredCommands = $derived(
 		allCommands.filter(c => 
@@ -616,7 +648,7 @@
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Words</Label>
-											<p class="text-[10px] text-muted-foreground">Offer words from this document while typing. Off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on</p>
+											<p class="text-[10px] text-muted-foreground">Offer words from this document. Fallback shows them only when a server errors or times out; off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on</p>
 											<select
 												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
 												value={appState.prefs.completionWords}
@@ -626,6 +658,7 @@
 												}}
 											>
 												<option value="enabled">enabled</option>
+												<option value="fallback">fallback</option>
 												<option value="disabled">disabled</option>
 											</select>
 										</div>
@@ -664,6 +697,67 @@
 											{#if languageOverridesError}
 												<p class="text-[11px] text-destructive">{languageOverridesError}</p>
 											{/if}
+										</div>
+									</div>
+								</div>
+
+								<div class="space-y-4">
+									<h4 class="text-sm font-semibold">Language Servers</h4>
+									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Language Servers</Label>
+											<p class="text-[10px] text-muted-foreground">Suggest from a running language server. Off leaves words and notes alone</p>
+											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+												<Switch
+													checked={serverLsp}
+													onCheckedChange={(checked: boolean) =>
+														appState.prefs.set('editor', 'lsp', checked, appState.prefs.activeScope)}
+												/>
+											</div>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Server Fetch Timeout</Label>
+											<p class="text-[10px] text-muted-foreground">Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes</p>
+											<input
+												type="number"
+												min="0"
+												step="50"
+												value={serverFetchTimeoutMs}
+												onchange={(e) => setServerFetchTimeoutMs((e.currentTarget as HTMLInputElement).value)}
+												class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+											/>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Server Insert Mode</Label>
+											<p class="text-[10px] text-muted-foreground">What accepting a server suggestion replaces. Suffix replaces what you typed; range replaces the range the server named</p>
+											<select
+												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={serverInsertMode}
+												onchange={(e) =>
+													appState.prefs.set(
+														'editor',
+														'lsp_insert_mode',
+														(e.currentTarget as HTMLSelectElement).value,
+														appState.prefs.activeScope,
+													)}
+											>
+												<option value="replace_suffix">replace_suffix</option>
+												<option value="replace_range">replace_range</option>
+											</select>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Show Completion Documentation</Label>
+											<p class="text-[10px] text-muted-foreground">Show the signature and docs a server attached to its suggestion</p>
+											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+												<Switch
+													checked={showCompletionDocumentation}
+													onCheckedChange={(checked: boolean) =>
+														appState.prefs.set('editor', 'show_completion_documentation', checked, appState.prefs.activeScope)}
+												/>
+											</div>
 										</div>
 									</div>
 								</div>

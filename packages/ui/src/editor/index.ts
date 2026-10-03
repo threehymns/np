@@ -354,6 +354,7 @@ export * from "./extensions/wikilinks";
 export * from "./extensions/buffer-words";
 export * from "./extensions/completion-sources";
 export * from "./extensions/completion-settings";
+export * from "./extensions/server-completions";
 export * from "./extensions/strikethrough";
 export * from "./extensions/inline-highlight";
 export * from "./extensions/hash-tags";

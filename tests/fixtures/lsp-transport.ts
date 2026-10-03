@@ -9,10 +9,15 @@ import type { LspProcess, LspSpawnOptions, LspTransport } from '@np/core';
  * Spawns the scripted stub server through Node's `child_process`, so the tests
  * exercise the actual framing path — real pipes, real chunk boundaries, real
  * process lifetime — with only the *choice of executable* swapped for the stub.
- * The command the descriptor declares is recorded and still asserted; only the
- * binary is replaced, because vtsls is not bundled (that is #265). Faking the
+ * The command the descriptor declares is recorded and still asserted. Faking the
  * stream instead would prove nothing: a fake cannot produce a chunk boundary
- * inside a multi-byte character, which is the bug this seam exists to prevent.
+ * inside a multi-byte character, which is the bug this seam exists to prevent,
+ * and #265's completion tests would then be asserting against a stub of a stub.
+ *
+ * The bundled vtsls is not used here even though `apps/desktop` now depends on
+ * it. Indexing a real project to answer one query is minutes of work and a
+ * machine-dependent answer, where the stub answers the same request in
+ * milliseconds and identically on every CI runner — including the Windows one.
  */
 
 export const STUB_SERVER_PATH = join(import.meta.dir, 'lsp-stub-server.ts');

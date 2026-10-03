@@ -4,7 +4,12 @@ import type {
 	CompletionResult,
 	CompletionSource,
 } from "@codemirror/autocomplete";
-import { EDITOR_COMPLETION_DEFAULTS, type CompletionWordsMode } from "@np/core";
+import {
+	EDITOR_COMPLETION_DEFAULTS,
+	type CompletionWordsMode,
+	type LspCompletionOutcome
+} from "@np/core";
+import type { ServerOutcomeReader } from "./server-completions";
 
 /**
  * Per-query knobs for the buffer-word source. Read through an injected reader
@@ -21,7 +26,9 @@ export interface BufferWordSettings {
 	readonly minWordLength: number;
 	/**
 	 * Gates automatic offers only. `'disabled'` means quiet, not unavailable:
-	 * the explicit trigger still answers, in every language.
+	 * the explicit trigger still answers, in every language. `'fallback'` is
+	 * different: it stands words down for as long as a server is answering,
+	 * on both triggers, which is what makes them the path behind a failing one.
 	 */
 	readonly words: CompletionWordsMode;
 	/**
@@ -61,6 +68,12 @@ export interface BufferWordPolicy {
 	readonly automatic: boolean;
 	/** Shortest typed prefix that may summon words automatically. */
 	readonly minWordLength: number;
+	/**
+	 * Whether words answer at all, on either trigger. Only `'fallback'` can
+	 * turn this off, and only while a server is answering: `'disabled'` means
+	 * quiet on a keystroke, not unavailable.
+	 */
+	readonly offered: boolean;
 }
 
 /**
@@ -81,11 +94,11 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
 }
 
 /**
- * The single place deciding what a query may offer, so the trigger split and
- * the settings land here instead of in the source body.
+ * The single place deciding what a query may offer, so the trigger split, the
+ * settings and the server fallback all land here instead of in the source body.
  *
- * Two independent brakes on the automatic path, and neither of them touches
- * the explicit one:
+ * Three independent brakes on the automatic path, and none of them touches the
+ * explicit one:
  *
  * - Markdown prose is quiet on a typing trigger by default. A note is prose
  *   being written, not code being recalled, and words fire constantly while
@@ -96,15 +109,26 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
  *   that does nothing is worse than no edit at all.
  * - `words: 'disabled'` silences the automatic path in every language. Off
  *   means quiet, not unavailable.
+ *
+ * `server` speaks only for `'fallback'`, and a serving server closes both
+ * paths: `offered` because a server that answered owns the popover, and
+ * `automatic` because there is no separate "automatic" server behaviour to
+ * consult — the global popup gate already covers the trigger, and there is no
+ * automatic trigger on the server side to gate. A server that errored or timed
+ * out answers neither way, which is the whole point of the mode.
  */
 export function resolveBufferWordPolicy(
 	languageName: string | null,
 	settings: BufferWordSettings,
+	server: LspCompletionOutcome | null = null
 ): BufferWordPolicy {
 	const proseQuiet = isMarkdownProse(languageName) && !settings.wordsOverridden;
+	const fallbackQuiet = settings.words === "fallback" && server?.state === "serving";
 	return {
-		automatic: settings.words !== "disabled" && !proseQuiet,
+		automatic:
+			settings.words !== "disabled" && !proseQuiet && !fallbackQuiet,
 		minWordLength: normalizeMinWordLength(settings.minWordLength),
+		offered: !fallbackQuiet
 	};
 }
 
@@ -126,11 +150,20 @@ export interface BufferWordSourceOptions {
 	readonly languageName: string | null;
 	/** Defaults to {@link DEFAULT_BUFFER_WORD_SETTINGS}. */
 	readonly readSettings?: () => BufferWordSettings;
+	/**
+	 * Where the server source's answer for this query comes from. Optional, and
+	 * omitted whenever the chain has no server source — a document with no
+	 * server, or an editor state built without an LSP runtime.
+	 */
+	readonly server?: ServerOutcomeReader | null;
 }
 
 function staticDefaultSettings(): BufferWordSettings {
 	return DEFAULT_BUFFER_WORD_SETTINGS;
 }
+
+/** A reader that has never been asked anything, so nothing is in flight. */
+const NO_SERVER_QUERIES: ServerOutcomeReader = { queryFor: () => null };
 
 /**
  * Current-document words, ranked behind every other completion source.
@@ -143,46 +176,64 @@ function staticDefaultSettings(): BufferWordSettings {
  * behind it, so every query re-reads `context.state.doc` and no staleness rule
  * is needed. It carries no length floor, because the setting is a trigger
  * threshold and not a vocabulary rule.
+ *
+ * The query may return a promise, and that is new: deciding synchronously would
+ * have to guess whether an in-flight server request will succeed, and a guess
+ * wrong in the direction of "serving" is the silence `fallback` exists to
+ * remove. When nothing is in flight — every note, and every editor state built
+ * without an LSP runtime — the answer is immediate and nothing changes.
  */
 export function bufferWordCompletions(
 	options: BufferWordSourceOptions,
 ): CompletionSource {
-	const { languageName, readSettings = staticDefaultSettings } = options;
+	const {
+		languageName,
+		readSettings = staticDefaultSettings,
+		server = null
+	} = options;
 
-	return (context: CompletionContext): CompletionResult | null => {
-		const policy = resolveBufferWordPolicy(languageName, readSettings());
+	return (context: CompletionContext): CompletionResult | null | Promise<CompletionResult | null> => {
+		const query = (server ?? NO_SERVER_QUERIES).queryFor(context.pos);
+		const decide = (outcome: LspCompletionOutcome | null): CompletionResult | null => {
+			const settings = readSettings();
+			const policy = resolveBufferWordPolicy(languageName, settings, outcome);
+			if (!policy.offered) return null;
 
-		const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
-		// An empty typed prefix would dump the whole vocabulary into the popover.
-		if (!typed || typed.from === context.pos) return null;
+			const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
+			// An empty typed prefix would dump the whole vocabulary into the popover.
+			if (!typed || typed.from === context.pos) return null;
 
-		if (!context.explicit) {
-			if (!policy.automatic) return null;
-			// Past the minimum length, or the popup interrupts the first
-			// characters of every word.
-			if (typed.text.length < policy.minWordLength) return null;
-		}
+			if (!context.explicit) {
+				if (!policy.automatic) return null;
+				// Past the minimum length, or the popup interrupts the first
+				// characters of every word.
+				if (typed.text.length < policy.minWordLength) return null;
+			}
 
-		const prefix = typed.text.toLowerCase();
-		const labels = bufferVocabulary(context.state.doc.toString(), typed.from).filter((label) =>
-			label.toLowerCase().startsWith(prefix),
-		);
+			const prefix = typed.text.toLowerCase();
+			const labels = bufferVocabulary(context.state.doc.toString(), typed.from).filter(
+				(label) => label.toLowerCase().startsWith(prefix)
+			);
 
-		if (labels.length === 0) return null;
+			if (labels.length === 0) return null;
 
-		return {
-			from: typed.from,
-			// Re-querying on every keystroke would reshuffle the list under the
-			// cursor, so a longer run of word characters keeps this vocabulary.
-			validFor: /^[\w$]*$/,
-			options: labels.map(
-				(label): Completion => ({
-					label,
-					type: "text",
-					boost: WORDS_RANK_BELOW_EVERY_SOURCE,
-				}),
-			),
+			return {
+				from: typed.from,
+				// Re-querying on every keystroke would reshuffle the list under the
+				// cursor, so a longer run of word characters keeps this vocabulary.
+				validFor: /^[\w$]*$/,
+				options: labels.map(
+					(label): Completion => ({
+						label,
+						type: "text",
+						boost: WORDS_RANK_BELOW_EVERY_SOURCE,
+					})
+				),
+			};
 		};
+
+		if (query && query.settled === null) return query.outcome.then(decide);
+		return decide(query?.settled ?? null);
 	};
 }
 

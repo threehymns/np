@@ -14,6 +14,7 @@ import { LSP_TRANSPORT_SERVICE_KEY } from '@np/core';
  */
 describe('createElectronLspTransport', () => {
 	let mockSpawn: ReturnType<typeof mock>;
+	let mockResolve: ReturnType<typeof mock>;
 	let mockWrite: ReturnType<typeof mock>;
 	let mockEnd: ReturnType<typeof mock>;
 	let mockKill: ReturnType<typeof mock>;
@@ -27,6 +28,14 @@ describe('createElectronLspTransport', () => {
 
 	beforeEach(() => {
 		mockSpawn = mock(async () => ({ processId: 'p1', pid: 4242 }));
+		// Echoes the declared name, which is what a machine with nothing bundled
+		// resolves to. The bundled plan is exercised separately below.
+		mockResolve = mock(async (command: string) => ({
+			command,
+			args: [] as string[],
+			env: {} as Record<string, string>,
+			source: 'path' as const
+		}));
 		mockWrite = mock(() => {});
 		mockEnd = mock(() => {});
 		mockKill = mock(async () => {});
@@ -36,6 +45,7 @@ describe('createElectronLspTransport', () => {
 		(globalThis as any).window = {
 			electronAPI: {
 				fileExists: mockExists,
+				resolveLspCommand: mockResolve,
 				spawnLspServer: mockSpawn,
 				writeLspServer: mockWrite,
 				endLspServer: mockEnd,
@@ -60,9 +70,47 @@ describe('createElectronLspTransport', () => {
 		const transport = createElectronLspTransport(bridgeHost());
 		const spawned = transport.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
 
+		// The declared name is resolved first, then the plan main minted is what
+		// gets spawned — never a command this side assembled.
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
-		expect(mockSpawn).toHaveBeenCalledWith('vtsls', ['--stdio'], '/repo');
+		expect(mockResolve).toHaveBeenCalledWith('vtsls');
+		expect(mockSpawn.mock.calls[0]).toEqual([
+			{ command: 'vtsls', args: [], env: {}, source: 'path' },
+			['--stdio'],
+			'/repo',
+		]);
 		expect(spawned.pid).toBe(4242);
+	});
+
+	it('passes a bundled plan through untouched, interpreter and script included', async () => {
+		// The bundled candidate is a Node script, so the plan carries both an
+		// executable and an environment. Rebuilding it here would drop
+		// ELECTRON_RUN_AS_NODE and start an Electron instance instead of a server.
+		const plan = {
+			command: '/opt/np/np',
+			args: ['/opt/np/resources/app.asar.unpacked/node_modules/@vtsls/language-server/bin/vtsls.js'],
+			env: { ELECTRON_RUN_AS_NODE: '1' },
+			source: 'bundled' as const,
+		};
+		mockResolve.mockImplementation(async () => plan);
+		const transport = createElectronLspTransport(bridgeHost());
+		transport.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
+
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+		expect(mockSpawn.mock.calls[0]).toEqual([plan, ['--stdio'], '/repo']);
+	});
+
+	it('reports a resolution failure as an exit rather than spawning nothing', async () => {
+		mockResolve.mockImplementation(async () => {
+			throw new Error('resolve vtsls failed');
+		});
+		const transport = createElectronLspTransport(bridgeHost());
+		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+
+		const exit = await spawned.exit;
+		expect(exit.code).toBe(-1);
+		expect(exit.error).toContain('resolve vtsls failed');
+		expect(mockSpawn).not.toHaveBeenCalled();
 	});
 
 	it('answers the marker probe through the bridge', async () => {
@@ -76,7 +124,11 @@ describe('createElectronLspTransport', () => {
 		const received: Uint8Array[] = [];
 		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		spawned.stdout.onData((chunk) => received.push(chunk));
-		await waitFor(() => capturedHandlers !== null);
+		// Delivery routes by process id, which exists only once the spawn round
+		// trip has landed — and there are two hops to it, the resolution and the
+		// spawn.
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+		expect(capturedHandlers).not.toBeNull();
 
 		// Two pipe reads that split a multi-byte character in half, which is what
 		// a large document actually produces.
@@ -121,6 +173,9 @@ describe('createElectronLspTransport', () => {
 		spawned.stdout.onData((chunk) => received.push(chunk));
 		spawned.stdin.write('early');
 
+		// The write above is still buffered: the spawn itself has not been called
+		// yet, so there is nothing to attach to.
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
 		resolveSpawn!({ processId: 'p9', pid: 77 });
 		await waitFor(() => mockWrite.mock.calls.length === 1);
 		expect(mockWrite.mock.calls[0][0]).toBe('p9');
