@@ -2,7 +2,7 @@ import type { PluginCleanup, PluginHostInterface } from '../types';
 import { manifest } from './manifest';
 
 /**
- * Setup for the Svelte Language Core Plugin (spec #194 exemplar).
+ * Setup for the Svelte Language Core Plugin.
  *
  * Registers metadata plus a zero-argument loader and performs no grammar
  * import of its own: the grammar package is reachable only through the
