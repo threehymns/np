@@ -373,6 +373,8 @@ export class ProjectTree {
 				toURI(this.project.rootOrigin) === toURI(rootOrigin)
 			) {
 				this.nodes = builtNodes;
+				const wt = this.project.worktree;
+				if (wt) wt.entries = builtNodes;
 				// Surface externally deleted open files (#175) on the next
 				// scan/refresh: same deleted-on-disk tab state as in-app
 				// deletes, edits preserved. Guarded for test doubles without
