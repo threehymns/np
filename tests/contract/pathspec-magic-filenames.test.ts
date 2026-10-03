@@ -34,7 +34,7 @@ import {
 	nodeFileAccess,
 	porcelainStatus,
 	seedCommit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 /**
@@ -81,7 +81,7 @@ async function stageEditsToBoth(repo: TestRepo): Promise<void> {
 	await repo.git(['add', '-A']);
 }
 
-/** The index/worktree status letters for `filepath`, or undefined when unchanged. */
+/** The index/working-tree status letters for `filepath`, or undefined when unchanged. */
 async function xy(repo: TestRepo, filepath: string): Promise<string | undefined> {
 	const entry = (await porcelainStatus(repo)).find(e => e.path === filepath);
 	return entry ? `${entry.x}${entry.y}` : undefined;
@@ -121,10 +121,10 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		await adapterFor(repo).discardChanges(MAGIC_NAME);
 
 		// The named file is gone...
-		expect(await worktreeContents(repo, MAGIC_NAME)).toBeNull();
+		expect(await workingTreeContents(repo, MAGIC_NAME)).toBeNull();
 		// ...and the bystander the user never mentioned survives. Unwrapped, the
 		// clean deletes it: that is the data loss this pins.
-		expect(await worktreeContents(repo, 'IMPORTANT_UNTRACKED.txt')).toBe('precious\n');
+		expect(await workingTreeContents(repo, 'IMPORTANT_UNTRACKED.txt')).toBe('precious\n');
 	});
 
 	it('discarding a staged change to a magic-named file discards only that file', async () => {
@@ -140,19 +140,19 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		expect(await xy(repo, PLAIN)).toBe('M ');
 	});
 
-	it('discarding unstaged edits in a magic-named file preserves other worktree edits', async () => {
+	it('discarding unstaged edits in a magic-named file preserves other working-tree edits', async () => {
 		const repo = await repoWithTrackedMagicFile();
 		await stageEditsToBoth(repo);
-		// Now both also differ from the index in the worktree.
-		await repo.write(MAGIC_NAME, 'magic worktree 2\n');
-		await repo.write(PLAIN, 'plain worktree 2\n');
+		// Now both also differ from the index in the working tree.
+		await repo.write(MAGIC_NAME, 'magic working tree 2\n');
+		await repo.write(PLAIN, 'plain working tree 2\n');
 
 		await adapterFor(repo).discardChanges(MAGIC_NAME, { staged: false });
 
-		// The magic file's worktree copy is back to its staged version...
-		expect(await worktreeContents(repo, MAGIC_NAME)).toBe('magic edited\n');
-		// ...and the plain file's worktree edit is untouched.
-		expect(await worktreeContents(repo, PLAIN)).toBe('plain worktree 2\n');
+		// The magic file's working-tree copy is back to its staged version...
+		expect(await workingTreeContents(repo, MAGIC_NAME)).toBe('magic edited\n');
+		// ...and the plain file's working-tree edit is untouched.
+		expect(await workingTreeContents(repo, PLAIN)).toBe('plain working tree 2\n');
 	});
 
 	it('unstageFile unstages only the named magic-named file', async () => {
@@ -183,9 +183,9 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		// Every untracked file is removed — that is what discardAll means, and the
 		// magic-named file is no exception. Unwrapped, the magic pathspec reads as
 		// "everything except base.txt", which spares it and removes nothing.
-		expect(await worktreeContents(repo, MAGIC_NAME)).toBeNull();
-		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
-		expect(await worktreeContents(repo, 'BYSTANDER_UNTRACKED.txt')).toBeNull();
+		expect(await workingTreeContents(repo, MAGIC_NAME)).toBeNull();
+		expect(await workingTreeContents(repo, 'junk.txt')).toBeNull();
+		expect(await workingTreeContents(repo, 'BYSTANDER_UNTRACKED.txt')).toBeNull();
 	});
 
 	it('discardAll leaves tracked files alone', async () => {
@@ -194,9 +194,9 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 
 		await adapterFor(repo).discardAll();
 
-		expect(await worktreeContents(repo, 'junk.txt')).toBeNull();
-		expect(await worktreeContents(repo, MAGIC_NAME)).toBe('magic\n');
-		expect(await worktreeContents(repo, PLAIN)).toBe('plain\n');
+		expect(await workingTreeContents(repo, 'junk.txt')).toBeNull();
+		expect(await workingTreeContents(repo, MAGIC_NAME)).toBe('magic\n');
+		expect(await workingTreeContents(repo, PLAIN)).toBe('plain\n');
 	});
 
 	it('an ordinary filename is unaffected end to end', async () => {
@@ -256,7 +256,7 @@ describe('SpawnGitAdapter — a directory path still covers everything under it'
 
 		await adapterFor(repo).discardChanges('newdir');
 
-		expect(await worktreeContents(repo, 'newdir/x.txt')).toBeNull();
-		expect(await worktreeContents(repo, 'KEEPME.txt')).toBe('keep\n');
+		expect(await workingTreeContents(repo, 'newdir/x.txt')).toBeNull();
+		expect(await workingTreeContents(repo, 'KEEPME.txt')).toBe('keep\n');
 	});
 });

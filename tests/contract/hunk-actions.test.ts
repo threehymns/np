@@ -22,7 +22,7 @@ import {
 	lsFiles,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 function origin(r: TestRepo): FileOrigin {
@@ -191,9 +191,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Stage the first hunk (Section 1 edit)
 			await applyHunkAction(appState, initialChange, hunks[0], 'stage');
 
-			// Oracle verification: Index has section 1 edit, worktree has both edits
+			// Oracle verification: Index has section 1 edit, working tree has both edits
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION1);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'app.ts' }]);
 
 			// Repository changes split: one staged change (section 1) and one unstaged change (section 3)
@@ -212,9 +212,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Stage the remaining hunk (Section 3 edit)
 			await applyHunkAction(appState, remainingUnstagedChange!, remainingHunks[0], 'stage');
 
-			// Oracle verification: Index now has both edits, matching worktree
+			// Oracle verification: Index now has both edits, matching working tree
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'app.ts' }]);
 
 			// Repository changes now only contain a single staged change
@@ -248,7 +248,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			// Oracle verification: Index now only has section 3 edit, section 1 is reverted to HEAD
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'app.ts' }]);
 
 			// Repository changes now list both staged (section 3) and unstaged (section 1) changes
@@ -276,8 +276,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Discard the first hunk (Section 1 edit)
 			await applyHunkAction(appState, initialChange, hunks[0], 'discard');
 
-			// Oracle verification: Worktree has section 1 reverted, but section 3 edit is preserved!
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
+			// Oracle verification: Working tree has section 1 reverted, but section 3 edit is preserved!
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_BASE);
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'app.ts' }]);
 
@@ -286,7 +286,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(repository.changes[0].staged).toBe(false);
 		});
 
-		it('discards a staged hunk, reverting both index and worktree for that hunk while preserving other staged edits', async () => {
+		it('discards a staged hunk, reverting both index and working tree for that hunk while preserving other staged edits', async () => {
 			const r = await createTrackedRepo();
 			await r.write('app.ts', MULTI_SECTION_BASE);
 			await commitAll(r, 'base commit');
@@ -306,9 +306,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Discard the first hunk from the staged change
 			await applyHunkAction(appState, stagedChange, hunks[0], 'discard');
 
-			// Oracle verification: Both index and worktree have section 1 reverted to HEAD, section 3 preserved
+			// Oracle verification: Both index and working tree have section 1 reverted to HEAD, section 3 preserved
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'app.ts' }]);
 
 			expect(repository.changes).toHaveLength(1);
@@ -324,7 +324,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await r.write('app.ts', MULTI_SECTION_STAGE_SECTION1);
 			await stageAll(r);
 
-			// In worktree, add section 3 edit as an unstaged modification
+			// In working tree, add section 3 edit as an unstaged modification
 			await r.write('app.ts', MULTI_SECTION_EDITED);
 
 			const adapter = engine.adapter(r);
@@ -343,12 +343,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await applyHunkAction(appState, unstagedChange!, unstagedHunks[0], 'discard');
 
-			// Worktree reverted to staged index content (MULTI_SECTION_STAGE_SECTION1)
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION1);
+			// Working tree reverted to staged index content (MULTI_SECTION_STAGE_SECTION1)
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION1);
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION1);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'app.ts' }]);
 
-			// Re-apply worktree edit and test staging the unstaged hunk on the combined change
+			// Re-apply working-tree edit and test staging the unstaged hunk on the combined change
 			await r.write('app.ts', MULTI_SECTION_EDITED);
 			await repository.refresh();
 
@@ -359,13 +359,13 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await applyHunkAction(appState, nextUnstagedChange!, nextHunks[0], 'stage');
 
-			// Index and worktree now both have full MULTI_SECTION_EDITED
+			// Index and working tree now both have full MULTI_SECTION_EDITED
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'app.ts' }]);
 		});
 
-		it('discards a staged hunk in a combined change, reverting the staged portion while preserving unstaged worktree edits', async () => {
+		it('discards a staged hunk in a combined change, reverting the staged portion while preserving unstaged working-tree edits', async () => {
 			const r = await createTrackedRepo();
 			await r.write('app.ts', MULTI_SECTION_BASE);
 			await commitAll(r, 'base commit');
@@ -374,7 +374,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await r.write('app.ts', MULTI_SECTION_STAGE_SECTION1);
 			await stageAll(r);
 
-			// In worktree, add section 3 edit as an unstaged modification
+			// In working tree, add section 3 edit as an unstaged modification
 			await r.write('app.ts', MULTI_SECTION_EDITED);
 
 			const adapter = engine.adapter(r);
@@ -398,11 +398,11 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			const combinedHunks = deriveHunks(combinedDiff!.originalContent, combinedDiff!.modifiedContent);
 			expect(combinedHunks).toHaveLength(2);
 
-			// Discard the staged hunk (Hunk 0 = Section 1): reverts section 1 from index and worktree, preserves section 3 in worktree
+			// Discard the staged hunk (Hunk 0 = Section 1): reverts section 1 from index and working tree, preserves section 3 in working tree
 			await applyHunkAction(appState, combinedChange, combinedHunks[0], 'discard');
 
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_BASE);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION3);
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'app.ts' }]);
 
 			expect(repository.changes).toHaveLength(1);
@@ -438,7 +438,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await applyHunkAction(appState, rawChange, hunks[0], 'stage');
 
 			expect(await indexContents(r, 'app.ts')).toBe(MULTI_SECTION_STAGE_SECTION1);
-			expect(await worktreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
+			expect(await workingTreeContents(r, 'app.ts')).toBe(MULTI_SECTION_EDITED);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'app.ts' }]);
 		});
 
@@ -468,8 +468,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await r.write('lines.txt', stagedLines);
 			await stageAll(r);
 
-			// Worktree modifies 'delta' -> 'delta_MODIFIED' at the bottom
-			const worktreeLines = [
+			// Working tree modifies 'delta' -> 'delta_MODIFIED' at the bottom
+			const workingTreeLines = [
 				'INSERTED_TOP_1',
 				'INSERTED_TOP_2',
 				'INSERTED_TOP_3',
@@ -479,7 +479,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 				'delta_MODIFIED',
 				'epsilon'
 			].join('\n') + '\n';
-			await r.write('lines.txt', worktreeLines);
+			await r.write('lines.txt', workingTreeLines);
 
 			const adapter = engine.adapter(r);
 			const { repository, appState } = createTestContext(r, adapter);
@@ -493,8 +493,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Stage the bottom hunk; mapRange must map the offset into the index with the top insertions
 			await applyHunkAction(appState, unstagedChange!, hunks[0], 'stage');
 
-			expect(await indexContents(r, 'lines.txt')).toBe(worktreeLines);
-			expect(await worktreeContents(r, 'lines.txt')).toBe(worktreeLines);
+			expect(await indexContents(r, 'lines.txt')).toBe(workingTreeLines);
+			expect(await workingTreeContents(r, 'lines.txt')).toBe(workingTreeLines);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'lines.txt' }]);
 		});
 
@@ -566,7 +566,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			].join('\n') + '\n';
 
 			expect(await indexContents(r, 'data.txt')).toBe(expectedIndexAfterHunk1);
-			expect(await worktreeContents(r, 'data.txt')).toBe(modifiedLines);
+			expect(await workingTreeContents(r, 'data.txt')).toBe(modifiedLines);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'data.txt' }]);
 
 			// Now stage Hunk 0 (the insertion after line2)
@@ -595,7 +595,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			].join('\n') + '\n';
 
 			expect(await indexContents(r, 'data.txt')).toBe(expectedIndexAfterHunk0);
-			expect(await worktreeContents(r, 'data.txt')).toBe(modifiedLines);
+			expect(await workingTreeContents(r, 'data.txt')).toBe(modifiedLines);
 
 			// Now unstage Hunk 1 (the deletion of line5) so line5 is restored in the index
 			const stagedDiff = await repository.getFileDiff('data.txt', { staged: true });
@@ -625,7 +625,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			].join('\n') + '\n';
 
 			expect(await indexContents(r, 'data.txt')).toBe(expectedIndexAfterUnstage);
-			expect(await worktreeContents(r, 'data.txt')).toBe(modifiedLines);
+			expect(await workingTreeContents(r, 'data.txt')).toBe(modifiedLines);
 		});
 	});
 }

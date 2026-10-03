@@ -177,7 +177,7 @@ export class NodeDirectoryHandle {
 	}
 }
 
-/** Move `srcPath` to `destPath` on disk; used to build worktree renames in fixtures. */
+/** Move `srcPath` to `destPath` on disk; used to build working-tree renames in fixtures. */
 export async function moveEntry(srcPath: string, destPath: string): Promise<void> {
 	await mkdir(dirname(destPath), { recursive: true });
 	await rename(srcPath, destPath);

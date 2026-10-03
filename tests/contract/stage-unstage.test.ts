@@ -20,7 +20,7 @@ import {
 	porcelainStatus,
 	runGit,
 	TEST_IDENTITY,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 function origin(r: TestRepo): FileOrigin {
@@ -80,30 +80,30 @@ async function commitAll(r: TestRepo, message: string): Promise<void> {
 	if (res.code !== 0) throw new Error(res.stderr);
 }
 
-const CRLF_WORKTREE = 'line1\r\nline2\r\n';
+const CRLF_WORKING_TREE = 'line1\r\nline2\r\n';
 
 /**
  * A fresh base repository whose `core.autocrlf` is set to `autocrlf` (`null`
- * leaves it unmentioned), holding a CRLF file in the worktree, staged through
+ * leaves it unmentioned), holding a CRLF file in the working tree, staged through
  * `adapter.stageAll()`.
  *
  * Every line-ending case differs only in that one config value, so they share
  * the fixture. Resolves the repository, the adapter, the resulting index
- * contents and the worktree copy, so a caller asserts on the outcome rather
+ * contents and the working-tree copy, so a caller asserts on the outcome rather
  * than re-deriving it. Returns the repository because one case has to read the
  * index back with the config line removed first.
  */
 async function stageCrlfWithAutocrlf(
 	engine: Engine,
 	autocrlf: string | null
-): Promise<{ repo: TestRepo; adapter: StageUnstage; staged: string | null; worktree: string }> {
+): Promise<{ repo: TestRepo; adapter: StageUnstage; staged: string | null; workingTree: string }> {
 	const r = await createTrackedRepo();
 	await baseRepo(r);
 	await r.git(['config', 'user.name', TEST_IDENTITY.name]);
 	await r.git(['config', 'user.email', TEST_IDENTITY.email]);
 	if (autocrlf !== null) await r.git(['config', 'core.autocrlf', autocrlf]);
 	const adapter = engine.adapter(r);
-	await writeFile(path.join(r.path, 'crlf.txt'), CRLF_WORKTREE);
+	await writeFile(path.join(r.path, 'crlf.txt'), CRLF_WORKING_TREE);
 
 	await adapter.stageAll();
 
@@ -111,7 +111,7 @@ async function stageCrlfWithAutocrlf(
 		repo: r,
 		adapter,
 		staged: await indexContents(r, 'crlf.txt'),
-		worktree: await worktreeContents(r, 'crlf.txt')
+		workingTree: await workingTreeContents(r, 'crlf.txt')
 	};
 }
 
@@ -128,7 +128,7 @@ async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
 
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — per-file and bulk stage/unstage`, () => {
-		it('stages an unstaged modification per-file, matching the index to the worktree', async () => {
+		it('stages an unstaged modification per-file, matching the index to the working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('hello.ts', HELLO_V1);
@@ -138,7 +138,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V1);
-			expect(await indexContents(r, 'hello.ts')).toBe(await worktreeContents(r, 'hello.ts'));
+			expect(await indexContents(r, 'hello.ts')).toBe(await workingTreeContents(r, 'hello.ts'));
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
@@ -155,7 +155,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await lsFiles(r)).toEqual(['README.md', 'added.txt', 'hello.ts', 'src.txt']);
 		});
 
-		it('stages a worktree deletion per-file without touching the worktree', async () => {
+		it('stages a working-tree deletion per-file without touching the working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await rm(`${r.path}/hello.ts`);
@@ -166,7 +166,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await porcelainStatus(r)).toEqual([{ x: 'D', y: ' ', path: 'hello.ts' }]);
 			expect(await indexContents(r, 'hello.ts')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'src.txt']);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(null);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(null);
 		});
 
 		it('unstages a staged modification per-file, restoring HEAD content to the index', async () => {
@@ -180,7 +180,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
 		});
 
 		it('unstages a staged addition per-file, removing it from the index', async () => {
@@ -195,7 +195,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'added.txt' }]);
 			expect(await indexContents(r, 'added.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
-			expect(await worktreeContents(r, 'added.txt')).toBe('new content\n');
+			expect(await workingTreeContents(r, 'added.txt')).toBe('new content\n');
 		});
 
 		it('unstages a staged delete per-file, restoring the file to the index', async () => {
@@ -204,7 +204,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await checkedGit(r, ['rm', '-q', '--cached', 'README.md']);
 			const adapter = engine.adapter(r);
 			// Porcelain reports the staged delete (`D `) and the now-untracked
-			// worktree file (`??`) as separate comparisons.
+			// working-tree file (`??`) as separate comparisons.
 			expect(await porcelainStatus(r)).toEqual([
 				{ x: 'D', y: ' ', path: 'README.md' },
 				{ x: '?', y: '?', path: 'README.md' }
@@ -233,7 +233,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			]);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'moved.txt')).toBe(null);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
 		});
 
 		it('stageAll stages modifications, additions, and deletions in one operation', async () => {
@@ -251,12 +251,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 				{ x: 'M', y: ' ', path: 'hello.ts' },
 				{ x: 'D', y: ' ', path: 'src.txt' }
 			]);
-			expect(await indexContents(r, 'hello.ts')).toBe(await worktreeContents(r, 'hello.ts'));
+			expect(await indexContents(r, 'hello.ts')).toBe(await workingTreeContents(r, 'hello.ts'));
 			expect(await indexContents(r, 'added.txt')).toBe('new content\n');
 			expect(await indexContents(r, 'src.txt')).toBe(null);
 		});
 
-		it('stageAll on a worktree rename produces a staged rename', async () => {
+		it('stageAll on a working-tree rename produces a staged rename', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
@@ -300,10 +300,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.unstageFile('first.txt');
 
 			// No commits exist yet, so there is no HEAD to reset to: the index entry
-			// is removed and the worktree copy stays put.
+			// is removed and the working-tree copy stays put.
 			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'first.txt' }]);
 			expect(await indexContents(r, 'first.txt')).toBe(null);
-			expect(await worktreeContents(r, 'first.txt')).toBe('first content\n');
+			expect(await workingTreeContents(r, 'first.txt')).toBe('first content\n');
 			expect(await lsFiles(r)).toEqual([]);
 		});
 
@@ -330,8 +330,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'first.txt')).toBe(null);
 			expect(await indexContents(r, 'second.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual([]);
-			expect(await worktreeContents(r, 'first.txt')).toBe('first content\n');
-			expect(await worktreeContents(r, 'second.txt')).toBe('second content\n');
+			expect(await workingTreeContents(r, 'first.txt')).toBe('first content\n');
+			expect(await workingTreeContents(r, 'second.txt')).toBe('second content\n');
 		});
 
 		it('unstageAll treats an empty unborn index as a successful no-op', async () => {
@@ -361,7 +361,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 	});
 
 	describe(`${engine.name} — index-content engine`, () => {
-		it('writes the exact content to the index without touching the worktree', async () => {
+		it('writes the exact content to the index without touching the working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('hello.ts', HELLO_V1);
@@ -370,7 +370,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', 'const a = 1;\nconst b = 99;\n');
 
 			expect(await indexContents(r, 'hello.ts')).toBe('const a = 1;\nconst b = 99;\n');
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
 			expect(await indexMode(r, 'hello.ts')).toBe('100644');
 		});
@@ -383,10 +383,10 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', '');
 
 			expect(await indexContents(r, 'hello.ts')).toBe('');
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 		});
 
-		it('writes identical content as a no-op, leaving the index and worktree untouched', async () => {
+		it('writes identical content as a no-op, leaving the index and working tree untouched', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
@@ -395,9 +395,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', HELLO_V0);
 
 			// The index already holds exactly this content: the write must be
-			// skipped entirely, leaving status, index, and worktree untouched.
+			// skipped entirely, leaving status, index, and working tree untouched.
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
 
@@ -412,7 +412,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', '');
 
 			expect(await indexContents(r, 'hello.ts')).toBe('');
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
 		});
 
@@ -424,7 +424,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', 'no trailing newline');
 
 			expect(await indexContents(r, 'hello.ts')).toBe('no trailing newline');
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
 		});
 
@@ -439,7 +439,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', '\n');
 
 			expect(await indexContents(r, 'hello.ts')).toBe('\n');
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: 'M', path: 'hello.ts' }]);
 
 			// "\n" → HELLO_V0: the reverse transition must round-trip too. HELLO_V0
@@ -447,34 +447,34 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.updateIndexContent('hello.ts', HELLO_V0);
 
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
 
 		it('stages a lone-newline untracked file through the index-content engine', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			await r.write('added.txt', 'worktree copy\n');
+			await r.write('added.txt', 'working-tree copy\n');
 			const adapter = engine.adapter(r);
 
 			await adapter.updateIndexContent('added.txt', '\n');
 
 			expect(await indexContents(r, 'added.txt')).toBe('\n');
-			expect(await worktreeContents(r, 'added.txt')).toBe('worktree copy\n');
+			expect(await workingTreeContents(r, 'added.txt')).toBe('working-tree copy\n');
 			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: 'M', path: 'added.txt' }]);
 			expect(await indexMode(r, 'added.txt')).toBe('100644');
 		});
 
-		it('stages an untracked file with exact content without touching the worktree', async () => {
+		it('stages an untracked file with exact content without touching the working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			await r.write('added.txt', 'worktree copy\n');
+			await r.write('added.txt', 'working-tree copy\n');
 			const adapter = engine.adapter(r);
 
 			await adapter.updateIndexContent('added.txt', 'staged copy\n');
 
 			expect(await indexContents(r, 'added.txt')).toBe('staged copy\n');
-			expect(await worktreeContents(r, 'added.txt')).toBe('worktree copy\n');
+			expect(await workingTreeContents(r, 'added.txt')).toBe('working-tree copy\n');
 			expect(await porcelainStatus(r)).toEqual([{ x: 'A', y: 'M', path: 'added.txt' }]);
 			expect(await indexMode(r, 'added.txt')).toBe('100644');
 		});
@@ -482,7 +482,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		it('stages content into a hollowed index entry without mis-targeting other paths', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			// The index entry is removed while HEAD and the worktree keep the file;
+			// The index entry is removed while HEAD and the working tree keep the file;
 			// the write must re-add the exact content without touching other entries.
 			await checkedGit(r, ['rm', '-q', '--cached', 'README.md']);
 			const adapter = engine.adapter(r);
@@ -496,7 +496,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
 		});
 
-		it('never removes an unrelated worktree-deleted path when staging a new untracked file', async () => {
+		it('never removes an unrelated working-tree-deleted path when staging a new untracked file', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await rm(`${r.path}/src.txt`);
@@ -549,7 +549,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// cannot learn a POSIX mode, so the index is the only place the bit
 			// can survive; losing it here breaks the script for everyone who
 			// checks the commit out. The entry must also be fully staged (no
-			// lingering worktree difference), not left permanently modified.
+			// lingering working tree difference), not left permanently modified.
 			expect(await indexMode(r, 'hello.ts')).toBe('100755');
 			expect(await indexContents(r, 'hello.ts')).toBe(`${HELLO_V0}extra\n`);
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
@@ -690,8 +690,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(await indexContents(r, 'secret.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['.gitignore', 'README.md', 'hello.ts', 'src.txt']);
 			expect(await porcelainStatus(r)).toEqual([]);
-			// A refusal must not touch the worktree either: the file is still there.
-			expect(await worktreeContents(r, 'secret.txt')).toBe('do not commit\n');
+			// A refusal must not touch the working tree either: the file is still there.
+			expect(await workingTreeContents(r, 'secret.txt')).toBe('do not commit\n');
 
 			// Once tracked, always staged: force the path in, then match it with a
 			// rule and confirm a later edit still reaches the index.
@@ -715,12 +715,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// likely to have.
 			const NORMALISING: string[] = ['true', 'yes', 'on', '1', 'TRUE', 'On', 'input', 'INPUT'];
 			for (const value of NORMALISING) {
-				const { staged, worktree } = await stageCrlfWithAutocrlf(engine, value);
+				const { staged, workingTree } = await stageCrlfWithAutocrlf(engine, value);
 
 				expect(staged, `autocrlf=${value}`).toBe('line1\nline2\n');
-				// The worktree copy is untouched: normalisation applies to what is
+				// The working-tree copy is untouched: normalisation applies to what is
 				// committed, never to the user's file on disk.
-				expect(worktree, `autocrlf=${value}`).toBe(CRLF_WORKTREE);
+				expect(workingTree, `autocrlf=${value}`).toBe(CRLF_WORKING_TREE);
 			}
 		});
 
@@ -731,7 +731,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			for (const value of ['false', 'no', 'off', '0', 'FALSE', 'Off', '']) {
 				const { staged } = await stageCrlfWithAutocrlf(engine, value);
 
-				expect(staged, `autocrlf=${value}`).toBe(CRLF_WORKTREE);
+				expect(staged, `autocrlf=${value}`).toBe(CRLF_WORKING_TREE);
 			}
 		});
 
@@ -739,7 +739,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// The default, on a repository that never mentions the setting.
 			const { staged } = await stageCrlfWithAutocrlf(engine, null);
 
-			expect(staged).toBe(CRLF_WORKTREE);
+			expect(staged).toBe(CRLF_WORKING_TREE);
 		});
 
 		// Scoped to the engine that owns the degrade, by identity rather than by
@@ -753,7 +753,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 				// unrecognised value must not throw. Throwing would turn a single
 				// bad config line into an inability to stage anything at all, which
 				// is a strictly worse failure than staging CRLF unchanged.
-				const { repo, staged, worktree } = await stageCrlfWithAutocrlf(engine, 'bogus');
+				const { repo, staged, workingTree } = await stageCrlfWithAutocrlf(engine, 'bogus');
 
 				// git refuses *every* command while that config line is bad —
 				// including `git show :path`, which is how the index is normally
@@ -762,8 +762,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 				// `show :path` prints the staged blob verbatim.
 				await repo.git(['config', '--unset', 'core.autocrlf']);
 
-				expect(await indexContents(repo, 'crlf.txt')).toBe(CRLF_WORKTREE);
-				expect(worktree).toBe(CRLF_WORKTREE);
+				expect(await indexContents(repo, 'crlf.txt')).toBe(CRLF_WORKING_TREE);
+				expect(workingTree).toBe(CRLF_WORKING_TREE);
 				expect(staged).toBe(null);
 			});
 		}
@@ -790,7 +790,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await commitAll(r, 'add binary');
 			const adapter = engine.adapter(r);
 
-			// Edit the file the way a user would, then stage the whole worktree.
+			// Edit the file the way a user would, then stage the whole working tree.
 			const edited = Buffer.concat([bytes, Buffer.from([0xfe, 0x01])]);
 			await writeFile(path.join(r.path, 'blob.bin'), edited);
 			await adapter.stageAll();
@@ -810,7 +810,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 		it('stages an emptied tracked file rather than skipping it', async () => {
 			// Staging writes the blob directly, so a file truncated to empty must
-			// still produce a staged empty blob. A falsy read of the worktree content
+			// still produce a staged empty blob. A falsy read of the working-tree content
 			// would silently skip the file. As with the binary case this is a guard on
 			// the current implementation; `git.add` staged the empty file too.
 			const r = await createTrackedRepo();
@@ -860,7 +860,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: 'M', path: 'moved.txt', origPath: 'src.txt' }]);
 			expect(await indexContents(r, 'moved.txt')).toBe(`${SRC_CONTENT}extra\n`);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'src.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'moved.txt']);
 		});
@@ -868,13 +868,13 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		it('does not stage deletion of an unrelated deleted file when staging an untracked file with identical content', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			// src.txt is deleted in the worktree but NOT staged as deleted in the index
+			// src.txt is deleted in the working tree but NOT staged as deleted in the index
 			await rm(`${r.path}/src.txt`);
 			// An unrelated new file happens to have identical content to src.txt
 			await r.write('unrelated.txt', SRC_CONTENT);
 			const adapter = engine.adapter(r);
 
-			// Status before: src.txt is worktree-deleted, unrelated.txt is untracked
+			// Status before: src.txt is working-tree-deleted, unrelated.txt is untracked
 			expect(await porcelainStatus(r)).toEqual([
 				{ x: ' ', y: 'D', path: 'src.txt' },
 				{ x: '?', y: '?', path: 'unrelated.txt' }
@@ -922,23 +922,23 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 	});
 
 	/**
-	 * `updateFileContent` is the worktree half of the hunk-action write path, and
+	 * `updateFileContent` is the working-tree half of the hunk-action write path, and
 	 * it was the only method on the `VCSAdapter` surface with no contract
 	 * coverage at all — both engines were exercised only through mocks. A mock
 	 * cannot catch a root- or path-joining mistake, which is the whole point of
 	 * the real-engine contract suite (ADR 0004).
 	 */
 	describe(`${engine.name} — updateFileContent`, () => {
-		it('writes a tracked file into the worktree without touching the index', async () => {
+		it('writes a tracked file into the working tree without touching the index', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
 
 			await adapter.updateFileContent('hello.ts', HELLO_V1);
 
-			// The worktree holds the new bytes...
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
-			// ...the index still holds the committed bytes (this is a worktree
+			// The working tree holds the new bytes...
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+			// ...the index still holds the committed bytes (this is a working-tree
 			// write, not a stage), so the file reads as an unstaged `M`.
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
@@ -952,7 +952,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.updateFileContent('empty-me.txt', '');
 
-			expect(await worktreeContents(r, 'empty-me.txt')).toBe('');
+			expect(await workingTreeContents(r, 'empty-me.txt')).toBe('');
 			expect(await indexContents(r, 'empty-me.txt')).toBe('previous contents\n');
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'empty-me.txt' }]);
 		});
@@ -965,7 +965,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.updateFileContent('nested/deep/file.txt', 'rewritten by adapter\n');
 
-			expect(await worktreeContents(r, 'nested/deep/file.txt')).toBe('rewritten by adapter\n');
+			expect(await workingTreeContents(r, 'nested/deep/file.txt')).toBe('rewritten by adapter\n');
 			expect(await indexContents(r, 'nested/deep/file.txt')).toBe('original\n');
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'nested/deep/file.txt' }]);
 		});
@@ -982,15 +982,15 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// clean in the porcelain and still tracked in the index. A write that
 			// also staged, added, or clobbered a sibling would show up here
 			// even though every sibling file still read back correctly.
-			expect(await worktreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'M', path: 'hello.ts' }]);
 		});
 
-		it('creates a missing target as an untracked worktree entry without staging it', async () => {
+		it('creates a missing target as an untracked working-tree entry without staging it', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const adapter = engine.adapter(r);
@@ -1026,6 +1026,6 @@ describe('SpawnGitAdapter — broken-HEAD unstage guard', () => {
 		// Every index entry survives: the guard must refuse to touch the index.
 		expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V1);
-		expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+		expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
 	});
 });

@@ -19,7 +19,7 @@ import {
 	lsFiles,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 function origin(r: TestRepo): FileOrigin {
@@ -42,7 +42,7 @@ interface Engine {
 	name: string;
 	adapter(r: TestRepo): BranchSwitching;
 	/**
-	 * Whether this engine's worktree can carry a POSIX mode at all.
+	 * Whether this engine's working tree can carry a POSIX mode at all.
 	 *
 	 * The browser engine's `GitFileAccess` is a File System Access API handle:
 	 * it exposes a name, a MIME type and bytes, and no permission bits. There is
@@ -106,7 +106,7 @@ async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
  * observes the same surface a user would: the mode of the file they are about
  * to run, not the mode an engine reports about it.
  */
-async function worktreeMode(r: TestRepo, relPath: string): Promise<number | null> {
+async function workingTreeMode(r: TestRepo, relPath: string): Promise<number | null> {
 	try {
 		return (await stat(path.join(r.path, relPath))).mode & 0o7777;
 	} catch {
@@ -120,18 +120,18 @@ for (const engine of ENGINES) {
 			it('reports no-op when switching to the current branch and changes nothing', async () => {
 				const r = await createTrackedRepo();
 				await commitFiles(r, 'initial', { 'file.txt': 'base content\n' });
-				await r.write('file.txt', 'dirty worktree\n');
+				await r.write('file.txt', 'dirty working tree\n');
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('main');
 
 				expect(res).toEqual({ status: 'noop' });
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'file.txt')).toBe('dirty worktree\n');
+				expect(await workingTreeContents(r, 'file.txt')).toBe('dirty working tree\n');
 				expect(await indexContents(r, 'file.txt')).toBe('base content\n');
 			});
 
-			it('switches cleanly between branches and updates worktree to match target branch', async () => {
+			it('switches cleanly between branches and updates working tree to match target branch', async () => {
 				const r = await createTrackedRepo();
 				await commitFiles(r, 'initial', { 'common.txt': 'base\n', 'feature-only.txt': 'v1\n' });
 				await createBranch(r, 'feature');
@@ -145,8 +145,8 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'common.txt')).toBe('base\n');
-				expect(await worktreeContents(r, 'main-only.txt')).toBeNull();
+				expect(await workingTreeContents(r, 'common.txt')).toBe('base\n');
+				expect(await workingTreeContents(r, 'main-only.txt')).toBeNull();
 				expect(await lsFiles(r)).toEqual(['common.txt', 'feature-only.txt']);
 			});
 		});
@@ -170,9 +170,9 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'common.txt')).toBe('unstaged dirty edit\n');
+				expect(await workingTreeContents(r, 'common.txt')).toBe('unstaged dirty edit\n');
 				expect(await indexContents(r, 'common.txt')).toBe('base\n');
-				expect(await worktreeContents(r, 'other.txt')).toBe('other modified on feature\n');
+				expect(await workingTreeContents(r, 'other.txt')).toBe('other modified on feature\n');
 
 				const status = await porcelainStatus(r);
 				const commonStatus = status.find(s => s.path === 'common.txt');
@@ -200,7 +200,7 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'common.txt')).toBe('staged dirty edit\n');
+				expect(await workingTreeContents(r, 'common.txt')).toBe('staged dirty edit\n');
 				expect(await indexContents(r, 'common.txt')).toBe('staged dirty edit\n');
 
 				const status = await porcelainStatus(r);
@@ -223,7 +223,7 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'untracked.txt')).toBe('brand new untracked\n');
+				expect(await workingTreeContents(r, 'untracked.txt')).toBe('brand new untracked\n');
 				expect(await indexContents(r, 'untracked.txt')).toBeNull();
 
 				const status = await porcelainStatus(r);
@@ -247,7 +247,7 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'staged-new.txt')).toBe('new staged content\n');
+				expect(await workingTreeContents(r, 'staged-new.txt')).toBe('new staged content\n');
 				expect(await indexContents(r, 'staged-new.txt')).toBe('new staged content\n');
 
 				const status = await porcelainStatus(r);
@@ -265,14 +265,14 @@ for (const engine of ENGINES) {
 				// Stage an edit, then make further unstaged edit
 				await r.write('common.txt', 'staged version\n');
 				await r.git(['add', 'common.txt']);
-				await r.write('common.txt', 'worktree unstaged version\n');
+				await r.write('common.txt', 'working tree unstaged version\n');
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('feature');
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'common.txt')).toBe('worktree unstaged version\n');
+				expect(await workingTreeContents(r, 'common.txt')).toBe('working tree unstaged version\n');
 				expect(await indexContents(r, 'common.txt')).toBe('staged version\n');
 
 				const status = await porcelainStatus(r);
@@ -295,7 +295,7 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'to-delete.txt')).toBeNull();
+				expect(await workingTreeContents(r, 'to-delete.txt')).toBeNull();
 				expect(await indexContents(r, 'to-delete.txt')).toBeNull();
 
 				const status = await porcelainStatus(r);
@@ -321,11 +321,11 @@ for (const engine of ENGINES) {
 
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
-				expect(await worktreeContents(r, 'src/common.txt')).toBe('nested unstaged edit\n');
+				expect(await workingTreeContents(r, 'src/common.txt')).toBe('nested unstaged edit\n');
 				expect(await indexContents(r, 'src/common.txt')).toBe('base\n');
-				expect(await worktreeContents(r, 'src/staged.txt')).toBe('nested staged\n');
+				expect(await workingTreeContents(r, 'src/staged.txt')).toBe('nested staged\n');
 				expect(await indexContents(r, 'src/staged.txt')).toBe('nested staged\n');
-				expect(await worktreeContents(r, 'src/nested/untracked.txt')).toBe('deep untracked\n');
+				expect(await workingTreeContents(r, 'src/nested/untracked.txt')).toBe('deep untracked\n');
 			});
 
 			it('preserves a combination of multiple dirty files (staged, unstaged, untracked, deleted) simultaneously', async () => {
@@ -346,7 +346,7 @@ for (const engine of ENGINES) {
 				// 3. Staged + unstaged (both)
 				await r.write('mod-both.txt', 'staged part\n');
 				await r.git(['add', 'mod-both.txt']);
-				await r.write('mod-both.txt', 'worktree part\n');
+				await r.write('mod-both.txt', 'working tree part\n');
 				// 4. Staged delete
 				await r.git(['rm', 'del-staged.txt']);
 				// 5. Untracked file
@@ -361,22 +361,22 @@ for (const engine of ENGINES) {
 				expect(res).toEqual({ status: 'switched' });
 				expect(await currentBranch(r)).toBe('feature');
 
-				expect(await worktreeContents(r, 'mod-unstaged.txt')).toBe('unstaged change\n');
+				expect(await workingTreeContents(r, 'mod-unstaged.txt')).toBe('unstaged change\n');
 				expect(await indexContents(r, 'mod-unstaged.txt')).toBe('base1\n');
 
-				expect(await worktreeContents(r, 'mod-staged.txt')).toBe('staged change\n');
+				expect(await workingTreeContents(r, 'mod-staged.txt')).toBe('staged change\n');
 				expect(await indexContents(r, 'mod-staged.txt')).toBe('staged change\n');
 
-				expect(await worktreeContents(r, 'mod-both.txt')).toBe('worktree part\n');
+				expect(await workingTreeContents(r, 'mod-both.txt')).toBe('working tree part\n');
 				expect(await indexContents(r, 'mod-both.txt')).toBe('staged part\n');
 
-				expect(await worktreeContents(r, 'del-staged.txt')).toBeNull();
+				expect(await workingTreeContents(r, 'del-staged.txt')).toBeNull();
 				expect(await indexContents(r, 'del-staged.txt')).toBeNull();
 
-				expect(await worktreeContents(r, 'untracked.txt')).toBe('untracked content\n');
+				expect(await workingTreeContents(r, 'untracked.txt')).toBe('untracked content\n');
 				expect(await indexContents(r, 'untracked.txt')).toBeNull();
 
-				expect(await worktreeContents(r, 'added-staged.txt')).toBe('added staged\n');
+				expect(await workingTreeContents(r, 'added-staged.txt')).toBe('added staged\n');
 				expect(await indexContents(r, 'added-staged.txt')).toBe('added staged\n');
 			});
 		});
@@ -404,9 +404,9 @@ for (const engine of ENGINES) {
 					files: ['conflict.txt']
 				});
 
-				// Safety check: branch did NOT change, worktree did NOT lose work
+				// Safety check: branch did NOT change, working tree did NOT lose work
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'conflict.txt')).toBe('local uncommitted work\n');
+				expect(await workingTreeContents(r, 'conflict.txt')).toBe('local uncommitted work\n');
 				expect(await indexContents(r, 'conflict.txt')).toBe('base\n');
 			});
 
@@ -435,8 +435,8 @@ for (const engine of ENGINES) {
 
 				// Both safe and conflict uncommitted edits must be preserved exactly
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'conflict.txt')).toBe('local dirty conflict\n');
-				expect(await worktreeContents(r, 'safe.txt')).toBe('safe staged edit\n');
+				expect(await workingTreeContents(r, 'conflict.txt')).toBe('local dirty conflict\n');
+				expect(await workingTreeContents(r, 'safe.txt')).toBe('safe staged edit\n');
 				expect(await indexContents(r, 'safe.txt')).toBe('safe staged edit\n');
 			});
 
@@ -464,7 +464,7 @@ for (const engine of ENGINES) {
 
 				// Safety check: untracked local file is NOT overwritten or lost
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'collision.txt')).toBe('untracked local content\n');
+				expect(await workingTreeContents(r, 'collision.txt')).toBe('untracked local content\n');
 			});
 
 			it('reports all conflicting files when multiple files differ', async () => {
@@ -489,8 +489,8 @@ for (const engine of ENGINES) {
 				}
 
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'c1.txt')).toBe('dirty1\n');
-				expect(await worktreeContents(r, 'c2.txt')).toBe('dirty2\n');
+				expect(await workingTreeContents(r, 'c1.txt')).toBe('dirty1\n');
+				expect(await workingTreeContents(r, 'c2.txt')).toBe('dirty2\n');
 			});
 
 			it('reports a non-ASCII conflict filename verbatim (unquoted)', async () => {
@@ -531,7 +531,7 @@ for (const engine of ENGINES) {
 				await commitFiles(r, 'feature commit', { 'c1.txt': 'feat1\n', 'c2.txt': 'feat2\n' });
 				await checkoutBranch(r, 'main');
 
-				// Dirty all six files in the worktree.
+				// Dirty all six files in the working tree.
 				for (let i = 1; i <= 4; i++) await r.write(`ok${i}.txt`, `local${i}\n`);
 				await r.write('c1.txt', 'dirty1\n');
 				await r.write('c2.txt', 'dirty2\n');
@@ -548,7 +548,7 @@ for (const engine of ENGINES) {
 				expect(await currentBranch(r)).toBe('main');
 				// Non-conflicting dirty files are carried forward untouched.
 				for (let i = 1; i <= 4; i++) {
-					expect(await worktreeContents(r, `ok${i}.txt`)).toBe(`local${i}\n`);
+					expect(await workingTreeContents(r, `ok${i}.txt`)).toBe(`local${i}\n`);
 				}
 			});
 		});
@@ -604,7 +604,7 @@ for (const engine of ENGINES) {
 					expect(res.message).toBeTruthy();
 				}
 				expect(await currentBranch(r)).toBe('main');
-				expect(await worktreeContents(r, 'file.txt')).toBe('dirty work\n');
+				expect(await workingTreeContents(r, 'file.txt')).toBe('dirty work\n');
 				expect(await indexContents(r, 'file.txt')).toBe('base\n');
 			});
 		});
@@ -638,14 +638,14 @@ for (const engine of ENGINES) {
 
 				// The user marks the script executable and stages that, changing
 				// nothing else. Staging the mode (rather than only chmod-ing the
-				// worktree) is what puts the path into the snapshot at all: a
-				// worktree-only mode never reaches the index, so the case would
+				// working tree) is what puts the path into the snapshot at all: a
+				// working-tree-only mode never reaches the index, so the case would
 				// never be exercised.
 				chmodSync(path.join(r.path, 'run.sh'), 0o755);
 				const add = await r.git(['add', 'run.sh']);
 				if (add.code !== 0) throw new Error(add.stderr);
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 
 				const adp = engine.adapter(r);
 				const res = await adp.switchBranch('feature');
@@ -654,7 +654,7 @@ for (const engine of ENGINES) {
 				// Both surfaces must agree after the switch, or the app reports a
 				// clean file that the user cannot run.
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 			});
 
 			it.skipIf(
@@ -684,9 +684,9 @@ for (const engine of ENGINES) {
 				const res = await adp.switchBranch('feature');
 
 				expect(res).toEqual({ status: 'switched' });
-				expect(await worktreeContents(r, 'run.sh')).toBe('#!/bin/sh\necho changed\n');
+				expect(await workingTreeContents(r, 'run.sh')).toBe('#!/bin/sh\necho changed\n');
 				expect(await indexMode(r, 'run.sh')).toBe('100755');
-				expect(await worktreeMode(r, 'run.sh')).toBe(0o755);
+				expect(await workingTreeMode(r, 'run.sh')).toBe(0o755);
 			});
 		});
 
@@ -729,7 +729,7 @@ for (const engine of ENGINES) {
 
 					// The invariant is that the user's edit survives, not that the
 					// switch reports a particular verdict.
-					expect(await worktreeContents(r, NOTE)).toBe('LOCAL UNCOMMITTED\n');
+					expect(await workingTreeContents(r, NOTE)).toBe('LOCAL UNCOMMITTED\n');
 					// And if it did report a clean switch, the file must not have
 					// been silently clobbered — assert the status is honest too.
 					if (res.status === 'switched') {

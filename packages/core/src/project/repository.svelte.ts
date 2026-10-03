@@ -204,7 +204,7 @@ const opQueues = new WeakMap<object, { queue: Promise<unknown>; depth: number }>
  * Serializes mutating operations per repository instance and holds `isBusy`
  * until the last queued operation settles. Hunk actions splice contents read
  * from an earlier snapshot, so overlapping writes on one repository can
- * corrupt the index or worktree.
+ * corrupt the index or working tree.
  */
 export function runExclusively<T>(repo: { isBusy: boolean }, op: () => Promise<T>): Promise<T> {
 	const existing = opQueues.get(repo);

@@ -38,7 +38,7 @@ describe('updateIndexContent: an empty index entry', () => {
 		await adapterFor(repo).updateIndexContent('config.json', newContent);
 
 		expect(await indexContents(repo, 'config.json')).toBe(newContent);
-		// The worktree is untouched — this writes the index only.
+		// The working tree is untouched — this writes the index only.
 		expect(await repo.read('config.json')).toBe('');
 	});
 

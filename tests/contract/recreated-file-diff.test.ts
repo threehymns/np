@@ -1,13 +1,13 @@
 /**
  * A file deleted and recreated between refreshes must not be reported as deleted.
  *
- * `getFileDiff` short-circuits the worktree read when the combined porcelain
+ * `getFileDiff` short-circuits the working tree read when the combined porcelain
  * status is `D`. That status means "staged deletion". It does NOT mean the file
  * is absent from disk: a user who deletes a file, stages the deletion, and then
  * recreates it gets exactly `D  f.txt` alongside `?? f.txt` from git, and the
  * UI combines those into one entry whose status is `D`.
  *
- * The consequence is unrecoverable data loss. Reporting the worktree as empty
+ * The consequence is unrecoverable data loss. Reporting the working tree as empty
  * arms it: two discard routes resolve the path from the index or from HEAD, and
  * a recreate's content is in neither. `discardChanges(..., {staged: false})`
  * cannot resolve the pathspec — the path is out of the index — so it falls
@@ -26,7 +26,7 @@
 import { expect } from 'bun:test';
 import type { FileOrigin } from '@np/core';
 import { SpawnGitAdapter } from '../../apps/desktop/src/renderer/SpawnGitAdapter';
-import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit, worktreeContents } from './harness';
+import { TestRepo, createTrackedRepo, describe, it, nodeFileAccess, porcelainStatus, runGit, workingTreeContents } from './harness';
 
 function adapterFor(repo: TestRepo): SpawnGitAdapter {
 	const origin: FileOrigin = { scheme: 'file', path: repo.path, name: 'repo' };
@@ -50,7 +50,7 @@ async function seed(repo: TestRepo, content = 'A\nB\n'): Promise<void> {
 }
 
 describe('getFileDiff: a deleted file that was recreated', () => {
-	it('reports the recreated worktree content instead of an empty file', async () => {
+	it('reports the recreated working-tree content instead of an empty file', async () => {
 		const repo = await createTrackedRepo();
 		await seed(repo);
 		await repo.git(['rm', '-q', '-f', 'f.txt']);
@@ -61,16 +61,16 @@ describe('getFileDiff: a deleted file that was recreated', () => {
 		const detail = await adapterFor(repo).getFileDiff('f.txt', { status });
 
 		expect(detail.modifiedContent).toBe('C\n');
-		expect(await worktreeContents(repo, 'f.txt')).toBe('C\n');
+		expect(await workingTreeContents(repo, 'f.txt')).toBe('C\n');
 	});
 
-	it('still reports an empty worktree for a file that really is gone', async () => {
+	it('still reports an empty working tree for a file that really is gone', async () => {
 		const repo = await createTrackedRepo();
 		await seed(repo);
 		await repo.git(['rm', '-q', '-f', 'f.txt']);
 		const status = await uiStatusFor(repo, 'f.txt');
 		expect(status).toBe('D');
-		expect(await worktreeContents(repo, 'f.txt')).toBeNull();
+		expect(await workingTreeContents(repo, 'f.txt')).toBeNull();
 
 		const detail = await adapterFor(repo).getFileDiff('f.txt', { status });
 

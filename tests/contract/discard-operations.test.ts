@@ -20,7 +20,7 @@ import {
 	lsFiles,
 	porcelainStatus,
 	runGit,
-	worktreeContents
+	workingTreeContents
 } from './harness';
 
 const copyVersion = await gitVersion();
@@ -47,7 +47,7 @@ interface Engine {
 	name: string;
 	adapter(r: TestRepo): DiscardSurface;
 	/**
-	 * Whether a worktree file written through this engine's filesystem can carry
+	 * Whether a working-tree file written through this engine's filesystem can carry
 	 * a POSIX mode at all. `BrowserGitFS` has no `chmod` and reports a fixed
 	 * `100644` from `stat`, so a file it writes can never be executable — an
 	 * engine-capability limit, not a behaviour any restore can work around.
@@ -103,7 +103,7 @@ async function indexMode(r: TestRepo, relPath: string): Promise<string | null> {
 	return res.stdout.trim().split(/\s+/)[0] ?? null;
 }
 
-const RECREATED_WORKTREE = 'C\nD\nE\n';
+const RECREATED_WORKING_TREE = 'C\nD\nE\n';
 
 /**
  * A file deleted, with the deletion staged, then recreated on disk.
@@ -119,7 +119,7 @@ async function recreateAfterStagedDelete(r: TestRepo): Promise<void> {
 	await baseRepo(r);
 	const rm = await r.git(['rm', '-q', '-f', 'src.txt']);
 	if (rm.code !== 0) throw new Error(rm.stderr);
-	await r.write('src.txt', RECREATED_WORKTREE);
+	await r.write('src.txt', RECREATED_WORKING_TREE);
 }
 
 /** The `D  ` + `?? ` pair git emits for that state. */
@@ -130,7 +130,7 @@ const RECREATED_STATUS: PorcelainEntry[] = [
 
 for (const engine of [spawnEngine, isomorphicEngine]) {
 	describe(`${engine.name} — discard of staged changes`, () => {
-		it('discards a staged modification, returning the index and worktree to HEAD', async () => {
+		it('discards a staged modification, returning the index and working tree to HEAD', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('hello.ts', HELLO_V1);
@@ -141,11 +141,11 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
-		it('discards a staged addition, removing it from the index and worktree', async () => {
+		it('discards a staged addition, removing it from the index and working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('added.txt', 'new content\n');
@@ -156,11 +156,11 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'added.txt')).toBe(null);
-			expect(await worktreeContents(r, 'added.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'added.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
-		it('discards a staged deletion, restoring the file to the index and worktree', async () => {
+		it('discards a staged deletion, restoring the file to the index and working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const rmRes = await r.git(['rm', '-q', 'README.md']);
@@ -172,7 +172,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
-			expect(await worktreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
+			expect(await workingTreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
@@ -187,12 +187,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('moved.txt');
 
 			// The rename is fully reverted: the original path is back in the index and
-			// worktree with its committed content, and the destination is gone everywhere.
+			// working tree with its committed content, and the destination is gone everywhere.
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'moved.txt')).toBe(null);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
@@ -211,9 +211,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// at the destination survive as an untracked file.
 			expect(await porcelainStatus(r)).toEqual([{ x: '?', y: '?', path: 'moved.txt' }]);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'moved.txt')).toBe(null);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(DEST_EDITED);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(DEST_EDITED);
 		});
 
 		it.skipIf(
@@ -241,9 +241,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Only the copy is removed; the staged-modified source is never touched.
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'src.txt' }]);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_EDITED);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_EDITED);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_EDITED);
 			expect(await indexContents(r, 'copy.txt')).toBe(null);
-			expect(await worktreeContents(r, 'copy.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'copy.txt')).toBe(null);
 		});
 
 		it.skipIf(
@@ -273,14 +273,14 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 				{ x: '?', y: '?', path: 'copy.txt' }
 			]);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_EDITED);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_EDITED);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_EDITED);
 			expect(await indexContents(r, 'copy.txt')).toBe(null);
-			expect(await worktreeContents(r, 'copy.txt')).toBe(DEST_EDITED);
+			expect(await workingTreeContents(r, 'copy.txt')).toBe(DEST_EDITED);
 		});
 	});
 
 	describe(`${engine.name} — discard of unstaged changes`, () => {
-		it('discards an unstaged modification, returning the worktree to the index', async () => {
+		it('discards an unstaged modification, returning the working tree to the index', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('hello.ts', HELLO_V1);
@@ -290,7 +290,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 		});
 
 		it('discards only the unstaged half of a staged+unstaged modification, keeping the staged change', async () => {
@@ -304,13 +304,13 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.discardChanges('hello.ts', { staged: false });
 
-			// The staged modification survives; only the worktree copy is reset to it.
+			// The staged modification survives; only the working-tree copy is reset to it.
 			expect(await porcelainStatus(r)).toEqual([{ x: 'M', y: ' ', path: 'hello.ts' }]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V1);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V1);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
 		});
 
-		it('leaves a staged rename intact while discarding the worktree copy of its destination', async () => {
+		it('leaves a staged rename intact while discarding the working-tree copy of its destination', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			const mvRes = await r.git(['mv', 'src.txt', 'moved.txt']);
@@ -321,7 +321,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
 			expect(await indexContents(r, 'moved.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
 		});
 
 		it('discards the unstaged edits at an RM rename destination, keeping the staged rename', async () => {
@@ -335,15 +335,15 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.discardChanges('moved.txt', { staged: false });
 
-			// The worktree copy is reset to the staged rename content; the staged
+			// The working-tree copy is reset to the staged rename content; the staged
 			// rename itself is untouched.
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
 			expect(await indexContents(r, 'moved.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'src.txt')).toBe(null);
 		});
 
-		it('restores a worktree-deleted tracked file from the index', async () => {
+		it('restores a working-tree-deleted tracked file from the index', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await rm(`${r.path}/src.txt`);
@@ -352,14 +352,14 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('src.txt', { staged: false });
 
 			expect(await porcelainStatus(r)).toEqual([]);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
-		it('restores the source and removes the destination of an unstaged worktree rename', async () => {
+		it('restores the source and removes the destination of an unstaged working-tree rename', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			// Unstaged worktree rename: git never pairs these, so the adapter sees a
-			// worktree deletion plus an untracked file rather than a rename.
+			// Unstaged working-tree rename: git never pairs these, so the adapter sees a
+			// working-tree deletion plus an untracked file rather than a rename.
 			await moveEntry(`${r.path}/src.txt`, `${r.path}/moved.txt`);
 			const adapter = engine.adapter(r);
 			expect(await porcelainStatus(r)).toEqual([
@@ -369,12 +369,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.discardChanges('moved.txt', { staged: false });
 
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(null);
 		});
 
 		// The source is recovered by matching the destination's bytes against the
-		// index content of paths git reports as worktree-deleted. These two tests pin
+		// index content of paths git reports as working-tree-deleted. These two tests pin
 		// the cases where that match must NOT fire, so the recovery can never
 		// resurrect a file the user did not rename.
 
@@ -391,12 +391,12 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('moved.txt', { staged: false });
 
 			// The untracked destination is discarded; the unrelated deletion stands.
-			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(null);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
-		it('never restores a source that is still present in the worktree', async () => {
+		it('never restores a source that is still present in the working tree', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			// An untracked copy of a tracked file whose source the user still has.
@@ -408,8 +408,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			await adapter.discardChanges('copy.txt', { staged: false });
 
-			expect(await worktreeContents(r, 'copy.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'copy.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
 
@@ -441,9 +441,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('moved.txt', { staged: false });
 
 			// Neither candidate is restored: the destination is an untracked file.
-			expect(await worktreeContents(r, 'moved.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(null);
-			expect(await worktreeContents(r, 'dup.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'dup.txt')).toBe(null);
 			// Both deletions stand, and the index still records both files.
 			expect(await porcelainStatus(r)).toEqual([
 				{ x: ' ', y: 'D', path: 'dup.txt' },
@@ -456,7 +456,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 		it('restores a unique byte-identical match, which is the whole limit of what a rename can be proven to be', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
-			// Exactly one worktree deletion whose index content equals the untracked
+			// Exactly one working-tree deletion whose index content equals the untracked
 			// destination. The user could equally have deleted src.txt on purpose and
 			// then written a new file that happens to hold the same bytes: no git
 			// invocation separates the two shapes, so the adapter commits to the
@@ -474,8 +474,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('notes.txt', { staged: false });
 
 			// The single matching candidate is recovered, and the destination goes.
-			expect(await worktreeContents(r, 'notes.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'notes.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(SRC_CONTENT);
 			expect(await porcelainStatus(r)).toEqual([]);
 		});
 
@@ -507,7 +507,7 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			if (commit.code !== 0) throw new Error(commit.stderr);
 			await moveEntry(`${r.path}/run.sh`, `${r.path}/moved.sh`);
 			const adapter = engine.adapter(r);
-			// The index records 100755; the worktree simply lost the file.
+			// The index records 100755; the working tree simply lost the file.
 			expect(await indexMode(r, 'run.sh')).toBe('100755');
 			expect(await porcelainStatus(r)).toEqual([
 				{ x: ' ', y: 'D', path: 'run.sh' },
@@ -519,15 +519,15 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// The bytes come back, and so must the executable bit. Restoring the
 			// file non-executable is a modification nobody made: porcelain would
 			// report the source as dirty against an index that says otherwise.
-			expect(await worktreeContents(r, 'run.sh')).toBe(SCRIPT_CONTENT);
+			expect(await workingTreeContents(r, 'run.sh')).toBe(SCRIPT_CONTENT);
 			expect(await indexMode(r, 'run.sh')).toBe('100755');
 			expect(await porcelainStatus(r)).toEqual([]);
-			expect(await worktreeContents(r, 'moved.sh')).toBe(null);
+			expect(await workingTreeContents(r, 'moved.sh')).toBe(null);
 		});
 	});
 
 	describe(`${engine.name} — discard of untracked files`, () => {
-		it('cleans an untracked file without touching unrelated worktree deletions', async () => {
+		it('cleans an untracked file without touching unrelated working-tree deletions', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('added.txt', 'untracked\n');
@@ -543,8 +543,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// Only the untracked file is cleaned; the unrelated deletion is never
 			// restored or staged.
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'D', path: 'src.txt' }]);
-			expect(await worktreeContents(r, 'added.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'added.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(null);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
@@ -560,11 +560,11 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// unstaged changes must not remove it. In git's model that copy is
 			// untracked, so there are no unstaged changes to revert, and the state
 			// is left exactly as it was rather than half-acted on.
-			expect(await worktreeContents(r, 'src.txt')).toBe(RECREATED_WORKTREE);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(RECREATED_WORKING_TREE);
 			expect(await porcelainStatus(r)).toEqual(RECREATED_STATUS);
 		});
 
-		it('cleans an untracked file without a scope, never touching unrelated worktree deletions', async () => {
+		it('cleans an untracked file without a scope, never touching unrelated working-tree deletions', async () => {
 			const r = await createTrackedRepo();
 			await baseRepo(r);
 			await r.write('added.txt', 'untracked\n');
@@ -574,8 +574,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			await adapter.discardChanges('added.txt');
 
 			expect(await porcelainStatus(r)).toEqual([{ x: ' ', y: 'D', path: 'src.txt' }]);
-			expect(await worktreeContents(r, 'added.txt')).toBe(null);
-			expect(await worktreeContents(r, 'src.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'added.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(null);
 			expect(await indexContents(r, 'src.txt')).toBe(SRC_CONTENT);
 		});
 
@@ -595,9 +595,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			// Only the untracked file is cleaned; the unrelated staged rename is untouched.
 			expect(await porcelainStatus(r)).toEqual([{ x: 'R', y: ' ', path: 'moved.txt', origPath: 'src.txt' }]);
-			expect(await worktreeContents(r, 'added.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'added.txt')).toBe(null);
 			expect(await indexContents(r, 'moved.txt')).toBe(SRC_CONTENT);
-			expect(await worktreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
+			expect(await workingTreeContents(r, 'moved.txt')).toBe(SRC_CONTENT);
 			expect(await indexContents(r, 'src.txt')).toBe(null);
 		});
 	});
@@ -630,13 +630,13 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 
 			expect(await porcelainStatus(r)).toEqual([]);
 			expect(await indexContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
 			expect(await indexContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
-			expect(await worktreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
+			expect(await workingTreeContents(r, 'README.md')).toBe('alpha\nbeta\ngamma\n');
 			expect(await indexContents(r, 'added.txt')).toBe(null);
-			expect(await worktreeContents(r, 'added.txt')).toBe(null);
-			expect(await worktreeContents(r, 'untracked.txt')).toBe(null);
-			expect(await worktreeContents(r, 'nested/deep.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'added.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'untracked.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'nested/deep.txt')).toBe(null);
 			expect(await lsFiles(r)).toEqual(['README.md', 'hello.ts', 'src.txt']);
 		});
 
@@ -664,9 +664,9 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			// content is in neither the index nor HEAD, so restoring "everything"
 			// from them is what destroys it. The staged deletion also survives the
 			// restore, which is why the file is left looking deleted-with-a-copy.
-			expect(await worktreeContents(r, 'src.txt')).toBe(RECREATED_WORKTREE);
-			expect(await worktreeContents(r, 'hello.ts')).toBe(HELLO_V0);
-			expect(await worktreeContents(r, 'untracked.txt')).toBe(null);
+			expect(await workingTreeContents(r, 'src.txt')).toBe(RECREATED_WORKING_TREE);
+			expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V0);
+			expect(await workingTreeContents(r, 'untracked.txt')).toBe(null);
 			expect(await porcelainStatus(r)).toEqual(RECREATED_STATUS);
 		});
 	});
@@ -690,8 +690,8 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			try {
 				const adapter = engine.adapter(r);
 				await expect(adapter.discardChanges('sub/mod.txt', { staged: false })).rejects.toThrow();
-				// The worktree copy must survive a failed discard.
-				expect(await worktreeContents(r, 'sub/mod.txt')).toBe('changed line\n');
+				// The working-tree copy must survive a failed discard.
+				expect(await workingTreeContents(r, 'sub/mod.txt')).toBe('changed line\n');
 			} finally {
 				chmodSync(path.join(r.path, 'sub', 'mod.txt'), 0o644);
 				chmodSync(path.join(r.path, 'sub'), 0o755);

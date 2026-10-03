@@ -215,7 +215,7 @@ describe('resolveRenamedHeadContent', () => {
 		).rejects.toThrow('EACCES: permission denied');
 	});
 
-	it('rethrows non-ENOENT filesystem errors during worktree stat probing', async () => {
+	it('rethrows non-ENOENT filesystem errors during working-tree stat probing', async () => {
 		const fsWithStatError = {
 			promises: {
 				readFile: mock(async () => {

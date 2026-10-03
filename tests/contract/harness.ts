@@ -307,8 +307,8 @@ export async function indexContents(repo: TestRepo, relPath: string): Promise<st
 	return res.code === 0 ? res.stdout : null;
 }
 
-/** Worktree contents for a path, or null when the file does not exist on disk. */
-export async function worktreeContents(repo: TestRepo, relPath: string): Promise<string | null> {
+/** Working-tree contents for a path, or null when the file does not exist on disk. */
+export async function workingTreeContents(repo: TestRepo, relPath: string): Promise<string | null> {
 	return repo.read(relPath);
 }
 
