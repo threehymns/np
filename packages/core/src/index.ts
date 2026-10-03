@@ -11,6 +11,7 @@ export * from './context.svelte';
 export * from './keymap.svelte';
 export * from './project/vcs';
 export * from './project/worktree.svelte';
+export * from './project/project.svelte';
 export * from './project/tree.svelte';
 export * from './project/repository.svelte';
 export * from './transformer/types';

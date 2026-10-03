@@ -6,6 +6,7 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { ProjectTree } from './project/tree.svelte';
+import { Project } from './project/project.svelte';
 import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
@@ -21,19 +22,68 @@ export class Workspace {
 	tabs = $state<WorkspaceTab[]>([]);
 	activeTabId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
-	rootOrigin = $state<FileOrigin | null>(null);
-	repository = $state<Repository | null>(null);
-	repositoryOwnerId = $state<string | null>(null);
+	project: Project;
 	recentFolders = $state<FileOrigin[]>([]);
 	projectTree = new ProjectTree(this);
-	hasRootPermission = $state(false);
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
-	
-	storage: Storage;
-	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	persistence: SessionPersistence;
+
+	get rootOrigin(): FileOrigin | null {
+		return this.project.rootOrigin;
+	}
+
+	set rootOrigin(origin: FileOrigin | null) {
+		this.project.rootOrigin = origin;
+	}
+
+	get repository(): Repository | null {
+		return this.project.repository;
+	}
+
+	set repository(repo: Repository | null) {
+		this.project.repository = repo;
+	}
+
+	get repositoryOwnerId(): string | null {
+		return this.project.repositoryOwnerId;
+	}
+
+	set repositoryOwnerId(id: string | null) {
+		this.project.repositoryOwnerId = id;
+	}
+
+	get hasRootPermission(): boolean {
+		return this.project.hasRootPermission;
+	}
+
+	set hasRootPermission(value: boolean) {
+		this.project.hasRootPermission = value;
+	}
+
+	get storage(): Storage {
+		return this.project.storage;
+	}
+
+	set storage(value: Storage) {
+		this.project.storage = value;
+	}
+
+	get vcsFactory(): (rootOrigin: FileOrigin) => VCSAdapter {
+		return this.project.vcsFactory;
+	}
+
+	set vcsFactory(factory: (rootOrigin: FileOrigin) => VCSAdapter) {
+		this.project.vcsFactory = factory;
+	}
+
+	get persistence(): SessionPersistence {
+		return this.project.persistence;
+	}
+
+	set persistence(value: SessionPersistence) {
+		this.project.persistence = value;
+	}
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 	private restorePromise: Promise<void> | null = null;
@@ -268,9 +318,7 @@ export class Workspace {
 		persistence: SessionPersistence,
 		pluginHost?: PluginHostInterface
 	) {
-		this.storage = storage;
-		this.vcsFactory = vcsFactory;
-		this.persistence = persistence;
+		this.project = new Project(storage, vcsFactory, persistence);
 		this.pluginHost = pluginHost ?? new PluginHost();
 		// Publish under the generic workspace service key (#202): feature
 		// plugins (e.g. Git) resolve the workspace lazily through the host
