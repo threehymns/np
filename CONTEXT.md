@@ -81,6 +81,9 @@ A searchable dialog interface allowing the user to search and run registered act
 - **VCSAdapter**: The interface through which the app performs version-control operations, abstracting the underlying engine (system git, isomorphic-git) behind one contract. _Avoid_: git adapter, SimpleGitAdapter
 - **Carry-Forward**: The property of a branch switch that preserves modified and staged files instead of overwriting them. _Avoid_: auto-merge, preserve
 - **Hunk Action**: A partial-file edit applied by text-splicing a single diff hunk (stage, unstage, or discard), requiring direct index/working-tree writes beyond file-level git commands.
+- **Diff Viewer**: The presentation of a file's original versus working-copy content for review and staging, in split or inline mode. Distinct from an Editor tab: it shows the same working-copy Document through a diff lens.
+- **Original Pane**: The read-only side of the Diff Viewer showing base content (HEAD or staged). Never editable. _Avoid_: left side, side a
+- **Working-copy Pane**: The editable side of the Diff Viewer showing the working-tree Document. Keystrokes are unsaved edits to the same Document an Editor tab shows. _Avoid_: right side, side b
 
 ## Testing
 - **Contract Test**: A behavior test that exercises a module through its public interface against a real engine (system git, isomorphic-git) in throwaway repositories, asserting semantic outcomes (contents, status, branch) rather than command construction. _Avoid_: integration test, end-to-end test
