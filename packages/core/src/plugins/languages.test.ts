@@ -11,6 +11,8 @@ import {
 	getActiveLanguages,
 	syncActiveLanguageDescriptions
 } from '../editor/language.svelte';
+import { DocumentSession } from '../document.svelte';
+import { createMockStorage } from '../../../../tests/mock-storage';
 import { languages as seedTable } from '@codemirror/language-data';
 import { HeadlessIconRegistry } from '../editor/icons/headless-registry.svelte';
 
@@ -120,8 +122,11 @@ describe('Language contribution interface (#205)', () => {
 		});
 		await host.activate('toy');
 		expect(host.getLanguageForFile('note.toy')?.name).toBe('Toy');
-		const support = await host.getLanguageForFile('note.toy')!.load();
+		const support = (await host.getLanguageForFile('note.toy')!.load()) as LanguageSupport;
 		expect(support).toBeDefined();
+		// Inline StreamLanguage grammar carries its name: proves the
+		// no-publish path yields a real highlightable grammar.
+		expect((support as unknown as { language?: { name?: string } }).language?.name).toBe('toy');
 		await host.deactivate('toy');
 	});
 
@@ -180,15 +185,21 @@ describe('Language disablement fallback and composition (#206)', () => {
 		const host = new PluginHost();
 		host.register(svelteLanguageRegistration);
 		await host.activate(svelteLanguageRegistration.manifest.id);
-		const content = '<h1>hello</h1>';
-		expect(AppLanguageSupport.getLanguageForFile('App.svelte')?.name).toBe('svelte');
+		const storage = createMockStorage();
+		const doc = new DocumentSession(storage, '<h1>hello</h1>', {
+			scheme: 'file',
+			path: '/App.svelte',
+			name: 'App.svelte'
+		});
+		expect(doc.language?.name).toBe('svelte');
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
-		// Unmapped files resolve to no language; the editor configures an
-		// empty language compartment while document content is untouched.
-		expect(AppLanguageSupport.getLanguageForFile('App.svelte')).toBeNull();
-		expect(content).toBe('<h1>hello</h1>');
+		// Unmapped files resolve to no language (empty language
+		// compartment) while document content is untouched.
+		expect(doc.language).toBeNull();
+		expect(doc.content).toBe('<h1>hello</h1>');
 		await host.activate(svelteLanguageRegistration.manifest.id);
-		expect(AppLanguageSupport.getLanguageForFile('App.svelte')?.name).toBe('svelte');
+		expect(doc.language?.name).toBe('svelte');
+		expect(doc.content).toBe('<h1>hello</h1>');
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
@@ -219,6 +230,16 @@ describe('Language disablement fallback and composition (#206)', () => {
 			undefined
 		);
 		expect(plainText.map((e) => e.contribution.id)).toEqual(['all-deco']);
+		// Re-enabling restores full behavior including decorations, with no refetch.
+		await host.activate(svelteLanguageRegistration.manifest.id);
+		expect(AppLanguageSupport.getLanguageForFile('App.svelte')?.name).toBe('svelte');
+		const restored = getContributionsForType(
+			host.getEditorContributions('decoration'),
+			'decoration',
+			'svelte'
+		);
+		expect(restored.map((e) => e.contribution.id).sort()).toEqual(['all-deco', 'svelte-deco']);
+		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
 	it('resolves extensionless names, case-insensitive extensions, and plain text for unknown files', () => {
