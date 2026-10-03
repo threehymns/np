@@ -1,15 +1,19 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { XIcon, ColumnsIcon, RowsIcon, InfoIcon, CaretRightIcon, CaretDownIcon, CaretUpDownIcon, ArrowUpIcon, ArrowDownIcon } from 'phosphor-svelte';
-	import type { GitChange, FileDiffDetail } from '@np/core';
+	import type { GitChange, FileDiffDetail, DocumentSession } from '@np/core';
 	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
-	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
+	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate, highlightSpecialChars, drawSelection, highlightActiveLine } from "@codemirror/view";
 	import { EditorState, Annotation, Compartment, EditorSelection, Text, Transaction, RangeSetBuilder } from "@codemirror/state";
-	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
+	import { syntaxHighlighting, foldedRanges, indentOnInput, bracketMatching, type LanguageDescription } from "@codemirror/language";
+	import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
+	import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+	import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+	import { vim, getCM } from "@replit/codemirror-vim";
 	import { MergeView, unifiedMergeView, Chunk, getChunks } from "@codemirror/merge";
-	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
+	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 	import {
 		findBoundDocument,
@@ -688,6 +692,17 @@
 		};
 	}
 
+	// Identity key for the Working-copy pane language (#271): the bound
+	// Document's detected language (honors user override) plus the registry
+	// revision, so enabling a language refreshes the pane even when the
+	// resolved description reference is unchanged.
+	function paneLanguageKey(
+		docLanguage: LanguageDescription | null,
+		languageRevision: number | undefined
+	): string {
+		return `${docLanguage?.name ?? '∅'}::${languageRevision ?? 0}`;
+	}
+
 	// Svelte action to initialize CodeMirror MergeView (Split View)
 	function setupMergeView(
 		node: HTMLDivElement,
@@ -700,6 +715,10 @@
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
 			editable: boolean;
+			vimEnabled: boolean;
+			docLanguage: LanguageDescription | null;
+			languageRevision: number | undefined;
+			boundDoc: DocumentSession | undefined;
 			onDocChange?: (newVal: string) => void;
 		}
 	) {
@@ -707,12 +726,45 @@
 		let currentOptions = options;
 		let cleanupSync: (() => void) | undefined;
 		let untrackCursorFocus: (() => void) | undefined;
+		let untrackPaneFocus: (() => void) | undefined;
+		let detachVimMode: (() => void) | undefined;
 		let disposed = false;
 		let bEditable = options.editable;
+		let bVimEnabled = options.vimEnabled;
+		let bLangKey = paneLanguageKey(options.docLanguage, options.languageRevision);
+		let bBoundDoc = options.boundDoc;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
 		const hunkCompartmentB = new Compartment();
 		const readOnlyCompartmentB = new Compartment();
+		// Working-copy pane parity compartments (#271). Each pane owns its
+		// instances so per-file languages never fight: the Original (a) pane
+		// stays bare and read-only, only the b-pane gets editor behavior.
+		const vimCompartmentB = new Compartment();
+		const languageCompartmentB = new Compartment();
+		const facetCompartmentB = new Compartment();
+
+		// (Re)attach the vim-mode-change bridge for the focused b-pane so
+		// app-level vim bindings track normal/insert/visual like a tab.
+		function syncPaneVimModeListener() {
+			detachVimMode?.();
+			detachVimMode = undefined;
+			if (!currentOptions.vimEnabled || !view || disposed) return;
+			const cm = getCM(view.b) as any;
+			if (!cm) return;
+			const handler = (args: any) => {
+				if (view?.b.hasFocus) appState.keymaps.setContext('vim_mode', args.mode);
+			};
+			cm.on('vim-mode-change', handler);
+			detachVimMode = () => cm.off('vim-mode-change', handler);
+		}
+
+		function readPaneVimMode(v: EditorView): 'normal' | 'insert' | 'visual' {
+			const state: any = (getCM(v) as any)?.state?.vim;
+			if (state?.insertMode) return 'insert';
+			if (state?.visualMode) return 'visual';
+			return 'normal';
+		}
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -740,7 +792,35 @@
 						hunkCompartmentB.of(
 							createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 						),
-						...langExtensions,
+						// Editor parity for the Working-copy pane only (#271):
+						// independent undo history, vim bindings, completions
+						// with workspace context, detected language, and tab
+						// keybindings. Each MergeView b-pane is its own
+						// EditorView, so history() is inherently per-view.
+						vimCompartmentB.of(currentOptions.vimEnabled ? vim() : []),
+						languageCompartmentB.of(langExtensions),
+						facetCompartmentB.of([
+							workspaceFacet.of(appState.workspace),
+							currentDocFacet.of(currentOptions.boundDoc ?? null)
+						]),
+						history(),
+						autocompletion(),
+						indentOnInput(),
+						bracketMatching(),
+						closeBrackets(),
+						highlightSpecialChars(),
+						drawSelection(),
+						highlightActiveLine(),
+						highlightSelectionMatches(),
+						EditorState.allowMultipleSelections.of(true),
+						keymap.of([
+							...closeBracketsKeymap,
+							...defaultKeymap,
+							...searchKeymap,
+							...historyKeymap,
+							{ key: "Tab", run: smartIndent("more") },
+							{ key: "Shift-Tab", run: smartIndent("less") }
+						]),
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
 						EditorView.updateListener.of((update) => {
@@ -810,6 +890,36 @@
 				untrackA();
 				untrackB();
 			};
+			// Focused Working-copy pane publishes itself as the active editor
+			// (#271) so edit.* commands (undo/redo/cut/copy/paste/find/...)
+			// target it; the read-only a-pane never publishes. Identity
+			// checks mirror the activeDiffNavigator cleanup.
+			const paneDom = view.b.dom;
+			const onPaneFocusIn = () => {
+				if (disposed || !currentOptions.editable) return;
+				appState.activeEditorView = view!.b;
+				if (currentOptions.vimEnabled) {
+					appState.keymaps.setContext('vim_mode', readPaneVimMode(view!.b));
+					if (appState.prefs.vimSyncClipboard) {
+						void syncVimRegistersFromClipboard();
+					}
+				}
+			};
+			const onPaneFocusOut = () => {
+				if (appState.activeEditorView === view?.b) {
+					appState.activeEditorView = undefined;
+				}
+				if (currentOptions.vimEnabled) {
+					appState.keymaps.setContext('vim_mode', 'normal');
+				}
+			};
+			paneDom.addEventListener('focusin', onPaneFocusIn);
+			paneDom.addEventListener('focusout', onPaneFocusOut);
+			untrackPaneFocus = () => {
+				paneDom.removeEventListener('focusin', onPaneFocusIn);
+				paneDom.removeEventListener('focusout', onPaneFocusOut);
+			};
+			syncPaneVimModeListener();
 		});
 
 		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
@@ -860,6 +970,43 @@
 								EditorState.readOnly.of(!bEditable)
 							)
 						);
+						// A pane that just went read-only stops being an edit
+						// target for the shared edit.* commands.
+						if (!bEditable && appState.activeEditorView === view.b) {
+							appState.activeEditorView = undefined;
+						}
+					}
+					let vimToggled = false;
+					if (currentOptions.vimEnabled !== bVimEnabled) {
+						bVimEnabled = currentOptions.vimEnabled;
+						effectsB.push(
+							vimCompartmentB.reconfigure(bVimEnabled ? vim() : [])
+						);
+						vimToggled = true;
+					}
+					if (currentOptions.boundDoc !== bBoundDoc) {
+						bBoundDoc = currentOptions.boundDoc;
+						effectsB.push(
+							facetCompartmentB.reconfigure([
+								workspaceFacet.of(appState.workspace),
+								currentDocFacet.of(bBoundDoc ?? null)
+							])
+						);
+					}
+					const langKey = paneLanguageKey(currentOptions.docLanguage, currentOptions.languageRevision);
+					if (langKey !== bLangKey) {
+						bLangKey = langKey;
+						const nextDesc = currentOptions.docLanguage;
+						const requestedKey = langKey;
+						void getLanguageExtensions(nextDesc).then((langExtensions) => {
+							if (disposed || !view) return;
+							// Only apply when no newer language request has
+							// superseded this one while the load was in flight.
+							if (bLangKey !== requestedKey) return;
+							view.b.dispatch({
+								effects: languageCompartmentB.reconfigure(langExtensions)
+							});
+						});
 					}
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effectsB.push(
@@ -876,6 +1023,9 @@
 						// with selection and scroll preserved. Snapshot
 						// refreshes never reach this branch: rightContent is
 						// driven by Document content, not the git snapshot.
+						// The sync is a minimal hunk (not a full replacement)
+						// so tab keystrokes map through — rather than wipe —
+						// the pane's independent undo history (#271).
 						const insert = currentOptions.rightContent;
 						const sel = view.b.state.selection;
 						const clamped = EditorSelection.create(
@@ -886,14 +1036,15 @@
 						);
 						const prevTop = view.b.scrollDOM.scrollTop;
 						const prevLeft = view.b.scrollDOM.scrollLeft;
+						const syncChange = hasRightDocChange
+							? (minimalTextChange(rightDoc, insert) ?? {
+									from: 0,
+									to: view.b.state.doc.length,
+									insert
+								})
+							: undefined;
 						view.b.dispatch({
-							changes: hasRightDocChange
-								? {
-										from: 0,
-										to: view.b.state.doc.length,
-										insert
-								  }
-								: undefined,
+							changes: syncChange,
 							selection: hasRightDocChange ? clamped : undefined,
 							effects: effectsB.length > 0 ? effectsB : undefined,
 							annotations: hasRightDocChange
@@ -904,6 +1055,10 @@
 							view.b.scrollDOM.scrollTop = prevTop;
 							view.b.scrollDOM.scrollLeft = prevLeft;
 						}
+						// Re-bridge vim-mode changes after the new vim
+						// configuration above has applied (getCM reads the
+						// post-dispatch state).
+						if (vimToggled) syncPaneVimModeListener();
 					}
 				}
 			},
@@ -912,6 +1067,12 @@
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
 				untrackCursorFocus?.();
+				untrackPaneFocus?.();
+				detachVimMode?.();
+				detachVimMode = undefined;
+				if (view && appState.activeEditorView === view.b) {
+					appState.activeEditorView = undefined;
+				}
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
 					delete existing.split;
@@ -974,6 +1135,15 @@
 			appState.keymaps.setContext('editor', undefined);
 			appState.keymaps.setContext('vim_mode', undefined);
 		};
+	});
+
+	// Keep global vim clipboard sync armed while the diff is mounted, so
+	// vim yanks in the Working-copy pane sync even when no tab Editor is
+	// mounted to run its own effect (idempotent with Editor.svelte's).
+	$effect(() => {
+		const vimEnabled = appState.prefs.vimMode;
+		const syncClipboard = appState.prefs.vimSyncClipboard;
+		setupVimClipboardSync(vimEnabled && syncClipboard);
 	});
 
 	// Publish hunk navigation for the core diff.nextHunk / diff.prevHunk
@@ -1622,6 +1792,10 @@
 											hunks: diff.hunks,
 											unstagedChunks: diff.unstagedChunks,
 											editable: isSplitWorkingCopyEditable(fileChange.status, splitDoc),
+											vimEnabled: appState.prefs.vimMode,
+											docLanguage: splitDoc?.language ?? LanguageSupport.getLanguageForFile(fileChange.filepath),
+											languageRevision: appState.plugins?.languageRevision,
+											boundDoc: splitDoc,
 											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)
 										}}></div>
 									</div>

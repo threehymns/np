@@ -308,6 +308,7 @@ export * from "./extensions/faded";
 export * from "./extensions/frontmatter";
 export * from "./extensions/line-numbers";
 export * from "./extensions/html";
+export * from "./text-sync";
 export * from "./extensions/theme";
 export * from "./extensions/diff-theme";
 import "./styles/diff.css";
