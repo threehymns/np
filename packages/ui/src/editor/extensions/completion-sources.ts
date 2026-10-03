@@ -83,7 +83,14 @@ function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 	const server =
 		options.server === null || options.server === undefined
 			? null
-			: serverCompletions({ ...options.server, languageName: options.languageName });
+			: serverCompletions({
+					...options.server,
+					languageName: options.languageName,
+					// The trigger rules are the word source's, not a second copy:
+					// server items follow the same rules as words so that one
+					// explicit-trigger migration covers both (spec #263).
+					readTriggerSettings: options.readSettings
+				});
 	return [
 		...(server === null ? [] : [server.source]),
 		snippetCompletions({

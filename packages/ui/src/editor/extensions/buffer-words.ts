@@ -6,8 +6,8 @@ import type {
 } from "@codemirror/autocomplete";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
-	type CompletionWordsMode,
-	type LspCompletionOutcome
+	type CompletionAnswer,
+	type CompletionWordsMode
 } from "@np/core";
 import type { ServerOutcomeReader } from "./server-completions";
 
@@ -120,7 +120,7 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
 export function resolveBufferWordPolicy(
 	languageName: string | null,
 	settings: BufferWordSettings,
-	server: LspCompletionOutcome | null = null
+	server: CompletionAnswer | null = null
 ): BufferWordPolicy {
 	const proseQuiet = isMarkdownProse(languageName) && !settings.wordsOverridden;
 	const fallbackQuiet = settings.words === "fallback" && server?.state === "serving";
@@ -194,7 +194,7 @@ export function bufferWordCompletions(
 
 	return (context: CompletionContext): CompletionResult | null | Promise<CompletionResult | null> => {
 		const query = (server ?? NO_SERVER_QUERIES).queryFor(context.pos);
-		const decide = (outcome: LspCompletionOutcome | null): CompletionResult | null => {
+		const decide = (outcome: CompletionAnswer | null): CompletionResult | null => {
 			const settings = readSettings();
 			const policy = resolveBufferWordPolicy(languageName, settings, outcome);
 			if (!policy.offered) return null;

@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bundledSearchRoots, resolveLanguageServerCommand } from "./LspCommandResolver";
+import {
+	bundledSearchRoots,
+	findCommandOnPath,
+	resolveLanguageServerCommand,
+	resolvePathCommand,
+	shimScriptTarget,
+} from "./LspCommandResolver";
 
 /**
  * Bundled command resolution (spec #263, #265).
@@ -19,6 +25,9 @@ import { bundledSearchRoots, resolveLanguageServerCommand } from "./LspCommandRe
  */
 
 const roots: string[] = [];
+
+/** The `bundled` declaration the bundled TypeScript descriptor carries. */
+const VTSLS = { package: "@vtsls/language-server", binary: "bin/vtsls.js" } as const;
 
 function layout(files: readonly string[]): string {
 	const root = mkdtempSync(join(tmpdir(), "lsp-resolution-"));
@@ -69,7 +78,7 @@ describe("resolveLanguageServerCommand", () => {
 	it("resolves the declared name against the packaged dependency first", () => {
 		const root = layout(["node_modules/@vtsls/language-server/bin/vtsls.js"]);
 
-		const plan = resolveLanguageServerCommand("vtsls", root);
+		const plan = resolveLanguageServerCommand("vtsls", root, VTSLS);
 
 		expect(plan.source).toBe("bundled");
 		expect(plan.script).toBe(
@@ -88,7 +97,7 @@ describe("resolveLanguageServerCommand", () => {
 
 		// Development shape: `apps/desktop` is the app and the workspace hoisted the
 		// dependency to the repository root.
-		expect(resolveLanguageServerCommand("vtsls", join(root, "apps/desktop")).source).toBe(
+		expect(resolveLanguageServerCommand("vtsls", join(root, "apps/desktop"), VTSLS).source).toBe(
 			"bundled"
 		);
 	});
@@ -96,7 +105,7 @@ describe("resolveLanguageServerCommand", () => {
 	it("falls back to the declared name when nothing is bundled", () => {
 		const root = layout([]);
 
-		const plan = resolveLanguageServerCommand("vtsls", root);
+		const plan = resolveLanguageServerCommand("vtsls", root, VTSLS);
 
 		// Not "unresolvable": an unresolvable answer would have to become a failure
 		// somewhere, and the spawn failing with ENOENT is already how a missing
@@ -105,9 +114,11 @@ describe("resolveLanguageServerCommand", () => {
 		expect(plan.script).toBeUndefined();
 	});
 
-	it("resolves nothing for a name it has no bundled package for", () => {
+	it("resolves nothing for a name with no bundled package declared", () => {
 		const root = layout(["node_modules/@vtsls/language-server/bin/vtsls.js"]);
 
+		// A descriptor that declares no package is a PATH-only server, so the
+		// resolution has nothing to look for and hands the name straight back.
 		expect(resolveLanguageServerCommand("solargraph", root)).toEqual({
 			command: "solargraph",
 			args: [],
@@ -116,12 +127,26 @@ describe("resolveLanguageServerCommand", () => {
 		});
 	});
 
+	it("reads a second server's bundled package off its own declaration", () => {
+		const root = layout(["node_modules/some-server/bin/server.js"]);
+
+		const plan = resolveLanguageServerCommand("some-server", root, {
+			package: "some-server",
+			binary: "bin/server.js",
+		});
+
+		// Which package to look for came from the descriptor, so a second bundled
+		// server needed nothing from this resolver (spec #263, story 10).
+		expect(plan.source).toBe("bundled");
+		expect(plan.script).toBe(join(root, "node_modules/some-server/bin/server.js"));
+	});
+
 	it("finds the dependency this workspace actually installs", () => {
 		// The one assertion about the real install rather than a fixture: the
 		// resolution has to point at a file that exists in this checkout, or the
 		// acceptance criterion is being claimed for a package that is not there.
 		const appPath = join(import.meta.dir);
-		const plan = resolveLanguageServerCommand("vtsls", appPath);
+		const plan = resolveLanguageServerCommand("vtsls", appPath, VTSLS);
 
 		if (plan.source !== "bundled") {
 			throw new Error(
@@ -131,5 +156,136 @@ describe("resolveLanguageServerCommand", () => {
 		}
 		expect(existsSync(plan.script!)).toBe(true);
 		expect(plan.script).toContain("@vtsls/language-server");
+	});
+});
+/**
+ * The Windows PATH fallback.
+ *
+ * `spawn` without a shell cannot find or run what npm installs on Windows — the
+ * name carries no extension the OS recognises, and the file that exists is a
+ * batch shim. These are asserted against a fake PATH with injected `exists` and
+ * `readText`, because the behaviour being pinned is which *plan* is built; there
+ * is no Windows here to spawn on.
+ */
+describe("the PATH candidate on Windows", () => {
+	/** npm's own generated shim, the shape `cmd-shim` writes. */
+	function npmShim(scriptPath: string): string {
+		return [
+			"@ECHO off",
+			"GOTO start",
+			":find_dp0",
+			"SET dp0=%~dp0",
+			"EXIT /b",
+			":start",
+			"SETLOCAL",
+			'CALL :find_dp0',
+			'IF EXIST "%dp0%\\node.exe" (',
+			'\tSET "_prog=%dp0%\\node.exe"',
+			") ELSE (",
+			'\tSET "_prog=node"',
+			'\tSET PATHEXT=%PATHEXT:;.JS;=;%',
+			")",
+			"endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & %_prog%",
+			`"%_prog%"  "%dp0%\\${scriptPath}" %*`,
+			":endOfScript",
+			""
+		].join("\r\n");
+	}
+
+	it("leaves a bare name alone where the OS resolves names itself", () => {
+		const plan = resolvePathCommand("vtsls", "linux", { PATH: "/usr/bin" }, () => true);
+		expect(plan).toEqual({ command: "vtsls", args: [], env: {}, source: "path" });
+	});
+
+	it("finds an executable on PATH and runs it directly, with no shell", () => {
+		const exists = (candidate: string) => candidate === "C:\\npm\\vtsls.exe";
+		const plan = resolvePathCommand("vtsls", "win32", { PATH: "C:\\npm" }, exists, () => null);
+
+		expect(plan).toEqual({
+			command: "C:\\npm\\vtsls.exe",
+			args: [],
+			env: {},
+			source: "path"
+		});
+	});
+
+	it("runs the script an npm shim names, through the interpreter, with no shell", () => {
+		// The bug this exists for: `spawn('vtsls')` on Windows cannot execute
+		// `vtsls.cmd`, so the PATH candidate resolved the real entry script and
+		// ran it the way the bundled candidate is run.
+		const shim = "C:\\npm\\vtsls.cmd";
+		const target = "C:\\npm\\node_modules\\vtsls\\bin\\vtsls.js";
+		const exists = (candidate: string) => candidate === shim || candidate === target;
+		const plan = resolvePathCommand(
+			"vtsls",
+			"win32",
+			{ PATH: "C:\\npm" },
+			exists,
+			(candidate) =>
+				candidate === shim
+					? npmShim("node_modules\\vtsls\\bin\\vtsls.js")
+					: null
+		);
+
+		expect(plan).toEqual({
+			command: process.execPath,
+			args: [target],
+			env: { ELECTRON_RUN_AS_NODE: "1" },
+			source: "path",
+			script: target
+		});
+	});
+
+	it("falls back to a shell only for a shim whose script it cannot read", () => {
+		const shim = "C:\\tools\\weird.cmd";
+		const exists = (candidate: string) => candidate === shim;
+		const plan = resolvePathCommand(
+			"weird",
+			"win32",
+			{ PATH: "C:\\tools" },
+			exists,
+			() => "@echo off\r\necho nothing to read here\r\n"
+		);
+
+		// A batch file cannot run any other way, so this is the one case where a
+		// shell interprets the argument list. Quoted, because the path has spaces
+		// in it more often than not.
+		expect(plan.command).toBe("cmd.exe");
+		expect(plan.args).toEqual(["/d", "/s", "/c", `"${shim}"`]);
+	});
+
+	it("leaves the name alone when PATH holds nothing for it", () => {
+		const plan = resolvePathCommand("vtsls", "win32", { PATH: "C:\\npm" }, () => false, () => null);
+		expect(plan).toEqual({ command: "vtsls", args: [], env: {}, source: "path" });
+	});
+});
+
+describe("findCommandOnPath", () => {
+	it("searches every PATH entry and every extension npm writes", () => {
+		const seen: string[] = [];
+		const found = findCommandOnPath("vtsls", ["C:\\a", "C:\\b"].join(";"), (candidate) => {
+			seen.push(candidate);
+			return candidate === "C:\\b\\vtsls.cmd";
+		});
+
+		expect(found).toBe("C:\\b\\vtsls.cmd");
+		expect(seen).toContain("C:\\a\\vtsls.cmd");
+	});
+
+	it("returns null without a PATH rather than searching the process directory", () => {
+		expect(findCommandOnPath("vtsls", undefined, () => true)).toBeNull();
+	});
+});
+
+describe("shimScriptTarget", () => {
+	it("refuses a target that does not exist rather than naming a path that fails", () => {
+		const shim = "C:\\npm\\vtsls.cmd";
+		expect(
+			shimScriptTarget(shim, () => '"%_prog%"  "%dp0%\\..\\lib\\node_modules\\vtsls\\bin\\vtsls.js" %*', () => false)
+		).toBeNull();
+	});
+
+	it("returns null for a file it cannot read", () => {
+		expect(shimScriptTarget("C:\\npm\\vtsls.cmd", () => null, () => true)).toBeNull();
 	});
 });

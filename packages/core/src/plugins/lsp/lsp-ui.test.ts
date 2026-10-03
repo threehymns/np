@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
-import { WORKSPACE_SERVICE_KEY, LSP_TRANSPORT_SERVICE_KEY, type WorkspaceLike } from '../services';
+import { WORKSPACE_SERVICE_KEY, LSP_PLATFORM_SERVICE_KEY, type WorkspaceLike } from '../services';
 import { createPilotComponent, type UIContributionComponent } from '../ui-contributions';
 import {
 	LSP_RESTART_ALL_SERVERS_COMMAND,
@@ -18,11 +18,11 @@ import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
 import { lspRegistration } from './registration';
 import { LSP_LOGS_TAB_ID, LSP_STATUS_ITEM_ID, LSP_UI_COMPONENTS_KEY } from './ui';
 import {
-	createRealProcessTransport,
+	createRealProcessPlatform,
 	isProcessAlive,
 	waitFor,
-	type RealProcessTransport
-} from '../../../../../tests/fixtures/lsp-transport';
+	type RealProcessPlatform
+} from '../../../../../tests/fixtures/lsp-platform';
 
 /**
  * The status menu, the Logs tab and the commands behind both (spec #263,
@@ -52,7 +52,7 @@ interface OffState {
 
 interface Harness {
 	readonly host: PluginHost;
-	readonly transport: RealProcessTransport;
+	readonly platform: RealProcessPlatform;
 	readonly runtime: LspRuntime;
 	readonly tabs: Array<{ id: string; type: 'document' | 'diff'; pluginId?: string }>;
 	/** Snapshots taken while the plugin's own teardown was running. */
@@ -76,10 +76,10 @@ async function startPlugin(
 	options: { script?: readonly string[]; uiComponents?: boolean } = {}
 ): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
-	const transport = createRealProcessTransport(
+	const platform = createRealProcessPlatform(
 		options.script ? { script: options.script } : {}
 	);
-	host.provideService(LSP_TRANSPORT_SERVICE_KEY, transport);
+	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 
 	if (options.uiComponents) {
 		host.provideService(LSP_UI_COMPONENTS_KEY, {
@@ -129,7 +129,7 @@ async function startPlugin(
 
 	return {
 		host,
-		transport,
+		platform,
 		runtime,
 		tabs,
 		duringCleanup,
@@ -250,7 +250,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		await waitForRunning(harness.runtime, 2);
 		const outerKey = lspServerKey('typescript', root);
 		const innerKey = lspServerKey('typescript', join(root, 'packages/app'));
-		const [outerPid, innerPid] = harness.transport.pids;
+		const [outerPid, innerPid] = harness.platform.pids;
 
 		expect(await harness.host.executeCommand(LSP_STOP_SERVER_COMMAND, outerKey)).toBe(true);
 		await waitFor(() => !isProcessAlive(outerPid), { label: 'the stopped server to exit' });
@@ -258,16 +258,16 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		// A stop is final: editing the document does not bring it back.
 		harness.open(outer, 'const a = 1;');
 		await settle();
-		expect(harness.transport.spawned).toHaveLength(2);
+		expect(harness.platform.spawned).toHaveLength(2);
 
 		// An explicit restart is what re-opens it, with its document re-synced.
 		expect(await harness.host.executeCommand(LSP_RESTART_SERVER_COMMAND, outerKey)).toBe(true);
-		await waitFor(() => harness.transport.spawned.length === 3, { label: 'the restart' });
+		await waitFor(() => harness.platform.spawned.length === 3, { label: 'the restart' });
 		expect(harness.runtime.getServers().find((server) => server.server === outerKey)?.state).toBe(
 			'running'
 		);
 		// The untouched server was neither restarted nor stopped along with it.
-		expect(harness.transport.pids[1]).toBe(innerPid);
+		expect(harness.platform.pids[1]).toBe(innerPid);
 		expect(isProcessAlive(innerPid)).toBe(true);
 	});
 
@@ -277,22 +277,22 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		harness.open(outer, '');
 		harness.open(inner, '');
 		await waitForRunning(harness.runtime, 2);
-		const firstPids = [...harness.transport.pids];
+		const firstPids = [...harness.platform.pids];
 
 		await harness.host.executeCommand(LSP_RESTART_ALL_SERVERS_COMMAND);
 
 		await waitForRunning(harness.runtime, 2);
-		await waitFor(() => harness.transport.spawned.length === 4, { label: 'both restarts' });
+		await waitFor(() => harness.platform.spawned.length === 4, { label: 'both restarts' });
 		for (const pid of firstPids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `old pid ${pid} to exit` });
 		}
-		expect(harness.transport.spawned.slice(2).map((entry) => entry.cwd).sort()).toEqual(
+		expect(harness.platform.spawned.slice(2).map((entry) => entry.cwd).sort()).toEqual(
 			[root, join(root, 'packages/app')].sort()
 		);
 
 		await harness.host.executeCommand(LSP_STOP_ALL_SERVERS_COMMAND);
 
-		for (const pid of harness.transport.pids) {
+		for (const pid of harness.platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
 		expect(harness.runtime.getServers().every((server) => server.state === 'stopped')).toBe(true);
@@ -307,7 +307,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		} finally {
 			errors.restore();
 		}
-		expect(harness.transport.spawned).toHaveLength(0);
+		expect(harness.platform.spawned).toHaveLength(0);
 		expect(harness.runtime.getServers()).toEqual([]);
 		expect(errors.read()).toBe('');
 	});
@@ -353,7 +353,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		harness.open(inner, '');
 		await waitForRunning(harness.runtime, 2);
 		await harness.host.executeCommand(LSP_VIEW_LOGS_COMMAND);
-		const pids = [...harness.transport.pids];
+		const pids = [...harness.platform.pids];
 		expect(pids.every((pid) => isProcessAlive(pid))).toBe(true);
 
 		await harness.host.deactivate('lsp');
@@ -397,7 +397,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 				servers: 1
 			}
 		]);
-		for (const pid of harness.transport.pids) {
+		for (const pid of harness.platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
 	});

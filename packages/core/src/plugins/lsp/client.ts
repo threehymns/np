@@ -1,4 +1,5 @@
 import type { LspProcess } from '../services';
+import { describeError } from './describe-error';
 import { LspLogStore, splitLogLines } from './logs';
 
 /**
@@ -258,7 +259,7 @@ export class LspClient {
 				server: this.options.server,
 				kind: 'server',
 				level: 'warn',
-				message: `Shutdown handshake failed, killing the process instead: ${describe(error)}`
+				message: `Shutdown handshake failed, killing the process instead: ${describeError(error)}`
 			});
 		}
 		if (!(await this.waitForExit(DEFAULT_EXIT_TIMEOUT_MS))) {
@@ -355,10 +356,6 @@ export class LspClient {
 			if (line.trim().length > 0) this.options.logs.appendServerLine(this.options.server, line);
 		}
 	}
-}
-
-function describe(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 async function withTimeout<T>(

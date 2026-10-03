@@ -1,14 +1,25 @@
-import { ConflictingLspDescriptorError } from '../errors';
-import { WORKSPACE_SERVICE_KEY, type LspTransport, type WorkspaceLike } from '../services';
+import {
+	WORKSPACE_SERVICE_KEY,
+	type CompletionAnswer,
+	type CompletionCoordinator,
+	type CompletionQuery,
+	type LspPlatform,
+	type WorkspaceLike
+} from '../services';
 import type { PluginHostInterface } from '../types';
 import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
-import { parseServerCompletions, type ServerCompletionList } from './completions';
+import { parseServerCompletions } from './completions';
 import { parsePublishDiagnostics, type LspDiagnosticsStore } from './diagnostics';
 import type { LspLogStore } from './logs';
-import { dirnameOf, findProjectRoot, toFileUri } from './root';
-import { toServerStatusRows, type LspServerStatusRow } from './status';
-import { resolveLspTransport } from './transport';
+import { toFileUri } from './root';
+import { describeError } from './describe-error';
+import { lspServerKey, LspTargetResolver } from './targets';
+import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
+import { resolveLspPlatform } from './platform';
+
+export { lspServerKey };
+export type { LspServerState, LspServerStatus };
 
 /**
  * Server lifecycle (spec #263, ADR 0019).
@@ -19,7 +30,7 @@ import { resolveLspTransport } from './transport';
  *
  * Every entry point here is safe to call from an observer. Document opening
  * arrives as an event (ADR 0013) and therefore cannot throw back at the editor,
- * so a conflict, a missing transport, a server that will not start, and a
+ * so a conflict, a missing platform, a server that will not start, and a
  * protocol failure are all recorded and returned, never raised.
  */
 
@@ -44,47 +55,6 @@ export interface LspDocumentInput {
 	readonly language?: string | null;
 }
 
-export type LspServerState = 'starting' | 'running' | 'stopped' | 'failed';
-
-/**
- * One completion query, as the editor states it.
- *
- * `line` is zero-based and `character` is a UTF-16 offset within that line,
- * which is what the protocol specifies and what CodeMirror positions already
- * are — so no coordinate translation belongs here. `timeoutMs` is the
- * `lsp_fetch_timeout_ms` bound and `undefined` means *no bound*, which is the
- * setting's own default of `0` expressed rather than a separate sentinel.
- */
-export interface LspCompletionRequest extends LspDocumentInput {
-	/** Zero-based line of the cursor. */
-	readonly line: number;
-	/** UTF-16 offset of the cursor within that line. */
-	readonly character: number;
-	readonly timeoutMs?: number;
-}
-
-/**
- * What one completion query produced, and the three-way answer
- * `words: 'fallback'` is decided on.
- *
- * `'inactive'` is not a failure: nothing was ever meant to answer, and words
- * answering there is the pre-#263 behaviour rather than a degradation.
- * `'unavailable'` is a failure, and is the case words exist behind.
- */
-export type LspCompletionOutcome =
-	| { readonly state: 'inactive'; readonly reason: string }
-	| { readonly state: 'serving'; readonly list: ServerCompletionList }
-	| { readonly state: 'unavailable'; readonly server: string; readonly reason: string };
-
-export interface LspServerStatus {
-	readonly server: string;
-	readonly descriptorId: string;
-	readonly root: string;
-	readonly marker: string | null;
-	readonly state: LspServerState;
-	readonly pid: number | undefined;
-}
-
 export interface LspRuntimeOptions {
 	readonly host: PluginHostInterface;
 	/** Owning plugin, for attribution on a contained failure. */
@@ -96,11 +66,11 @@ export interface LspRuntimeOptions {
 	 */
 	readonly diagnostics?: LspDiagnosticsStore;
 	/**
-	 * Overrides the transport service. This is the injection seam tests use;
-	 * without it the seam is resolved from `LSP_TRANSPORT_SERVICE_KEY` on every
+	 * Overrides the platform service. This is the injection seam tests use;
+	 * without it the seam is resolved from `LSP_PLATFORM_SERVICE_KEY` on every
 	 * use, so an app that publishes it late still gets it.
 	 */
-	readonly transport?: LspTransport;
+	readonly platform?: LspPlatform;
 	/** Bound on one server's `initialize` handshake. See `LspClientOptions`. */
 	readonly initializeTimeoutMs?: number;
 }
@@ -110,12 +80,6 @@ interface OpenDocument {
 	readonly languageId: string;
 	content: string;
 	version: number;
-}
-
-interface LspTarget {
-	readonly descriptor: RegisteredLspDescriptor;
-	readonly root: string;
-	readonly marker: string | null;
 }
 
 interface RunningServer {
@@ -129,56 +93,56 @@ interface RunningServer {
 	stoppedByUser: boolean;
 }
 
-export function lspServerKey(descriptorId: string, root: string): string {
-	return `${descriptorId}@${root}`;
-}
-
-export class LspRuntime {
+/**
+ * The running-server table, and the only reader of it.
+ *
+ * `implements LspServerStatusApi` because that interface is the whole of what a
+ * status bar needs: the rows, a change notification, and a revision counter for
+ * a consumer that would rather poll than subscribe. Nothing else about starting
+ * and stopping a process is exposed by reading status.
+ */
+export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	private readonly servers = new Map<string, RunningServer>();
 	private readonly openDocuments = new Map<string, OpenDocument>();
 	/** Document URI to the server it is synced to, so a restart re-opens it. */
 	private readonly documentServers = new Map<string, string>();
-	/**
-	 * Resolved target per file path, keyed by the registry revision it was
-	 * resolved against. Every keystroke arrives as a full-content change, and
-	 * re-resolving one means a language match plus a marker walk that stats a
-	 * file per level; the answer cannot change while the registry and the files
-	 * on disk do not, and the registry's own revision counter says so.
-	 */
-	private readonly resolvedTargets = new Map<string, { revision: number; target: LspTarget | null }>();
+	private readonly targets: LspTargetResolver;
 	private readonly statusListeners = new Set<() => void>();
 	private statusRevision = 0;
 	private disposed = false;
 
-	constructor(private readonly options: LspRuntimeOptions) {}
+	constructor(private readonly options: LspRuntimeOptions) {
+		this.targets = new LspTargetResolver({
+			host: options.host,
+			logs: options.logs,
+			platform: () => this.resolvePlatform()
+		});
+	}
 
-	getServers(): LspServerStatus[] {
+	/**
+	 * One row per server the runtime knows about, in the order it learned about
+	 * them. Reads the same table the lifecycle tests assert, so the menu cannot
+	 * report a state the runtime does not hold.
+	 */
+	getStatusRows(): LspServerStatus[] {
 		return [...this.servers.values()].map((entry) => ({
 			server: entry.server,
 			descriptorId: entry.descriptor.id,
 			root: entry.root,
 			marker: entry.marker,
 			state: entry.state,
-			pid: entry.client?.pid
+			pid: entry.client?.pid,
+			// The details slot is shaped now and filled by the version and memory
+			// follow-ups, so arriving there is not a redesign of the row.
+			details: []
 		}));
 	}
 
-	/**
-	 * The status menu's rows: the same running state, plus the details slot that
-	 * the version and memory follow-ups will fill. Reads the same table the
-	 * lifecycle tests assert, so the menu cannot report a state the runtime does
-	 * not hold.
-	 */
-	getStatusRows(): LspServerStatusRow[] {
-		return toServerStatusRows(this.getServers());
+	/** The same rows, named for what the commands and tests are asking for. */
+	getServers(): LspServerStatus[] {
+		return this.getStatusRows();
 	}
 
-	/**
-	 * Notified when the server set or any server's state changes. A plain
-	 * callback rather than a rune: the runtime is process code and stays usable
-	 * without a Svelte compiler, and the UI layer owns the reactivity that reads
-	 * it.
-	 */
 	subscribe(listener: () => void): () => void {
 		this.statusListeners.add(listener);
 		return () => {
@@ -204,7 +168,7 @@ export class LspRuntime {
 		// runtime being torn down must not start new work.
 		if (this.disposed || !path) return null;
 		try {
-			const target = await this.targetFor(input);
+			const target = await this.targets.resolve(input);
 			if (!target) return null;
 			const server = lspServerKey(target.descriptor.id, target.root);
 			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
@@ -224,7 +188,7 @@ export class LspRuntime {
 	 *
 	 * The three states are the whole point of this method. `'inactive'` means
 	 * nothing is meant to answer here — no descriptor claims the language, no
-	 * transport exists, or the runtime is shutting down — and words answer
+	 * platform exists, or the runtime is shutting down — and words answer
 	 * exactly as they did before any server existed. `'serving'` means a server
 	 * answered, and `'unavailable'` means one was there and could not deliver.
 	 * Collapsing the last two would make a wedged server indistinguishable from
@@ -234,19 +198,26 @@ export class LspRuntime {
 	 * Contained like every entry point here: document work arrives as an event
 	 * (ADR 0013) and cannot throw back at the editor, so a failed request is
 	 * recorded and returned rather than raised.
+	 *
+	 * The coordinates in `query` are the protocol's own — a zero-based line and a
+	 * UTF-16 offset within it — and `timeoutMs` is the `lsp_fetch_timeout_ms`
+	 * bound, where absent means *no bound*: the setting's own default of `0`
+	 * expressed rather than a separate sentinel. Both come from the generic query
+	 * the editor asks, which is what lets the shell issue one without naming a
+	 * language server.
 	 */
-	async fetchCompletions(input: LspCompletionRequest): Promise<LspCompletionOutcome> {
+	async fetch(query: CompletionQuery): Promise<CompletionAnswer> {
 		if (this.disposed) {
 			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
 		}
-		const path = input.path;
+		const { document, line, character, timeoutMs } = query;
+		const path = document.path;
 		if (!path) {
 			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
 		}
-		const document = { ...input, path };
 		let server = 'lsp';
 		try {
-			const target = await this.targetFor(document);
+			const target = await this.targets.resolve(document);
 			if (!target) {
 				return { state: 'inactive', reason: 'No language server claims this document.' };
 			}
@@ -255,32 +226,33 @@ export class LspRuntime {
 			if (entry.state !== 'running' || !entry.client) {
 				return {
 					state: 'unavailable',
-					server,
+					provider: server,
 					reason: `Server "${server}" is ${entry.state}, so it cannot answer.`
 				};
 			}
-			this.syncDocument(entry, document);
+			this.syncDocument(entry, { ...document, path });
 			const result = await entry.client.request(
 				'textDocument/completion',
 				{
 					textDocument: { uri: toFileUri(path) },
-					position: { line: input.line, character: input.character }
+					position: { line, character }
 				},
-				input.timeoutMs
+				timeoutMs
 			);
-			return { state: 'serving', list: parseServerCompletions(result) };
+			const list = parseServerCompletions(result);
+			return { state: 'serving', items: list.items, incomplete: list.incomplete };
 		} catch (error) {
 			// Logged as well as returned. Words appearing behind a failed request is
 			// indistinguishable from words working, from the outside, so the reason
 			// has to be somewhere the Logs tab (#266) can show it.
-			const reason = describe(error);
+			const reason = describeError(error);
 			this.options.logs.append({
 				server,
 				kind: 'server',
 				level: 'warn',
 				message: `Completion request failed, so words answer instead: ${reason}`
 			});
-			return { state: 'unavailable', server, reason };
+			return { state: 'unavailable', provider: server, reason };
 		}
 	}
 
@@ -311,7 +283,7 @@ export class LspRuntime {
 		}
 		const document: OpenDocument = {
 			uri,
-			languageId: this.languageIdFor(input),
+			languageId: this.targets.languageIdFor(entry.descriptor, input),
 			content: input.content,
 			version: 1
 		};
@@ -379,100 +351,12 @@ export class LspRuntime {
 		this.servers.clear();
 		this.openDocuments.clear();
 		this.documentServers.clear();
-		this.resolvedTargets.clear();
+		this.targets.clear();
 		this.statusChanged();
 	}
 
-	/** The memoized target for a file, re-resolved whenever the registry moves. */
-	private async targetFor(input: LspDocumentInput): Promise<LspTarget | null> {
-		if (!input.path) return null;
-		const revision = this.options.host.lspRevision;
-		const memo = this.resolvedTargets.get(input.path);
-		if (memo && memo.revision === revision) return memo.target;
-		const target = await this.resolveTarget(input);
-		// Bounded rather than unbounded: a session that opens more files than
-		// this has cleared every entry, and re-resolving a handful of them costs
-		// one marker walk each.
-		if (this.resolvedTargets.size >= MAX_RESOLVED_TARGETS) this.resolvedTargets.clear();
-		this.resolvedTargets.set(input.path, { revision, target });
-		return target;
-	}
-
-	private async resolveTarget(input: LspDocumentInput): Promise<LspTarget | null> {
-		if (!input.path) return null;
-		const language = input.language ?? this.options.host.getLanguageForFile(input.fileName)?.name ?? null;
-		if (!language) return null;
-		const descriptors = this.options.host.getLspDescriptorsForLanguage(language);
-		if (descriptors.length === 0) return null;
-		if (descriptors.length > 1) {
-			// Two servers would index the same file. Resolving it by registration
-			// order would make the answer depend on which plugin enabled first, so
-			// the conflict is reported instead and no server starts for this file.
-			throw new ConflictingLspDescriptorError(
-				input.path,
-				descriptors.map((d) => d.id)
-			);
-		}
-		const descriptor = descriptors[0];
-		// Resolved after the descriptor check on purpose: a note that no server
-		// serves must not report a missing transport, or every Markdown file in
-		// the session would log one.
-		const transport = this.resolveTransport();
-		if (!transport) {
-			// Recorded against the server this file would have used. Only a served
-			// file reaches here, so a web session never logs it — a note must not
-			// report a missing transport just because it has no server.
-			this.options.logs.append({
-				server: lspServerKey(descriptor.id, dirnameOf(input.path)),
-				kind: 'server',
-				level: 'info',
-				message:
-					'No LSP transport is published, so this server cannot start. On web no transport exists by design (spec #263); elsewhere the desktop app failed to publish one.'
-			});
-			return null;
-		}
-		const resolution = await findProjectRoot({
-			startDir: dirnameOf(input.path),
-			markers: descriptor.rootMarkers,
-			probe: transport,
-			boundary: this.workspaceRoot()
-		});
-		return { descriptor, root: resolution.root, marker: resolution.marker };
-	}
-
-	/**
-	 * The protocol's `languageId`, which is the *lowercased registry name*.
-	 *
-	 * The registry publishes display names (`TypeScript`), while every server in
-	 * the ecosystem keys off a language id (`typescript`), so passing the name
-	 * through unlowercased would select the wrong grammar on the server side.
-	 *
-	 * Known gap, recorded rather than papered over: for the abbreviated names the
-	 * registry does publish — `TSX` and `JSX` — this produces `tsx`/`jsx`, and
-	 * the TypeScript server answers to `typescriptreact`/`javascriptreact`
-	 * instead. Nothing in the registry carries those ids: `@codemirror/
-	 * language-data` lists `typescript` as an *alias* of `TypeScript` and
-	 * declares `TSX` with `extensions: ["tsx"]`, so neither list contains the
-	 * protocol's spelling. Deriving it needs the descriptor to say which id maps
-	 * to which served name, which is new descriptor surface and therefore its own
-	 * change; until then a `.tsx` file is served by one server and synced with the
-	 * id that server may not recognise.
-	 */
-	private languageIdFor(input: LspDocumentInput): string {
-		const language =
-			input.language ?? this.options.host.getLanguageForFile(input.fileName)?.name ?? null;
-		return (language ?? 'plaintext').toLowerCase();
-	}
-
-	private workspaceRoot(): string | null {
-		return (
-			this.options.host.getService<WorkspaceLike>(WORKSPACE_SERVICE_KEY)?.project.rootOrigin
-				?.path ?? null
-		);
-	}
-
-	private resolveTransport(): LspTransport | undefined {
-		return this.options.transport ?? resolveLspTransport(this.options.host);
+	private resolvePlatform(): LspPlatform | undefined {
+		return this.options.platform ?? resolveLspPlatform(this.options.host);
 	}
 
 	private async ensureRunning(
@@ -504,24 +388,25 @@ export class LspRuntime {
 		this.statusChanged();
 
 		// Re-resolved here rather than handed in: `resolveTarget` and the start
-		// are separated by the root walk, and a transport published in between
+		// are separated by the root walk, and a platform published in between
 		// must still count.
-		const transport = this.resolveTransport();
-		if (!transport) {
+		const platform = this.resolvePlatform();
+		if (!platform) {
 			entry.state = 'failed';
-			this.log(entry, 'info', `No LSP transport is published, so "${server}" cannot start.`);
+			this.log(entry, 'info', `No LSP platform is published, so "${server}" cannot start.`);
 			this.statusChanged();
 			return entry;
 		}
 		// Named `serverProcess`, not `process`: a local named after the global
-		// shadows it for the whole block, and a transport implementation reading
+		// shadows it for the whole block, and a platform implementation reading
 		// `process.execPath` from the caller's scope would read a dead binding.
 		let spawnedProcess: { kill(): void } | undefined;
 		try {
-			const serverProcess = transport.spawn({
+			const serverProcess = platform.spawn({
 				command: descriptor.command,
 				args: descriptor.args,
-				cwd: root
+				cwd: root,
+				...(descriptor.bundled ? { bundled: descriptor.bundled } : {})
 			});
 			spawnedProcess = serverProcess;
 			const client = new LspClient({
@@ -560,7 +445,7 @@ export class LspRuntime {
 			entry.client = undefined;
 			spawnedProcess?.kill();
 			this.statusChanged();
-			this.log(entry, 'error', `Failed to start ${descriptor.command}: ${describe(error)}`);
+			this.log(entry, 'error', `Failed to start ${descriptor.command}: ${describeError(error)}`);
 		}
 		return entry;
 	}
@@ -628,7 +513,7 @@ export class LspRuntime {
 
 	private reportContained(what: string, error: unknown): void {
 		console.error(
-			`[${this.options.pluginId}] ${what} failed: ${describe(error)}`
+			`[${this.options.pluginId}] ${what} failed: ${describeError(error)}`
 		);
 	}
 }
@@ -636,6 +521,3 @@ export class LspRuntime {
 /** Enough recent files to cover a working session without growing forever. */
 const MAX_RESOLVED_TARGETS = 128;
 
-function describe(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}

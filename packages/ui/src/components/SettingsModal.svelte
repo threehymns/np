@@ -9,7 +9,7 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { cn } from '@np/core';
-	import type { AppearanceMode, CompletionWordsMode } from '@np/core';
+	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode } from '@np/core';
 
 	const appState = useAppState();
 
@@ -209,36 +209,13 @@
 		}
 	}
 
-	/**
-	 * The four server settings have no `_data` field in `Preferences` — nothing
-	 * in the editor reads them synchronously — so their values come from the
-	 * resolver through `settingsVersion`, which is the reactive handle for a
-	 * resolved setting. Declared here rather than in the markup so the markup
-	 * reads as markup.
-	 */
-	const serverLsp = $derived.by(() => {
-		appState.prefs.settingsVersion;
-		return appState.prefs.get('editor', 'lsp') !== false;
-	});
-	const serverFetchTimeoutMs = $derived.by(() => {
-		appState.prefs.settingsVersion;
-		const value = appState.prefs.get('editor', 'lsp_fetch_timeout_ms');
-		return typeof value === 'number' ? value : 0;
-	});
-	const serverInsertMode = $derived.by(() => {
-		appState.prefs.settingsVersion;
-		const value = appState.prefs.get('editor', 'lsp_insert_mode');
-		return value === 'replace_range' ? 'replace_range' : 'replace_suffix';
-	});
-	const showCompletionDocumentation = $derived.by(() => {
-		appState.prefs.settingsVersion;
-		return appState.prefs.get('editor', 'show_completion_documentation') !== false;
-	});
-
 	function setServerFetchTimeoutMs(raw: string) {
 		const parsed = Number(raw);
 		if (!Number.isFinite(parsed)) return;
-		appState.prefs.set('editor', 'lsp_fetch_timeout_ms', Math.max(0, Math.trunc(parsed)), appState.prefs.activeScope);
+		// The stored schema owns the bounds; clamping here keeps an emptied number
+		// field from handing SettingsManager a value it rejects outright. Same as
+		// the word-length control above.
+		appState.prefs.serverFetchTimeoutMs = Math.max(0, Math.trunc(parsed));
 	}
 
 	const allCommands = $derived(appState.commands.getAll());
@@ -709,9 +686,9 @@
 											<p class="text-[10px] text-muted-foreground">Suggest from a running language server. Off leaves words and notes alone</p>
 											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
 												<Switch
-													checked={serverLsp}
+													checked={appState.prefs.serverLsp}
 													onCheckedChange={(checked: boolean) =>
-														appState.prefs.set('editor', 'lsp', checked, appState.prefs.activeScope)}
+														(appState.prefs.serverLsp = checked)}
 												/>
 											</div>
 										</div>
@@ -723,7 +700,7 @@
 												type="number"
 												min="0"
 												step="50"
-												value={serverFetchTimeoutMs}
+												value={appState.prefs.serverFetchTimeoutMs}
 												onchange={(e) => setServerFetchTimeoutMs((e.currentTarget as HTMLInputElement).value)}
 												class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
 											/>
@@ -734,14 +711,10 @@
 											<p class="text-[10px] text-muted-foreground">What accepting a server suggestion replaces. Suffix replaces what you typed; range replaces the range the server named</p>
 											<select
 												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
-												value={serverInsertMode}
+												value={appState.prefs.serverInsertMode}
 												onchange={(e) =>
-													appState.prefs.set(
-														'editor',
-														'lsp_insert_mode',
-														(e.currentTarget as HTMLSelectElement).value,
-														appState.prefs.activeScope,
-													)}
+													(appState.prefs.serverInsertMode = (e.currentTarget as HTMLSelectElement)
+														.value as CompletionLspInsertMode)}
 											>
 												<option value="replace_suffix">replace_suffix</option>
 												<option value="replace_range">replace_range</option>
@@ -753,9 +726,9 @@
 											<p class="text-[10px] text-muted-foreground">Show the signature and docs a server attached to its suggestion</p>
 											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
 												<Switch
-													checked={showCompletionDocumentation}
+													checked={appState.prefs.showCompletionDocumentation}
 													onCheckedChange={(checked: boolean) =>
-														appState.prefs.set('editor', 'show_completion_documentation', checked, appState.prefs.activeScope)}
+														(appState.prefs.showCompletionDocumentation = checked)}
 												/>
 											</div>
 										</div>

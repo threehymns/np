@@ -2,6 +2,7 @@ import {
 	SettingsManager,
 	FileWorkspaceSettingsStorage,
 	EDITOR_COMPLETION_DEFAULTS,
+	type CompletionLspInsertMode,
 	type CompletionWordsMode,
 	type ResolvedSetting,
 	type SettingDiagnostic,
@@ -49,6 +50,14 @@ const DEFAULTS = {
 	completionWords: EDITOR_COMPLETION_DEFAULTS.words,
 	minWordLength: EDITOR_COMPLETION_DEFAULTS.minWordLength,
 	automaticCompletions: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
+	// The four server keys, defaulted from the schema like every other
+	// completion setting. They live here rather than being re-derived in the
+	// settings UI because a default written in three places is a default that
+	// drifts, and `EDITOR_COMPLETION_DEFAULTS` says so itself.
+	serverLsp: EDITOR_COMPLETION_DEFAULTS.lsp,
+	serverFetchTimeoutMs: EDITOR_COMPLETION_DEFAULTS.lspFetchTimeoutMs,
+	serverInsertMode: EDITOR_COMPLETION_DEFAULTS.lspInsertMode,
+	showCompletionDocumentation: EDITOR_COMPLETION_DEFAULTS.showCompletionDocumentation,
 	zoom: 100,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,
@@ -156,6 +165,34 @@ export class Preferences {
 		if (this._data.automaticCompletions === val) return;
 		this._data.automaticCompletions = val;
 		this.syncToSettingsAndSave('editor', 'automatic_completions', val);
+	}
+
+	get serverLsp(): boolean { return this._data.serverLsp; }
+	set serverLsp(val: boolean) {
+		if (this._data.serverLsp === val) return;
+		this._data.serverLsp = val;
+		this.syncToSettingsAndSave('editor', 'lsp', val);
+	}
+
+	get serverFetchTimeoutMs(): number { return this._data.serverFetchTimeoutMs; }
+	set serverFetchTimeoutMs(val: number) {
+		if (this._data.serverFetchTimeoutMs === val) return;
+		this._data.serverFetchTimeoutMs = val;
+		this.syncToSettingsAndSave('editor', 'lsp_fetch_timeout_ms', val);
+	}
+
+	get serverInsertMode(): CompletionLspInsertMode { return this._data.serverInsertMode; }
+	set serverInsertMode(val: CompletionLspInsertMode) {
+		if (this._data.serverInsertMode === val) return;
+		this._data.serverInsertMode = val;
+		this.syncToSettingsAndSave('editor', 'lsp_insert_mode', val);
+	}
+
+	get showCompletionDocumentation(): boolean { return this._data.showCompletionDocumentation; }
+	set showCompletionDocumentation(val: boolean) {
+		if (this._data.showCompletionDocumentation === val) return;
+		this._data.showCompletionDocumentation = val;
+		this.syncToSettingsAndSave('editor', 'show_completion_documentation', val);
 	}
 
 	get zoom(): number { return this._data.zoom; }
@@ -333,6 +370,13 @@ export class Preferences {
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
+			this._data.serverLsp = this.settings.resolve('editor', 'lsp').value;
+			this._data.serverFetchTimeoutMs = this.settings.resolve('editor', 'lsp_fetch_timeout_ms').value;
+			this._data.serverInsertMode = this.settings.resolve('editor', 'lsp_insert_mode').value;
+			this._data.showCompletionDocumentation = this.settings.resolve(
+				'editor',
+				'show_completion_documentation'
+			).value;
 
 			this._data.theme = this.settings.resolve('ui', 'theme').value;
 			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
@@ -398,6 +442,13 @@ export class Preferences {
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
+			this._data.serverLsp = this.settings.resolve('editor', 'lsp').value;
+			this._data.serverFetchTimeoutMs = this.settings.resolve('editor', 'lsp_fetch_timeout_ms').value;
+			this._data.serverInsertMode = this.settings.resolve('editor', 'lsp_insert_mode').value;
+			this._data.showCompletionDocumentation = this.settings.resolve(
+				'editor',
+				'show_completion_documentation'
+			).value;
 
 			// Resolve UI settings
 			this._data.theme = this.settings.resolve('ui', 'theme').value;

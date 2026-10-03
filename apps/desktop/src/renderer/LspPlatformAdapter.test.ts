@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { createElectronLspTransport, provideLspTransport } from './LspTransportAdapter';
-import { LSP_TRANSPORT_SERVICE_KEY } from '@np/core';
+import { createElectronLspPlatform, provideLspPlatform } from './LspPlatformAdapter';
+import { LSP_PLATFORM_SERVICE_KEY } from '@np/core';
 
 /**
- * The desktop transport over a stubbed preload bridge, the same seam
+ * The desktop platform over a stubbed preload bridge, the same seam
  * `SpawnGitAdapter.test.ts` uses for git.
  *
  * What matters here is that bytes stay bytes. The bridge hands the adapter a
@@ -12,7 +12,7 @@ import { LSP_TRANSPORT_SERVICE_KEY } from '@np/core';
  * A test that decoded here would prove the wrong thing and hide the bug this
  * arrangement exists to prevent.
  */
-describe('createElectronLspTransport', () => {
+describe('createElectronLspPlatform', () => {
 	let mockSpawn: ReturnType<typeof mock>;
 	let mockResolve: ReturnType<typeof mock>;
 	let mockWrite: ReturnType<typeof mock>;
@@ -67,19 +67,38 @@ describe('createElectronLspTransport', () => {
 	const bridgeHost = () => (globalThis as any).window;
 
 	it('spawns the descriptor command and arguments in the resolved root', async () => {
-		const transport = createElectronLspTransport(bridgeHost());
-		const spawned = transport.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
 
 		// The declared name is resolved first, then the plan main minted is what
 		// gets spawned — never a command this side assembled.
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
-		expect(mockResolve).toHaveBeenCalledWith('vtsls');
+		expect(mockResolve).toHaveBeenCalledWith('vtsls', undefined);
 		expect(mockSpawn.mock.calls[0]).toEqual([
 			{ command: 'vtsls', args: [], env: {}, source: 'path' },
 			['--stdio'],
 			'/repo',
 		]);
 		expect(spawned.pid).toBe(4242);
+	});
+
+	it("hands the descriptor's bundled declaration to the resolver", async () => {
+		// The descriptor says which package its server ships as; the resolver acts
+		// on that rather than on a name it has in a table of its own, which is what
+		// makes a second bundled server configuration alone (spec #263, story 10).
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({
+			command: 'vtsls',
+			args: ['--stdio'],
+			cwd: '/repo',
+			bundled: { package: '@vtsls/language-server', binary: 'bin/vtsls.js' }
+		});
+
+		await waitFor(() => mockResolve.mock.calls.length === 1);
+		expect(mockResolve.mock.calls[0][1]).toEqual({
+			package: '@vtsls/language-server',
+			binary: 'bin/vtsls.js'
+		});
 	});
 
 	it('passes a bundled plan through untouched, interpreter and script included', async () => {
@@ -93,8 +112,8 @@ describe('createElectronLspTransport', () => {
 			source: 'bundled' as const,
 		};
 		mockResolve.mockImplementation(async () => plan);
-		const transport = createElectronLspTransport(bridgeHost());
-		transport.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
 
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 		expect(mockSpawn.mock.calls[0]).toEqual([plan, ['--stdio'], '/repo']);
@@ -104,8 +123,8 @@ describe('createElectronLspTransport', () => {
 		mockResolve.mockImplementation(async () => {
 			throw new Error('resolve vtsls failed');
 		});
-		const transport = createElectronLspTransport(bridgeHost());
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 
 		const exit = await spawned.exit;
 		expect(exit.code).toBe(-1);
@@ -114,15 +133,15 @@ describe('createElectronLspTransport', () => {
 	});
 
 	it('answers the marker probe through the bridge', async () => {
-		const transport = createElectronLspTransport(bridgeHost());
-		expect(await transport.fileExists('/repo/tsconfig.json')).toBe(true);
+		const platform = createElectronLspPlatform(bridgeHost());
+		expect(await platform.fileExists('/repo/tsconfig.json')).toBe(true);
 		expect(mockExists).toHaveBeenCalledWith('/repo/tsconfig.json');
 	});
 
 	it('carries a chunk across as bytes, so a split character survives the bridge', async () => {
-		const transport = createElectronLspTransport(bridgeHost());
+		const platform = createElectronLspPlatform(bridgeHost());
 		const received: Uint8Array[] = [];
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		spawned.stdout.onData((chunk) => received.push(chunk));
 		// Delivery routes by process id, which exists only once the spawn round
 		// trip has landed — and there are two hops to it, the resolution and the
@@ -144,16 +163,20 @@ describe('createElectronLspTransport', () => {
 		);
 	});
 
-	it('encodes a string write as UTF-8 bytes for the server', async () => {
-		const transport = createElectronLspTransport(bridgeHost());
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+	it('forwards written bytes across the bridge untouched', async () => {
+		// The sink takes bytes because the client frames a message as UTF-8 and
+		// hands the result over: an adapter that re-encoded a string would be
+		// guessing at an encoding it has no way to know.
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 
-		spawned.stdin.write('héllo');
+		const bytes = new TextEncoder().encode('héllo');
+		spawned.stdin.write(bytes);
 		expect(mockWrite).toHaveBeenCalledTimes(1);
 		const [processId, chunk] = mockWrite.mock.calls[0] as [string, Uint8Array];
 		expect(processId).toBe('p1');
-		expect(new TextDecoder().decode(chunk)).toBe('héllo');
+		expect(chunk).toBe(bytes);
 	});
 
 	it('defers writes and subscriptions made before the spawn round trip', async () => {
@@ -167,9 +190,9 @@ describe('createElectronLspTransport', () => {
 					resolveSpawn = resolve;
 				})
 		);
-		const transport = createElectronLspTransport(bridgeHost());
+		const platform = createElectronLspPlatform(bridgeHost());
 		const received: Uint8Array[] = [];
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		spawned.stdout.onData((chunk) => received.push(chunk));
 		spawned.stdin.write('early');
 
@@ -186,8 +209,8 @@ describe('createElectronLspTransport', () => {
 	});
 
 	it('resolves exit once, and kills a server on request', async () => {
-		const transport = createElectronLspTransport(bridgeHost());
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 
 		capturedHandlers!.onExit({ processId: 'p1', code: 0, signal: null });
@@ -203,8 +226,8 @@ describe('createElectronLspTransport', () => {
 		mockSpawn.mockImplementation(async () => {
 			throw new Error('spawn vtsls ENOENT');
 		});
-		const transport = createElectronLspTransport(bridgeHost());
-		const spawned = transport.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 
 		const exit = await spawned.exit;
 		expect(exit.code).toBe(-1);
@@ -217,17 +240,17 @@ describe('createElectronLspTransport', () => {
 			provideService: (key: string, service: unknown) => published.push([key, service])
 		};
 
-		expect(provideLspTransport(host, bridgeHost())).toBeDefined();
-		expect(published[0][0]).toBe(LSP_TRANSPORT_SERVICE_KEY);
+		expect(provideLspPlatform(host, bridgeHost())).toBeDefined();
+		expect(published[0][0]).toBe(LSP_PLATFORM_SERVICE_KEY);
 
 		delete (globalThis as any).window;
-		expect(provideLspTransport(host)).toBeUndefined();
+		expect(provideLspPlatform(host)).toBeUndefined();
 		expect(published).toHaveLength(1);
 	});
 
-	it('refuses to build a transport with no bridge, and says what to do', () => {
+	it('refuses to build a platform with no bridge, and says what to do', () => {
 		delete (globalThis as any).window;
-		expect(() => createElectronLspTransport(bridgeHost())).toThrow(/Action:/);
+		expect(() => createElectronLspPlatform(bridgeHost())).toThrow(/Action:/);
 	});
 });
 

@@ -16,14 +16,19 @@
  *   absent, matching the pre-plugin behavior of dialog-less contexts.
  * - `diffNavigator`: published by the app composer (AppState). Provider for
  *   the currently mounted diff view's hunk navigator, if any.
- * - `lsp:transport`: published by the desktop app. Process spawning and one
+ * - `lsp:platform`: published by the desktop app. Process spawning and one
  *   filesystem question, the two capabilities a neutral host cannot have
- *   itself; see {@link LspTransport}.
+ *   itself; see {@link LspPlatform}.
+ * - `completion:coordinator`: published by a Core Plugin that can answer a
+ *   completion query about a document — a language server today. The editor
+ *   shell reads it to compose its sources, and knows only that *something* can
+ *   answer; see {@link CompletionCoordinator}.
  */
 
 import type { FileOrigin } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import type { Repository } from '../project/repository.svelte';
+import type { LspBundledCommand } from './lsp-descriptors';
 
 export interface ProjectLike {
 	readonly rootOrigin: FileOrigin | null;
@@ -72,31 +77,45 @@ export const WORKSPACE_SERVICE_KEY = 'workspace';
 export const DIALOGS_SERVICE_KEY = 'dialogs';
 export const DIFF_NAVIGATOR_SERVICE_KEY = 'diffNavigator';
 export const PLUGIN_UI_LOADER_SERVICE_KEY = 'plugin-ui-loader';
-export const LSP_TRANSPORT_SERVICE_KEY = 'lsp:transport';
+export const LSP_PLATFORM_SERVICE_KEY = 'lsp:platform';
 
 /**
- * Language-server transport seam (spec #263, ADR 0019).
+ * The platform seam (spec #263, ADR 0019).
  *
  * Everything the LSP plugin needs that `@np/core` cannot have for itself is
  * named here and nothing else: spawning a process, and asking the filesystem
- * whether a root marker exists. The host owns the *capability names*, never the
- * implementation — the desktop app supplies both over IPC (spec #263 keeps web
- * out of scope, so a web build simply publishes nothing), and the plugin
- * degrades to "no LSP" when the service is absent. That is what lets a real
- * process and a real filesystem be tested without either leaking into neutral
- * core, and it is the same provider/consumer-by-key arrangement as the `git:
- * ui-components` precedent.
+ * whether a file exists. It is a *platform* and not a transport because a
+ * transport is how bytes move along a connection, which is one half of this; the
+ * other half is a filesystem question that no connection carries. The host owns
+ * the *capability names*, never the implementation — the desktop app supplies
+ * both over IPC (spec #263 keeps web out of scope, so a web build simply
+ * publishes nothing), and the plugin degrades to "no LSP" when the service is
+ * absent. That is what lets a real process and a real filesystem be tested
+ * without either leaking into neutral core, and it is the same
+ * provider/consumer-by-key arrangement as the `git:ui-components` precedent.
  */
 export interface LspSpawnOptions {
 	readonly command: string;
 	readonly args: readonly string[];
 	/** The resolved project root. Servers inherit it as their working directory. */
 	readonly cwd: string;
+	/**
+	 * Which packaged dependency this server ships as, when it ships as one. The
+	 * descriptor declares it and the transport acts on it, so a platform that
+	 * resolves commands out of `node_modules` needs no per-server map of its own
+	 * — which is what makes the second bundled server configuration (spec #263,
+	 * story 10). Absent means PATH.
+	 */
+	readonly bundled?: LspBundledCommand;
 }
 
-/** Byte sink. A string chunk is encoded as UTF-8 by the transport. */
+/**
+ * Byte sink. Bytes only: the client frames a message as UTF-8 and hands over the
+ * result, so a transport that accepted strings too would have to guess an
+ * encoding, and the one guess available would be wrong for a binary payload.
+ */
 export interface LspWritableStream {
-	write(chunk: Uint8Array | string): void;
+	write(chunk: Uint8Array): void;
 	/** Closes the sink. Servers treat end-of-input as "the client is gone". */
 	end(): void;
 }
@@ -130,10 +149,96 @@ export interface LspProcess {
 	kill(): void;
 }
 
-export interface LspTransport {
+export interface LspPlatform {
 	/** Whether a root marker exists at an absolute path. */
 	fileExists(path: string): Promise<boolean>;
 	spawn(options: LspSpawnOptions): LspProcess;
+}
+
+export const COMPLETION_COORDINATOR_SERVICE_KEY = 'completion:coordinator';
+
+/**
+ * What a document is, as a completion query states it.
+ *
+ * Nested rather than flat because a query is about a *position* in a document and
+ * the position means nothing without it — which is also what lets the shell hand
+ * the same shape to any provider.
+ */
+export interface CompletionQueryDocument {
+	/** Absolute path, or null for a document with no file yet. */
+	readonly path: string | null;
+	readonly fileName: string;
+	readonly content: string;
+	/** The language name the editor already resolved, when it has one. */
+	readonly language?: string | null;
+}
+
+/** One position's completion query, as a completion source states it. */
+export interface CompletionQuery {
+	readonly document: CompletionQueryDocument;
+	/** Zero-based line of the cursor. */
+	readonly line: number;
+	/** UTF-16 offset of the cursor within that line. */
+	readonly character: number;
+	/** How long a provider may hold this query up. Absent means no bound. */
+	readonly timeoutMs?: number;
+}
+
+/** The range an accepted suggestion replaces, when the provider named one. */
+export interface CompletionSuggestionRange {
+	readonly start: { readonly line: number; readonly character: number };
+	readonly end: { readonly line: number; readonly character: number };
+}
+
+/**
+ * One suggestion, in the shape every provider's items are read as.
+ *
+ * Deliberately not any provider's wire format: the shell renders these, so it
+ * must not have to know what any one protocol calls them.
+ */
+export interface CompletionSuggestion {
+	readonly label: string;
+	readonly insertText: string;
+	/** One-line signature, for the popover's right-hand column. */
+	readonly detail: string | null;
+	/** Documentation as one string: JSDoc, a signature, or a rendered blob. */
+	readonly documentation: string | null;
+	readonly kind: number | null;
+	/** Only meaningful for a provider whose settings name a range replace. */
+	readonly replaceRange: CompletionSuggestionRange | null;
+}
+
+/**
+ * The three-way answer a completion provider gives, and the whole of the
+ * vocabulary a source needs to use one.
+ *
+ * `'inactive'` is not a failure: nothing was ever meant to answer, and any other
+ * source answering there is the pre-provider behaviour rather than a degradation.
+ * `'unavailable'` is a failure, and is the case a fallback source exists behind.
+ */
+export type CompletionAnswer =
+	| { readonly state: 'inactive'; readonly reason: string }
+	| {
+			readonly state: 'serving';
+			readonly items: readonly CompletionSuggestion[];
+			/** Whether the provider wants to be asked again as the user keeps typing. */
+			readonly incomplete: boolean;
+	  }
+	| { readonly state: 'unavailable'; readonly provider: string; readonly reason: string };
+
+/**
+ * Completion coordination, published by whoever can answer a query about a
+ * document (ADR 0008, ADR 0019).
+ *
+ * Generic on purpose and generic in the only sense that matters: the editor shell
+ * asks a question about a position and receives suggestions, without naming what
+ * is answering. A language server is the first provider; a second one, or an
+ * index of the user's own repository, is the same seam with a different
+ * implementation behind it. Nothing here is protocol vocabulary, which is what
+ * lets `Editor.svelte` read a provider without knowing one exists by name.
+ */
+export interface CompletionCoordinator {
+	fetch(query: CompletionQuery): Promise<CompletionAnswer>;
 }
 
 export interface PluginUILoader {

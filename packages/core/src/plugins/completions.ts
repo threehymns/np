@@ -117,6 +117,10 @@ export function rebuildSnippets(transforms: readonly SnippetTransformEntry[]): R
 				next.set(id, snippet);
 				continue;
 			}
+			// The same rule the descriptor and language registries apply, and for the
+			// same reason: a record with no owner is being claimed now, one with an
+			// owner keeps it. The second arm cannot fall back to `entry.pluginId`,
+			// since it only runs when the owner is already a non-empty string.
 			const owned: RegisteredSnippet = { ...snippet, owner: snippet.owner || entry.pluginId };
 
 			const previousOwner = owners.get(id);

@@ -11,7 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
-	import { LSP_RUNTIME_SERVICE_KEY, LspRuntime, type LspCompletionRequest } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -338,11 +338,16 @@
 		// registered snippet is one read rather than a read plus a filter that
 		// says the same thing.
 		const snippets = appState.plugins?.getSnippets() ?? [];
-		// The LSP plugin publishes its runtime as a service (ADR 0019). Absent on
-		// web and while the plugin is disabled, which is the same "no server here"
-		// answer a language nothing serves gives — so the chain simply carries no
-		// server source and words behave exactly as they did before #263.
-		const lspRuntime = appState.plugins?.getService<LspRuntime>(LSP_RUNTIME_SERVICE_KEY);
+		// Whoever can answer a completion query publishes itself under one generic
+		// key (ADR 0008); a language server is the first such provider. Absent —
+		// on web, or while the providing plugin is disabled — is the same "nothing
+		// can answer here" answer a language nothing serves gives, so the chain
+		// carries no provider source and words behave exactly as they did before.
+		// The shell names no provider, because it does not need to know which one is
+		// answering.
+		const completionCoordinator = appState.plugins?.getService<CompletionCoordinator>(
+			COMPLETION_COORDINATOR_SERVICE_KEY
+		);
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -363,9 +368,9 @@
 							automaticCompletions: readAutomaticCompletions(readSetting),
 							readSettings: () =>
 								readBufferWordSettings(readSetting, languageName),
-							server: lspRuntime
+							server: completionCoordinator
 								? {
-										fetch: (request: LspCompletionRequest) => lspRuntime.fetchCompletions(request),
+										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
 									}

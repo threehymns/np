@@ -6,7 +6,7 @@ import { lspRegistration } from './lsp/registration';
 import { LSP_DESCRIPTORS } from './lsp/descriptors';
 import { DuplicateLspDescriptorIdError, PluginActivationError } from './errors';
 import type { PluginHostInterface } from './types';
-import type { LspDescriptorContribution } from './lsp-descriptors';
+import { lspLanguageId, type LspDescriptorContribution, type RegisteredLspDescriptor } from './lsp-descriptors';
 
 function typescriptDescriptor(): LspDescriptorContribution {
 	return {
@@ -67,6 +67,19 @@ describe('Server descriptor interface (#264)', () => {
 		// Order is data, not a set: the first declared marker outranks the rest.
 		expect(descriptor.rootMarkers).toEqual(LSP_DESCRIPTORS[0].rootMarkers);
 		expect(descriptor.languages).toEqual(LSP_DESCRIPTORS[0].languages);
+		// The protocol ids the bundled server answers to, which is the field that
+		// makes a second server configuration rather than architecture: a name the
+		// registry publishes and an id the protocol uses are different lists.
+		expect(descriptor.languageIds).toEqual({
+			TypeScript: 'typescript',
+			TSX: 'typescriptreact',
+			JavaScript: 'javascript',
+			JSX: 'javascriptreact'
+		});
+		expect(descriptor.bundled).toEqual({
+			package: '@vtsls/language-server',
+			binary: 'bin/vtsls.js'
+		});
 
 		await host.deactivate(lspRegistration.manifest.id);
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
@@ -338,5 +351,37 @@ describe('Server descriptor registry replay', () => {
 
 		expect(host.getLspDescriptors()[0].owner).toBe('plug-b');
 		expect(host.getLspDescriptors()[0].command).toBe('other-server');
+	});
+});
+
+describe('Protocol language ids (#265)', () => {
+	function registered(contribution: LspDescriptorContribution): RegisteredLspDescriptor {
+		const host = desktopHost();
+		host.registerLspDescriptors('plug-a', [contribution]);
+		return host.getLspDescriptors()[0];
+	}
+
+	it('prefers the declared id for a served name, matched case-insensitively', () => {
+		const descriptor = registered({
+			...typescriptDescriptor(),
+			languages: ['TypeScript', 'TSX'],
+			languageIds: { TSX: 'typescriptreact' }
+		});
+
+		// `TSX` is the registry's spelling and `typescriptreact` is the protocol's,
+		// so the two vocabularies meet only here.
+		expect(lspLanguageId(descriptor, 'TSX')).toBe('typescriptreact');
+		expect(lspLanguageId(descriptor, 'tsx')).toBe('typescriptreact');
+		expect(lspLanguageId(descriptor, 'TsX')).toBe('typescriptreact');
+		// A name with no mapping still lowercases, which is right for TypeScript.
+		expect(lspLanguageId(descriptor, 'TypeScript')).toBe('typescript');
+	});
+
+	it('lowercases the served name when the descriptor declares no mapping at all', () => {
+		const descriptor = registered(typescriptDescriptor());
+
+		expect(descriptor.languageIds).toEqual({});
+		expect(lspLanguageId(descriptor, 'TSX')).toBe('tsx');
+		expect(lspLanguageId(descriptor, null)).toBe('plaintext');
 	});
 });

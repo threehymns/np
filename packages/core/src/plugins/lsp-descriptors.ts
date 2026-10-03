@@ -33,6 +33,34 @@ export interface LspDescriptorContribution {
 	readonly rootMarkers: readonly string[];
 	/** Languages this server serves, joined on language identity. Case-insensitive. */
 	readonly languages: readonly string[];
+	/**
+	 * Protocol `languageId` per served language, keyed by the same registry name
+	 * `languages` uses.
+	 *
+	 * The two vocabularies are not the same list. The registry publishes
+	 * `TypeScript` and `TSX`; the protocol's ids are `typescript` and
+	 * `typescriptreact`. Joining on language identity therefore *requires* this
+	 * field for any server whose names do not lowercase to their ids, which is
+	 * the difference between the second server being configuration and needing
+	 * a host change (spec #263, story 10). Omitted, a served name lowercases —
+	 * the right answer for every language whose name already is its id.
+	 */
+	readonly languageIds?: Readonly<Record<string, string>>;
+	/**
+	 * The npm package this server ships as, and the script inside it, so a
+	 * platform that resolves commands from packaged dependencies has everything
+	 * it needs from the descriptor alone. Omitted means "no bundled package:
+	 * resolve the command against PATH".
+	 */
+	readonly bundled?: LspBundledCommand;
+}
+
+/** Which package a bundled server lives in, and which script inside it runs. */
+export interface LspBundledCommand {
+	/** The npm package the dependency was declared under, e.g. `@vtsls/language-server`. */
+	readonly package: string;
+	/** Path within that package, from its `bin` entry, e.g. `bin/vtsls.js`. */
+	readonly binary: string;
 }
 
 /**
@@ -48,6 +76,9 @@ export interface RegisteredLspDescriptor {
 	readonly args: readonly string[];
 	readonly rootMarkers: readonly string[];
 	readonly languages: readonly string[];
+	/** Empty rather than absent when the contribution declared none. */
+	readonly languageIds: Readonly<Record<string, string>>;
+	readonly bundled?: LspBundledCommand;
 	readonly owner: string;
 }
 
@@ -79,6 +110,11 @@ export function createAddLspDescriptorsTransform(
 				args: [...contribution.args],
 				rootMarkers: [...contribution.rootMarkers],
 				languages: [...contribution.languages],
+				// Materialized here rather than left optional so every consumer
+				// reads the same shape: the mapping is a lookup, and a missing
+				// lookup and an empty one mean the same thing.
+				languageIds: { ...(contribution.languageIds ?? {}) },
+				...(contribution.bundled ? { bundled: { ...contribution.bundled } } : {}),
 				owner: ''
 			});
 		}
@@ -90,9 +126,12 @@ export function createAddLspDescriptorsTransform(
  * Replays transforms from an empty initial value (ADR 0012), in the owner
  * order the host computes, binding each materialized record's owner.
  *
- * Ownership follows `rebuildSnippets` exactly: a record that arrives with an
- * empty owner is being claimed by the transform that emitted it and is stamped
- * with that plugin, while a record that already carries an owner keeps it.
+ * Ownership follows `rebuildSnippets` exactly — deliberately a copy rather than a
+ * shared helper, because each registry raises its own duplicate error and the
+ * rule itself is the part ADR 0012 fixes for all of them: a record that arrives
+ * with an empty owner is being claimed by the transform that emitted it and is
+ * stamped with that plugin, while a record that already carries an owner keeps
+ * it.
  * Preserving the pre-bound owner is what makes a refresh transform safe — one
  * that re-emits a record it did not change, with a new object identity, stays
  * the original plugin's record instead of being re-attributed to whoever ran
@@ -121,10 +160,13 @@ export function rebuildLspDescriptors(
 				next.set(id, descriptor);
 				continue;
 			}
-			const owned: RegisteredLspDescriptor =
-				descriptor.owner === ''
-					? { ...descriptor, owner: entry.pluginId }
-					: { ...descriptor, owner: descriptor.owner || entry.pluginId };
+			// One rule, and the branch that is not two: a record arriving with no
+			// owner is being claimed by the transform that emitted it, and a record
+			// that already carries one keeps it — including when that owner is the
+			// plugin running now. The `|| entry.pluginId` this used to hold in the
+			// second arm could never fire, since that arm only runs when the owner
+			// is a non-empty string.
+			const owned: RegisteredLspDescriptor = { ...descriptor, owner: descriptor.owner || entry.pluginId };
 
 			const previousOwner = owners.get(id);
 			if (previousOwner !== undefined && previousOwner !== owned.owner) {
@@ -160,4 +202,33 @@ export function getLspDescriptorsForLanguage(
 ): RegisteredLspDescriptor[] {
 	const lowered = language.toLowerCase();
 	return descriptors.filter((d) => d.languages.some((l) => l.toLowerCase() === lowered));
+}
+
+/**
+ * The protocol's `languageId` for one served language.
+ *
+ * A descriptor's `languageIds` wins, matched case-insensitively against the same
+ * registry name it keys by, so `{"TSX": "typescriptreact"}` answers for a
+ * document whose language resolved as `TSX`, `tsx` or `Tsx`. Without an entry the
+ * served name lowercases, which is the right answer whenever the name already
+ * is the id — `TypeScript` and `JavaScript` both are — and the only guess
+ * available for a language that is not.
+ */
+export function lspLanguageId(descriptor: RegisteredLspDescriptor, language: string | null): string {
+	const name = language ?? 'plaintext';
+	const declared = findDeclaredLanguageId(descriptor.languageIds, name);
+	return declared ?? name.toLowerCase();
+}
+
+function findDeclaredLanguageId(
+	languageIds: Readonly<Record<string, string>>,
+	language: string
+): string | undefined {
+	const direct = languageIds[language];
+	if (direct !== undefined) return direct;
+	const lowered = language.toLowerCase();
+	for (const [key, value] of Object.entries(languageIds)) {
+		if (key.toLowerCase() === lowered) return value;
+	}
+	return undefined;
 }

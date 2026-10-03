@@ -4,7 +4,9 @@ import {
 	classifyServerOutput,
 	LspLogStore,
 	splitLogLines,
-	DEFAULT_LOG_CAPACITY_PER_SERVER
+	summarizeProtocolMessage,
+	DEFAULT_LOG_CAPACITY_PER_SERVER,
+	MAX_TRACE_MESSAGE_CHARS
 } from './logs';
 
 /**
@@ -114,5 +116,95 @@ describe('Per-server log buffers (#264)', () => {
 		const start = logs.revision;
 		logs.appendServerLine('a@/one', 'a line');
 		expect(logs.revision).toBeGreaterThan(start);
+	});
+});
+
+/**
+ * The trace's second bound.
+ *
+ * Full-content document sync means the client sends the whole open document on
+ * every keystroke, so a trace that stored payloads verbatim would hold up to
+ * `DEFAULT_LOG_CAPACITY_PER_SERVER` copies of the file being edited. The
+ * assertion is about memory rather than about text: a document far larger than
+ * the buffer's entry cap must not make the buffer larger by its own size.
+ */
+describe('The protocol trace never retains a document body (#264)', () => {
+	const document = 'const value = 1;\n'.repeat(40_000);
+
+	it('does not grow the buffer by the size of the document being synced', () => {
+		const logs = new LspLogStore();
+		const before = JSON.stringify(logs.read()).length;
+
+		for (let version = 1; version <= 8; version++) {
+			logs.appendProtocolTrace(
+				'a@/one',
+				'sent',
+				JSON.stringify({
+					jsonrpc: '2.0',
+					method: 'textDocument/didChange',
+					params: {
+						textDocument: { uri: 'file:///a.ts', version },
+						contentChanges: [{ text: document }]
+					}
+				})
+			);
+		}
+		const after = JSON.stringify(logs.read()).length;
+
+		// The document is ~840KB; eight copies of it would be ~6.7MB. The buffer is
+		// bounded by the line cap instead.
+		expect(document.length).toBeGreaterThan(MAX_TRACE_MESSAGE_CHARS);
+		expect(after - before).toBeLessThan(document.length);
+		expect(logs.read()).toHaveLength(8);
+	});
+
+	it('keeps the conversation and drops the text, so the line is still useful', () => {
+		const logs = new LspLogStore();
+		logs.appendProtocolTrace(
+			'a@/one',
+			'sent',
+			JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'textDocument/didOpen',
+				params: {
+					textDocument: {
+						uri: 'file:///src/a.ts',
+						languageId: 'typescriptreact',
+						version: 1,
+						text: document
+					}
+				}
+			})
+		);
+
+		const [entry] = logs.read();
+		expect(entry.message).toContain('"method":"textDocument/didOpen"');
+		expect(entry.message).toContain('file:///src/a.ts');
+		expect(entry.message).toContain('"languageId":"typescriptreact"');
+		expect(entry.message).toContain(`<document text: ${document.length} chars>`);
+		// The body itself is what must not survive: it is the whole file, and a
+		// reader of a trace wants the exchange, not the document.
+		expect(entry.message).not.toContain('const value = 1;');
+		expect(entry.message.length).toBeLessThan(MAX_TRACE_MESSAGE_CHARS);
+	});
+
+	it('caps a reply no document redaction can shrink', () => {
+		const logs = new LspLogStore();
+		logs.appendProtocolTrace(
+			'a@/one',
+			'received',
+			JSON.stringify({ jsonrpc: '2.0', id: 3, result: { items: 'x'.repeat(50_000) } })
+		);
+
+		const [entry] = logs.read();
+		expect(entry.message.length).toBeLessThan(MAX_TRACE_MESSAGE_CHARS + 80);
+		expect(entry.message).toContain('chars)');
+	});
+
+	it('truncates a payload that is not JSON rather than losing the line', () => {
+		expect(summarizeProtocolMessage('not json at all')).toBe('not json at all');
+		expect(summarizeProtocolMessage('x'.repeat(MAX_TRACE_MESSAGE_CHARS + 10))).toContain(
+			`(+10 chars)`
+		);
 	});
 });

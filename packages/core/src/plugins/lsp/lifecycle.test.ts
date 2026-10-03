@@ -1,20 +1,20 @@
 import '../../../../../tests/contract/rune-setup';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
-import { LSP_TRANSPORT_SERVICE_KEY } from '../services';
+import { LSP_PLATFORM_SERVICE_KEY } from '../services';
 import type { PluginHostInterface } from '../types';
 import {
-	createRealProcessTransport,
+	createRealProcessPlatform,
 	isProcessAlive,
 	waitFor,
-	type RealProcessTransport
-} from '../../../../../tests/fixtures/lsp-transport';
+	type RealProcessPlatform
+} from '../../../../../tests/fixtures/lsp-platform';
 
 /**
  * The lifecycle against a real process.
@@ -50,16 +50,37 @@ function makeProject(files: Record<string, string>): string {
 
 interface Harness {
 	readonly host: PluginHost;
-	readonly transport: RealProcessTransport;
+	readonly platform: RealProcessPlatform;
 	readonly logs: LspLogStore;
 	readonly runtime: LspRuntime;
+	/** Where the stub records what arrived on the wire, read by {@link received}. */
+	readonly wireLog: string;
 	open(path: string, content: string): void;
+}
+
+/**
+ * The messages the stub server actually received, one JSON payload per line.
+ *
+ * The protocol trace is not the place to read this from: it summarizes document
+ * bodies away on purpose, so what the server got on the wire is only observable
+ * from the server's side. The fixture's `--log-file` is that side.
+ */
+function received(harness: { readonly wireLog: string }): string[] {
+	try {
+		return readFileSync(harness.wireLog, 'utf-8').split('\n').filter((line) => line.length > 0);
+	} catch {
+		return [];
+	}
 }
 
 async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
-	const transport = createRealProcessTransport(script.length > 0 ? { script } : {});
-	host.provideService(LSP_TRANSPORT_SERVICE_KEY, transport);
+	const wireLog = join(makeProject({}), 'wire.log');
+	// Always on: the stub is the only witness to what the client sent, and a
+	// suite where some tests have one and some do not is a suite where the
+	// difference is invisible.
+	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
+	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	host.register(lspRegistration);
 	await host.activate(lspRegistration.manifest.id);
 	// Every teardown goes through the plugin's own disablement: the path that has
@@ -73,9 +94,10 @@ async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 	const runtime = host.getService<LspRuntime>(LSP_RUNTIME_SERVICE_KEY)!;
 	return {
 		host,
-		transport,
+		platform,
 		logs,
 		runtime,
+		wireLog,
 		open: (path, content) => {
 			host.emit('document:opened', {
 				document: {
@@ -89,10 +111,10 @@ async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 	};
 }
 
-/** A runtime driven directly, with its transport and log capacity injected. */
+/** A runtime driven directly, with its platform and log capacity injected. */
 async function startRuntime(
 	options: { script?: readonly string[]; capacity?: number; initializeTimeoutMs?: number }
-): Promise<{ runtime: LspRuntime; transport: RealProcessTransport; logs: LspLogStore }> {
+): Promise<{ runtime: LspRuntime; platform: RealProcessPlatform; logs: LspLogStore }> {
 	const host = new PluginHost({ platform: 'desktop' });
 	host.register({
 		manifest: { id: 'ts', name: 'TS', version: 0 },
@@ -107,7 +129,7 @@ async function startRuntime(
 		}
 	});
 	await host.activate('ts');
-	const transport = createRealProcessTransport(
+	const platform = createRealProcessPlatform(
 		options.script ? { script: options.script } : {}
 	);
 	const logs = new LspLogStore(options.capacity);
@@ -115,11 +137,11 @@ async function startRuntime(
 		host,
 		pluginId: 'ts',
 		logs,
-		transport,
+		platform,
 		initializeTimeoutMs: options.initializeTimeoutMs
 	});
 	cleanups.push(() => runtime.dispose());
-	return { runtime, transport, logs };
+	return { runtime, platform, logs };
 }
 
 /**
@@ -162,13 +184,13 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const harness = await startPlugin();
 
-		expect(harness.transport.spawned).toHaveLength(0);
+		expect(harness.platform.spawned).toHaveLength(0);
 		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
 
-		await waitFor(() => harness.transport.spawned.length === 1, { label: 'a server to spawn' });
+		await waitFor(() => harness.platform.spawned.length === 1, { label: 'a server to spawn' });
 		await waitForRunning(harness.runtime, 1);
-		const [spawned] = harness.transport.spawned;
-		// The descriptor's own configuration reaches the transport, and the resolved
+		const [spawned] = harness.platform.spawned;
+		// The descriptor's own configuration reaches the platform, and the resolved
 		// root is the server's working directory.
 		expect(spawned.requestedCommand).toBe('vtsls');
 		expect([...spawned.requestedArgs]).toEqual(['--stdio']);
@@ -182,14 +204,25 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(trace(harness.logs).join('\n')).toContain(`file://${root}`);
 
 		// The document is synced with its full text, which is what this slice
-		// declares: no incremental ranges are sent at all.
+		// declares: no incremental ranges are sent at all. Read off the wire rather
+		// than off the trace, because the trace deliberately does not retain
+		// document bodies — a buffer that kept five hundred copies of the file being
+		// edited would grow with the file on the keystroke path.
 		await waitFor(() => trace(harness.logs).some((line) => line.includes('didOpen')), {
 			label: 'the didOpen notification'
 		});
 		const didOpen = trace(harness.logs).find((line) => line.includes('didOpen'))!;
-		expect(didOpen).toContain('export const a = 1;\\n');
 		expect(didOpen).toContain('"languageId":"typescript"');
 		expect(didOpen).not.toContain('contentChanges');
+		// What the trace keeps instead: that a body went, and how big it was.
+		expect(didOpen).toContain('<document text: 20 chars>');
+		expect(didOpen).not.toContain('export const a');
+		await waitFor(() => received(harness).some((line) => line.includes('didOpen')), {
+			label: 'the stub to record the didOpen it received'
+		});
+		expect(received(harness).find((line) => line.includes('didOpen'))).toContain(
+			'"text":"export const a = 1;'
+		);
 
 		expect(harness.runtime.getServers()).toEqual([
 			{
@@ -198,9 +231,39 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 				root,
 				marker: 'tsconfig.json',
 				state: 'running',
-				pid: harness.transport.pids[0]
+				pid: harness.platform.pids[0],
+				details: []
 			}
 		]);
+	});
+
+	it('syncs each served language with the protocol id its server answers to', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/app.tsx': 'export const App = () => null;\n',
+			'src/page.jsx': 'export const Page = () => null;\n'
+		});
+		const harness = await startPlugin();
+
+		harness.open(join(root, 'src/app.tsx'), 'export const App = () => null;\n');
+		await waitFor(() => trace(harness.logs).some((line) => line.includes('app.tsx')), {
+			label: 'the tsx didOpen'
+		});
+
+		// The registry names the language `TSX` and the server answers to
+		// `typescriptreact`; syncing it as `tsx` would leave the server with a
+		// language it has no grammar for. The mapping is the descriptor's.
+		expect(trace(harness.logs).find((line) => line.includes('app.tsx'))).toContain(
+			'"languageId":"typescriptreact"'
+		);
+
+		harness.open(join(root, 'src/page.jsx'), 'export const Page = () => null;\n');
+		await waitFor(() => trace(harness.logs).some((line) => line.includes('page.jsx')), {
+			label: 'the jsx didOpen'
+		});
+		expect(trace(harness.logs).find((line) => line.includes('page.jsx'))).toContain(
+			'"languageId":"javascriptreact"'
+		);
 	});
 
 	it('starts nothing for prose, an unserved language, or a file with no extension', async () => {
@@ -217,7 +280,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'LICENSE'), 'MIT');
 		await settle();
 
-		expect(harness.transport.spawned).toHaveLength(0);
+		expect(harness.platform.spawned).toHaveLength(0);
 		// Not one buffer either: a note that pays for no server leaves no trace.
 		expect(harness.logs.read()).toEqual([]);
 		expect(harness.runtime.getServers()).toEqual([]);
@@ -225,7 +288,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'src/a.ts'), 'const a = 1;');
 		await waitForRunning(harness.runtime, 1);
 		await settle();
-		expect(harness.transport.spawned).toHaveLength(1);
+		expect(harness.platform.spawned).toHaveLength(1);
 	});
 
 	it('resolves the root by marker order in a nested layout and attributes it to one descriptor', async () => {
@@ -240,7 +303,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		// The nearer `package.json` did not outrank the `tsconfig.json` above it, and
 		// the decision is recorded against the one descriptor that made it.
-		expect(harness.transport.spawned[0].cwd).toBe(root);
+		expect(harness.platform.spawned[0].cwd).toBe(root);
 		await waitFor(
 			() => harness.logs.read({ kind: 'server' }).some((e) => e.message.includes('via tsconfig.json')),
 			{ label: 'the root decision to be logged' }
@@ -264,7 +327,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'packages/app/src/b.ts'), '');
 		await waitForRunning(harness.runtime, 2);
 
-		expect(harness.transport.spawned.map((s) => s.cwd)).toEqual([
+		expect(harness.platform.spawned.map((s) => s.cwd)).toEqual([
 			root,
 			join(root, 'packages/app')
 		]);
@@ -304,7 +367,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		// No second server: resolving by registration order would make the answer
 		// depend on which plugin enabled first.
-		expect(harness.transport.spawned).toHaveLength(1);
+		expect(harness.platform.spawned).toHaveLength(1);
 		const reported = errors.join('\n');
 		expect(reported).toContain('ts-rival');
 		expect(reported).toContain('typescript');
@@ -326,7 +389,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		const outer = lspServerKey('typescript', root);
 		const inner = lspServerKey('typescript', join(root, 'packages/app'));
-		const [outerPid, innerPid] = harness.transport.pids;
+		const [outerPid, innerPid] = harness.platform.pids;
 
 		// Stopping one leaves the other running.
 		expect(await harness.runtime.stopServer(outer)).toBe(true);
@@ -337,19 +400,19 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		// A stop is final: editing a document under it does not resurrect the server.
 		harness.open(join(root, 'src/a.ts'), 'const a = 2;');
 		await settle();
-		expect(harness.transport.spawned).toHaveLength(2);
+		expect(harness.platform.spawned).toHaveLength(2);
 
 		// Restarting brings that server back as a new process with its documents
 		// re-opened, so a restart is not a silent loss of context.
 		const didOpens = () => trace(harness.logs).filter((line) => line.includes('didOpen')).length;
 		const before = didOpens();
 		expect(await harness.runtime.restartServer(outer)).toBe(true);
-		await waitFor(() => harness.transport.spawned.length === 3, { label: 'the restart' });
-		expect(harness.transport.spawned[2].cwd).toBe(root);
+		await waitFor(() => harness.platform.spawned.length === 3, { label: 'the restart' });
+		expect(harness.platform.spawned[2].cwd).toBe(root);
 		expect(harness.runtime.getServers().find((s) => s.server === outer)?.state).toBe('running');
 		await waitFor(() => didOpens() > before, { label: 'the re-opened document' });
 		// And the untouched server was neither restarted nor stopped with it.
-		expect(harness.transport.pids[1]).toBe(innerPid);
+		expect(harness.platform.pids[1]).toBe(innerPid);
 		expect(isProcessAlive(innerPid)).toBe(true);
 		expect(harness.runtime.getServers().find((s) => s.server === inner)?.state).toBe('running');
 	});
@@ -365,17 +428,17 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'src/a.ts'), '');
 		harness.open(join(root, 'packages/app/src/b.ts'), '');
 		await waitForRunning(harness.runtime, 2);
-		const firstPids = [...harness.transport.pids];
+		const firstPids = [...harness.platform.pids];
 
 		await harness.runtime.restartAll();
 
-		await waitFor(() => harness.transport.spawned.length === 4, { label: 'both restarts' });
+		await waitFor(() => harness.platform.spawned.length === 4, { label: 'both restarts' });
 		await waitForRunning(harness.runtime, 2);
 		for (const pid of firstPids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `old pid ${pid} to exit` });
 		}
 		// Both roots come back, each against its own project.
-		expect(harness.transport.spawned.slice(2).map((s) => s.cwd).sort()).toEqual(
+		expect(harness.platform.spawned.slice(2).map((s) => s.cwd).sort()).toEqual(
 			[root, join(root, 'packages/app')].sort()
 		);
 	});
@@ -392,7 +455,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'packages/app/src/b.ts'), '');
 		await waitForRunning(harness.runtime, 2);
 
-		const pids = [...harness.transport.pids];
+		const pids = [...harness.platform.pids];
 		expect(pids.every((pid) => isProcessAlive(pid))).toBe(true);
 
 		await harness.host.deactivate(lspRegistration.manifest.id);
@@ -410,7 +473,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		const harness = await startPlugin(['--mode', 'no-shutdown']);
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
-		const [pid] = harness.transport.pids;
+		const [pid] = harness.platform.pids;
 
 		expect(await harness.runtime.stopServer(lspServerKey('typescript', root))).toBe(true);
 
@@ -476,7 +539,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(logs.droppedCount).toBeGreaterThan(0);
 	});
 
-	it('stays inert, with no server and no failure, when no transport is published', async () => {
+	it('stays inert, with no server and no failure, when no platform is published', async () => {
 		// Web publishes nothing (spec #263), so the plugin has to degrade to "no
 		// LSP" rather than fail to activate or throw on the first document.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
@@ -501,7 +564,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		const logs = host.getService<LspLogStore>(LSP_LOG_STORE_SERVICE_KEY)!;
 		expect(logs.read({ kind: 'protocol' })).toEqual([]);
-		expect(logs.read().some((e) => e.message.includes('No LSP transport'))).toBe(true);
+		expect(logs.read().some((e) => e.message.includes('No LSP platform'))).toBe(true);
 	});
 
 	it('reports a server that cannot start, and leaves nothing running', async () => {
@@ -514,7 +577,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		);
 		expect(harness.runtime.getServers()[0].state).toBe('failed');
 		// A failed start must not leave the failed process behind either.
-		for (const pid of harness.transport.pids) {
+		for (const pid of harness.platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
 	});
@@ -523,7 +586,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		// The timeout path #265 depends on: a silent server must not strand the
 		// runtime on a document it will never be able to answer.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
-		const { runtime, logs, transport } = await startRuntime({
+		const { runtime, logs, platform } = await startRuntime({
 			script: ['--mode', 'silent'],
 			initializeTimeoutMs: 250
 		});
@@ -537,7 +600,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		expect(runtime.getServers()[0].state).toBe('failed');
 		expect(logs.read().some((e) => e.message.includes('did not answer "initialize"'))).toBe(true);
-		for (const pid of transport.pids) {
+		for (const pid of platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
 	});

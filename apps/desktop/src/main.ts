@@ -359,8 +359,8 @@ function registerIpcHandlers() {
 		}
 	});
 
-	ipcMain.handle('lsp:resolveCommand', async (_event, command: string) => {
-		return resolveLanguageServerCommand(command, app.getAppPath());
+	ipcMain.handle('lsp:resolveCommand', async (_event, command: string, bundled?: { package: string; binary: string }) => {
+		return resolveLanguageServerCommand(command, app.getAppPath(), bundled);
 	});
 
 	ipcMain.handle('lsp:spawn', async (

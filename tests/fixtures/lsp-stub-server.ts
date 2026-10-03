@@ -1,10 +1,11 @@
+import { appendFileSync } from 'node:fs';
 /**
  * Scripted stub stdio language server, standing in for vtsls.
  *
  * Speaks the real thing: `Content-Length` framed JSON-RPC 2.0 over stdin and
  * stdout, the `initialize` / `initialized` handshake, `shutdown` / `exit`, and
  * stderr diagnostics. It is spawned as a real process by the tests through the
- * real transport, because a hand-written fake stream proves nothing about
+ * real pipes, because a hand-written fake stream proves nothing about
  * framing (ADR 0004 sets the precedent with real `git` in the contract suite).
  *
  * Scripted by argv, so one fixture covers every mode the lifecycle has to
@@ -23,6 +24,10 @@
  *   --diagnostics   publish one error and one warning for every document that
  *                   is opened or changed, which is the notification the
  *                   diagnostics slice renders
+ *   --log-file <path>  append every message the stub received, so a test can
+ *                   assert what actually arrived on the wire. The protocol trace
+ *                   deliberately does not retain document bodies, so this is the
+ *                   only place full-content sync is observable
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
  * without making the suite slow: a `textDocument/completion` that arrives later
@@ -35,6 +40,7 @@ interface StubOptions {
 	stderr: string | null;
 	echoText: boolean;
 	diagnostics: boolean;
+	logFile: string | null;
 }
 
 function readOption(argv: string[], name: string): string | undefined {
@@ -53,7 +59,8 @@ function parseOptions(argv: string[]): StubOptions {
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text'),
-		diagnostics: argv.includes('--diagnostics')
+		diagnostics: argv.includes('--diagnostics'),
+		logFile: readOption(argv, 'log-file') ?? null
 	};
 }
 
@@ -175,6 +182,7 @@ process.stdin.on('data', (chunk: Buffer) => {
 		} catch {
 			continue;
 		}
+		if (options.logFile !== null) appendFileSync(options.logFile, raw + '\n');
 		handle(message);
 	}
 });

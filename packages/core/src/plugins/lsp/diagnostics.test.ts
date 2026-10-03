@@ -39,6 +39,7 @@ describe('publishDiagnostics payloads (#266)', () => {
 
 		expect(parsed).toEqual({
 			uri: A,
+			server: 'typescript@/repo',
 			diagnostics: [
 				{
 					server: 'typescript@/repo',
@@ -89,7 +90,7 @@ describe('publishDiagnostics payloads (#266)', () => {
 	});
 
 	it('reads a clean report as an empty list rather than a failure', () => {
-		expect(report(A, [])).toEqual({ uri: A, diagnostics: [] });
+		expect(report(A, [])).toEqual({ uri: A, server: 'typescript@/repo', diagnostics: [] });
 	});
 });
 
@@ -124,6 +125,38 @@ describe('Diagnostics store (#266)', () => {
 
 		expect(store.read(A)).toEqual([]);
 		expect(store.read(B).map((d) => d.message)).toEqual(['from b']);
+	});
+
+	it('keeps the other server\'s findings for a file both of them report on', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'type error' }], 'ts@/repo')!);
+		store.publish(report(A, [{ range: range(2, 0, 3), message: 'lint' }], 'lint@/repo')!);
+
+		// One server stopping erases only its own findings, not the file's.
+		store.dropServer('ts@/repo');
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['lint']);
+		expect(store.uris()).toEqual([A]);
+
+		// And the survivor is the last one left, so the URI goes with it.
+		store.dropServer('lint@/repo');
+		expect(store.read(A)).toEqual([]);
+		expect(store.uris()).toEqual([]);
+	});
+
+	it('replaces one server\'s findings for a shared file without touching the other\'s', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'type error' }], 'ts@/repo')!);
+		store.publish(report(A, [{ range: range(2, 0, 3), message: 'lint' }], 'lint@/repo')!);
+
+		// The protocol's publish is per server: the file is clean for one server
+		// and still broken for the other, and both statements are true at once.
+		store.publish(report(A, [], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['lint']);
+
+		// A later publish from that server replaces only its own slice.
+		store.publish(report(A, [{ range: range(4, 0, 1), message: 'other error' }], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['lint', 'other error']);
 	});
 
 	it('bumps its revision on a real change only, and notifies subscribers', () => {

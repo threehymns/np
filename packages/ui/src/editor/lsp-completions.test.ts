@@ -18,19 +18,19 @@ import {
 import {
 	LSP_LOG_STORE_SERVICE_KEY,
 	LSP_RUNTIME_SERVICE_KEY,
-	LSP_TRANSPORT_SERVICE_KEY,
+	LSP_PLATFORM_SERVICE_KEY,
 	lspRegistration,
 	PluginHost,
-	type LspCompletionOutcome,
-	type LspCompletionRequest,
+	type CompletionAnswer,
+	type CompletionQuery,
 	type LspLogStore,
 	type LspRuntime,
 } from "@np/core";
 import {
-	createRealProcessTransport,
+	createRealProcessPlatform,
 	waitFor,
-	type RealProcessTransport
-} from "../../../../tests/fixtures/lsp-transport";
+	type RealProcessPlatform
+} from "../../../../tests/fixtures/lsp-platform";
 import { currentDocFacet, workspaceFacet } from "./extensions/wikilinks";
 import {
 	COMPLETION_RANK_TIERS,
@@ -52,7 +52,7 @@ import { resolveBufferWordPolicy } from "./extensions/buffer-words";
  * #263, #265).
  *
  * Every server here is the stub spawned as a real process over the real
- * transport and driven by the real client, so the framing, the handshake and the
+ * platform and driven by the real client, so the framing, the handshake and the
  * request are genuinely exercised — ADR 0004's argument for real `git`, applied
  * to the LSP plugin. Only the executable is swapped: a real vtsls would index a
  * project to answer one query, which is minutes of work and a machine-dependent
@@ -221,7 +221,7 @@ function makeProject(files: Record<string, string>): string {
 }
 
 interface StubServer {
-	readonly transport: RealProcessTransport;
+	readonly platform: RealProcessPlatform;
 	readonly requests: LspCompletionRequest[];
 	/** The plugin's own per-server buffers, which the Logs tab (#266) reads. */
 	readonly logs: LspLogStore;
@@ -235,10 +235,10 @@ interface StubServer {
  */
 async function startStubServer(script: readonly string[]): Promise<StubServer> {
 	const host = new PluginHost({ platform: "desktop" });
-	const transport = createRealProcessTransport(
+	const platform = createRealProcessPlatform(
 		script.length > 0 ? { script } : {}
 	);
-	host.provideService(LSP_TRANSPORT_SERVICE_KEY, transport);
+	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	host.register(lspRegistration);
 	await host.activate(lspRegistration.manifest.id);
 	// The plugin's own disablement, which is the path that has to leave no
@@ -250,14 +250,16 @@ async function startStubServer(script: readonly string[]): Promise<StubServer> {
 	});
 	const runtime = host.getService<LspRuntime>(LSP_RUNTIME_SERVICE_KEY)!;
 	const logs = host.getService<LspLogStore>(LSP_LOG_STORE_SERVICE_KEY)!;
-	const requests: LspCompletionRequest[] = [];
+	const requests: CompletionQuery[] = [];
 	return {
-		transport,
+		platform,
 		logs,
 		requests,
-		async fetch(request) {
-			requests.push(request);
-			return await runtime.fetchCompletions(request);
+		async fetch(query) {
+			requests.push(query);
+			// Through the runtime's public entry point, which is what a second
+			// provider would also implement (`CompletionCoordinator`).
+			return await runtime.fetch(query);
 		}
 	};
 }
@@ -531,7 +533,7 @@ describe("server completions in the composed chain", () => {
 			// trip, not a server's whole life.
 			await offeredLabels(state, DOC.length, true);
 			await waitFor(() => server.requests.length === 1, { label: "the first request" });
-			expect(server.transport.spawned).toHaveLength(1);
+			expect(server.platform.spawned).toHaveLength(1);
 
 			const started = Date.now();
 			const labels = await offeredLabels(state, DOC.length, true);
@@ -580,7 +582,7 @@ describe("server completions in the composed chain", () => {
 			expect(await offeredWordLabels(state, DOC.length, true)).toEqual(["widgetId"]);
 			// The handshake came back and the process is running; only the method
 			// refused. The query really did go out.
-			expect(server.transport.spawned).toHaveLength(1);
+			expect(server.platform.spawned).toHaveLength(1);
 			expect(server.requests.length).toBeGreaterThan(0);
 			// And the reason reached the server's log, because from the outside
 			// words answering is indistinguishable from words working.
@@ -621,17 +623,17 @@ describe("server completions in the composed chain", () => {
 
 			await waitFor(() => server.requests.length > 0, { label: "a completion request" });
 			const request = server.requests[0];
-			expect(request.path).toBe(join(root, "a.ts"));
-			expect(request.fileName).toBe("a.ts");
-			expect(request.content).toBe(DOC);
-			expect(request.language).toBe("TypeScript");
+			expect(request.document.path).toBe(join(root, "a.ts"));
+			expect(request.document.fileName).toBe("a.ts");
+			expect(request.document.content).toBe(DOC);
+			expect(request.document.language).toBe("TypeScript");
 			// Line 2 in CodeMirror's terms, the second line on the wire.
 			expect(request.line).toBe(1);
 			expect(request.character).toBe(DOC.length - (DOC.lastIndexOf("\n") + 1));
 			expect(request.timeoutMs).toBe(750);
 			// And the server ran against the marker in that project, not the
 			// document's directory: the root the descriptor's marker order chose.
-			expect(server.transport.spawned[0].cwd).toBe(root);
+			expect(server.platform.spawned[0].cwd).toBe(root);
 		},
 		30_000
 	);
@@ -810,9 +812,10 @@ describe("the server insert mode", () => {
 });
 
 describe("the words fallback decision", () => {
-	const serving: LspCompletionOutcome = {
+	const serving: CompletionAnswer = {
 		state: "serving",
-		list: { items: [], incomplete: false }
+		items: [],
+		incomplete: false
 	};
 
 	it("stands words down only while a server is answering", () => {
@@ -829,7 +832,7 @@ describe("the words fallback decision", () => {
 		expect(
 			resolveBufferWordPolicy("TypeScript", settings, {
 				state: "unavailable",
-				server: "typescript@/project",
+				provider: "typescript@/project",
 				reason: "timed out"
 			}).offered
 		).toBe(true);
@@ -869,7 +872,156 @@ describe("the words fallback decision", () => {
 			// The query went out and came back unanswered, and the reason it came
 			// back that way is that nothing claimed the file: no process, no log.
 			expect(server.requests.length).toBeGreaterThan(0);
-			expect(server.transport.spawned).toEqual([]);
+			expect(server.platform.spawned).toEqual([]);
+		},
+		30_000
+	);
+});
+/**
+ * The trigger rules, which are the buffer-word source's.
+ *
+ * Spec #263 asks for this explicitly: "server items follow the same trigger rules
+ * as words, so that migration covers both at once." Before this, only the global
+ * `automatic_completions` gate was shared, so a Markdown note opened a server
+ * query on every keystroke and a two-character prefix did too. Each rule is
+ * asserted against the scripted stub, because a rule that merely returned null
+ * for a missing language would pass the same test as a rule that respects prose.
+ */
+describe("the server source obeys the trigger rules", () => {
+	/**
+	 * The labels only the server could have produced.
+	 *
+	 * `offeredOptions` runs every source the language registers, and a TypeScript
+	 * file brings its own keyword and local-variable sources that answer whatever
+	 * the editor asks of them. Filtering to the stub's own items is what makes
+	 * "the server source declined" observable at all; the labels cannot come from
+	 * the buffer, which does not contain them.
+	 */
+	const served = (options: Completion[]): string[] =>
+		options.filter((option) => option.label.startsWith("Widget")).map((option) => option.label);
+
+	it(
+		"answers the explicit trigger whatever the automatic path would say",
+		async () => {
+			const server = await startStubServer([]);
+			// A threshold no prefix in the document can reach: the automatic path is
+			// shut, and the explicit trigger is the only thing being asserted.
+			const state = await projectState(DOC, {
+				fetch: server.fetch,
+				read: reader(undefined, { min_word_length: 50 })
+			});
+
+			expect(served(await offeredOptions(state, DOC.length, true))).toEqual([
+				"Widget",
+				"WidgetFactory"
+			]);
+
+			const before = server.requests.length;
+			expect(served(await offeredOptions(state, DOC.length, false))).toEqual([]);
+			expect(server.requests.length).toBe(before);
+		},
+		30_000
+	);
+
+	it(
+		"stays quiet on a typing trigger in prose, so a note pays for no round trip",
+		async () => {
+			const server = await startStubServer([]);
+			const markdown = await codeState("Notes about widgets\n\nwid", {
+				language: "Markdown",
+				fetch: server.fetch,
+				filePath: "/project/note.md"
+			});
+
+			// Prose is quiet on a keystroke by default, which is the rule the word
+			// source has obeyed since #259. The server source is not exempt. Without
+			// the rule this query reached the runtime: the bundled descriptor serves
+			// no Markdown, so the answer came back 'inactive' — a request whose only
+			// outcome was silence.
+			expect(served(await offeredOptions(markdown, markdown.doc.length, false))).toEqual([]);
+			expect(server.requests).toEqual([]);
+		},
+		30_000
+	);
+
+	it(
+		"honours a per-language override that turns prose back on",
+		async () => {
+			const server = await startStubServer([]);
+			const markdown = await codeState("Notes about widgets\n\nwid", {
+				language: "Markdown",
+				fetch: server.fetch,
+				filePath: "/project/note.md",
+				// Prose silence is a default, not a hard rule, and an override that did
+				// nothing would be worse than no override at all.
+				read: reader({ Markdown: { words: "enabled" } })
+			});
+
+			await offeredOptions(markdown, markdown.doc.length, false);
+			expect(server.requests.length).toBeGreaterThan(0);
+		},
+		30_000
+	);
+
+	it(
+		"holds both sources to the same minimum typed length",
+		async () => {
+			const server = await startStubServer([]);
+			// One character, against the documented minimum of three.
+			const short = "const widgetId = w";
+			const state = await projectState(short, { fetch: server.fetch });
+
+			// Both sources decline together, which is the claim: the same policy,
+			// not two that happen to agree today.
+			expect(served(await offeredOptions(state, short.length, false))).toEqual([]);
+			expect(await offeredWordLabels(state, short.length, false)).toEqual([]);
+			expect(server.requests).toEqual([]);
+
+			// The user asked, so the length does not apply — which is what the
+			// explicit-trigger migration depends on.
+			expect(served(await offeredOptions(state, short.length, true))).toEqual([
+				"Widget",
+				"WidgetFactory"
+			]);
+			expect(server.requests.length).toBeGreaterThan(0);
+		},
+		30_000
+	);
+
+	it(
+		"follows a raised minimum length, and only on the automatic path",
+		async () => {
+			const server = await startStubServer([]);
+			const state = await projectState(DOC, {
+				fetch: server.fetch,
+				read: reader(undefined, { min_word_length: 10 })
+			});
+
+			// `wid` is three characters, well short of ten.
+			const before = server.requests.length;
+			expect(served(await offeredOptions(state, DOC.length, false))).toEqual([]);
+			expect(server.requests.length).toBe(before);
+			expect(served(await offeredOptions(state, DOC.length, true))).not.toEqual([]);
+		},
+		30_000
+	);
+
+	it(
+		"is silenced on a typing trigger by words being off, and still answers explicitly",
+		async () => {
+			// `words: 'disabled'` means quiet on a keystroke, not unavailable — so it
+			// closes the server source's automatic path too, and the explicit trigger
+			// still reaches a server.
+			const server = await startStubServer([]);
+			const state = await projectState(DOC, {
+				fetch: server.fetch,
+				read: reader(undefined, { words: "disabled" })
+			});
+
+			const before = server.requests.length;
+			expect(served(await offeredOptions(state, DOC.length, false))).toEqual([]);
+			expect(server.requests.length).toBe(before);
+			expect(served(await offeredOptions(state, DOC.length, true))).not.toEqual([]);
 		},
 		30_000
 	);

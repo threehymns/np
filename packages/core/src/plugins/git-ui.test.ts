@@ -201,21 +201,58 @@ describe('Git UI migration (#203)', () => {
 			'packages/core/src/state.svelte.ts'
 		];
 
-		it('contains zero `git` identifiers in shell containers, entry, and app-state wiring', () => {
+		/**
+		 * Feature vocabularies the shell may not speak, with the reason each is
+		 * here rather than assumed.
+		 *
+		 * The list is the rule; a test that greps for one name enforces one rule.
+		 * `/git/i` alone would have stayed green through a shell that imported
+		 * `LSP_RUNTIME_SERVICE_KEY` and named a language server in the editor —
+		 * which is exactly what the editor did, and exactly what this now fails on.
+		 * `lsp` and `language server` are the second feature's two spellings: the
+		 * identifier and the prose, because a comment-stripped string literal saying
+		 * "Language servers: none running" in shell code is still the shell knowing
+		 * about a feature.
+		 */
+		const FEATURE_WORDS: ReadonlyArray<readonly [name: string, pattern: RegExp]> = [
+			['git', /git/i],
+			['lsp', /lsp|\blanguage[- ]server/i]
+		];
+
+		function featureOffenders(files: readonly string[]): string[] {
 			const offenders: string[] = [];
-			for (const rel of shellFiles) {
+			for (const rel of files) {
 				const source = readFileSync(join(import.meta.dir, '../../../..', rel), 'utf-8');
 				const code = stripComments(source);
-				if (/git/i.test(code)) {
-					const lines = code.split('\n');
-					lines.forEach((line, idx) => {
-						if (/git/i.test(line)) {
-							offenders.push(`${rel}:${idx + 1}: ${line.trim().slice(0, 120)}`);
+				for (const line of code.split('\n')) {
+					for (const [name, pattern] of FEATURE_WORDS) {
+						if (pattern.test(line)) {
+							offenders.push(
+								`${rel}: ${name} — ${line.trim().slice(0, 120)}`
+							);
 						}
-					});
+					}
 				}
 			}
-			expect(offenders).toEqual([]);
+			return offenders;
+		}
+
+		it('contains no feature identifier in shell containers, entry, and app-state wiring', () => {
+			expect(featureOffenders(shellFiles)).toEqual([]);
+		});
+
+		it('names no provider in the shell: the editor asks a generic coordinator', () => {
+			// The rule this instance of the guard exists for. A shell that resolves
+			// `LSP_RUNTIME_SERVICE_KEY` has decided which feature is answering its
+			// completion queries, and the second provider then needs a shell change to
+			// exist at all (spec #263, story 10).
+			const editor = readFileSync(
+				join(import.meta.dir, '../../../..', 'packages/ui/src/components/Editor.svelte'),
+				'utf-8'
+			);
+			const code = stripComments(editor);
+			expect(code).toContain('COMPLETION_COORDINATOR_SERVICE_KEY');
+			expect(code).not.toMatch(/LSP_RUNTIME_SERVICE_KEY|LspRuntime|LspCompletion/);
 		});
 
 		it('keeps MainLayout free of Git-specific presentation', () => {

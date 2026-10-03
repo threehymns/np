@@ -1,4 +1,8 @@
-import { WORKSPACE_SERVICE_KEY, type WorkspaceLike } from '../services';
+import {
+	COMPLETION_COORDINATOR_SERVICE_KEY,
+	WORKSPACE_SERVICE_KEY,
+	type WorkspaceLike
+} from '../services';
 import type { PluginCleanup, PluginHostInterface } from '../types';
 import { createPilotComponent } from '../ui-contributions';
 import { manifest } from './manifest';
@@ -45,16 +49,23 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	host.registerLspDescriptors(manifest.id, LSP_DESCRIPTORS);
 	host.provideService(LSP_LOG_STORE_SERVICE_KEY, logs);
 	host.provideService(LSP_RUNTIME_SERVICE_KEY, runtime);
+	// The same runtime under the generic name, because that is the name the editor
+	// shell knows: it composes a completion query without knowing that a language
+	// server is what will answer it. Publishing both is the seam ADR 0008 describes —
+	// one provider, two consumers, each reaching for the key it knows.
+	host.provideService(COMPLETION_COORDINATOR_SERVICE_KEY, runtime);
 
+	// One closure for both events: opening a document and changing one are the
+	// same work — resolve the server, start it if the file is served, sync the
+	// current text — and the runtime already treats identical text as nothing to
+	// resend. Two copies of this would be two places for the next event to miss.
+	const syncDocumentEvent = (payload: unknown): void => {
+		const input = readDocumentInput(payload);
+		if (input) void runtime.openDocument(input);
+	};
 	const stopObserving = [
-		host.on('document:opened', (payload) => {
-			const input = readDocumentInput(payload);
-			if (input) void runtime.openDocument(input);
-		}, manifest.id),
-		host.on('document:changed', (payload) => {
-			const input = readDocumentInput(payload);
-			if (input) void runtime.openDocument(input);
-		}, manifest.id)
+		host.on('document:opened', syncDocumentEvent, manifest.id),
+		host.on('document:changed', syncDocumentEvent, manifest.id)
 	];
 
 	host.registerEditorContributions(manifest.id, [
@@ -70,9 +81,16 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	// rebuilt, which is the one generic way to ask it to re-read what was
 	// published. Nothing is re-registered here, so a replay can neither
 	// duplicate a contribution nor lose one.
-	const unsubscribeDiagnostics = diagnostics.subscribe(() => {
-		host.rebuildEditorContributions();
-	});
+	//
+	// A rebuild reconfigures *all three* compartments, not just the decoration one
+	// (see `reconfigureEditorContributions`), and a server publishes a burst: one
+	// report per file it has an opinion about, plus a fresh set after every
+	// keystroke it answers. Coalesced per tick so a burst costs one rebuild rather
+	// than one per report, which is the difference between re-instantiating every
+	// other decoration contribution dozens of times a second and once.
+	const unsubscribeDiagnostics = diagnostics.subscribe(
+		createRepaintScheduler(() => host.rebuildEditorContributions())
+	);
 
 	const getWorkspace = (): WorkspaceLike | undefined =>
 		host.getService<WorkspaceLike>(WORKSPACE_SERVICE_KEY);
@@ -114,6 +132,30 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 		// a Logs tab to render as current.
 		logs.clear();
 		diagnostics.clear();
+	};
+}
+
+/**
+ * Coalesces many repaint requests into one per tick.
+ *
+ * A publish arrives per file per edit, and each request costs a full
+ * reconfiguration of the editor's compartments, so a burst is worth one rather
+ * than one-per-report. A microtask is enough: the point is to collapse a burst
+ * that has already landed, not to wait for the frame — a single publish is still
+ * repainted before the browser paints, because the microtask runs first.
+ *
+ * Exported for the assertion, since "one rebuild per burst" is otherwise only
+ * observable by timing a real server.
+ */
+export function createRepaintScheduler(request: () => void): () => void {
+	let queued = false;
+	return () => {
+		if (queued) return;
+		queued = true;
+		queueMicrotask(() => {
+			queued = false;
+			request();
+		});
 	};
 }
 

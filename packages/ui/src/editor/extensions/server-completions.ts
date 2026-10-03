@@ -8,11 +8,17 @@ import type {
 import { insertCompletionText, pickedCompletion } from "@codemirror/autocomplete";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
+	type CompletionAnswer,
 	type CompletionLspInsertMode,
-	type LspCompletionOutcome,
-	type LspCompletionRequest,
-	type ServerCompletionItem,
+	type CompletionQuery,
+	type CompletionSuggestion,
 } from "@np/core";
+import {
+	DEFAULT_BUFFER_WORD_SETTINGS,
+	isMarkdownProse,
+	resolveBufferWordPolicy,
+	type BufferWordSettings,
+} from "./buffer-words";
 import { currentDocFacet } from "./wikilinks";
 
 /**
@@ -55,8 +61,14 @@ export const SERVER_RANKS_WITH_NOTE_SOURCES = 0;
  */
 const SERVER_COMPLETION_TYPE = "variable";
 
-/** Asks the runtime for one position's completions. */
-export type LspCompletionFetch = (request: LspCompletionRequest) => Promise<LspCompletionOutcome>;
+/**
+ * Asks whatever provider is published for one position's completions.
+ *
+ * Named for the question rather than for the technology answering it, so a
+ * second provider is a second implementation of this one function and the shell
+ * that wires it never has to learn a new name.
+ */
+export type CompletionFetch = (query: CompletionQuery) => Promise<CompletionAnswer>;
 
 /** The four settings that shape server completions, already per language. */
 export interface ServerCompletionSettings {
@@ -96,8 +108,8 @@ export const DEFAULT_SERVER_COMPLETION_SETTINGS: ServerCompletionSettings = {
 export interface ServerCompletionQuery {
 	readonly position: number;
 	/** The answer, when there already is one. Null while the request is in flight. */
-	readonly settled: LspCompletionOutcome | null;
-	readonly outcome: Promise<LspCompletionOutcome>;
+	readonly settled: CompletionAnswer | null;
+	readonly outcome: Promise<CompletionAnswer>;
 }
 
 /** Where the words source reads the server's answer from. */
@@ -113,7 +125,7 @@ export class ServerCompletionCoordinator implements ServerOutcomeReader {
 	 * Records the query this source is about to make. Called synchronously, so
 	 * the words source sees it in the same pass over the chain.
 	 */
-	begin(position: number, outcome: Promise<LspCompletionOutcome>): ServerCompletionQuery {
+	begin(position: number, outcome: Promise<CompletionAnswer>): ServerCompletionQuery {
 		const query: ServerCompletionQuery = { position, settled: null, outcome };
 		this.current = query;
 		return query;
@@ -124,7 +136,7 @@ export class ServerCompletionCoordinator implements ServerOutcomeReader {
 	 * or the language's server completions are off. Without this the words
 	 * source would have to wait a microtask for every note in the workspace.
 	 */
-	settleNow(position: number, outcome: LspCompletionOutcome): void {
+	settleNow(position: number, outcome: CompletionAnswer): void {
 		const query = this.current;
 		if (!query || query.position !== position) return;
 		this.current = { position, settled: outcome, outcome: Promise.resolve(outcome) };
@@ -142,13 +154,65 @@ export class ServerCompletionCoordinator implements ServerOutcomeReader {
  * from, and a second copy of it is a second thing to keep in step.
  */
 export interface ServerCompletionSourceOptions {
-	readonly fetch: LspCompletionFetch;
+	readonly fetch: CompletionFetch;
 	/** Defaults to {@link DEFAULT_SERVER_COMPLETION_SETTINGS}. */
 	readonly readSettings?: () => ServerCompletionSettings;
+	/**
+	 * The trigger rules, which are the buffer-word settings rather than anything
+	 * of this source's own. Read per query and for the same reason the words
+	 * source reads its own: a settings change must not need an editor
+	 * reconfiguration.
+	 *
+	 * Defaults to {@link DEFAULT_BUFFER_WORD_SETTINGS}, which is what an editor
+	 * built without any settings reader gets.
+	 */
+	readonly readTriggerSettings?: () => BufferWordSettings;
 }
 
 function staticServerSettings(): ServerCompletionSettings {
 	return DEFAULT_SERVER_COMPLETION_SETTINGS;
+}
+
+function staticTriggerSettings(): BufferWordSettings {
+	return DEFAULT_BUFFER_WORD_SETTINGS;
+}
+
+/** Why a query may not reach the server, or null when it may. */
+interface TriggerDecline {
+	readonly reason: string;
+}
+
+/**
+ * Whether this query is one a source may answer on a typing trigger.
+ *
+ * Delegates the decision to `resolveBufferWordPolicy` — the single place that
+ * decides what a query may offer — and reports only the reasons. A declined
+ * query is `'inactive'` rather than a failure: nothing was wrong, the rules
+ * said no, and the buffer-word source is entitled to answer exactly as it did
+ * before any server existed.
+ */
+function declinedByTriggerRules(
+	context: CompletionContext,
+	languageName: string | null,
+	settings: BufferWordSettings,
+	typed: { readonly text: string }
+): TriggerDecline | null {
+	// The explicit trigger is the user asking, so it is never gated.
+	if (context.explicit) return null;
+	const policy = resolveBufferWordPolicy(languageName, settings);
+	if (!policy.automatic) {
+		return {
+			reason: isMarkdownProse(languageName) && !settings.wordsOverridden
+				? "Prose is quiet on a typing trigger; ask explicitly to reach a server."
+				: "Automatic suggestions are off for this language; ask explicitly to reach a server."
+		};
+	}
+	if (typed.text.length < policy.minWordLength) {
+		return {
+			reason: `A typed prefix of at least ${policy.minWordLength} characters may summon suggestions.`
+		};
+	}
+	return null;
 }
 
 export interface ServerCompletionChain {
@@ -167,6 +231,7 @@ export function serverCompletions(
 	options: ServerCompletionSourceOptions & { readonly languageName: string | null }
 ): ServerCompletionChain {
 	const { languageName, fetch, readSettings = staticServerSettings } = options;
+	const readTriggerSettings = options.readTriggerSettings ?? staticTriggerSettings;
 	const coordinator = new ServerCompletionCoordinator();
 
 	const source: CompletionSource = (context: CompletionContext) => {
@@ -203,12 +268,27 @@ export function serverCompletions(
 			return null;
 		}
 
+		// The same three brakes the buffer-word source obeys, decided by the same
+		// policy, so the explicit-trigger migration covers both sources at once
+		// (spec #263): the explicit trigger always answers, a typing trigger is
+		// gated by the popup's own rules — prose silence, `words: 'disabled'`, and
+		// the minimum typed length. Only the global `automatic_completions` gate
+		// sits above both sources, because it is a property of the popup rather
+		// than of any one of them.
+		const declined = declinedByTriggerRules(context, languageName, readTriggerSettings(), typed);
+		if (declined) {
+			coordinator.settleNow(context.pos, { state: "inactive", reason: declined.reason });
+			return null;
+		}
+
 		const line = context.state.doc.lineAt(context.pos);
 		const outcome = fetch({
-			path,
-			fileName: document?.fileName ?? path,
-			content: context.state.doc.toString(),
-			language: languageName,
+			document: {
+				path,
+				fileName: document?.fileName ?? path,
+				content: context.state.doc.toString(),
+				language: languageName
+			},
 			line: line.number - 1,
 			character: context.pos - line.from,
 			timeoutMs: normalizeFetchTimeout(settings.fetchTimeoutMs)
@@ -218,8 +298,8 @@ export function serverCompletions(
 		coordinator.begin(context.pos, outcome);
 
 		return outcome.then((answer) =>
-			answer.state === "serving" && answer.list.items.length > 0
-				? serverResult(answer.list, typed.from, context.pos, settings)
+			answer.state === "serving" && answer.items.length > 0
+				? serverResult(answer, typed.from, context.pos, settings)
 				: null
 		);
 	};
@@ -237,8 +317,12 @@ function normalizeFetchTimeout(ms: number): number | undefined {
 	return Math.trunc(ms);
 }
 
+/**
+ * The popover result for one answer: the provider's items, ranked against the
+ * note tier and applied under this language's insert mode.
+ */
 function serverResult(
-	list: { readonly items: readonly ServerCompletionItem[]; readonly incomplete: boolean },
+	list: { readonly items: readonly CompletionSuggestion[]; readonly incomplete: boolean },
 	from: number,
 	to: number,
 	settings: ServerCompletionSettings
@@ -263,7 +347,7 @@ function serverResult(
 }
 
 function serverOption(
-	item: ServerCompletionItem,
+	item: CompletionSuggestion,
 	settings: ServerCompletionSettings
 ): Completion {
 	return {
@@ -288,7 +372,7 @@ function serverOption(
  * silently replacing an unknown range is worse than replacing less.
  */
 function serverApply(
-	item: ServerCompletionItem,
+	item: CompletionSuggestion,
 	insertMode: CompletionLspInsertMode
 ): NonNullable<Completion["apply"]> {
 	return (view, completion, applyFrom, applyTo) => {
@@ -311,7 +395,7 @@ function serverApply(
  */
 function serverRangeToOffsets(
 	state: EditorState,
-	range: NonNullable<ServerCompletionItem["replaceRange"]>
+	range: NonNullable<CompletionSuggestion["replaceRange"]>
 ): { from: number; to: number } {
 	const clamp = (line: number, character: number): number => {
 		const clampedLine = Math.max(1, Math.min(Math.trunc(line) + 1, state.doc.lines));

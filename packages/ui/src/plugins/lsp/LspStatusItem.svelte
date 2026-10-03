@@ -1,9 +1,9 @@
 <script lang="ts">
 	import {
 		lspManifest,
-		type LspRuntime,
 		type LspServerState,
-		type LspServerStatusRow
+		type LspServerStatus,
+		type LspServerStatusApi
 	} from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
 	import { ArrowClockwiseIcon, StopIcon } from 'phosphor-svelte';
@@ -20,11 +20,13 @@
 	 * server does.
 	 */
 	const appState = useAppState();
-	// The plugin's own runtime, keyed from the manifest id the same way the
+	// The plugin's own status API, keyed from the manifest id the same way the
 	// plugin publishes it: the host keeps a service opaque (ADR 0008), and a
 	// plugin that is not active publishes nothing, so the item shows no servers
-	// rather than failing inside the status bar.
-	const runtime = appState.plugins.getService<LspRuntime>(`${lspManifest.id}:runtime`);
+	// rather than failing inside the status bar. Typed as the status contract
+	// rather than the runtime, because starting and stopping a server is reached
+	// through registered commands and this component needs to read nothing else.
+	const runtime = appState.plugins.getService<LspServerStatusApi>(`${lspManifest.id}:runtime`);
 
 	// Server state changes come from a process, not from the UI, so there is no
 	// reactive source to follow. The subscription is turned into one: bumping the
@@ -34,7 +36,7 @@
 		revision++;
 	}));
 
-	const rows = $derived.by((): LspServerStatusRow[] => {
+	const rows = $derived.by((): LspServerStatus[] => {
 		revision;
 		return runtime?.getStatusRows() ?? [];
 	});

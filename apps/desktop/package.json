@@ -27,8 +27,11 @@
 			"node_modules/@vtsls/**/*",
 			"node_modules/@vscode/**/*",
 			"node_modules/vscode-*/**/*",
-			"node_modules/@parcel/watcher-*/**/*",
 			"node_modules/semver/**/*",
+			"node_modules/jsonc-parser/**/*",
+			"node_modules/source-map-support/**/*",
+			"node_modules/source-map/**/*",
+			"node_modules/buffer-from/**/*",
 			"node_modules/typescript/**/*"
 		],
 		"mac": {

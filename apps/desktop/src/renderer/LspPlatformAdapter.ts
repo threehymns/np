@@ -1,13 +1,13 @@
 import {
-	LSP_TRANSPORT_SERVICE_KEY,
+	LSP_PLATFORM_SERVICE_KEY,
 	type LspProcess,
 	type LspReadableStream,
-	type LspTransport,
+	type LspPlatform,
 	type LspWritableStream
 } from '@np/core';
 
 /**
- * The desktop LSP transport (spec #263).
+ * The desktop LSP platform (spec #263).
  *
  * Supplies the seam `@np/core` cannot have for itself: it spawns the server and
  * answers one filesystem question. Both halves are IPC, because the renderer has
@@ -21,12 +21,12 @@ import {
  * source file. The client's frame parser decodes whole frames instead, which is
  * exact by construction.
  *
- * `LspTransport` is structural, so tests drive this adapter with a stubbed
+ * `LspPlatform` is structural, so tests drive this adapter with a stubbed
  * `window.electronAPI` exactly as `SpawnGitAdapter.test.ts` does.
  */
 interface ElectronLspBridge {
 	fileExists(path: string): Promise<boolean>;
-	resolveLspCommand(command: string): Promise<ResolvedLspCommand>;
+	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<ResolvedLspCommand>;
 	spawnLspServer(
 		plan: ResolvedLspCommand,
 		args: string[],
@@ -40,6 +40,12 @@ interface ElectronLspBridge {
 		onStderr: (processId: string, chunk: Uint8Array) => void;
 		onExit: (exit: { processId: string; code: number; signal: string | null; error?: string }) => void;
 	}): () => void;
+}
+
+/** The descriptor's own declaration of which packaged package its server is in. */
+interface BundledLspCommand {
+	readonly package: string;
+	readonly binary: string;
 }
 
 /**
@@ -58,8 +64,6 @@ interface ResolvedLspCommand {
 export interface LspBridgeHost {
 	readonly electronAPI?: ElectronLspBridge;
 }
-
-const textEncoder = new TextEncoder();
 
 function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 	let resolve!: (value: T) => void;
@@ -87,9 +91,8 @@ class IpcLspProcess implements LspProcess {
 
 	constructor(private readonly bridge: ElectronLspBridge, private readonly route: ProcessRouter) {
 		this.stdin = {
-			write: (chunk: Uint8Array | string) => {
-				const bytes = typeof chunk === 'string' ? textEncoder.encode(chunk) : chunk;
-				this.withId((id) => this.bridge.writeLspServer(id, bytes));
+			write: (chunk: Uint8Array) => {
+				this.withId((id) => this.bridge.writeLspServer(id, chunk));
 			},
 			end: () => this.withId((id) => this.bridge.endLspServer(id))
 		};
@@ -184,19 +187,19 @@ class ProcessRouter {
 /**
  * The bridge as the renderer finds it: the preload installs `electronAPI` on the
  * window. Read through a function rather than a module-level constant so a test
- * can install its own window before the transport is built.
+ * can install its own window before the platform is built.
  */
 function defaultBridgeHost(): LspBridgeHost {
 	return { electronAPI: (globalThis as { window?: LspBridgeHost }).window?.electronAPI };
 }
 
-/** Builds one transport over the preload bridge. */
-export function createElectronLspTransport(host: LspBridgeHost = defaultBridgeHost()): LspTransport {
+/** Builds one platform over the preload bridge. */
+export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHost()): LspPlatform {
 	const bridge = host.electronAPI;
 	if (!bridge) {
 		throw new Error(
 			'No Electron bridge is available, so language servers cannot be started.\n' +
-				'Action: Publish the LSP transport only in the desktop renderer. On web, publish nothing: the plugin resolves no transport and stays inert.'
+				'Action: Publish the LSP platform only in the desktop renderer. On web, publish nothing: the plugin resolves no platform and stays inert.'
 		);
 	}
 
@@ -213,11 +216,13 @@ export function createElectronLspTransport(host: LspBridgeHost = defaultBridgeHo
 			const process = new IpcLspProcess(bridge, router);
 			// The declared command is resolved first: `vtsls` is a name, and the
 			// plan that runs is the packaged dependency if there is one and the
-			// name itself otherwise (see LspCommandResolver). A resolution that
-			// fails is reported as an exit rather than swallowed, so a missing
-			// server reaches the log instead of becoming a silent one.
+			// name itself otherwise (see LspCommandResolver). Which package that is
+			// comes from the descriptor, so this adapter carries no table of server
+			// names. A resolution that fails is reported as an exit rather than
+			// swallowed, so a missing server reaches the log instead of becoming a
+			// silent one.
 			void bridge
-				.resolveLspCommand(options.command)
+				.resolveLspCommand(options.command, options.bundled)
 				.then((plan) => bridge.spawnLspServer(plan, [...options.args], options.cwd))
 				.then((spawned) => process.attach(spawned.processId, spawned.pid))
 				// A spawn that never produced a process is reported as an exit, so
@@ -233,18 +238,18 @@ export function createElectronLspTransport(host: LspBridgeHost = defaultBridgeHo
 }
 
 /**
- * Publishes the transport under the seam key the LSP plugin resolves.
+ * Publishes the platform under the seam key the LSP plugin resolves.
  *
  * The host stores it opaquely (ADR 0008): `@np/core` names the capability, the
  * desktop app supplies it, and a build that does not supply it leaves the plugin
  * with no LSP at all.
  */
-export function provideLspTransport(
+export function provideLspPlatform(
 	host: { provideService(key: string, service: unknown): void },
 	bridgeHost: LspBridgeHost = defaultBridgeHost()
-): LspTransport | undefined {
+): LspPlatform | undefined {
 	if (!bridgeHost.electronAPI) return undefined;
-	const transport = createElectronLspTransport(bridgeHost);
-	host.provideService(LSP_TRANSPORT_SERVICE_KEY, transport);
-	return transport;
+	const platform = createElectronLspPlatform(bridgeHost);
+	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
+	return platform;
 }

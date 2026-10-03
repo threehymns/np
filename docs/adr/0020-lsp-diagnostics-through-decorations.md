@@ -21,13 +21,25 @@ so that two owners cannot each answer for the same editor and have the result
 depend on which plugin enabled first.
 
 A publish still has to reach the screen, and a store write is not a transaction.
-The editor already re-applies its decoration compartment whenever the
+The editor already re-applies its contribution compartments whenever the
 editor-contribution registry is rebuilt, so the plugin asks for exactly that. It
 replays the transforms it already registered rather than registering new ones,
 which is why a rebuild cannot duplicate a contribution or lose one (ADR 0012) and
-why it is safe to call on every publish — re-registering, the alternative, grows
-a transform per keystroke. No host method is added, no view is touched, and the
-cost is one compartment reconfiguration per report.
+why it is safe to call repeatedly — re-registering, the alternative, grows a
+transform per keystroke. No host method is added, no view is touched, and the
+plugin never dispatches.
+
+What a rebuild costs is worth stating precisely, because the obvious description
+of it is wrong: it is not one compartment. `reconfigureEditorContributions`
+reconfigures all three — gutter, decorations and keybindings — so every
+contribution in every category is re-instantiated on the publish cadence. Nothing
+grows: the registry is replayed from the same transforms into a fresh array, and
+the marks themselves live in a module-level field whose value survives the
+reconfiguration, so editor state carries over. And because a server publishes a
+report per file per edit, the plugin coalesces the requests per tick — a burst
+costs one rebuild rather than one per report. Narrowing further would mean a host
+method that re-applies one category, which is the decoration-data seam this ADR
+declined for the same reason it exists.
 
 What is asserted, and where: the marks themselves are read from the state field
 through the host's own compartments, including that one file's diagnostics never

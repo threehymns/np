@@ -74,6 +74,51 @@ describe('Project-root scoping (#264)', () => {
 		expect(result.root).toBe('/work');
 	});
 
+	it('checks containment, not width, at the boundary', async () => {
+		// `/work/other/src` and the boundary `/work/app` are the same width and one
+		// is not under the other. A length compare would walk on from `/work/other`
+		// and claim `/work`'s configuration for a file that has nothing to do with
+		// the open project.
+		const result = await findProjectRoot({
+			startDir: '/work/other/src',
+			markers: ['tsconfig.json'],
+			probe: probeFor(['/work/tsconfig.json', '/tsconfig.json']),
+			boundary: '/work/app'
+		});
+		expect(result).toEqual({ root: '/work/other/src', marker: null, usedFallback: true });
+	});
+
+	it('does not let a boundary with a shared prefix claim a sibling directory', async () => {
+		const result = await findProjectRoot({
+			startDir: '/repo/application/src',
+			markers: ['tsconfig.json'],
+			// `/repo/app/tsconfig.json` is the open project's own marker and is not
+			// under `/repo/application`, so it may not be adopted.
+			probe: probeFor(['/repo/app/tsconfig.json']),
+			boundary: '/repo/app'
+		});
+		expect(result.root).toBe('/repo/application/src');
+
+		// The same boundary does contain the project it names.
+		const contained = await findProjectRoot({
+			startDir: '/repo/app/src',
+			markers: ['tsconfig.json'],
+			probe: probeFor(['/repo/app/tsconfig.json']),
+			boundary: '/repo/app'
+		});
+		expect(contained.root).toBe('/repo/app');
+	});
+
+	it('treats a filesystem root boundary as containing everything', async () => {
+		const result = await findProjectRoot({
+			startDir: '/deep/nested/src',
+			markers: ['tsconfig.json'],
+			probe: probeFor(['/deep/tsconfig.json']),
+			boundary: '/'
+		});
+		expect(result.root).toBe('/deep');
+	});
+
 	it('derives parent directories on both path separators', () => {
 		expect(dirnameOf('/repo/packages/app/src')).toBe('/repo/packages/app/src'.replace('/src', ''));
 		expect(dirnameOf('/repo/a.ts')).toBe('/repo');

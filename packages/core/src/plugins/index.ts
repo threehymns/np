@@ -16,31 +16,31 @@ export * from './languages';
 export * from './language-scope';
 export * from './completions';
 export * from './lsp-descriptors';
-export * from './lsp/completions';
-export * from './lsp/logs';
 export {
-	LspRuntime,
 	LSP_RUNTIME_SERVICE_KEY,
 	lspServerKey,
-	type LspCompletionOutcome,
-	type LspCompletionRequest,
 	type LspDocumentInput,
-	type LspServerState,
-	type LspServerStatus
+	type LspRuntime
 } from './lsp/lifecycle';
+// Types only. The UI layer's LSP components read the plugin's own services and
+// render its decoded items, and nothing outside the plugin needs its client, its
+// process, its buffers or the functions that parse a reply — so those stay behind
+// the plugin's lazy import. A `export *` here would publish all of them as values
+// and quietly make the claim false, which is why the service keys below are named
+// one by one instead: a key is a string convention, not an implementation, and it
+// is what a consumer needs in order to look up an opaque service (ADR 0008).
+export { LSP_LOG_STORE_SERVICE_KEY } from './lsp/logs';
+export type { LspLogStore, LspLogEntry, LspLogKind, LspLogLevel } from './lsp/logs';
+export type { ServerCompletionItemKind, ServerCompletionList } from './lsp/completions';
+export type {
+	LspServerState,
+	LspServerStatus,
+	LspServerStatusApi,
+	LspStatusDetail
+} from './lsp/status';
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
 export { manifest as svelteLanguageManifest } from './svelte-language/manifest';
 export { svelteLanguageRegistration } from './svelte-language/registration';
 export { manifest as lspManifest } from './lsp/manifest';
 export { lspRegistration } from './lsp/registration';
-// Types only: the UI layer's LSP components read the plugin's own services and
-// render its status rows, and type-only exports keep the implementation — the
-// client, the process and the buffers — behind the plugin's lazy import.
-export type {
-	LspRuntime,
-	LspServerState,
-	LspServerStatus
-} from './lsp/lifecycle';
-export type { LspLogStore, LspLogEntry, LspLogKind, LspLogLevel } from './lsp/logs';
-export type { LspServerStatusRow, LspStatusDetail } from './lsp/status';

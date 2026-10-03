@@ -3,6 +3,12 @@
  * rebuilt by the renderer, so the only thing the renderer chooses is which
  * descriptor command to ask about.
  */
+/** The descriptor's declaration of which packaged package its server ships in. */
+export interface BundledLspCommand {
+	package: string;
+	binary: string;
+}
+
 export interface ResolvedLspCommand {
 	command: string;
 	args: string[];
@@ -29,9 +35,11 @@ export interface ElectronAPI {
 	 * Resolves a declared server command against the packaged dependency and
 	 * then against PATH, in the main process (spec #263). Returns a spawn plan
 	 * rather than a bare path because the bundled candidate is a Node script and
-	 * needs both an interpreter and an environment to run.
+	 * needs both an interpreter and an environment to run. `bundled` is the
+	 * descriptor's own declaration, which is why the resolver keeps no table of
+	 * server names.
 	 */
-	resolveLspCommand(command: string): Promise<ResolvedLspCommand>;
+	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<ResolvedLspCommand>;
 	spawnLspServer(
 		plan: ResolvedLspCommand,
 		args: string[],

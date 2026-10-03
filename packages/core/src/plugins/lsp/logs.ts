@@ -5,12 +5,16 @@
  * traffic. Both are per running server, so the tab can filter by server as well
  * as by kind and level.
  *
- * The buffers are CAPPED, per server, at a fixed number of entries. A long
- * session against a chatty server is unbounded in both feeds — a protocol trace
- * is one line per keystroke and stderr is where servers go when confused — so an
- * uncapped buffer is a slow leak that only shows up in a tab nobody is looking
- * at. Dropping the oldest entries and counting the drops is the deliberate
- * trade: a truncated tail is diagnosable, an exhausted heap is not.
+ * The buffers are CAPPED, per server, at a fixed number of entries, and every
+ * protocol trace line is capped at a fixed length with document bodies replaced
+ * before it is stored. A long session against a chatty server is unbounded in
+ * both feeds — a protocol trace is one line per keystroke and stderr is where
+ * servers go when confused — so an uncapped buffer is a slow leak that only shows
+ * up in a tab nobody is looking at. Dropping the oldest entries and counting the
+ * drops is the deliberate trade: a truncated tail is diagnosable, an exhausted
+ * heap is not. The entry cap alone is not enough, because full-content document
+ * sync makes a single entry as large as the file being edited; see
+ * {@link MAX_TRACE_MESSAGE_CHARS}.
  *
  * Pure data and pure functions, no runes and no host reference, so the cap and
  * the filtering are asserted directly rather than through a rendered tab.
@@ -43,6 +47,84 @@ export interface LspLogFilter {
 }
 
 export const DEFAULT_LOG_CAPACITY_PER_SERVER = 500;
+
+/**
+ * Longest protocol trace line kept, in characters.
+ *
+ * The cap on entries is not a cap on memory: it bounds how many lines a server
+ * may leave, and one of those lines is whatever the server or this client sent.
+ * Full-content document sync means the client puts the whole open document on the
+ * wire on every keystroke, so an entry cap alone retains up to five hundred
+ * copies of the file being edited — the buffer grows with the file, on the path
+ * that runs while the user types. This is the second bound, and it is the one
+ * that makes the buffer's size a property of the cap rather than of the document.
+ *
+ * Document text is removed rather than merely truncated (see
+ * {@link summarizeProtocolMessage}), because the head of a JSON payload is the
+ * part that identifies the conversation and the tail is the part that is just
+ * the file. The value is characters rather than bytes because that is what a
+ * reader of the Logs tab counts, and it is within a factor of two of the memory.
+ */
+export const MAX_TRACE_MESSAGE_CHARS = 2000;
+
+/** What a removed document body is replaced with, so the trace still says it sent one. */
+const REDACTED_TEXT_PREFIX = '<document text: ';
+
+/**
+ * A trace line: the message with document bodies removed, then capped.
+ *
+ * Never throws and never fails to produce a line — a payload it cannot parse is
+ * truncated as text, which is what a server sending something other than JSON
+ * deserves. Total, because the client calls it on every frame in both
+ * directions and a throw here would be an exception on the keystroke path.
+ */
+export function summarizeProtocolMessage(payload: string): string {
+	return capLength(safeRedact(payload), MAX_TRACE_MESSAGE_CHARS);
+}
+
+/**
+ * Replaces the fields the protocol uses for document bodies, everywhere in the
+ * message.
+ *
+ * Structural rather than size-based on purpose: `textDocument.text` and
+ * `contentChanges[].text` are the whole document by definition, while a field
+ * that merely happens to be called `text` and holds one line is still worth
+ * reading in a trace. Only those two shapes are removed, so a diagnostics report,
+ * a completion list and a configuration dump all survive intact.
+ */
+function safeRedact(payload: string): string {
+	try {
+		return JSON.stringify(redact(JSON.parse(payload)));
+	} catch {
+		return payload;
+	}
+}
+
+function redact(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(redact);
+	if (value === null || typeof value !== 'object') return value;
+	const source = value as Record<string, unknown>;
+	const result: Record<string, unknown> = {};
+	for (const [key, entry] of Object.entries(source)) {
+		result[key] = redactEntry(key, entry);
+	}
+	return result;
+}
+
+function redactEntry(key: string, value: unknown): unknown {
+	if (key === 'text' && typeof value === 'string') return redactText(value);
+	return redact(value);
+}
+
+function redactText(value: string): string {
+	return `${REDACTED_TEXT_PREFIX}${value.length} chars>`;
+}
+
+/** Keeps the head of a line and says how much of the tail is missing. */
+function capLength(text: string, max: number): string {
+	if (text.length <= max) return text;
+	return `${text.slice(0, max)}… (+${text.length - max} chars)`;
+}
 
 /**
  * Key the LSP plugin publishes its log store under, so the Logs tab (#266) can
@@ -111,13 +193,19 @@ export class LspLogStore {
 		return this.append({ server, kind: 'server', level: classifyServerOutput(line), message: line });
 	}
 
-	/** Appends one JSON-RPC message, outbound or inbound, as a trace line. */
+	/**
+	 * Appends one JSON-RPC message, outbound or inbound, as a trace line.
+	 *
+	 * Summarized rather than stored whole: the conversation is what a reader of
+	 * the Logs tab is debugging, and full-content sync would otherwise park a
+	 * copy of the open document in the buffer on every keystroke.
+	 */
 	appendProtocolTrace(server: string, direction: 'sent' | 'received', message: string): LspLogEntry {
 		return this.append({
 			server,
 			kind: 'protocol',
 			level: 'trace',
-			message: `${direction === 'sent' ? '-->' : '<--'} ${message}`
+			message: `${direction === 'sent' ? '-->' : '<--'} ${summarizeProtocolMessage(message)}`
 		});
 	}
 

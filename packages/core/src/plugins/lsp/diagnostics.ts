@@ -5,8 +5,15 @@
  * The protocol half lives here and stays free of CodeMirror: a server reports
  * per URI, its positions are line/character pairs against the text the server
  * last saw, and a publish carrying no diagnostics is how it says "this file is
- * clean" — which has to remove the entry rather than record an empty list, or a
- * fixed file keeps its underline forever.
+ * clean" — which has to remove that server's entry rather than record an empty
+ * list, or a fixed file keeps its underline forever.
+ *
+ * Reports are keyed by server *within* each URI, not by URI alone. Two servers
+ * can report on one file — a language server and one that only knows about a
+ * framework's config — and the protocol's publish is per server: each replaces
+ * its own set, never the other's. A URI-keyed store would make the second
+ * server's publish overwrite the first's, and make the first server stopping
+ * erase everything the second still believes.
  *
  * The editor half is `diagnostic-decorations.ts`, because marks are the only
  * part that needs a CodeMirror import and the store has to stay testable on its
@@ -40,6 +47,13 @@ export interface LspDiagnostic {
 
 export interface LspPublishDiagnostics {
 	readonly uri: string;
+	/**
+	 * The running server this report came from, as `<descriptor id>@<root>`.
+	 * Carried on the report rather than read off its first diagnostic, because a
+	 * clean report has none — and "this server says this file is clean" is the
+	 * one publish that must not clear a sibling server's findings.
+	 */
+	readonly server: string;
 	readonly diagnostics: readonly LspDiagnostic[];
 }
 
@@ -86,7 +100,7 @@ export function parsePublishDiagnostics(
 		const diagnostic = parseDiagnostic(server, entry);
 		if (diagnostic) diagnostics.push(diagnostic);
 	}
-	return { uri: payload.uri, diagnostics };
+	return { uri: payload.uri, server, diagnostics };
 }
 
 function parseDiagnostic(server: string, entry: unknown): LspDiagnostic | null {
@@ -140,22 +154,43 @@ function codeText(value: unknown): string | null {
 }
 
 export class LspDiagnosticsStore {
-	private readonly byUri = new Map<string, readonly LspDiagnostic[]>();
+	private readonly byUri = new Map<string, Map<string, readonly LspDiagnostic[]>>();
 	private readonly listeners = new Set<() => void>();
 	private sequence = 0;
 
+	/**
+	 * Files one server's report for one URI, replacing only that server's set.
+	 * An empty report clears that server's findings and nothing else, so a
+	 * second server serving the same file keeps its marks.
+	 */
 	publish(report: LspPublishDiagnostics): void {
+		const existing = this.byUri.get(report.uri);
 		if (report.diagnostics.length === 0) {
-			if (this.byUri.delete(report.uri)) this.changed();
+			// Nothing filed and nothing to clear: not a change, so a view that
+			// re-reads on every notification is not woken for a file no server has
+			// an opinion about.
+			if (!existing?.delete(report.server)) return;
+			if (existing.size === 0) this.byUri.delete(report.uri);
+			this.changed();
 			return;
 		}
-		this.byUri.set(report.uri, report.diagnostics);
+		const servers = existing ?? new Map<string, readonly LspDiagnostic[]>();
+		servers.set(report.server, report.diagnostics);
+		this.byUri.set(report.uri, servers);
 		this.changed();
 	}
 
-	/** Every report for one URI, in the order the server listed them. */
+	/**
+	 * Every server's findings for one URI. Servers are read in the order they
+	 * first published, and each server's own list keeps the order it arrived in,
+	 * so one report is not reshuffled because an unrelated server said something.
+	 */
 	read(uri: string): readonly LspDiagnostic[] {
-		return this.byUri.get(uri) ?? [];
+		const servers = this.byUri.get(uri);
+		if (!servers) return [];
+		const all: LspDiagnostic[] = [];
+		for (const diagnostics of servers.values()) all.push(...diagnostics);
+		return all;
 	}
 
 	uris(): string[] {
@@ -163,15 +198,20 @@ export class LspDiagnosticsStore {
 	}
 
 	/**
-	 * Drops every report one server made. A stopped server's findings describe a
-	 * process that is no longer watching the file, and leaving them painted
-	 * would make a restart look like it did nothing.
+	 * Drops one server's findings and leaves every other server's for that URI.
+	 *
+	 * A stopped server's findings describe a process that is no longer watching
+	 * the file, and leaving them painted would make a restart look like it did
+	 * nothing. But a URI is not owned by one server: a document can be served by
+	 * two, and dropping the whole entry would erase the other server's findings as
+	 * a side effect of the first one stopping. So only that server's slice goes,
+	 * and a URI whose last slice went goes with it.
 	 */
 	dropServer(server: string): void {
 		let dropped = false;
-		for (const [uri, diagnostics] of [...this.byUri]) {
-			if (!diagnostics.some((diagnostic) => diagnostic.server === server)) continue;
-			this.byUri.delete(uri);
+		for (const [uri, servers] of [...this.byUri]) {
+			if (!servers.delete(server)) continue;
+			if (servers.size === 0) this.byUri.delete(uri);
 			dropped = true;
 		}
 		if (dropped) this.changed();

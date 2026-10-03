@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { LspProcess, LspSpawnOptions, LspTransport } from '@np/core';
+import type { LspProcess, LspSpawnOptions, LspPlatform } from '@np/core';
 
 /**
- * A real-process transport for the LSP plugin's tests.
+ * A real-process platform for the LSP plugin's tests.
  *
  * Spawns the scripted stub server through Node's `child_process`, so the tests
  * exercise the actual framing path — real pipes, real chunk boundaries, real
@@ -33,21 +33,21 @@ export interface SpawnedServer {
 /** Extra argv handed to the stub, e.g. `--mode silent --delay-ms 500`. */
 export type StubScript = readonly string[];
 
-export interface RealProcessTransportOptions {
+export interface RealProcessPlatformOptions {
 	readonly script?: StubScript;
 	/** Swaps the descriptor's command for the stub binary. Default true. */
 	readonly useStubBinary?: boolean;
 }
 
-export interface RealProcessTransport extends LspTransport {
+export interface RealProcessPlatform extends LspPlatform {
 	readonly spawned: SpawnedServer[];
-	/** Every process this transport started, so a test can assert it is gone. */
+	/** Every process this platform started, so a test can assert it is gone. */
 	readonly pids: number[];
 }
 
-export function createRealProcessTransport(
-	options: RealProcessTransportOptions = {}
-): RealProcessTransport {
+export function createRealProcessPlatform(
+	options: RealProcessPlatformOptions = {}
+): RealProcessPlatform {
 	const script = options.script ?? [];
 	const useStubBinary = options.useStubBinary ?? true;
 	const spawned: SpawnedServer[] = [];
@@ -108,7 +108,7 @@ function asLspProcess(child: ChildProcess): LspProcess {
 		},
 		stdin: {
 			write: (chunk) => {
-				child.stdin.write(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk));
+				child.stdin.write(Buffer.from(chunk));
 			},
 			end: () => child.stdin.end()
 		},

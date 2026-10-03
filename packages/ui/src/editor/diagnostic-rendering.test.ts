@@ -10,13 +10,14 @@ import {
 	PluginHost,
 	lspRegistration,
 	reconfigureEditorContributions,
+	LSP_PLATFORM_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
 	type WorkspaceLike,
 } from "@np/core";
 import {
-	createRealProcessTransport,
+	createRealProcessPlatform,
 	waitFor,
-} from "../../../../tests/fixtures/lsp-transport";
+} from "../../../../tests/fixtures/lsp-platform";
 
 /**
  * Server diagnostics as drawn on screen (spec #263, ticket #266, ADR 0016).
@@ -224,8 +225,8 @@ describe("Server diagnostics on screen (#266)", () => {
 
 		const host = new PluginHost({ platform: "desktop" });
 		host.provideService(
-			"lsp:transport",
-			createRealProcessTransport({ script: ["--diagnostics"] }),
+			LSP_PLATFORM_SERVICE_KEY,
+			createRealProcessPlatform({ script: ["--diagnostics"] }),
 		);
 		const workspace = movableWorkspace();
 		workspace.show(path);

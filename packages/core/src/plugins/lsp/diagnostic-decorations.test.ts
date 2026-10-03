@@ -6,14 +6,15 @@ import { dirname, join } from 'node:path';
 import { EditorState } from '@codemirror/state';
 import { composeEditorContributions, reconfigureEditorContributions } from '../editor';
 import { PluginHost } from '../host.svelte';
-import { WORKSPACE_SERVICE_KEY, LSP_TRANSPORT_SERVICE_KEY, type WorkspaceLike } from '../services';
+import { WORKSPACE_SERVICE_KEY, LSP_PLATFORM_SERVICE_KEY, type WorkspaceLike } from '../services';
 import { lspRegistration } from './registration';
 import { createDiagnosticEditorContribution, lspDiagnosticField } from './diagnostic-decorations';
 import { LspDiagnosticsStore, parsePublishDiagnostics } from './diagnostics';
+import { createRepaintScheduler } from './index';
 import { LSP_LOG_STORE_SERVICE_KEY, type LspLogStore } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY } from './lifecycle';
 import { toFileUri } from './root';
-import { createRealProcessTransport, waitFor, type RealProcessTransport } from '../../../../../tests/fixtures/lsp-transport';
+import { createRealProcessPlatform, waitFor, type RealProcessPlatform } from '../../../../../tests/fixtures/lsp-platform';
 
 /**
  * Server diagnostics as editor marks, through the decoration seam the plugin
@@ -288,10 +289,10 @@ describe('Diagnostics in the editor through decoration contributions (#266)', ()
 			'src/a.ts': 'const a = 1;\nconst b = 2;\n'
 		});
 		const host = new PluginHost({ platform: 'desktop' });
-		const transport: RealProcessTransport = createRealProcessTransport({
+		const platform: RealProcessPlatform = createRealProcessPlatform({
 			script: ['--diagnostics']
 		});
-		host.provideService(LSP_TRANSPORT_SERVICE_KEY, transport);
+		host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 		const path = join(root, 'src/a.ts');
 		host.provideService(WORKSPACE_SERVICE_KEY, workspaceShowing(path));
 		host.register(lspRegistration);
@@ -362,5 +363,29 @@ describe('Diagnostics in the editor through decoration contributions (#266)', ()
 			)
 		}).state;
 		expect(marksIn(state)).toEqual([]);
+	});
+
+	it('coalesces a burst of publishes into one request to re-read them', async () => {
+		// A server publishes a report per file it has an opinion about, and the
+		// repaint a publish asks for reconfigures every editor-contribution
+		// compartment. Asking once per tick is the difference between one rebuild
+		// and one per report.
+		let repaints = 0;
+		const schedule = createRepaintScheduler(() => {
+			repaints++;
+		});
+
+		for (let i = 0; i < 25; i++) schedule();
+		// Nothing yet: the whole point is that the burst collapses before it costs
+		// anything.
+		expect(repaints).toBe(0);
+
+		await Promise.resolve();
+		expect(repaints).toBe(1);
+
+		// And the next burst is not swallowed by a queue that never drains.
+		schedule();
+		await Promise.resolve();
+		expect(repaints).toBe(2);
 	});
 });

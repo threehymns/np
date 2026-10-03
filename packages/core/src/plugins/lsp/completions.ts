@@ -1,3 +1,5 @@
+import type { CompletionSuggestion, CompletionSuggestionRange } from '../services';
+
 /**
  * Server completion items, as this plugin hands them to the editor.
  *
@@ -19,33 +21,16 @@
 /** LSP `CompletionItemKind`, kept as the wire number the server sent. */
 export type ServerCompletionItemKind = number;
 
-/** What an accepted item replaces, named by the server. */
-export interface ServerCompletionRange {
-	readonly start: { readonly line: number; readonly character: number };
-	readonly end: { readonly line: number; readonly character: number };
-}
-
-export interface ServerCompletionItem {
-	readonly label: string;
-	/**
-	 * Text an accept inserts. Defaults to the label when the server sent no
-	 * `textEdit`, `insertText` or `insertTextFormat`.
-	 */
-	readonly insertText: string;
-	/** One-line signature, for the popover's right-hand column. */
-	readonly detail: string | null;
-	/** Documentation as one string: JSDoc, a signature, or a markdown blob. */
-	readonly documentation: string | null;
-	readonly kind: ServerCompletionItemKind | null;
-	/**
-	 * The range the item replaces, when the server named one. Only meaningful
-	 * under `lsp_insert_mode: 'replace_range'`.
-	 */
-	readonly replaceRange: ServerCompletionRange | null;
-}
-
+/**
+ * One decoded item, and the list it came in.
+ *
+ * Both are the generic `CompletionSuggestion` rather than a protocol type of
+ * their own: the decode is this module's job, and everything downstream — the
+ * popover, the insert mode, the source that ranks them — is written against the
+ * shape a suggestion has, not the shape a `CompletionItem` has.
+ */
 export interface ServerCompletionList {
-	readonly items: readonly ServerCompletionItem[];
+	readonly items: readonly CompletionSuggestion[];
 	/** Whether the server asked to be asked again as the user keeps typing. */
 	readonly incomplete: boolean;
 }
@@ -78,7 +63,7 @@ export function flattenMarkup(value: unknown): string | null {
 	return null;
 }
 
-function readRange(value: unknown): ServerCompletionRange | null {
+function readRange(value: unknown): CompletionSuggestionRange | null {
 	if (!isRecord(value)) return null;
 	const start = isRecord(value.start) ? value.start : null;
 	const end = isRecord(value.end) ? value.end : null;
@@ -114,7 +99,7 @@ export function parseServerCompletions(result: unknown): ServerCompletionList {
 		: isRecord(result) && Array.isArray(result.items)
 			? result.items
 			: [];
-	const items: ServerCompletionItem[] = [];
+	const items: CompletionSuggestion[] = [];
 	for (const raw of rawItems) {
 		if (!isRecord(raw) || typeof raw.label !== 'string' || raw.label.length === 0) continue;
 		const textEdit = isRecord(raw.textEdit) ? raw.textEdit : null;

@@ -18,7 +18,9 @@
  *
  * No `node:path` and no filesystem access: the walk is string work, and the one
  * question it needs answered — does this marker exist — arrives through the
- * transport seam, so the resolution is testable with a probe and no disk.
+ * platform seam, so the resolution is testable with a probe and no disk. The
+ * dependency is named for the question rather than for the platform that answers
+ * it, which is why a caller passes one method rather than the whole seam.
  */
 
 export interface RootProbe {
@@ -60,6 +62,28 @@ function joinPath(directory: string, name: string): string {
 	return `${directory}/${name}`;
 }
 
+/**
+ * Whether `directory` is `boundary` or sits under it.
+ *
+ * Containment, not length. A length compare asks "is this path shorter than the
+ * boundary", which every sibling directory of the boundary answers yes to — so a
+ * file in `/work/other` would walk up through `/work` and adopt its
+ * `tsconfig.json` on the strength of being the same width as the workspace root.
+ * The separator check is what stops a prefix match: `/work` does not contain
+ * `/workspace`, and `/repo/app` does not contain `/repo/application`.
+ */
+function isWithin(directory: string, boundary: string): boolean {
+	// A boundary of `/` normalises away to nothing, which is the one case where
+	// every directory is contained: the walk may climb to the filesystem root.
+	const normalized = boundary.replace(/[\\/]+$/, '');
+	if (normalized === '') return true;
+	if (directory === normalized) return true;
+	return (
+		directory.startsWith(normalized) &&
+		separatorPattern.test(directory.charAt(normalized.length))
+	);
+}
+
 /** Every directory from `startDir` up to and including `boundary`, nearest first. */
 function ancestorDirectories(startDir: string, boundary: string | null): string[] {
 	const directories: string[] = [];
@@ -68,7 +92,10 @@ function ancestorDirectories(startDir: string, boundary: string | null): string[
 		directories.push(current);
 		const parent = dirnameOf(current);
 		if (parent === current) break;
-		if (boundary !== null && parent.length < boundary.length) break;
+		// Stop when the next step would leave the boundary — which is also the
+		// answer for a document that is not under it at all: its own directory is
+		// the only one that gets looked at.
+		if (boundary !== null && !isWithin(parent, boundary)) break;
 		current = parent;
 	}
 	return directories;
@@ -82,6 +109,10 @@ export interface FindProjectRootOptions {
 	 * Highest directory worth walking to, normally the workspace root. Beyond it
 	 * a marker belongs to some other project, so the walk stops. Null walks to
 	 * the filesystem root, which is what a document outside any folder gets.
+	 *
+	 * Containment, not a width: a document that is not under the boundary at all
+	 * is scoped to its own directory rather than walking up through directories
+	 * that merely have shorter paths.
 	 */
 	readonly boundary?: string | null;
 }
