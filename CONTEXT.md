@@ -19,29 +19,34 @@ User-defined settings that persist across sessions (theme, zoom, word wrap).
 The visual interface for interacting with a Document's content, powered by CodeMirror.
 - **Extension**: A modular piece of functionality added to the Editor (e.g., list renumbering, checkbox toggling).
 
-## Window
-The root of an application window. Owns the open Documents, their tabs, focus, and the active session.
-- **Workspace**: The root of a window. _Avoid_: project, vault
-  _Note: the `Workspace` class is not yet window-only — it also owns the folder on disk, its
-  repository, and its file tree ("owns the root"). The Window/Project split is tracked follow-up
-  work; until then "workspace" names one merged concept._
+## Workspace
+A unit the user switches between inside one window: it owns the panes, tabs, docks, layout, and
+focus, and exactly one **Project**. Several Workspaces can be held by one window at a time, ordered
+by when each was last shown; pinned ones survive navigating away.
+- _Avoid_: window, tab, vault
+  _Note: a Workspace is the "tab", not the window. The `Workspace` class here is not yet this: it
+  also owns the folder on disk, its repository, and its file tree. The Window/Workspace/Project
+  split is tracked follow-up work; until then "workspace" names one merged concept._
 
 ## Project
-A folder opened for editing, together with its repository and file tree. Several Projects may be
-open in one **Workspace**.
-- _Not yet a distinct type in code: today a Project is the root folder a `Workspace` holds._
+The shared backing store behind one **Workspace**: its search scope, its repositories and git
+state, and its settings. One Project per Workspace — switching Workpaces switches Projects.
+- _Avoid_: workspace, folder, vault
+  _Not yet a distinct type in code: today a Project is the root folder a `Workspace` holds._
 
 ## Worktree
-The local or remote files belonging to a **Project**. Several worktrees may be open from one
-Project at a time.
-- _Avoid_: vault, folder, root folder
-  _Note: replaces "vault". Today a Project has exactly one Worktree — its root — so **Root** is
-  the in-use term for that single directory until multi-worktree arrives. The persistence-layer
-  `root-folder` naming, recent-folders, and the "Open Folder" label all stay._
-- **Root**: The folder path a Project owns. _Avoid_: root folder, vault
+A checkout within a **Project**, holding a root path and the file entries scanned beneath it. A
+Project has several: its main checkout plus any linked ones, each independently scannable and
+searchable.
+- _Avoid_: vault, folder, repository, project
+  _Note: replaces "vault". A Worktree is a checkout, not a repository and not a project root —
+  those live one and two levels up respectively. Today a Project has exactly one Worktree — its
+  root — so **Root** is the in-use term for that single directory until linked worktrees arrive.
+  The persistence-layer `root-folder` naming, recent-folders, and the "Open Folder" label all stay._
+- **Root**: The folder path a Project is opened on. _Avoid_: root folder, vault
 
-_Git vocabulary:_ `worktree` is a registered container (git-worktree(1)), which includes git's own
-`--worktree` flags — those stay verbatim. "working tree" is the on-disk state that HEAD and the
+_Git vocabulary:_ `worktree` is a registered working root (git-worktree(1)), which includes git's
+own `--worktree` flags — those stay verbatim. "working tree" is the on-disk state that HEAD and the
 index are compared against. The two must stay distinguishable, and phrasing that names HEAD, index,
 and working tree together is correct as written. This codebase previously used `worktree` for the
 second sense, which is why `vault` had been standing in for the first.
