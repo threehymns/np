@@ -18,7 +18,7 @@ beforeAll(async () => {
 const folderA: FileOrigin = { scheme: "file", path: "/folder-a", name: "folder-a" };
 const folderB: FileOrigin = { scheme: "file", path: "/folder-b", name: "folder-b" };
 
-function createMockWorkspace(currentRoot: FileOrigin | null = folderA) {
+function createMockProject(currentRoot: FileOrigin | null = folderA) {
 	const storage = {
 		readFile: mock(async (origin: FileOrigin) => {
 			if (origin.name === ".gitignore") return "*.log\n";
@@ -39,7 +39,7 @@ function createMockWorkspace(currentRoot: FileOrigin | null = folderA) {
 		})
 	};
 
-	const ws: any = {
+	const project: any = {
 		hasRootPermission: true,
 		rootOrigin: currentRoot,
 		storage,
@@ -49,13 +49,13 @@ function createMockWorkspace(currentRoot: FileOrigin | null = folderA) {
 		}
 	};
 
-	return ws;
+	return project;
 }
 
 describe("ProjectTree single-child collapse", () => {
 	const root: FileOrigin = { scheme: "file", path: "/proj", name: "proj" };
 
-	function createChainWorkspace() {
+	function createChainProject() {
 		const storage = {
 			readFile: mock(async () => {
 				throw { name: "NotFoundError" };
@@ -90,7 +90,7 @@ describe("ProjectTree single-child collapse", () => {
 			renameEntry: mock(async (o: FileOrigin) => o),
 		};
 
-		const ws: any = {
+		const project: any = {
 			hasRootPermission: true,
 			rootOrigin: root,
 			storage,
@@ -101,12 +101,12 @@ describe("ProjectTree single-child collapse", () => {
 			}
 		};
 
-		return ws;
+		return project;
 	}
 
 	it("one click opens a 3-deep single-child chain with grandchildren visible", async () => {
-		const ws = createChainWorkspace();
-		const tree = new ProjectTreeClass(ws);
+		const project = createChainProject();
+		const tree = new ProjectTreeClass(project);
 		await tree.scan(root);
 
 		// Single click on top-level "a" must resolve the whole spine eagerly
@@ -123,12 +123,12 @@ describe("ProjectTree single-child collapse", () => {
 		expect(chain.originalNode).toBe(chain.chain[0]);
 		expect(chain.leafNode).toBe(chain.chain[chain.chain.length - 1]);
 		// Spine reads stay cheap: one per level + the fork read
-		expect(ws.storage.readDirectory.mock.calls.length).toBeLessThanOrEqual(4);
+		expect(project.storage.readDirectory.mock.calls.length).toBeLessThanOrEqual(4);
 	});
 
 	it("toggling a collapsed visual row still targets the leaf", async () => {
-		const ws = createChainWorkspace();
-		const tree = new ProjectTreeClass(ws);
+		const project = createChainProject();
+		const tree = new ProjectTreeClass(project);
 		await tree.scan(root);
 
 		const nodeA = tree.nodes.find((n) => n.name === "a")!;
@@ -152,8 +152,8 @@ describe("ProjectTree single-child collapse", () => {
 	});
 
 	it("collapsing keeps the chain discoverable across rescan", async () => {
-		const ws = createChainWorkspace();
-		const tree = new ProjectTreeClass(ws);
+		const project = createChainProject();
+		const tree = new ProjectTreeClass(project);
 		await tree.scan(root);
 
 		const nodeA = tree.nodes.find((n) => n.name === "a")!;
@@ -175,8 +175,8 @@ describe("ProjectTree single-child collapse", () => {
 
 describe("ProjectTree.scan", () => {
 	it("scans and commits nodes when root has not changed", async () => {
-		const ws = createMockWorkspace(folderA);
-		const tree = new ProjectTreeClass(ws);
+		const project = createMockProject(folderA);
+		const tree = new ProjectTreeClass(project);
 
 		await tree.scan(folderA);
 
@@ -184,14 +184,14 @@ describe("ProjectTree.scan", () => {
 		expect(tree.nodes[0].name).toBe("fileA.txt");
 	});
 
-	it("discards scan results if workspace rootOrigin changes before scan completes", async () => {
-		const ws = createMockWorkspace(folderA);
+	it("discards scan results if project rootOrigin changes before scan completes", async () => {
+		const project = createMockProject(folderA);
 		let resolveReadDir!: (val: any) => void;
 		const readDirPromise = new Promise<any>((resolve) => {
 			resolveReadDir = resolve;
 		});
 
-		ws.storage.readDirectory = mock(async (origin: FileOrigin) => {
+		project.storage.readDirectory = mock(async (origin: FileOrigin) => {
 			if (toURI(origin) === toURI(folderA)) {
 				await readDirPromise;
 				return [
@@ -201,13 +201,13 @@ describe("ProjectTree.scan", () => {
 			return [];
 		});
 
-		const tree = new ProjectTreeClass(ws);
+		const tree = new ProjectTreeClass(project);
 		const scanPromise = tree.scan(folderA);
 
 		await new Promise((r) => setTimeout(r, 0));
 
 		// Root switched while scan of folderA was deferred
-		ws.rootOrigin = folderB;
+		project.rootOrigin = folderB;
 		tree.nodes = [];
 
 		resolveReadDir([
@@ -217,5 +217,27 @@ describe("ProjectTree.scan", () => {
 
 		// Nodes must NOT be overwritten by the stale scan
 		expect(tree.nodes).toEqual([]);
+	});
+});
+
+describe("ProjectTree Project ownership pin (#252)", () => {
+	it("reads its folder through Project with no Workspace reference", async () => {
+		const project = createMockProject(folderA);
+		const tree = new ProjectTreeClass(project);
+
+		// No Workspace handle survives on the tree.
+		expect((tree as any).workspace).toBeUndefined();
+		expect((tree as any).project).toBe(project);
+
+		// Root, storage, permission and persistence all come from Project:
+		// a Project without a root refuses search, with a root scans.
+		project.rootOrigin = null;
+		await tree.scan(folderA);
+		// With no other root the stale guard drops the result; nodes stay empty.
+		// Restore the root and verify the same scan commits.
+		project.rootOrigin = folderA;
+		await tree.scan(folderA);
+		expect(tree.nodes.length).toBe(1);
+		expect(tree.nodes[0].name).toBe("fileA.txt");
 	});
 });

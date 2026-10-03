@@ -2,6 +2,7 @@ import type { FileOrigin, Storage } from '../storage';
 import type { SessionPersistence } from '../persistence';
 import type { VCSAdapter } from './vcs';
 import { Worktree } from './worktree.svelte';
+import { ProjectTree } from './tree.svelte';
 import type { Repository } from './repository.svelte';
 
 /**
@@ -33,6 +34,7 @@ export class Project {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
 	persistence: SessionPersistence;
+	projectTree: ProjectTree;
 
 	constructor(
 		storage: Storage,
@@ -42,6 +44,15 @@ export class Project {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
+		this.projectTree = new ProjectTree(this);
+	}
+
+	/**
+	 * Alias kept while consumers migrate from `workspace.projectTree`.
+	 * Prefer `projectTree`.
+	 */
+	get tree(): ProjectTree {
+		return this.projectTree;
 	}
 
 	get rootOrigin(): FileOrigin | null {

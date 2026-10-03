@@ -5,7 +5,7 @@ import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
-import { ProjectTree } from './project/tree.svelte';
+import type { ProjectTree } from './project/tree.svelte';
 import { Project } from './project/project.svelte';
 import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
@@ -24,7 +24,13 @@ export class Workspace {
 	pendingCloseId = $state<string | null>(null);
 	project: Project;
 	recentFolders = $state<FileOrigin[]>([]);
-	projectTree = new ProjectTree(this);
+	/**
+	 * Deprecated forwarder — the tree lives on Project (`project.tree`).
+	 * Will be removed in #253 when all consumers route through Project.
+	 */
+	get projectTree(): ProjectTree {
+		return this.project.projectTree;
+	}
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
@@ -307,6 +313,17 @@ export class Workspace {
 		pluginHost?: PluginHostInterface
 	) {
 		this.project = new Project(storage, vcsFactory, persistence);
+		this.project.projectTree.setWindowHooks({
+			markDocumentsDeleted: (origin) => this.markDocumentsDeleted(origin),
+			reconcileExternalDeletions: () => this.reconcileExternalDeletions(),
+			updateDocumentOrigin: (oldUri, newOrigin) => {
+				for (const doc of this.documents) {
+					if (doc.origin && toURI(doc.origin) === oldUri) {
+						doc.origin = newOrigin;
+					}
+				}
+			}
+		});
 		this.pluginHost = pluginHost ?? new PluginHost();
 		// Publish under the generic workspace service key (#202): feature
 		// plugins (e.g. Git) resolve the workspace lazily through the host

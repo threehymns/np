@@ -1,4 +1,4 @@
-import type { Workspace } from '../workspace.svelte';
+import type { Project } from './project.svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { toURI, type FileOrigin } from '../storage';
 import { isNotFoundError } from '../utils';
@@ -28,6 +28,17 @@ export interface VisualNode {
 
 /** Max levels a folded single-child chain may span (cycle guard). */
 const MAX_FOLD_DEPTH = 100;
+
+/**
+ * Window-state callbacks the tree needs without holding a Workspace.
+ * Provided once by the Workspace that owns the window state; absent in
+ * pure-Project test doubles, where the guarded call sites skip.
+ */
+export interface TreeWindowHooks {
+	markDocumentsDeleted?(origin: FileOrigin): void;
+	reconcileExternalDeletions?(): Promise<void>;
+	updateDocumentOrigin?(oldUri: string, newOrigin: FileOrigin): void;
+}
 
 /** The single directory child a fold can extend through, if any. */
 function singleDirChild(node: TreeNode): TreeNode | undefined {
@@ -99,10 +110,12 @@ export class ProjectTree {
 	private expandedPaths = new SvelteSet<string>();
 	private initPromise: Promise<void> | null = null;
 	private isRestoring = $state(true);
-	private workspace: Workspace;
+	private project: Project;
+	private windowHooks: TreeWindowHooks = {};
 
-	constructor(workspace: Workspace) {
-		this.workspace = workspace;
+	constructor(project: Project, windowHooks: TreeWindowHooks = {}) {
+		this.project = project;
+		this.windowHooks = windowHooks;
 		if (typeof window !== 'undefined') {
 			$effect.root(() => {
 				$effect(() => {
@@ -115,13 +128,23 @@ export class ProjectTree {
 						.slice(0, 500);
 					
 					// Safety check for persistence
-					if (this.workspace.persistence) {
-						const folderUri = this.workspace.rootOrigin ? toURI(this.workspace.rootOrigin) : '';
-						this.workspace.persistence.saveExpandedPaths(paths, folderUri);
+					if (this.project.persistence) {
+						const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
+						this.project.persistence.saveExpandedPaths(paths, folderUri);
 					}
 				});
 			});
 		}
+	}
+
+	/**
+	 * Window-state callbacks provided by Workspace (documents, deletion
+	 * marking, external-delete reconciliation). The tree itself holds no
+	 * Workspace reference — these are plain functions, set once by the
+	 * Workspace that owns the window state.
+	 */
+	setWindowHooks(hooks: TreeWindowHooks): void {
+		this.windowHooks = hooks;
 	}
 
 	resetExpansionState() {
@@ -146,10 +169,10 @@ export class ProjectTree {
 
 	private async loadExpansionState() {
 		try {
-			const folderUri = this.workspace.rootOrigin ? toURI(this.workspace.rootOrigin) : '';
+			const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 			// Add a safety timeout of 2 seconds
 			const paths = await Promise.race([
-				this.workspace.persistence.loadExpandedPaths(folderUri),
+				this.project.persistence.loadExpandedPaths(folderUri),
 				new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Timeout loading expansion state')), 2000))
 			]);
 			
@@ -255,7 +278,7 @@ export class ProjectTree {
 	});
 
 	private async performSearch(query: string) {
-		if (!this.workspace.rootOrigin) return;
+		if (!this.project.rootOrigin) return;
 		
 		if (this.searchAbortController) {
 			this.searchAbortController.abort();
@@ -270,7 +293,7 @@ export class ProjectTree {
 			const matchedChildren: TreeNode[] = [];
 			
 			try {
-				const entries = await this.workspace.storage.readDirectory(origin);
+				const entries = await this.project.storage.readDirectory(origin);
 				for (const entry of entries) {
 					if (signal.aborted) return null;
 
@@ -309,7 +332,7 @@ export class ProjectTree {
 			}) : null;
 		};
 
-		const found = await search(this.workspace.rootOrigin);
+		const found = await search(this.project.rootOrigin);
 		if (!signal.aborted) {
 			this.searchResults = found || [];
 			this.isSearching = false;
@@ -317,7 +340,7 @@ export class ProjectTree {
 	}
 
 	async scan(rootOrigin: FileOrigin) {
-		if (!this.workspace.hasRootPermission) {
+		if (!this.project.hasRootPermission) {
 			return;
 		}
 		
@@ -333,7 +356,7 @@ export class ProjectTree {
 					path: rootOrigin.path ? `${rootOrigin.path}/.gitignore` : '.gitignore',
 					name: '.gitignore'
 				};
-				const content = await this.workspace.storage.readFile(gitignoreOrigin);
+				const content = await this.project.storage.readFile(gitignoreOrigin);
 				this.gitignore = new GitIgnoreMatcher(content);
 			} catch (e: any) {
 				// Handle missing gitignore silently
@@ -346,17 +369,17 @@ export class ProjectTree {
 			const builtNodes = await this.buildLevel(rootOrigin);
 			if (
 				generation === this.scanGeneration &&
-				this.workspace.rootOrigin &&
-				toURI(this.workspace.rootOrigin) === toURI(rootOrigin)
+				this.project.rootOrigin &&
+				toURI(this.project.rootOrigin) === toURI(rootOrigin)
 			) {
 				this.nodes = builtNodes;
 				// Surface externally deleted open files (#175) on the next
 				// scan/refresh: same deleted-on-disk tab state as in-app
 				// deletes, edits preserved. Guarded for test doubles without
-				// a full Workspace.
-				const reconcile = (this.workspace as unknown as { reconcileExternalDeletions?: () => Promise<void> }).reconcileExternalDeletions;
+				// window hooks (pure-Project usage skips).
+				const reconcile = this.windowHooks.reconcileExternalDeletions;
 				if (typeof reconcile === 'function') {
-					await this.workspace.reconcileExternalDeletions();
+					await reconcile();
 				}
 			}
 		} catch (e) {
@@ -372,7 +395,7 @@ export class ProjectTree {
 		const nodes: TreeNode[] = [];
 		try {
 			let i = 0;
-			const entries = await this.workspace.storage.readDirectory(origin);
+			const entries = await this.project.storage.readDirectory(origin);
 			for (const entry of entries) {
 				// Yield every 50 items to keep UI responsive
 				if (++i % 50 === 0) {
@@ -487,8 +510,8 @@ export class ProjectTree {
 	}
 
 	private async getNodePath(node: TreeNode): Promise<string> {
-		if (!this.workspace.rootOrigin) return node.name;
-		const rootOrigin = this.workspace.rootOrigin;
+		if (!this.project.rootOrigin) return node.name;
+		const rootOrigin = this.project.rootOrigin;
 		if (node.origin.path === rootOrigin.path) return '';
 		if (node.origin.path.startsWith(rootOrigin.path + '/')) {
 			return node.origin.path.slice(rootOrigin.path.length + 1);
@@ -497,43 +520,41 @@ export class ProjectTree {
 	}
 
 	async createFile(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
-		await this.workspace.storage.createFile(parentOrigin, name);
+		await this.project.storage.createFile(parentOrigin, name);
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
 		} else {
-			await this.scan(this.workspace.rootOrigin!);
+			await this.scan(this.project.rootOrigin!);
 		}
 	}
 
 	async createDirectory(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
-		await this.workspace.storage.createDirectory(parentOrigin, name);
+		await this.project.storage.createDirectory(parentOrigin, name);
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
 		} else {
-			await this.scan(this.workspace.rootOrigin!);
+			await this.scan(this.project.rootOrigin!);
 		}
 	}
 
 	async deleteEntry(node: TreeNode) {
-		await this.workspace.storage.deleteEntry(node.origin);
-		// Reuse the shared Workspace marking path (see #173): directory
-		// deletes cover descendants, content untouched, tabs stay open.
-		this.workspace.markDocumentsDeleted(node.origin);
-		await this.scan(this.workspace.rootOrigin!);
+		await this.project.storage.deleteEntry(node.origin);
+		// Reuse the shared marking path (see #173): directory deletes cover
+		// descendants, content untouched, tabs stay open. The Workspace
+		// provides this hook; pure-Project doubles skip it.
+		this.windowHooks.markDocumentsDeleted?.(node.origin);
+		await this.scan(this.project.rootOrigin!);
 	}
 
 	async renameEntry(node: TreeNode, newName: string) {
-		const newOrigin = await this.workspace.storage.renameEntry(node.origin, newName);
+		const newOrigin = await this.project.storage.renameEntry(node.origin, newName);
 		
-		// Update any open documents that match this origin
-		for (const doc of this.workspace.documents) {
-			if (doc.origin && toURI(doc.origin) === toURI(node.origin)) {
-				doc.origin = newOrigin;
-			}
-		}
+		// Update any open documents that match this origin. The Workspace
+		// provides this hook so the tree never reaches into window state.
+		this.windowHooks.updateDocumentOrigin?.(toURI(node.origin), newOrigin);
 
-		await this.scan(this.workspace.rootOrigin!);
+		await this.scan(this.project.rootOrigin!);
 	}
 }
