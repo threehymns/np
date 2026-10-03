@@ -6,11 +6,18 @@
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
 	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
-	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
+	import { EditorState, Annotation, Compartment, EditorSelection, Text, Transaction, RangeSetBuilder } from "@codemirror/state";
 	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
 	import { MergeView, unifiedMergeView, Chunk, getChunks } from "@codemirror/merge";
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
+	import {
+		findBoundDocument,
+		ensureSplitDocument,
+		isSplitWorkingCopyEditable,
+		resolveSplitRightContent,
+		isDiffHeaderDirty
+	} from './diff-split-binding.js';
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -446,6 +453,71 @@
 		fireReadyResolvers(filepath);
 	}
 
+	// Shared-Document binding for the split Working-copy pane (#269).
+	// The b-pane edits the same Document an Editor tab shows; rules live in
+	// diff-split-binding.ts, this component only wires workspace state.
+	const splitBoundDocIds = new Map<string, string>();
+	let lastFocusedDiffFilepath = $state<string | null>(null);
+	// Tags b-pane dispatches that replay external Document state (tab
+	// keystrokes) so the updateListener below never routes them back as
+	// new edits. Mirrors Editor.svelte's syncAnnotation.
+	const splitSyncAnnotation = Annotation.define<boolean>();
+
+	function findSplitDoc(filepath: string) {
+		return findBoundDocument(
+			appState.workspace.documents,
+			splitBoundDocIds,
+			appState.workspace.project.rootOrigin,
+			filepath
+		);
+	}
+
+	// Pane -> Document: keystrokes become ordinary in-memory edits on the
+	// shared Document via the canonical keystroke path.
+	function handleSplitDocChange(filepath: string, text: string) {
+		const doc = findSplitDoc(filepath);
+		if (doc && text !== doc.content) {
+			appState.workspace.updateDocumentContent(doc, text);
+		}
+	}
+
+	// Ensure a shared Document exists for every visible diff file, reusing
+	// the open one when present. Creation reads the already-loaded git
+	// snapshot (content == baseline, so clean) and opens no tab; files
+	// whose diff has not loaded yet bind on the refresh that delivers it.
+	$effect(() => {
+		const files = activeChanges;
+		const root = appState.workspace.project.rootOrigin;
+		if (!root) return;
+		const workspace = appState.workspace;
+		const scope = {
+			documents: workspace.documents,
+			storage: workspace.project.storage,
+			rootOrigin: root,
+			coversOrigin: (origin: Parameters<typeof workspace.project.coversOrigin>[0]) =>
+				workspace.project.coversOrigin(origin)
+		};
+		for (const file of files) {
+			const detail = resolveFileDiff(file);
+			ensureSplitDocument(scope, splitBoundDocIds, file, detail?.modifiedContent ?? file.modifiedContent);
+		}
+	});
+
+	// Publish the save target for the focused diff file so file.save /
+	// file.saveAs with focus in the diff pane (shortcut or command) route
+	// through the standard save path for that Document. Falls back to the
+	// panel-selected file when nothing was focused yet. Cleared on unmount;
+	// the diff tab unmounts when inactive, so this never hijacks tab saves.
+	$effect(() => {
+		const focused = lastFocusedDiffFilepath;
+		const activeFile = repo?.activeDiffFile?.filepath;
+		const target = focused ?? activeFile ?? null;
+		appState.activeDiffDocument = target ? findSplitDoc(target) : undefined;
+		return () => {
+			appState.activeDiffDocument = undefined;
+		};
+	});
+
 	// Silent sync for scroll-past / cursor-focus / header-focus paths.
 	// These must update the Git panel highlight WITHOUT triggering the
 	// activeDiffFile reveal effect (expand + snap-to-top). Only explicit
@@ -627,6 +699,7 @@
 			wrap: boolean;
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
+			editable: boolean;
 			onDocChange?: (newVal: string) => void;
 		}
 	) {
@@ -635,9 +708,11 @@
 		let cleanupSync: (() => void) | undefined;
 		let untrackCursorFocus: (() => void) | undefined;
 		let disposed = false;
+		let bEditable = options.editable;
 		const wrapCompartmentA = new Compartment();
 		const wrapCompartmentB = new Compartment();
 		const hunkCompartmentB = new Compartment();
+		const readOnlyCompartmentB = new Compartment();
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -659,7 +734,9 @@
 				b: {
 					doc: currentOptions.rightContent,
 					extensions: [
-						EditorState.readOnly.of(true),
+						// Working-copy pane: editable when bound to the shared
+						// Document (#269). The a-pane above stays read-only.
+						readOnlyCompartmentB.of(EditorState.readOnly.of(!currentOptions.editable)),
 						hunkCompartmentB.of(
 							createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 						),
@@ -667,7 +744,11 @@
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
 						EditorView.updateListener.of((update) => {
-							if (update.docChanged && currentOptions.onDocChange) {
+							if (
+								update.docChanged &&
+								!update.transactions.some((tr) => tr.annotation(splitSyncAnnotation)) &&
+								currentOptions.onDocChange
+							) {
 								currentOptions.onDocChange(update.state.doc.toString());
 							}
 						}),
@@ -772,6 +853,14 @@
 							)
 						);
 					}
+					if (currentOptions.editable !== bEditable) {
+						bEditable = currentOptions.editable;
+						effectsB.push(
+							readOnlyCompartmentB.reconfigure(
+								EditorState.readOnly.of(!bEditable)
+							)
+						);
+					}
 					if (hasGitChangeChanged(oldOptions.fileChange, currentOptions.fileChange)) {
 						effectsB.push(
 							hunkCompartmentB.reconfigure(
@@ -780,16 +869,41 @@
 						);
 					}
 					if (hasRightDocChange || effectsB.length > 0) {
+						// Document -> pane sync (e.g. tab keystrokes): the
+						// pane already holds pane-side keystrokes (rightContent
+						// is Document-driven, so those are no-ops here), and
+						// external syncs stay out of the pane's undo history
+						// with selection and scroll preserved. Snapshot
+						// refreshes never reach this branch: rightContent is
+						// driven by Document content, not the git snapshot.
+						const insert = currentOptions.rightContent;
+						const sel = view.b.state.selection;
+						const clamped = EditorSelection.create(
+							sel.ranges.map((r) =>
+								EditorSelection.range(Math.min(r.anchor, insert.length), Math.min(r.head, insert.length))
+							),
+							sel.mainIndex
+						);
+						const prevTop = view.b.scrollDOM.scrollTop;
+						const prevLeft = view.b.scrollDOM.scrollLeft;
 						view.b.dispatch({
 							changes: hasRightDocChange
 								? {
 										from: 0,
 										to: view.b.state.doc.length,
-										insert: currentOptions.rightContent
+										insert
 								  }
 								: undefined,
-							effects: effectsB.length > 0 ? effectsB : undefined
+							selection: hasRightDocChange ? clamped : undefined,
+							effects: effectsB.length > 0 ? effectsB : undefined,
+							annotations: hasRightDocChange
+								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
+								: undefined
 						});
+						if (hasRightDocChange) {
+							view.b.scrollDOM.scrollTop = prevTop;
+							view.b.scrollDOM.scrollLeft = prevLeft;
+						}
 					}
 				}
 			},
@@ -1384,7 +1498,12 @@
 		{:else}
 			{#each activeChanges as fileChange (fileChange.filepath + '-' + fileChange.staged)}
 				{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
-				<div class="flex flex-col bg-background" id="diff-file-{fileChange.filepath}">
+				{@const headerDoc = findSplitDoc(fileChange.filepath)}
+				<div
+					class="flex flex-col bg-background"
+					id="diff-file-{fileChange.filepath}"
+					onfocusin={() => { lastFocusedDiffFilepath = fileChange.filepath; }}
+				>
 					<!-- File Header inside multibuffer -->
 					<div class="sticky top-0 z-10 bg-background pt-2 pb-1 px-2">
 						<div
@@ -1448,6 +1567,13 @@
 								</span>
 							</div>
 							<div class="flex items-center gap-1.5 text-[9px] font-bold">
+								{#if isDiffHeaderDirty(headerDoc)}
+									<span
+										class="inline-block size-1.5 rounded-full bg-foreground/60"
+										title="Unsaved changes"
+										aria-label="Unsaved changes"
+									></span>
+								{/if}
 								{#if fileChange.additions > 0}
 									<span class="text-emerald-500 font-bold">+{fileChange.additions}</span>
 								{/if}
@@ -1485,15 +1611,18 @@
 									</div>
 								{:else}
 									<!-- Split View: Side-by-side MergeView of the whole file -->
+									{@const splitDoc = findSplitDoc(fileChange.filepath)}
 									<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
 										<div use:setupMergeView={{
 											leftContent: diff.originalContent,
-											rightContent: diff.modifiedContent,
+											rightContent: resolveSplitRightContent(splitDoc, diff.modifiedContent),
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
 											wrap: appState.prefs.wordWrap,
 											hunks: diff.hunks,
-											unstagedChunks: diff.unstagedChunks
+											unstagedChunks: diff.unstagedChunks,
+											editable: isSplitWorkingCopyEditable(fileChange.status, splitDoc),
+											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)
 										}}></div>
 									</div>
 								{/if}
