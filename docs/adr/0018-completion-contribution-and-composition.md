@@ -22,7 +22,11 @@ The consequences shape where the settings live. The global popup toggle (`activa
 
 ## Vim: Enter is unbound, Ctrl-y accepts
 
-`completionKeymap` binds Enter to `acceptCompletion` and is installed at `Prec.highest`. In a code file, where words fire on their own, that turns a keystroke a vim insert-mode user means as a newline into an accepted completion — completions fighting the mode, which is exactly what must not happen. Under vim the compartment passes `defaultKeymap: false` and supplies the same bindings minus Enter, plus `Ctrl-y` bound to `acceptCompletion`, which is vim's own insert-mode accept. Every other binding is kept verbatim, so the explicit trigger and the selection keys do not move.
+`completionKeymap` binds Enter to `acceptCompletion` and is installed at `Prec.highest`, so a completion in a code file — where words fire on their own — sits one keystroke away from a key a vim insert-mode user means as a newline.
+
+No conflict is observed today, and the reason is not a guarantee: `@replit/codemirror-vim` claims insert-mode Enter before CodeMirror's keymap sees it. That ordering is the vim extension's implementation detail, not a contract, and the `Prec.highest` binding is the kind of thing a vim update or a future source could expose. So under vim the compartment passes `defaultKeymap: false` and supplies the same bindings **minus Enter**, plus `Ctrl-y` bound to `acceptCompletion`, which is vim's own insert-mode accept. Every other binding is kept verbatim, so the explicit trigger and the selection keys do not move.
+
+Acceptance was the binding that was genuinely missing: before this, a vim user had a way to summon completions and no key to accept one.
 
 ## Snippets are a sibling registry, not an editor contribution
 
