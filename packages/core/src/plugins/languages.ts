@@ -179,6 +179,15 @@ export function rebuildLanguages(transforms: readonly LanguageTransformEntry[]):
 		const next = new Map<string, RegisteredLanguage>();
 
 		for (const [key, value] of raw) {
+			// Only entries newly added or changed by this transform can
+			// introduce a conflict. Unchanged entries (identical reference
+			// to the pre-transform input) were already accounted for when
+			// their owning transform ran; reprocessing them would record
+			// duplicate or spurious diagnostics on unrelated rebuilds.
+			if (input.get(key) === value) {
+				next.set(key, value);
+				continue;
+			}
 			const owned: RegisteredLanguage =
 				value.owner === ''
 					? toRegistered(

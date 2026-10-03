@@ -288,8 +288,12 @@
 		}
 	}
 
-	// Sync language
+	// Sync language. Reads the language revision alongside doc.language so
+	// registry changes rebuild the compartment even when the resolved
+	// description reference is unchanged (e.g. enabling Svelte while a
+	// Markdown doc is open must refresh its fenced-language list).
 	$effect(() => {
+		const _langRev = appState.plugins?.languageRevision;
 		const lang = doc.language;
 		if (view && active) {
 			getLanguageExtensions(lang).then((extensions) => {
