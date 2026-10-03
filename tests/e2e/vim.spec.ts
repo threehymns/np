@@ -1,5 +1,6 @@
 import { test, expect, EDITOR_READY_TIMEOUT } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
+import { installMockFS } from './helpers/mock-fs';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
@@ -104,6 +105,120 @@ test('vim mode - shift+v followed by p to paste clipboard content (with clipboar
 
   expect(text).not.toContain('second linep');
   expect(text).toContain('copied from clipboard');
+});
+
+test('vim mode - ctrl+space summons buffer-word completions in insert mode', async ({ page }) => {
+  await mockIconThemes(page);
+  await page.goto('/');
+
+  const editor = page.locator('.cm-content').first();
+  await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+  await page.waitForFunction(() => typeof (window as any).appState !== 'undefined' && typeof (window as any).browserHandleRegistry !== 'undefined');
+  await page.evaluate(installMockFS);
+
+  // A Markdown file, so the language compartment gives the buffer-word chain a
+  // language to attach to.
+  await page.evaluate(async () => {
+    const appState = (window as any).appState;
+    const note = new (window as any).MockFileHandle('Words.md', new TextEncoder().encode(''));
+    await (window as any).browserHandleRegistry.register('browser://Words.md', note);
+    await appState.workspace.openFile({ scheme: 'browser', path: 'Words.md', name: 'Words.md' });
+  });
+
+  const active = page.locator('.cm-content').first();
+  await expect(active).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+
+  await page.evaluate(() => {
+    (window as any).appState.prefs.vimMode = true;
+  });
+
+  // Wait for Svelte effects and the vim compartment reconfiguration to settle.
+  await page.waitForTimeout(500);
+
+  await active.focus();
+
+  // Insert mode: the buffer vocabulary is the text typed before the cursor.
+  await page.keyboard.press('i');
+  await page.keyboard.type('kettle whistles');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('kettl');
+
+  // The explicit trigger must reach the popover without leaving insert mode.
+  await page.keyboard.press('Control+Space');
+
+  const tooltip = page.locator('.cm-tooltip-autocomplete').first();
+  await expect(tooltip).toBeVisible({ timeout: 5000 });
+  await expect(tooltip).toContainText('kettle');
+
+  // Still insert mode: the modal binding never fought the completion.
+  const docText = await page.evaluate(() =>
+    (window as any).appState.activeEditorView.state.doc.toString()
+  );
+  expect(docText).toBe('kettle whistles\nkettl');
+});
+
+test('vim mode - Enter inserts a newline in a code file while the popover is open', async ({ page }) => {
+  await mockIconThemes(page);
+  await page.goto('/');
+
+  await expect(page.locator('.cm-content').first()).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+  await page.waitForFunction(() => typeof (window as any).appState !== 'undefined' && typeof (window as any).browserHandleRegistry !== 'undefined');
+  await page.evaluate(installMockFS);
+
+  // A TypeScript file, unlike the Markdown case above: #261 makes words fire on
+  // their own in code, so an open popover is the normal state rather than
+  // something the explicit trigger had to create.
+  await page.evaluate(async () => {
+    const appState = (window as any).appState;
+    const file = new (window as any).MockFileHandle('greet.ts', new TextEncoder().encode(''));
+    await (window as any).browserHandleRegistry.register('browser://greet.ts', file);
+    await appState.workspace.openFile({ scheme: 'browser', path: 'greet.ts', name: 'greet.ts' });
+  });
+
+  const active = page.locator('.cm-content').first();
+  await expect(active).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
+
+  await page.evaluate(() => {
+    (window as any).appState.prefs.vimMode = true;
+  });
+  await page.waitForTimeout(500);
+  await active.focus();
+
+  // `greetUser` is the buffer vocabulary; `greet` is past the default minimum
+  // length, so the popover opens by itself.
+  await page.keyboard.press('i');
+  await page.keyboard.type('const greetUser = 1;');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('greet');
+
+  const tooltip = page.locator('.cm-tooltip-autocomplete').first();
+  await expect(tooltip).toBeVisible({ timeout: 5000 });
+
+  // Enter belongs to the mode. Accepting here would replace `greet` with the
+  // completion and leave one line.
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+
+  const afterEnter = await page.evaluate(() =>
+    (window as any).appState.activeEditorView.state.doc.toString()
+  );
+  expect(afterEnter).toBe('const greetUser = 1;\ngreet\n');
+
+  // Ctrl-y is vim's own accept key and the one the modal keymap binds.
+  await page.keyboard.type('greet');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Control+y');
+  await page.waitForTimeout(200);
+
+  const docText = await page.evaluate(() =>
+    (window as any).appState.activeEditorView.state.doc.toString()
+  );
+  expect(docText).toBe('const greetUser = 1;\ngreet\ngreetUser');
+
+  // Still insert mode throughout: the modal binding never fought the mode, and
+  // accepting a completion never left insert mode either.
+  const mode = await page.evaluate(() => (window as any).appState.keymaps.context.vim_mode);
+  expect(mode).toBe('insert');
 });
 
 test('vim mode - WhichKey support', async ({ page }) => {

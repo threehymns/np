@@ -13,6 +13,8 @@ export * from './host.svelte';
 // compatibility, crashing client code. Import it directly ('./boundary-check')
 // from node runtimes (tests, scripts) instead.
 export * from './languages';
+export * from './language-scope';
+export * from './completions';
 export { manifest as gitManifest } from './git/manifest';
 export { gitRegistration } from './git/registration';
 export { manifest as svelteLanguageManifest } from './svelte-language/manifest';

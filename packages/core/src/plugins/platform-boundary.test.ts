@@ -126,6 +126,8 @@ describe('Platform separation static boundary', () => {
 			'events.ts',
 			'errors.ts',
 			'languages.ts',
+			'language-scope.ts',
+			'completions.ts',
 			'git/index.ts',
 			'git/commands.ts',
 			'git/lifecycle.ts',
@@ -134,6 +136,7 @@ describe('Platform separation static boundary', () => {
 			'git/registration.ts',
 			'git/manifest.ts',
 			'svelte-language/index.ts',
+			'svelte-language/snippets.ts',
 			'svelte-language/registration.ts',
 			'svelte-language/manifest.ts'
 		];
