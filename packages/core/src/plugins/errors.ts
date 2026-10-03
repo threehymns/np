@@ -367,3 +367,26 @@ export class DuplicateEditorContributionIdError extends Error {
 		this.incomingPluginId = incomingPluginId;
 	}
 }
+
+/**
+ * Actionable diagnostic error thrown when two plugins claim one snippet ID.
+ * IDs are the registry key, so a collision cannot be resolved the way a
+ * language-name collision can: silently dropping one plugin's trigger would
+ * make a disabled-looking snippet vanish for a reason nothing reports.
+ */
+export class DuplicateSnippetIdError extends Error {
+	readonly snippetId: string;
+	readonly existingPluginId: string;
+	readonly incomingPluginId: string;
+
+	constructor(snippetId: string, existingPluginId: string, incomingPluginId: string) {
+		super(
+			`Duplicate snippet ID "${snippetId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every snippet must declare a unique "id". Rename the snippet ID or remove the conflicting plugin.`
+		);
+		this.name = 'DuplicateSnippetIdError';
+		this.snippetId = snippetId;
+		this.existingPluginId = existingPluginId;
+		this.incomingPluginId = incomingPluginId;
+	}
+}

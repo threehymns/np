@@ -123,6 +123,15 @@ import {
 	type LanguageTransformEntry,
 	type RegisteredLanguage
 } from './languages';
+import {
+	createAddSnippetsTransform,
+	rebuildSnippets as rebuildSnippetRegistry,
+	getSnippetsForLanguage as filterSnippetsForLanguage,
+	type SnippetContribution,
+	type SnippetTransform,
+	type SnippetTransformEntry,
+	type RegisteredSnippet
+} from './completions';
 import { languages as seededBaseLanguages } from '@codemirror/language-data';
 import { syncActiveLanguageDescriptions } from '../editor/language.svelte';
 
@@ -153,7 +162,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision registerSnippet registerSnippets registerSnippetTransform removePluginSnippets rebuildSnippets refreshSnippets getSnippets getSnippetsForLanguage snippetRevision applyDocumentEdit '.split(/\s+/)
 );
 
 /**
@@ -294,6 +303,14 @@ export class PluginHost implements PluginHostInterface {
 	private languageTransforms: LanguageTransformEntry[] = [];
 	private registeredLanguages: RegisteredLanguage[] = [];
 	private languageConflicts: LanguageConflict[] = [];
+
+	// Snippet registry (spec #194). A sibling data registry with no seeded
+	// base: plugin transforms replay from empty in activation order. Every
+	// rebuild bumps snippetRevision so the editor's completion chain re-reads
+	// the pack with no stale triggers.
+	snippetRevision = $state(0);
+	private snippetTransforms: SnippetTransformEntry[] = [];
+	private registeredSnippets: RegisteredSnippet[] = [];
 
 	/**
 	 * Command registry facade with the same shape as the standalone
@@ -450,6 +467,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginKeymaps(id);
 		this.removePluginIcons(id);
 		this.removePluginLanguages(id);
+		this.removePluginSnippets(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -1904,6 +1922,7 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildUIContributions();
 			this.rebuildEditorContributions();
 			this.rebuildLanguagesInternal();
+			this.rebuildSnippetsInternal();
 			this.attachedKeymapRegistry?.rebuild();
 			this.attachedIconRegistry?.rebuild();
 		} catch (error) {
@@ -1918,6 +1937,7 @@ export class PluginHost implements PluginHostInterface {
 			this.removePluginKeymaps(id);
 			this.removePluginIcons(id);
 			this.removePluginLanguages(id);
+			this.removePluginSnippets(id);
 			const cleanup = this.cleanups.get(id);
 			if (cleanup) {
 				try {
@@ -1983,6 +2003,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginKeymaps(id);
 		this.removePluginIcons(id);
 		this.removePluginLanguages(id);
+		this.removePluginSnippets(id);
 
 		// Execute cleanup if present
 		const cleanup = this.cleanups.get(id);
@@ -2152,6 +2173,69 @@ export class PluginHost implements PluginHostInterface {
 
 	getLanguageConflicts(): LanguageConflict[] {
 		return [...this.languageConflicts];
+	}
+
+	// -------------------------------------------------------------------------
+	// Snippet registry (spec #194)
+	// -------------------------------------------------------------------------
+
+	private orderedSnippetTransforms(
+		transforms: readonly SnippetTransformEntry[] = this.snippetTransforms
+	): SnippetTransformEntry[] {
+		const byOwner = new SvelteMap<string, SnippetTransformEntry[]>();
+		for (const entry of transforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) {
+				list.push(entry);
+			} else {
+				byOwner.set(entry.pluginId, [entry]);
+			}
+		}
+		// No core owner: unlike the language table there is no seeded base to
+		// park at the lowest priority.
+		const orderedOwners = this.orderedRegistryOwners(Array.from(byOwner.keys()), () => false);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
+	}
+
+	private rebuildSnippetsInternal(): void {
+		this.registeredSnippets = rebuildSnippetRegistry(this.orderedSnippetTransforms());
+		this.snippetRevision++;
+	}
+
+	registerSnippet(pluginId: string, contribution: SnippetContribution): void {
+		this.registerSnippets(pluginId, [contribution]);
+	}
+
+	registerSnippets(pluginId: string, contributions: readonly SnippetContribution[]): void {
+		this.registerSnippetTransform(pluginId, createAddSnippetsTransform(contributions));
+	}
+
+	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void {
+		this.snippetTransforms = [...this.snippetTransforms, { pluginId, transform }];
+		this.rebuildSnippetsInternal();
+	}
+
+	removePluginSnippets(pluginId: string): void {
+		const kept = this.snippetTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length === this.snippetTransforms.length) return;
+		this.snippetTransforms = kept;
+		this.rebuildSnippetsInternal();
+	}
+
+	rebuildSnippets(): void {
+		this.rebuildSnippetsInternal();
+	}
+
+	refreshSnippets(): void {
+		this.rebuildSnippetsInternal();
+	}
+
+	getSnippets(): RegisteredSnippet[] {
+		return [...this.registeredSnippets];
+	}
+
+	getSnippetsForLanguage(language: string): RegisteredSnippet[] {
+		return filterSnippetsForLanguage(this.registeredSnippets, language);
 	}
 
 	attachKeymapRegistryInternal(registry: KeymapRegistry): void {

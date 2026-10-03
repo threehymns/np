@@ -83,7 +83,6 @@ import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
-import { bufferWordCompletionChain } from "./extensions/completion-sources";
 import { StrikethroughExtension } from "./extensions/strikethrough";
 import { HighlightExtension } from "./extensions/inline-highlight";
 import { HashTagExtension } from "./extensions/hash-tags";
