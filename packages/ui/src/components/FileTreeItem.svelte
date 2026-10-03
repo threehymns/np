@@ -99,7 +99,7 @@
 		menuTargetIndex = null;
 		menuArmed = false;
 		if (visualNode.kind === 'directory') {
-			await appState.workspace.projectTree.toggleVisualExpand(visualNode);
+			await appState.workspace.project.projectTree.toggleVisualExpand(visualNode);
 		} else {
 			await appState.workspace.openFile(visualNode.origin);
 		}
@@ -110,9 +110,9 @@
 		if (!name) return;
 		if (visualNode.kind === 'directory') {
 			const target = menuTargetNode();
-			await appState.workspace.projectTree.createFile(target.origin, name, target);
+			await appState.workspace.project.projectTree.createFile(target.origin, name, target);
 		} else if (visualNode.parentOrigin) {
-			await appState.workspace.projectTree.createFile(visualNode.parentOrigin, name);
+			await appState.workspace.project.projectTree.createFile(visualNode.parentOrigin, name);
 		}
 	}
 
@@ -121,9 +121,9 @@
 		if (!name) return;
 		if (visualNode.kind === 'directory') {
 			const target = menuTargetNode();
-			await appState.workspace.projectTree.createDirectory(target.origin, name, target);
+			await appState.workspace.project.projectTree.createDirectory(target.origin, name, target);
 		} else if (visualNode.parentOrigin) {
-			await appState.workspace.projectTree.createDirectory(visualNode.parentOrigin, name);
+			await appState.workspace.project.projectTree.createDirectory(visualNode.parentOrigin, name);
 		}
 	}
 
@@ -135,14 +135,14 @@
 			if (idx < chain.length - 1) {
 				const subpath = chain.slice(idx).map((n: { name: string }) => n.name).join('/');
 				if (confirm(`Are you sure you want to delete ${subpath} and everything inside it?`)) {
-					await appState.workspace.projectTree.deleteEntry(target);
+					await appState.workspace.project.projectTree.deleteEntry(target);
 				}
 			} else if (confirm(`Are you sure you want to delete ${target.name}?`)) {
-				await appState.workspace.projectTree.deleteEntry(target);
+				await appState.workspace.project.projectTree.deleteEntry(target);
 			}
 		} else {
 			if (confirm(`Are you sure you want to delete ${visualNode.name}?`)) {
-				await appState.workspace.projectTree.deleteEntry(visualNode.originalNode);
+				await appState.workspace.project.projectTree.deleteEntry(visualNode.originalNode);
 			}
 		}
 	}
@@ -175,10 +175,10 @@
 		if (visualNode.kind === 'directory' && renamingIndex !== null) {
 			const target = visualNode.chain[Math.min(renamingIndex, visualNode.chain.length - 1)];
 			if (trimmedName && trimmedName !== target.name) {
-				await appState.workspace.projectTree.renameEntry(target, trimmedName);
+				await appState.workspace.project.projectTree.renameEntry(target, trimmedName);
 			}
 		} else if (trimmedName && trimmedName !== visualNode.leafNode.name) {
-			await appState.workspace.projectTree.renameEntry(visualNode.leafNode, trimmedName);
+			await appState.workspace.project.projectTree.renameEntry(visualNode.leafNode, trimmedName);
 		}
 		isRenaming = false;
 		renamingIndex = null;

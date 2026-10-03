@@ -5,9 +5,8 @@ import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
-import type { ProjectTree } from './project/tree.svelte';
 import { Project } from './project/project.svelte';
-import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
+import type { RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
@@ -24,98 +23,16 @@ export class Workspace {
 	pendingCloseId = $state<string | null>(null);
 	project: Project;
 	recentFolders = $state<FileOrigin[]>([]);
-	/**
-	 * Deprecated forwarder — the tree lives on Project (`project.tree`).
-	 * Will be removed in #253 when all consumers route through Project.
-	 */
-	get projectTree(): ProjectTree {
-		return this.project.projectTree;
-	}
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
 
-	get rootOrigin(): FileOrigin | null {
-		return this.project.rootOrigin;
-	}
-
-	set rootOrigin(origin: FileOrigin | null) {
-		this.project.rootOrigin = origin;
-	}
-
-	get repository(): Repository | null {
-		return this.project.repository;
-	}
-
-	set repository(repo: Repository | null) {
-		this.project.repository = repo;
-	}
-
-	get repositoryOwnerId(): string | null {
-		return this.project.repositoryOwnerId;
-	}
-
-	set repositoryOwnerId(id: string | null) {
-		this.project.repositoryOwnerId = id;
-	}
-
-	get hasRootPermission(): boolean {
-		return this.project.hasRootPermission;
-	}
-
-	set hasRootPermission(value: boolean) {
-		this.project.hasRootPermission = value;
-	}
-
-	get storage(): Storage {
-		return this.project.storage;
-	}
-
-	set storage(value: Storage) {
-		this.project.storage = value;
-	}
-
-	get vcsFactory(): (rootOrigin: FileOrigin) => VCSAdapter {
-		return this.project.vcsFactory;
-	}
-
-	set vcsFactory(factory: (rootOrigin: FileOrigin) => VCSAdapter) {
-		this.project.vcsFactory = factory;
-	}
-
-	get persistence(): SessionPersistence {
-		return this.project.persistence;
-	}
-
-	set persistence(value: SessionPersistence) {
-		this.project.persistence = value;
-	}
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
 	private restorePromise: Promise<void> | null = null;
 	private latestRestoreId = 0;
 
 	private saveOpenFilesTimeout: any = null;
-
-	/**
-	 * Is this origin covered by the granted workspace root? Synchronous and
-	 * side-effect free. Deprecated forwarder — the single owner is
-	 * Project.coversOrigin; Documents still receive coverage as plain
-	 * call-time data. Will be removed in #253 when all consumers route
-	 * through Project.
-	 */
-	coversOrigin(origin: FileOrigin): boolean {
-		return this.project.coversOrigin(origin);
-	}
-
-	/**
-	 * Path of `origin` relative to the granted workspace root, or null when
-	 * not covered. Returns '' for the root itself. Deprecated forwarder —
-	 * the single owner is Project.relativePath. Will be removed in #253.
-	 */
-	relativePath(origin: FileOrigin): string | null {
-		return this.project.relativePath(origin);
-	}
 
 	/**
 	 * The keystroke path: set in-memory content and schedule a session flush.
@@ -185,7 +102,7 @@ export class Workspace {
 				// folder and prefill the draft title. Falls back to a safe
 				// filename with no directory when no folder is open.
 				suggestedName: needsPicker ? toSuggestedSaveName(doc.fileName) : undefined,
-				startDirectory: needsPicker ? this.rootOrigin : undefined
+				startDirectory: needsPicker ? this.project.rootOrigin : undefined
 			});
 		} catch (error) {
 			await this.pluginHost?.runAfterSave({ document: doc, options, success: false });
@@ -214,7 +131,7 @@ export class Workspace {
 
 	private applyPendingDiffRestore() {
 		if (!this.isRepositoryActive) return;
-		const repo = this.repository;
+		const repo = this.project.repository;
 		if (!repo || this.pendingDiffRestore.size === 0) return;
 
 		for (const [tabId, pending] of [...this.pendingDiffRestore]) {
@@ -261,7 +178,7 @@ export class Workspace {
 					virtualTabType: 'diff',
 					...(tab.pluginId ? { pluginId: tab.pluginId } : {})
 				};
-				const active = this.repository?.activeDiffFile;
+				const active = this.project.repository?.activeDiffFile;
 				if (active) {
 					serialized.diffFilepath = active.filepath;
 					serialized.diffStaged = active.staged;
@@ -300,10 +217,10 @@ export class Workspace {
 			this.saveOpenFilesTimeout = null;
 		}
 
-		const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 		const serializedDocs = this.serializeTabs();
 
-		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
+		await this.project.persistence.saveOpenFiles(serializedDocs, folderUri);
 	}
 
 	constructor(
@@ -344,7 +261,7 @@ export class Workspace {
 			$effect(() => {
 				if (this.isRestoring) return;
 				
-				const _folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+				const _folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 				const _tabs = this.tabs.map(t => t.id).join(',');
 				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
 				
@@ -353,8 +270,8 @@ export class Workspace {
 
 			$effect(() => {
 				if (this.isRestoring) return;
-				const folderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
-				this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+				const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
+				this.project.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
 				untrack(() => {
 					void this.flushSaveOpenFiles().catch((e) => console.error('[Workspace] flushSaveOpenFiles failed', e));
 				});
@@ -363,13 +280,13 @@ export class Workspace {
 			$effect(() => {
 				if (this.isRestoring) return;
 				// Persist root folder
-				this.persistence.saveRootFolder(this.rootOrigin ? $state.snapshot(this.rootOrigin) : null);
+				this.project.persistence.saveRootFolder(this.project.rootOrigin ? $state.snapshot(this.project.rootOrigin) : null);
 			});
 
 			$effect(() => {
 				if (this.isRestoring) return;
 				// Persist recent folders
-				this.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
+				this.project.persistence.saveRecentFolders($state.snapshot(this.recentFolders));
 			});
 		});
 	}
@@ -402,9 +319,9 @@ export class Workspace {
 	 * publisher.
 	 */
 	get isRepositoryActive(): boolean {
-		if (!this.repository || !this.repositoryOwnerId) return false;
+		if (!this.project.repository || !this.project.repositoryOwnerId) return false;
 		try {
-			return this.pluginHost?.isPluginActive(this.repositoryOwnerId) ?? false;
+			return this.pluginHost?.isPluginActive(this.project.repositoryOwnerId) ?? false;
 		} catch {
 			return false;
 		}
@@ -412,12 +329,12 @@ export class Workspace {
 
 	get currentBranch() {
 		if (!this.isRepositoryActive) return null;
-		return this.repository?.currentBranch ?? null;
+		return this.project.repository?.currentBranch ?? null;
 	}
 
 	get branches() {
 		if (!this.isRepositoryActive) return [];
-		return this.repository?.branches ?? [];
+		return this.project.repository?.branches ?? [];
 	}
 
 	setTabs(tabs: WorkspaceTab[]) {
@@ -466,7 +383,7 @@ export class Workspace {
 
 	async newFile() {
 		this.untitledCounter++;
-		const newDoc = new DocumentSession(this.storage, '', null, `Untitled ${this.untitledCounter}`);
+		const newDoc = new DocumentSession(this.project.storage, '', null, `Untitled ${this.untitledCounter}`);
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -479,7 +396,7 @@ export class Workspace {
 		if (specificOrigin) {
 			origin = specificOrigin;
 		} else {
-			origin = await this.storage.pickFile();
+			origin = await this.project.storage.pickFile();
 		}
 
 		if (!origin) return;
@@ -492,8 +409,8 @@ export class Workspace {
 			return existing;
 		}
 
-		const content = await this.storage.readFile(origin);
-		const newDoc = new DocumentSession(this.storage, content, origin);
+		const content = await this.project.storage.readFile(origin);
+		const newDoc = new DocumentSession(this.project.storage, content, origin);
 		newDoc.refreshPermissionState(this.project.coversOrigin(origin));
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
@@ -507,25 +424,25 @@ export class Workspace {
 		if (specificOrigin) {
 			origin = specificOrigin;
 		} else {
-			origin = await this.storage.pickDirectory();
+			origin = await this.project.storage.pickDirectory();
 		}
 
 		if (!origin) return;
 		
 		// Verify permission
-		const granted = await this.storage.verifyPermission(origin, true);
+		const granted = await this.project.storage.verifyPermission(origin, true);
 		if (!granted) return;
 
 		// Save old state
 		await this.flushSaveOpenFiles();
-		const oldFolderUri = this.rootOrigin ? toURI(this.rootOrigin) : '';
+		const oldFolderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 		await this.saveFolderState(oldFolderUri);
 
 		this.isRestoring = true;
 
 		try {
-			this.rootOrigin = origin;
-			this.hasRootPermission = true;
+			this.project.rootOrigin = origin;
+			this.project.hasRootPermission = true;
 			await this.onRootOriginChange?.(origin);
 
 			// Repository lifecycle is owned by feature plugins (#202) through
@@ -537,8 +454,8 @@ export class Workspace {
 			// with plugin attribution, so when the owning hook fails the slot
 			// stays in this safe empty state and open proceeds (tree scan,
 			// session restore) instead of aborting or showing stale state.
-			this.repository = null;
-			this.repositoryOwnerId = null;
+			this.project.repository = null;
+			this.project.repositoryOwnerId = null;
 			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 
 			// Add to recent folders
@@ -546,9 +463,9 @@ export class Workspace {
 			this.recentFolders = [origin, ...newRecent].slice(0, 10);
 
 			// Reset project tree expansion state
-			this.projectTree.resetExpansionState();
+			this.project.projectTree.resetExpansionState();
 
-			await this.projectTree.scan(origin);
+			await this.project.projectTree.scan(origin);
 
 			// Load new folder state
 			const folderUri = toURI(origin);
@@ -566,22 +483,22 @@ export class Workspace {
 	}
 
 	async requestRootPermission() {
-		if (!this.rootOrigin) return false;
-		const granted = await this.storage.verifyPermission(this.rootOrigin, true);
+		if (!this.project.rootOrigin) return false;
+		const granted = await this.project.storage.verifyPermission(this.project.rootOrigin, true);
 		if (granted) {
-			this.hasRootPermission = true;
-			await this.onRootOriginChange?.(this.rootOrigin);
+			this.project.hasRootPermission = true;
+			await this.onRootOriginChange?.(this.project.rootOrigin);
 
 			// Repository lifecycle is plugin-owned (#202, see openDirectory):
 			// clear unconditionally, then let the workspace-opened hook
 			// detect and refresh when the owning plugin is enabled. A fresh
 			// adapter is created per open, so no adapter reset is needed.
-			this.repository = null;
-			this.repositoryOwnerId = null;
-			await this.pluginHost.runWorkspaceOpened({ origin: this.rootOrigin, workspace: this });
+			this.project.repository = null;
+			this.project.repositoryOwnerId = null;
+			await this.pluginHost.runWorkspaceOpened({ origin: this.project.rootOrigin, workspace: this });
 			this.applyPendingDiffRestore();
 
-			await this.projectTree.scan(this.rootOrigin);
+			await this.project.projectTree.scan(this.project.rootOrigin);
 
 			// Refresh permissions for already open files
 			for (const doc of this.documents) {
@@ -671,7 +588,7 @@ export class Workspace {
 	}
 
 	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
-		if (!this.repository || !this.isRepositoryActive) return null;
+		if (!this.project.repository || !this.isRepositoryActive) return null;
 		
 		const modifiedFiles = await Promise.all(
 			this.documents
@@ -685,20 +602,20 @@ export class Workspace {
 				})
 		);
 			
-		return await this.repository.getSafetyReport(modifiedFiles, targetBranch);
+		return await this.project.repository.getSafetyReport(modifiedFiles, targetBranch);
 	}
 
 	async switchBranch(branchName: string): Promise<SwitchResult> {
-		if (!this.repository || !this.rootOrigin || !this.isRepositoryActive) {
+		if (!this.project.repository || !this.project.rootOrigin || !this.isRepositoryActive) {
 			return { status: 'error', message: 'No repository' };
 		}
 
 		try {
-			const result = await this.repository.switchBranch(branchName);
+			const result = await this.project.repository.switchBranch(branchName);
 			
 			if (result.status === 'switched' || result.status === 'noop') {
 				// Full reload after branch switch
-				await this.projectTree.scan(this.rootOrigin);
+				await this.project.projectTree.scan(this.project.rootOrigin);
 				
 				for (const doc of this.documents) {
 					if (doc.origin) {
@@ -803,15 +720,15 @@ export class Workspace {
 	async saveFolderState(folderUri: string) {
 		const serializedDocs = this.serializeTabs();
 
-		await this.persistence.saveOpenFiles(serializedDocs, folderUri);
-		await this.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
+		await this.project.persistence.saveOpenFiles(serializedDocs, folderUri);
+		await this.project.persistence.saveActiveDocumentId(this.activeTabId, folderUri);
 	}
 
 	async loadFolderState(folderUri: string) {
 		this.pendingDiffRestore.clear();
 		try {
-			const origins = await this.persistence.loadOpenFiles(folderUri);
-			const activeId = await this.persistence.loadActiveDocumentId(folderUri);
+			const origins = await this.project.persistence.loadOpenFiles(folderUri);
+			const activeId = await this.project.persistence.loadActiveDocumentId(folderUri);
 
 			if (origins && origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
@@ -839,7 +756,7 @@ export class Workspace {
 							continue;
 						}
 						doc = new DocumentSession(
-							this.storage,
+							this.project.storage,
 							'',
 							serialized.origin,
 							serialized.untitledTitle || 'Untitled'
@@ -861,7 +778,7 @@ export class Workspace {
 					} else {
 						// Old schema compatibility
 						const origin = serialized as unknown as FileOrigin;
-						doc = new DocumentSession(this.storage, '', origin);
+						doc = new DocumentSession(this.project.storage, '', origin);
 						doc.refreshPermissionState(this.project.coversOrigin(origin));
 					}
 					restoredDocs.push(doc);
@@ -915,7 +832,7 @@ export class Workspace {
 			}
 
 			try {
-				const all = await this.persistence.loadAll();
+				const all = await this.project.persistence.loadAll();
 				
 				const rootOrigin: FileOrigin | null = all.rootFolder || null;
 				const recentFolders: FileOrigin[] = all.recentFolders || [];
@@ -923,12 +840,12 @@ export class Workspace {
 				this.recentFolders = recentFolders;
 
 				if (rootOrigin) {
-					this.rootOrigin = rootOrigin;
+					this.project.rootOrigin = rootOrigin;
 
-					const permission = await this.storage.queryPermission(rootOrigin, true);
+					const permission = await this.project.storage.queryPermission(rootOrigin, true);
 					
 					if (permission === 'granted') {
-						this.hasRootPermission = true;
+						this.project.hasRootPermission = true;
 						await this.onRootOriginChange?.(rootOrigin);
 						// Initialize repo and tree in background
 						(async () => {
@@ -937,8 +854,8 @@ export class Workspace {
 								// plugin-owned probe so the UI never shows stale
 								// state. Detection/refresh run through the generic
 								// workspace-opened hook (#202).
-								this.repository = null;
-								this.repositoryOwnerId = null;
+								this.project.repository = null;
+								this.project.repositoryOwnerId = null;
 								await this.pluginHost.runWorkspaceOpened({
 									origin: rootOrigin!,
 									workspace: this
@@ -946,13 +863,13 @@ export class Workspace {
 								// Session restore loads tabs before the repo exists;
 								// re-apply the persisted diff selection once changes are in.
 								this.applyPendingDiffRestore();
-								await this.projectTree.scan(rootOrigin!);
+								await this.project.projectTree.scan(rootOrigin!);
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
 							}
 						})();
 					} else {
-						this.hasRootPermission = false;
+						this.project.hasRootPermission = false;
 					}
 				}
 

@@ -458,15 +458,15 @@ describe("Document permission query freshness", () => {
 		storage.readDirectory = mock(async () => []) as any;
 
 		const ws = makeWorkspace(storage, persistence);
-		ws.rootOrigin = { scheme: "file", path: "/root", name: "root" } as FileOrigin;
-		ws.hasRootPermission = false;
+		ws.project.rootOrigin = { scheme: "file", path: "/root", name: "root" } as FileOrigin;
+		ws.project.hasRootPermission = false;
 
 		const docOrigin = { scheme: "file", path: "/root/test.txt", name: "test.txt" } as FileOrigin;
 		const doc = makeDocSession(storage, "", docOrigin);
 		ws.documents.push(doc);
 
 		// Not covered yet (no root permission), so this issues an async query.
-		doc.refreshPermissionState(ws.coversOrigin(docOrigin));
+		doc.refreshPermissionState(ws.project.coversOrigin(docOrigin));
 		const granted = await ws.requestRootPermission();
 		expect(granted).toBe(true);
 		expect(doc.permissionState).toBe("granted");

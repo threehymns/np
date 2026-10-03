@@ -21,7 +21,7 @@ function createMockAppState(adapter: Partial<VCSAdapter> = {}, alerts: string[] 
 	};
 	return {
 		appState: {
-			getWorkspace: () => ({ repository }) as any,
+			getWorkspace: () => ({ project: { repository } }) as any,
 			alert: mock(async (msg: string) => {
 				alerts.push(msg);
 			}),

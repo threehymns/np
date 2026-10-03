@@ -199,7 +199,7 @@ export class AppState {
 			getCurrentNavigator: () => this.activeDiffNavigator ?? undefined
 		});
 		this.workspace.onRootOriginChange = async (origin) => {
-			if (origin && this.workspace.hasRootPermission) {
+			if (origin && this.workspace.project.hasRootPermission) {
 				await this.prefs.attachWorkspace(this.storage, origin);
 			} else {
 				this.prefs.clearWorkspace();

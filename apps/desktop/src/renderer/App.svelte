@@ -72,7 +72,7 @@
     // proceeds; flushSync in main remains the final safety net.
     const unsubscribeFlush = window.electronAPI?.onSessionFlushRequest?.(async () => {
       try {
-        const folderUri = appState.workspace.rootOrigin ? toURI(appState.workspace.rootOrigin) : '';
+        const folderUri = appState.workspace.project.rootOrigin ? toURI(appState.workspace.project.rootOrigin) : '';
         await appState.workspace.saveFolderState(folderUri);
         await window.electronAPI.persistenceFlush();
       } catch (e) {

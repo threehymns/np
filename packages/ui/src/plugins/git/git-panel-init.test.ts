@@ -13,9 +13,11 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 	beforeEach(() => {
 		mockWorkspace = {
-			rootOrigin,
-			hasRootPermission: true,
-			repository: null
+			project: {
+				rootOrigin,
+				hasRootPermission: true,
+				repository: null
+			}
 		};
 
 		mockAppState = {
@@ -26,7 +28,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 				// `git.init` command.
 				execute: mock(async (id: string) => {
 					if (id === 'git.init') {
-						mockWorkspace.repository = { currentBranch: "main", changes: [] };
+						mockWorkspace.project.repository = { currentBranch: "main", changes: [] };
 						return true;
 					}
 					return undefined;
@@ -39,8 +41,8 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 
 	describe("1. Idle state and permission gating", () => {
 		it("enables initialization when workspace folder is open with write permission", () => {
-			mockWorkspace.rootOrigin = rootOrigin;
-			mockWorkspace.hasRootPermission = true;
+			mockWorkspace.project.rootOrigin = rootOrigin;
+			mockWorkspace.project.hasRootPermission = true;
 
 			expect(controller.canInitialize).toBe(true);
 			expect(controller.isInitializing).toBe(false);
@@ -48,8 +50,8 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 		});
 
 		it("disables initialization when no workspace folder is open (rootOrigin is null)", async () => {
-			mockWorkspace.rootOrigin = null;
-			mockWorkspace.hasRootPermission = true;
+			mockWorkspace.project.rootOrigin = null;
+			mockWorkspace.project.hasRootPermission = true;
 
 			expect(controller.canInitialize).toBe(false);
 
@@ -61,8 +63,8 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 		});
 
 		it("disables initialization when write permission is not granted (hasRootPermission is false)", async () => {
-			mockWorkspace.rootOrigin = rootOrigin;
-			mockWorkspace.hasRootPermission = false;
+			mockWorkspace.project.rootOrigin = rootOrigin;
+			mockWorkspace.project.hasRootPermission = false;
 
 			expect(controller.canInitialize).toBe(false);
 
@@ -84,7 +86,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 				expect(id).toBe("git.init");
 				initCallCount++;
 				await initDeferred;
-				mockWorkspace.repository = { currentBranch: "main", changes: [] };
+				mockWorkspace.project.repository = { currentBranch: "main", changes: [] };
 				return true;
 			});
 
@@ -143,7 +145,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 				if (attempt === 1) {
 					throw new Error("Temporary locked file error");
 				}
-				mockWorkspace.repository = { currentBranch: "main", changes: [] };
+				mockWorkspace.project.repository = { currentBranch: "main", changes: [] };
 				return true;
 			});
 
@@ -196,7 +198,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 			expect(controller.isInitializing).toBe(true);
 
 			// Switch workspace root while initialization is pending
-			mockWorkspace.rootOrigin = { scheme: "file", path: "/workspace/other", name: "other" };
+			mockWorkspace.project.rootOrigin = { scheme: "file", path: "/workspace/other", name: "other" };
 
 			resolveInit();
 			const result = await initPromise;
@@ -237,7 +239,7 @@ describe("GitPanel Empty State - GitInitController & Initialization Lifecycle (T
 		});
 
 		it("displays helpful guidance message when write permission is missing", () => {
-			expect(svelteContent).toContain("!appState.workspace.hasRootPermission");
+			expect(svelteContent).toContain("!appState.workspace.project.hasRootPermission");
 		});
 	});
 });

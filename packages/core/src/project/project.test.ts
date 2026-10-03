@@ -58,11 +58,11 @@ describe("Project coverage single ownership (#251)", () => {
 		const ws = new WorkspaceClass(createMockStorage(), makeVcsFactory(), new MemorySessionPersistence());
 		ws.project.rootOrigin = root;
 		ws.project.hasRootPermission = true;
-		expect(ws.coversOrigin({ scheme: "file", path: "/proj/a.md", name: "a.md" })).toBe(
+		expect(ws.project.coversOrigin({ scheme: "file", path: "/proj/a.md", name: "a.md" })).toBe(
 			project.coversOrigin({ scheme: "file", path: "/proj/a.md", name: "a.md" })
 		);
-		expect(ws.relativePath(root)).toBe(project.relativePath(root));
-		expect(ws.relativePath({ scheme: "file", path: "/proj2/a.md", name: "a.md" })).toBe(
+		expect(ws.project.relativePath(root)).toBe(project.relativePath(root));
+		expect(ws.project.relativePath({ scheme: "file", path: "/proj2/a.md", name: "a.md" })).toBe(
 			project.relativePath({ scheme: "file", path: "/proj2/a.md", name: "a.md" })
 		);
 	});

@@ -61,7 +61,7 @@ function createTestContext(r: TestRepo, adapter: VCSAdapter) {
 	const repository = new Repository(repoOrigin, () => adapter);
 	// Hunk actions take the Git plugin's command context (#202).
 	const appState = {
-		getWorkspace: () => ({ repository }),
+		getWorkspace: () => ({ project: { repository } }),
 		alert: async (msg: string) => {
 			throw new Error(`Unexpected alert dialog: ${msg}`);
 		},

@@ -9,7 +9,9 @@ function createMockAppState() {
 	let openFileCalled = false;
 
 	const workspace = {
-		rootOrigin: { scheme: "file", path: "/projects/np", name: "np" } as FileOrigin,
+		project: {
+			rootOrigin: { scheme: "file", path: "/projects/np", name: "np" } as FileOrigin,
+		},
 		openFile: mock(async (origin?: FileOrigin) => {
 			openedFiles.push(origin);
 			return origin;

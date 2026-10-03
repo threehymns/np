@@ -74,7 +74,7 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 			return "";
 		});
 
-		await ws.projectTree.scan(rootOrigin);
+		await ws.project.projectTree.scan(rootOrigin);
 
 		expect(doc.content).toBe(unsavedEdit);
 		expect(doc.deletedOnDisk).toBe(true);
@@ -110,7 +110,7 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 			return "";
 		});
 
-		await ws.projectTree.scan(rootOrigin);
+		await ws.project.projectTree.scan(rootOrigin);
 
 		expect(doc.content).toBe(diskContent);
 		expect(doc.deletedOnDisk).toBe(true);
@@ -120,7 +120,7 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 	it("leaves open docs alone when nothing was deleted externally", async () => {
 		const { ws, doc } = await makeWsWithOpenFile();
 		// readFile still succeeds: file exists on disk.
-		await ws.projectTree.scan(rootOrigin);
+		await ws.project.projectTree.scan(rootOrigin);
 
 		expect(doc.deletedOnDisk).toBe(false);
 		expect(ws.tabs.some((t) => t.id === doc.id)).toBe(true);
@@ -142,7 +142,7 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 			return `content of ${o.path}\n`;
 		});
 
-		await ws.projectTree.scan(rootOrigin);
+		await ws.project.projectTree.scan(rootOrigin);
 
 		expect(under.deletedOnDisk).toBe(true);
 		expect(sibling.deletedOnDisk).toBe(false);
@@ -198,7 +198,7 @@ describe("external delete marks open tabs deleted-on-disk (issue #175)", () => {
 			if (o.path === fileOrigin.path) throw notFound();
 			return "";
 		});
-		await ws.projectTree.scan(rootOrigin);
+		await ws.project.projectTree.scan(rootOrigin);
 		expect(doc.deletedOnDisk).toBe(true);
 
 		// File recreated externally with different content; the next

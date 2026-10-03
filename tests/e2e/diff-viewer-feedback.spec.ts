@@ -19,7 +19,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 				const root = new (window as any).MockDirectoryHandle('diff-test-project');
 				const origin = { scheme: 'browser', path: root.name, name: root.name };
 				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
-				const repository = new RepositoryClass(origin, appState.workspace.vcsFactory);
+				const repository = new RepositoryClass(origin, appState.workspace.project.vcsFactory);
 				const adapter = repository.adapter;
 
 				await root.getDirectoryHandle('.git', { create: true });
@@ -44,10 +44,10 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 
 				await repository.refresh();
 
-				appState.workspace.rootOrigin = origin;
+				appState.workspace.project.rootOrigin = origin;
 				appState.workspace.rootHandle = root;
-				appState.workspace.hasRootPermission = true;
-				appState.workspace.repository = repository;
+				appState.workspace.project.hasRootPermission = true;
+				appState.workspace.project.repository = repository;
 
 				return { repository, changes: repository.changes };
 			};
@@ -91,7 +91,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 
 		await page.evaluate(async () => {
 			await (window as any).setupDiffTestRepo();
-			const adapter = (window as any).appState.workspace.repository.adapter;
+			const adapter = (window as any).appState.workspace.project.repository.adapter;
 			(window as any).__getFileDiffCalls = 0;
 			const original = adapter.getFileDiff.bind(adapter);
 			adapter.getFileDiff = async (...args: any[]) => {
@@ -250,7 +250,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		});
 
 		const waitForActiveFile = (filepath: string) =>
-			page.waitForFunction((fp) => (window as any).appState.workspace.repository?.activeDiffFile?.filepath === fp, filepath, { timeout: 5000 });
+			page.waitForFunction((fp) => (window as any).appState.workspace.project.repository?.activeDiffFile?.filepath === fp, filepath, { timeout: 5000 });
 		const activeRow = (name: string) =>
 			page.locator('.bg-sidebar-accent.border-border', { hasText: name });
 
@@ -267,7 +267,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		// Hunk navigation across files drags the highlight along (press until
 		// we leave README regardless of how many hunks it holds)
 		for (let i = 0; i < 4; i++) {
-			const current = await page.evaluate(() => (window as any).appState.workspace.repository?.activeDiffFile?.filepath);
+			const current = await page.evaluate(() => (window as any).appState.workspace.project.repository?.activeDiffFile?.filepath);
 			if (current === 'hello.ts') break;
 			await page.locator('button[title="Next Hunk"]').click();
 		}

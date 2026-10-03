@@ -142,9 +142,9 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 
 			await workspace.openDirectory();
 
-			expect(workspace.repository).not.toBeNull();
-			expect(workspace.repository?.currentBranch).toBe('main');
-			expect(workspace.repository?.branches).toEqual(['main']);
+			expect(workspace.project.repository).not.toBeNull();
+			expect(workspace.project.repository?.currentBranch).toBe('main');
+			expect(workspace.project.repository?.branches).toEqual(['main']);
 		});
 
 		it('leaves the repository null when the opened folder is not detected', async () => {
@@ -152,7 +152,7 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 
 			await workspace.openDirectory();
 
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('works when activated before the workspace is constructed (lazy service resolution)', async () => {
@@ -168,7 +168,7 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			);
 			await workspace.openDirectory();
 
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 			expect(host.getCommand('git.stage')).toBeDefined();
 		});
 
@@ -222,10 +222,10 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 
 			const repo = new Repository(rootOrigin, createMockVcsFactory());
 			const refreshSpy = spyOn(repo, 'refresh');
-			workspace.repository = repo;
+			workspace.project.repository = repo;
 
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/file.md', name: 'file.md' };
-			const doc = new DocumentSession(workspace.storage, '', fileOrigin);
+			const doc = new DocumentSession(workspace.project.storage, '', fileOrigin);
 			doc.content = 'Updated file content';
 
 			const saved = await workspace.saveDocument(doc);
@@ -240,9 +240,9 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 
 			const repo = new Repository(rootOrigin, createMockVcsFactory());
 			const refreshSpy = spyOn(repo, 'refresh');
-			workspace.repository = repo;
+			workspace.project.repository = repo;
 
-			const doc = new DocumentSession(workspace.storage, '', null);
+			const doc = new DocumentSession(workspace.project.storage, '', null);
 			await host.runAfterSave({ document: doc, options: {}, success: false });
 
 			expect(refreshSpy).not.toHaveBeenCalled();
@@ -305,13 +305,13 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 		it('drops the repository and removes commands and hooks', async () => {
 			const { host, workspace } = await makeHarness({ detected: true });
 			await workspace.openDirectory();
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 			expect(host.getCommand('git.stage')).toBeDefined();
 
 			await host.deactivate('git');
 
 			// Repository dropped so the UI falls back to its empty state.
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			// Commands removed via the shared registry.
 			for (const id of EXPECTED_GIT_COMMAND_IDS) {
 				expect(host.getCommand(id)).toBeUndefined();
@@ -322,20 +322,20 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 		it('stops save-triggered refresh and folder-open detection after disable', async () => {
 			const { host, workspace } = await makeHarness({ detected: true });
 			await workspace.openDirectory();
-			const repo = workspace.repository!;
+			const repo = workspace.project.repository!;
 			const refreshSpy = spyOn(repo, 'refresh');
 
 			await host.deactivate('git');
 
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/file.md', name: 'file.md' };
-			const doc = new DocumentSession(workspace.storage, '', fileOrigin);
+			const doc = new DocumentSession(workspace.project.storage, '', fileOrigin);
 			doc.content = 'Edit after disable';
 			await workspace.saveDocument(doc);
 			expect(refreshSpy).not.toHaveBeenCalled();
 
 			const otherOrigin: FileOrigin = { scheme: 'file', path: '/other', name: 'other' };
 			await workspace.openDirectory(otherOrigin);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 
 			refreshSpy.mockRestore();
 		});
@@ -344,13 +344,13 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			const { host, workspace } = await makeHarness({ detected: true });
 			await workspace.openDirectory();
 			await host.deactivate('git');
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 
 			await host.activate('git');
 			await workspace.openDirectory();
 
-			expect(workspace.repository).not.toBeNull();
-			expect(workspace.repository?.currentBranch).toBe('main');
+			expect(workspace.project.repository).not.toBeNull();
+			expect(workspace.project.repository?.currentBranch).toBe('main');
 			expect(host.getCommand('git.stage')).toBeDefined();
 		});
 
@@ -426,7 +426,7 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			await Promise.all([openTask, deactivateTask]);
 
 			// The late detect result is discarded: nothing is published after disable.
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('finishes active writes before disable completes', async () => {
@@ -440,8 +440,8 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					await initGate;
 				}
 			});
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 
 			const initTask = host.executeCommand('git.init');
 			for (let i = 0; i < 50 && !initCalled; i++) await tick(1);
@@ -455,7 +455,7 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(initCalled).toBe(true);
 			// ...but its result is dropped: disable wins over stale publication.
 			expect(initResult).toBe(false);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 	});
 
@@ -467,10 +467,10 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					initPath = path;
 				}
 			});
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			let scannedOrigin: FileOrigin | null = null;
-			workspace.projectTree.scan = mock(async (origin: FileOrigin) => {
+			workspace.project.projectTree.scan = mock(async (origin: FileOrigin) => {
 				scannedOrigin = origin;
 			});
 
@@ -478,8 +478,8 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 
 			expect(result).toBe(true);
 			expect(initPath).toBe(rootOrigin.path);
-			expect(workspace.repository).not.toBeNull();
-			expect(workspace.repository?.currentBranch).toBe('main');
+			expect(workspace.project.repository).not.toBeNull();
+			expect(workspace.project.repository?.currentBranch).toBe('main');
 			expect(scannedOrigin).toEqual(rootOrigin);
 			expect(alerts).toHaveLength(0);
 		});
@@ -502,21 +502,21 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 				confirm: mock(async () => true)
 			});
 			await host.activate('git');
-			workspace.rootOrigin = null;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = null;
+			workspace.project.hasRootPermission = true;
 
 			expect(await host.executeCommand('git.init')).toBe(false);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			expect(factoryCalled).toBe(false);
 		});
 
 		it('returns false when the folder lacks permission', async () => {
 			const { host, workspace } = await makeHarness({ detected: true });
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = false;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = false;
 
 			expect(await host.executeCommand('git.init')).toBe(false);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('alerts and returns false when the adapter lacks init capability', async () => {
@@ -524,22 +524,22 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			// Establish an OWNED publication through folder open: init may
 			// clear what it owns, never what it does not (ADR 0009).
 			await workspace.openDirectory();
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 
 			expect(await host.executeCommand('git.init')).toBe(false);
 			expect(alerts).toEqual(['Failed to initialize repository: VCS adapter does not support repository initialization']);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('never drops a foreign repository it does not own (ADR 0009)', async () => {
 			const { host, workspace, alerts } = await makeHarness({ init: async () => {} });
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			const foreign = new Repository(rootOrigin, createMockVcsFactory());
-			workspace.repository = foreign;
+			workspace.project.repository = foreign;
 
 			expect(await host.executeCommand('git.init')).toBe(false);
-			expect(workspace.repository).toBe(foreign);
+			expect(workspace.project.repository).toBe(foreign);
 			expect(alerts).toHaveLength(1);
 			expect(alerts[0]).toContain('another contributor');
 			expect(alerts[0]).toContain('Action:');
@@ -551,12 +551,12 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					throw new Error('Filesystem write permission denied');
 				}
 			});
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 
 			expect(await host.executeCommand('git.init')).toBe(false);
 			expect(alerts).toEqual(['Failed to initialize repository: Filesystem write permission denied']);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('clears stale repository before asynchronous initialization starts', async () => {
@@ -565,22 +565,22 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			const initPromise = new Promise<void>((r) => (resolveInit = r));
 			const { host, workspace } = await makeHarness({
 				init: async () => {
-					repoClearedBeforeInit = workspace.repository === null;
+					repoClearedBeforeInit = workspace.project.repository === null;
 					await initPromise;
 				}
 			});
 			// Owned stale state (folder-open publication): init may clear it.
 			await workspace.openDirectory();
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 
 			const initTask = host.executeCommand('git.init');
 			await tick();
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 
 			resolveInit();
 			expect(await initTask).toBe(true);
 			expect(repoClearedBeforeInit).toBe(true);
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 		});
 
 		it('does not publish when the folder switches during deferred init', async () => {
@@ -591,25 +591,25 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 					await initGate;
 				}
 			});
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			const scanned: FileOrigin[] = [];
-			workspace.projectTree.scan = mock(async (origin: FileOrigin) => {
+			workspace.project.projectTree.scan = mock(async (origin: FileOrigin) => {
 				scanned.push(origin);
 			});
 
 			const initTask = host.executeCommand('git.init');
 			await tick();
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 
 			const otherOrigin: FileOrigin = { scheme: 'file', path: '/projects/other', name: 'other' };
-			workspace.rootOrigin = otherOrigin;
+			workspace.project.rootOrigin = otherOrigin;
 			const newerRepository = { currentBranch: 'newer' } as any;
-			workspace.repository = newerRepository;
+			workspace.project.repository = newerRepository;
 
 			resolveInit();
 			expect(await initTask).toBe(false);
-			expect(workspace.repository).toBe(newerRepository);
+			expect(workspace.project.repository).toBe(newerRepository);
 			expect(scanned).toEqual([]);
 		});
 
@@ -638,13 +638,13 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 				confirm: mock(async () => true)
 			});
 			await host.activate('git');
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			const scanMock = mock(async () => {});
-			workspace.projectTree.scan = scanMock;
+			workspace.project.projectTree.scan = scanMock;
 
 			expect(await host.executeCommand('git.init')).toBe(false);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			expect(scanMock).not.toHaveBeenCalled();
 		});
 
@@ -654,33 +654,33 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 				resolveScan = resolve;
 			});
 			const { host, workspace } = await makeHarness({ init: async () => {} });
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
-			workspace.projectTree.scan = mock(async () => {
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
+			workspace.project.projectTree.scan = mock(async () => {
 				await scanPromise;
 			});
 
 			const initOp = host.executeCommand('git.init');
 			await tick(2);
 
-			workspace.rootOrigin = { scheme: 'file', path: '/projects/other', name: 'other' };
+			workspace.project.rootOrigin = { scheme: 'file', path: '/projects/other', name: 'other' };
 			resolveScan();
 
 			expect(await initOp).toBe(false);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('alerts and returns false when project tree scan rejects', async () => {
 			const { host, workspace, alerts } = await makeHarness({ init: async () => {} });
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
-			workspace.projectTree.scan = mock(async () => {
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
+			workspace.project.projectTree.scan = mock(async () => {
 				throw new Error('Project tree scan failure');
 			});
 
 			expect(await host.executeCommand('git.init')).toBe(false);
 			expect(alerts).toEqual(['Failed to initialize repository: Project tree scan failure']);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 	});
 
@@ -719,7 +719,7 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			);
 
 			const state = createWorkspaceGitState(workspace);
-			workspace.rootOrigin = originA;
+			workspace.project.rootOrigin = originA;
 
 			// Start opening folder A (will pause on detectGateA)
 			const openTaskA = openFolderRepository(state, originA);
@@ -727,21 +727,21 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(detectACalled).toBe(true);
 
 			// Now switch workspace to folder B and start opening folder B
-			workspace.rootOrigin = originB;
+			workspace.project.rootOrigin = originB;
 			const openTaskB = openFolderRepository(state, originB);
 			await openTaskB;
 
 			// Folder B is now published
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 			
-			const repoB = workspace.repository;
+			const repoB = workspace.project.repository;
 
 			// Now release folder A detect
 			releaseDetectA();
 			await openTaskA;
 
 			// Workspace repository must NOT have been overwritten or disposed by the stale open A!
-			expect(workspace.repository).toBe(repoB);
+			expect(workspace.project.repository).toBe(repoB);
 			expect(state.repository).toBe(repoB);
 		});
 
@@ -773,18 +773,18 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			);
 
 			const state = createWorkspaceGitState(workspace);
-			workspace.rootOrigin = originA;
+			workspace.project.rootOrigin = originA;
 
 			const openTaskA = openFolderRepository(state, originA);
 			await tick(5);
 
 			// Root changed while refresh was in flight
-			workspace.rootOrigin = originB;
+			workspace.project.rootOrigin = originB;
 			releaseRefresh();
 			await openTaskA;
 
 			// Stale repo for folder A was cleared and not left active for folder B
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			expect(state.repository).toBeNull();
 		});
 
@@ -817,28 +817,28 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			);
 
 			const state = createWorkspaceGitState(workspace);
-			workspace.rootOrigin = originA;
+			workspace.project.rootOrigin = originA;
 
 			const openTaskA = openFolderRepository(state, originA);
 			// Wait until A publishes before starting B
-			for (let i = 0; i < 50 && !workspace.repository; i++) await tick(1);
-			expect(workspace.repository).not.toBeNull();
+			for (let i = 0; i < 50 && !workspace.project.repository; i++) await tick(1);
+			expect(workspace.project.repository).not.toBeNull();
 			publishedA = true;
 
 			// Newer open displaces A and publishes B
-			workspace.rootOrigin = originB;
+			workspace.project.rootOrigin = originB;
 			await openFolderRepository(state, originB);
-			const repoB = workspace.repository;
+			const repoB = workspace.project.repository;
 			expect(repoB).not.toBeNull();
-			expect(workspace.repositoryOwnerId).toBe("git");
+			expect(workspace.project.repositoryOwnerId).toBe("git");
 
 			// Stale A refresh completes; it must not clear B or its ownership
 			releaseRefreshA();
 			await openTaskA;
 
 			expect(publishedA).toBe(true);
-			expect(workspace.repository).toBe(repoB);
-			expect(workspace.repositoryOwnerId).toBe("git");
+			expect(workspace.project.repository).toBe(repoB);
+			expect(workspace.project.repositoryOwnerId).toBe("git");
 			expect(state.repository).toBe(repoB);
 		});
 
@@ -869,9 +869,9 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			);
 
 			const state = createWorkspaceGitState(workspace);
-			workspace.rootOrigin = originA;
-			workspace.hasRootPermission = true;
-			workspace.projectTree.scan = mock(async () => {
+			workspace.project.rootOrigin = originA;
+			workspace.project.hasRootPermission = true;
+			workspace.project.projectTree.scan = mock(async () => {
 				scanStarted = true;
 				await scanGate;
 			});
@@ -881,16 +881,16 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(scanStarted).toBe(true);
 
 			// Newer folder-open publishes B while init A is stuck in scan
-			workspace.rootOrigin = originB;
+			workspace.project.rootOrigin = originB;
 			await openFolderRepository(state, originB);
-			const repoB = workspace.repository;
+			const repoB = workspace.project.repository;
 			expect(repoB).not.toBeNull();
 
 			// Stale init A finishes; it must not clear B
 			releaseScan();
 			expect(await initTaskA).toBe(false);
-			expect(workspace.repository).toBe(repoB);
-			expect(workspace.repositoryOwnerId).toBe("git");
+			expect(workspace.project.repository).toBe(repoB);
+			expect(workspace.project.repositoryOwnerId).toBe("git");
 			expect(state.repository).toBe(repoB);
 		});
 	});

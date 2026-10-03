@@ -347,7 +347,7 @@
 							)}
 						>
 							<span>Workspace Settings</span>
-							{#if appState.workspace.rootOrigin}
+							{#if appState.workspace.project.rootOrigin}
 								<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
 							{/if}
 						</button>
@@ -355,9 +355,9 @@
 
 					<div class="text-xs text-muted-foreground flex items-center gap-2">
 						{#if appState.prefs.activeScope === 'workspace'}
-							{#if appState.workspace.rootOrigin}
+							{#if appState.workspace.project.rootOrigin}
 								<FolderOpen size={14} class="text-emerald-500" />
-								<span class="font-medium text-foreground truncate max-w-xs">{appState.workspace.rootOrigin.name || appState.workspace.rootOrigin.path}</span>
+								<span class="font-medium text-foreground truncate max-w-xs">{appState.workspace.project.rootOrigin.name || appState.workspace.project.rootOrigin.path}</span>
 								<span class="font-mono text-[11px] opacity-70">(.np/settings.json)</span>
 							{:else}
 								<span class="text-amber-500 font-medium">No folder open</span>
@@ -367,7 +367,7 @@
 				</div>
 
 				<div class="px-8 pt-6 pb-6">
-					{#if appState.prefs.activeScope === 'workspace' && !appState.workspace.rootOrigin}
+					{#if appState.prefs.activeScope === 'workspace' && !appState.workspace.project.rootOrigin}
 						<div class="p-6 rounded-xl border border-dashed border-border bg-card/40 text-center space-y-1.5 mb-6">
 							<p class="text-sm font-semibold text-foreground">No Workspace Open</p>
 							<p class="text-xs text-muted-foreground">Workspace settings are stored in <code class="font-mono text-primary bg-muted px-1.5 py-0.5 rounded">.np/settings.json</code> in the project root. Open a directory to configure workspace-specific settings.</p>

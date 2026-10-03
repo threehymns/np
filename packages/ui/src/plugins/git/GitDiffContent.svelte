@@ -6,5 +6,5 @@
 </script>
 
 <div class="h-full w-full overflow-hidden">
-	<DiffViewer changes={appState.workspace.repository?.changes ?? []} />
+	<DiffViewer changes={appState.workspace.project.repository?.changes ?? []} />
 </div>

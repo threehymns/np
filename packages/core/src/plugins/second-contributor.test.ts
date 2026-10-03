@@ -137,7 +137,7 @@ describe('Second contributor on the generic host path (spec genericity proof)', 
 
 		// Both contributors ran through the same runWorkspaceOpened: Git
 		// owns its repository lifecycle, the second contributor observed it.
-		expect(workspace.repository).not.toBeNull();
+		expect(workspace.project.repository).not.toBeNull();
 		expect(events.workspaceOpenedOrigins).toHaveLength(1);
 		expect(events.workspaceOpenedOrigins[0]).toEqual(rootOrigin);
 		expect(events.sawWorkspaceService).toBe(true);
@@ -151,17 +151,17 @@ describe('Second contributor on the generic host path (spec genericity proof)', 
 	it('keeps working with Git disabled', async () => {
 		const { events, host, workspace } = await makeHarness();
 		await workspace.openDirectory();
-		expect(workspace.repository).not.toBeNull();
+		expect(workspace.project.repository).not.toBeNull();
 
 		await host.deactivate('git');
 		expect(host.getCommand('git.stage')).toBeUndefined();
-		expect(workspace.repository).toBeNull();
+		expect(workspace.project.repository).toBeNull();
 
 		// The generic path is unaffected: hook still observes folder open,
 		// commands and services still resolve.
 		expect(host.executeCommand(SECOND_COMMAND_ID)).toBe('pong');
 		await workspace.openDirectory();
 		expect(events.workspaceOpenedOrigins).toHaveLength(2);
-		expect(workspace.repository).toBeNull();
+		expect(workspace.project.repository).toBeNull();
 	});
 });
