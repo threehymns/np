@@ -8,6 +8,12 @@ import type {
 } from "./editor";
 import type { KeymapBinding, KeymapTransform } from '../keymap.svelte';
 import type { FileIconTransform, ProductIconTransform } from '../editor/icons-types';
+import type {
+	LanguageConflict,
+	LanguageContribution,
+	LanguageTransform,
+	RegisteredLanguage
+} from './languages';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -274,6 +280,22 @@ export interface PluginHostInterface {
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[];
 	readonly editorRevision: number;
 	readonly editorContributionsRevision?: number;
+
+	// Language-mode registry (spec #194). Plugins register language records
+	// pairing a stable identity with file matchers and a lazy loader; the
+	// host rebuilds from a seeded base plus plugin transforms, resolves each
+	// document through the registry, and loads each grammar only on first use.
+	registerLanguage(pluginId: string, contribution: LanguageContribution): void;
+	registerLanguages(pluginId: string, contributions: readonly LanguageContribution[]): void;
+	registerLanguageTransform(pluginId: string, transform: LanguageTransform): void;
+	removePluginLanguages(pluginId: string): void;
+	rebuildLanguages(): void;
+	refreshLanguages(): void;
+	getLanguages(): RegisteredLanguage[];
+	getLanguage(name: string): RegisteredLanguage | undefined;
+	getLanguageForFile(filename: string): RegisteredLanguage | null;
+	getLanguageConflicts(): LanguageConflict[];
+	readonly languageRevision: number;
 
 	// Document text changes go through a host document-edit operation
 	// applied as one undo transaction with revision checks.

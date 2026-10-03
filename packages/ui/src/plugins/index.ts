@@ -2,6 +2,7 @@ import type { PluginHostInterface } from '@np/core';
 import {
 	gitManifest,
 	gitRegistration,
+	svelteLanguageRegistration,
 	PLUGIN_UI_LOADER_SERVICE_KEY,
 	type PluginUILoader
 } from '@np/core';
@@ -9,6 +10,9 @@ import {
 export function registerBundledPlugins(host: PluginHostInterface): void {
 	if (!host.hasPlugin(gitRegistration.manifest.id)) {
 		host.register(gitRegistration);
+	}
+	if (!host.hasPlugin(svelteLanguageRegistration.manifest.id)) {
+		host.register(svelteLanguageRegistration);
 	}
 }
 

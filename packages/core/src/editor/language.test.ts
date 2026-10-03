@@ -1,8 +1,19 @@
-import { describe, it, expect } from "bun:test";
-import { LanguageSupport, allLanguages } from "./language.svelte";
+import '../../../../tests/contract/rune-setup';
+import { describe, it, expect, afterEach } from "bun:test";
+import { LanguageSupport, syncActiveLanguageDescriptions } from "./language.svelte";
+import { languages as seedTable } from "@codemirror/language-data";
+import { PluginHost } from "../plugins/host.svelte";
+import { svelteLanguageRegistration } from "../plugins/svelte-language/registration";
+
+afterEach(() => {
+	syncActiveLanguageDescriptions([...seedTable]);
+});
 
 describe("LanguageSupport", () => {
-	it("resolves language description for common file extensions", () => {
+	it("resolves language description for common file extensions", async () => {
+		const host = new PluginHost();
+		host.register(svelteLanguageRegistration);
+		await host.activate(svelteLanguageRegistration.manifest.id);
 		expect(LanguageSupport.getLanguageForFile("file.ts")?.name).toBe("TypeScript");
 		expect(LanguageSupport.getLanguageForFile("file.tsx")?.name).toBe("TSX");
 		expect(LanguageSupport.getLanguageForFile("file.js")?.name).toBe("JavaScript");
@@ -12,6 +23,12 @@ describe("LanguageSupport", () => {
 		expect(LanguageSupport.getLanguageForFile("file.md")?.name).toBe("Markdown");
 		expect(LanguageSupport.getLanguageForFile("file.markdown")?.name).toBe("Markdown");
 		expect(LanguageSupport.getLanguageForFile("notes.MD")?.name).toBe("Markdown");
+		await host.deactivate(svelteLanguageRegistration.manifest.id);
+	});
+
+	it("leaves Svelte unmapped when its language plugin is off", () => {
+		// Seeded base has no Svelte; the plugin contributes it.
+		expect(LanguageSupport.getLanguageForFile("file.svelte")).toBeNull();
 	});
 
 	it("never resolves non-markdown files to the Markdown preview language", () => {

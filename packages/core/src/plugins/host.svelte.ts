@@ -111,6 +111,20 @@ import {
 	type UIContributionInstance,
 	type UIContributionRegistryLike
 } from './ui-contributions';
+import {
+	CORE_LANGUAGES_OWNER,
+	createAddLanguagesTransform,
+	createSeedLanguagesTransform,
+	rebuildLanguages as rebuildLanguageRegistry,
+	matchLanguageForFile as matchRegistryLanguageForFile,
+	type LanguageConflict,
+	type LanguageContribution,
+	type LanguageTransform,
+	type LanguageTransformEntry,
+	type RegisteredLanguage
+} from './languages';
+import { languages as seededBaseLanguages } from '@codemirror/language-data';
+import { syncActiveLanguageDescriptions } from '../editor/language.svelte';
 
 interface AsyncLocalStorageLike<T> {
 	run<R>(store: T, fn: () => R): R;
@@ -139,7 +153,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision applyDocumentEdit '.split(/\s+/)
 );
 
 /**
@@ -271,6 +285,16 @@ export class PluginHost implements PluginHostInterface {
 	private documentSessions = new SvelteMap<string, DocumentSession>();
 	private documentResolver?: (docId: string) => DocumentSession | undefined;
 
+	// Language-mode registry (spec #194). Seeded base is a host-owned
+	// transform at the lowest priority contributing the shared language
+	// table; plugin transforms replay after it in activation order. Every
+	// rebuild bumps languageRevision so Markdown composition, the manual
+	// picker, and icon resolution re-read with no stale lists.
+	languageRevision = $state(0);
+	private languageTransforms: LanguageTransformEntry[] = [];
+	private registeredLanguages: RegisteredLanguage[] = [];
+	private languageConflicts: LanguageConflict[] = [];
+
 	/**
 	 * Command registry facade with the same shape as the standalone
 	 * CommandRegistry, so `AppState.commands` stays a drop-in view.
@@ -370,6 +394,14 @@ export class PluginHost implements PluginHostInterface {
 		this.pluginInterface = createPluginHostInterface(this);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, EDITOR_SCHEMA);
 		this.registerSettingSchema(CORE_SETTINGS_OWNER, UI_SCHEMA);
+		// Seeded base: host-owned transform at the lowest priority
+		// contributing the shared language table. Replayed from empty like
+		// every other registry (ADR 0012); plugin transforms apply after it
+		// in activation order.
+		this.languageTransforms = [
+			{ pluginId: CORE_LANGUAGES_OWNER, transform: createSeedLanguagesTransform(seededBaseLanguages) }
+		];
+		this.rebuildLanguagesInternal();
 		if (options.initialPlugins) {
 			this.registerAll(options.initialPlugins);
 		}
@@ -417,6 +449,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginEditorContributions(id);
 		this.removePluginKeymaps(id);
 		this.removePluginIcons(id);
+		this.removePluginLanguages(id);
 	}
 
 	hasPlugin(id: string): boolean {
@@ -1870,6 +1903,7 @@ export class PluginHost implements PluginHostInterface {
 			this.rebuildSettings();
 			this.rebuildUIContributions();
 			this.rebuildEditorContributions();
+			this.rebuildLanguagesInternal();
 			this.attachedKeymapRegistry?.rebuild();
 			this.attachedIconRegistry?.rebuild();
 		} catch (error) {
@@ -1883,6 +1917,7 @@ export class PluginHost implements PluginHostInterface {
 			this.removePluginEditorContributions(id);
 			this.removePluginKeymaps(id);
 			this.removePluginIcons(id);
+			this.removePluginLanguages(id);
 			const cleanup = this.cleanups.get(id);
 			if (cleanup) {
 				try {
@@ -1947,6 +1982,7 @@ export class PluginHost implements PluginHostInterface {
 		this.removePluginEditorContributions(id);
 		this.removePluginKeymaps(id);
 		this.removePluginIcons(id);
+		this.removePluginLanguages(id);
 
 		// Execute cleanup if present
 		const cleanup = this.cleanups.get(id);
@@ -2035,6 +2071,87 @@ export class PluginHost implements PluginHostInterface {
 	getEditorContributions(type?: EditorContributionType): readonly EditorContributionEntry[] {
 		if (!type) return [...this.editorContributions];
 		return this.editorContributions.filter((e) => e.contribution.type === type);
+	}
+
+	// -------------------------------------------------------------------------
+	// Language-mode registry (spec #194)
+	// -------------------------------------------------------------------------
+
+	private orderedLanguageTransforms(
+		transforms: readonly LanguageTransformEntry[] = this.languageTransforms
+	): LanguageTransformEntry[] {
+		const byOwner = new SvelteMap<string, LanguageTransformEntry[]>();
+		for (const entry of transforms) {
+			const list = byOwner.get(entry.pluginId);
+			if (list) {
+				list.push(entry);
+			} else {
+				byOwner.set(entry.pluginId, [entry]);
+			}
+		}
+		const orderedOwners = this.orderedRegistryOwners(
+			Array.from(byOwner.keys()),
+			(id) => id === CORE_LANGUAGES_OWNER
+		);
+		return orderedOwners.flatMap((id) => byOwner.get(id)!);
+	}
+
+	private rebuildLanguagesInternal(): void {
+		const { languages, conflicts } = rebuildLanguageRegistry(
+			this.orderedLanguageTransforms()
+		);
+		this.registeredLanguages = languages;
+		this.languageConflicts = conflicts;
+		this.languageRevision++;
+		// Keep the static LanguageSupport snapshot in sync so documents,
+		// the picker, and Markdown fenced blocks resolve through the same
+		// registry without holding a host reference.
+		syncActiveLanguageDescriptions(languages.map((l) => l.description));
+	}
+
+	registerLanguage(pluginId: string, contribution: LanguageContribution): void {
+		this.registerLanguages(pluginId, [contribution]);
+	}
+
+	registerLanguages(pluginId: string, contributions: readonly LanguageContribution[]): void {
+		this.registerLanguageTransform(pluginId, createAddLanguagesTransform(contributions));
+	}
+
+	registerLanguageTransform(pluginId: string, transform: LanguageTransform): void {
+		this.languageTransforms = [...this.languageTransforms, { pluginId, transform }];
+		this.rebuildLanguagesInternal();
+	}
+
+	removePluginLanguages(pluginId: string): void {
+		const kept = this.languageTransforms.filter((entry) => entry.pluginId !== pluginId);
+		if (kept.length === this.languageTransforms.length) return;
+		this.languageTransforms = kept;
+		this.rebuildLanguagesInternal();
+	}
+
+	rebuildLanguages(): void {
+		this.rebuildLanguagesInternal();
+	}
+
+	refreshLanguages(): void {
+		this.rebuildLanguagesInternal();
+	}
+
+	getLanguages(): RegisteredLanguage[] {
+		return [...this.registeredLanguages];
+	}
+
+	getLanguage(name: string): RegisteredLanguage | undefined {
+		const lowered = name.toLowerCase();
+		return this.registeredLanguages.find((l) => l.name.toLowerCase() === lowered);
+	}
+
+	getLanguageForFile(filename: string): RegisteredLanguage | null {
+		return matchRegistryLanguageForFile(this.registeredLanguages, filename);
+	}
+
+	getLanguageConflicts(): LanguageConflict[] {
+		return [...this.languageConflicts];
 	}
 
 	attachKeymapRegistryInternal(registry: KeymapRegistry): void {

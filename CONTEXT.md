@@ -18,6 +18,7 @@ User-defined settings that persist across sessions (theme, zoom, word wrap).
 ## Editor
 The visual interface for interacting with a Document's content, powered by CodeMirror.
 - **Extension**: A modular piece of functionality added to the Editor (e.g., list renumbering, checkbox toggling).
+- **Completion**: A suggestion the Editor offers while typing, accepted explicitly by the user. A Completion source produces Completion items; ranking and presentation of items is host behavior.
 
 ## Workspace
 The window state: the open documents and tabs, the active tab, and a pending close — plus

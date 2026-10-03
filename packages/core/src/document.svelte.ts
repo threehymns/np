@@ -1,7 +1,7 @@
 import { DirectEditorViewAccessError, RawTransactionDispatchError } from "./plugins/errors";
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { isNotFoundError } from './utils';
-import { LanguageSupport, allLanguages } from './editor/language.svelte';
+import { LanguageSupport, getActiveLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
@@ -94,7 +94,7 @@ export class DocumentSession {
 
 	language = $derived.by(() => {
 		if (this.userLanguageOverride && this.userLanguageOverride !== "auto") {
-			const found = allLanguages.find(l => l.name === this.userLanguageOverride);
+			const found = getActiveLanguages().find(l => l.name === this.userLanguageOverride);
 			if (found) return found;
 			if (this.userLanguageOverride === "Plain Text") return null;
 		}
