@@ -51,7 +51,7 @@ function makeChange(filepath: string, staged: boolean): GitChange {
 function createVcsFactory(changes: GitChange[]): (root: FileOrigin) => VCSAdapter {
 	return () => ({
 		// Folders opened in these tests are treated as git repositories, so detect
-		// must report true for workspace.repository to be created (issue #64).
+		// must report true for workspace.project.repository to be created (issue #64).
 		detect: mock(async () => true),
 		getCurrentBranch: async () => "main",
 		getBranches: async () => ["main"],
@@ -95,9 +95,9 @@ describe("diff tab session persistence", () => {
 		const ws = await makeWorkspace(createLocalMockStorage(), createVcsFactory([]), persistence);
 		await ws.restoreSession();
 
-		ws.repository = new Repository(rootOrigin, createVcsFactory([]));
-		ws.repository.changes = [makeChange("src/a.ts", false), makeChange("docs/b.md", true)];
-		ws.repository.activeDiffFile = ws.repository.changes[1];
+		ws.project.repository = new Repository(rootOrigin, createVcsFactory([]));
+		ws.project.repository.changes = [makeChange("src/a.ts", false), makeChange("docs/b.md", true)];
+		ws.project.repository.activeDiffFile = ws.project.repository.changes[1];
 		ws.tabs.push({ id: "__project_diff__", type: "diff", pluginId: "git" });
 
 		await ws.flushSaveOpenFiles();
@@ -126,10 +126,10 @@ describe("diff tab session persistence", () => {
 
 		await ws.openDirectory(rootOrigin);
 
-		expect(ws.repository).not.toBeNull();
+		expect(ws.project.repository).not.toBeNull();
 		expect(ws.tabs.some(t => t.type === "diff")).toBe(true);
-		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
-		expect(ws.repository!.activeDiffFile?.staged).toBe(true);
+		expect(ws.project.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
+		expect(ws.project.repository!.activeDiffFile?.staged).toBe(true);
 	});
 
 	it("falls back to filepath match when the persisted scope no longer exists", async () => {
@@ -151,8 +151,8 @@ describe("diff tab session persistence", () => {
 		expect(ws.tabs.some(t => t.type === "diff")).toBe(true);
 		// Persisted scope (staged) is gone; falls back to the filepath,
 		// which is NOT refresh's default first change (src/a.ts).
-		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
-		expect(ws.repository!.activeDiffFile?.staged).toBe(false);
+		expect(ws.project.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
+		expect(ws.project.repository!.activeDiffFile?.staged).toBe(false);
 	});
 
 	it("keeps selections independent across multiple persisted diff tabs", async () => {
@@ -180,8 +180,8 @@ describe("diff tab session persistence", () => {
 		// A later diff tab's stale selection must not destroy an earlier tab's
 		// still-resolvable selection: entries resolve per tab, unresolvable
 		// ones are dropped, resolvable ones are applied.
-		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
-		expect(ws.repository!.activeDiffFile?.staged).toBe(true);
+		expect(ws.project.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
+		expect(ws.project.repository!.activeDiffFile?.staged).toBe(true);
 	});
 
 	it("restores the persisted diff selection when the change list finishes loading after session state", async () => {
@@ -218,13 +218,13 @@ describe("diff tab session persistence", () => {
 		await ws.restoreSession();
 
 		resolveChanges!();
-		for (let i = 0; i < 50 && !ws.repository?.activeDiffFile; i++) {
+		for (let i = 0; i < 50 && !ws.project.repository?.activeDiffFile; i++) {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 		}
 
 		// The persisted selection must win over refresh's default first change.
-		expect(ws.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
-		expect(ws.repository!.activeDiffFile?.staged).toBe(true);
+		expect(ws.project.repository!.activeDiffFile?.filepath).toBe("docs/b.md");
+		expect(ws.project.repository!.activeDiffFile?.staged).toBe(true);
 	});
 
 	it("re-persists the queued diff selection when saving before the change list loads", async () => {
@@ -253,7 +253,7 @@ describe("diff tab session persistence", () => {
 		// activeDiffFile is unset and the selection lives only in the
 		// pending-restore queue.
 		await ws.restoreSession();
-		expect(ws.repository?.activeDiffFile).toBeNull();
+		expect(ws.project.repository?.activeDiffFile).toBeNull();
 
 		await ws.flushSaveOpenFiles();
 		const saved = await persistence.loadOpenFiles(folderUri);

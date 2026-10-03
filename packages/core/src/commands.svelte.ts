@@ -500,8 +500,8 @@ export function registerCoreCommands(appState: AppState) {
 				path: target,
 				name
 			});
-		} else if (appState.workspace.rootOrigin) {
-			const rootUri = toURI(appState.workspace.rootOrigin);
+		} else if (appState.workspace.project.rootOrigin) {
+			const rootUri = toURI(appState.workspace.project.rootOrigin);
 			const fileUri = `${rootUri.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
 			await appState.workspace.openFile(parseURI(fileUri));
 		} else {

@@ -455,7 +455,7 @@
 	let silentSyncFor: string | null = null;
 
 	function syncActiveFileSilent(filepath: string) {
-		const repository = appState.workspace.repository;
+		const repository = appState.workspace.project.repository;
 		if (!repository) return;
 		if (repository.activeDiffFile?.filepath === filepath) return;
 		silentSyncFor = filepath;
@@ -833,10 +833,10 @@
 	}
 
 	async function openFileInRegularTab(filepath: string, lineNumber?: number) {
-		if (appState.workspace.rootOrigin) {
+		if (appState.workspace.project.rootOrigin) {
 			const origin = {
-				scheme: appState.workspace.rootOrigin.scheme,
-				path: appState.workspace.rootOrigin.path + '/' + filepath,
+				scheme: appState.workspace.project.rootOrigin.scheme,
+				path: appState.workspace.project.rootOrigin.path + '/' + filepath,
 				name: filepath.split('/').pop() || filepath
 			};
 			const doc = await appState.workspace.openFile(origin);
@@ -846,7 +846,7 @@
 		}
 	}
 
-	let repo = $derived(appState.workspace.repository);
+	let repo = $derived(appState.workspace.project.repository);
 
 	// Sync keymap context for DiffViewer so vim-mode and editor shortcuts function
 	$effect(() => {

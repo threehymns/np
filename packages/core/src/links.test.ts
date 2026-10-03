@@ -588,8 +588,8 @@ describe("openInternalLink resolution in Workspace", () => {
 			new MemorySessionPersistence()
 		);
 
-		workspace.rootOrigin = { scheme: "file", path: "/worktree", name: "worktree" };
-		await workspace.projectTree.scan(workspace.rootOrigin);
+		workspace.project.rootOrigin = { scheme: "file", path: "/worktree", name: "worktree" };
+		await workspace.project.projectTree.scan(workspace.project.rootOrigin);
 	});
 
 	it("navigates to heading within currently active note", async () => {
@@ -815,8 +815,8 @@ describe("worktree containment when following a link (task-012)", () => {
 			() => ({} as any),
 			new MemorySessionPersistence()
 		);
-		workspace.rootOrigin = { scheme: "file", path: "/worktree", name: "worktree" };
-		await workspace.projectTree.scan(workspace.rootOrigin);
+		workspace.project.rootOrigin = { scheme: "file", path: "/worktree", name: "worktree" };
+		await workspace.project.projectTree.scan(workspace.project.rootOrigin);
 	});
 
 	// --- RED: the defect ---

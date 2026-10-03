@@ -22,7 +22,7 @@ export async function runGitAction(
 		return;
 	}
 
-	const changes = appState.workspace.repository?.changes;
+	const changes = appState.workspace.project.repository?.changes;
 	const targets = opts.selectedPaths?.has(filepath) ? Array.from(opts.selectedPaths) : [filepath];
 	for (const path of targets) {
 		if (action === 'discard') {
@@ -48,7 +48,7 @@ export class GitInitController {
 
 	get canInitialize(): boolean {
 		const appState = this.getAppState();
-		return Boolean(appState?.workspace?.rootOrigin && appState?.workspace?.hasRootPermission);
+		return Boolean(appState?.workspace?.project.rootOrigin && appState?.workspace?.project.hasRootPermission);
 	}
 
 	async initialize(): Promise<boolean> {
@@ -57,7 +57,7 @@ export class GitInitController {
 
 		const currentGen = ++this.generation;
 		const appState = this.getAppState();
-		const targetUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+		const targetUri = appState?.workspace?.project.rootOrigin ? toURI(appState.workspace.project.rootOrigin) : null;
 
 		this.isInitializing = true;
 		this.error = null;
@@ -70,19 +70,19 @@ export class GitInitController {
 			if (currentGen !== this.generation) {
 				return false;
 			}
-			const currentUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+			const currentUri = appState?.workspace?.project.rootOrigin ? toURI(appState.workspace.project.rootOrigin) : null;
 			if (currentUri !== targetUri) {
 				return false;
 			}
 
-			if (!success && !appState.workspace.repository) {
+			if (!success && !appState.workspace.project.repository) {
 				this.error = 'Failed to initialize repository';
 				return false;
 			}
 			return Boolean(success);
 		} catch (err) {
 			if (currentGen === this.generation) {
-				const currentUri = appState?.workspace?.rootOrigin ? toURI(appState.workspace.rootOrigin) : null;
+				const currentUri = appState?.workspace?.project.rootOrigin ? toURI(appState.workspace.project.rootOrigin) : null;
 				if (currentUri === targetUri) {
 					this.error = err instanceof Error ? err.message : String(err);
 				}

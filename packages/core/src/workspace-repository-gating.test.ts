@@ -41,8 +41,8 @@ describe("workspace repository off-state gating", () => {
 		await host.activate("vcs-owner");
 
 		// Simulate a published repository owned by the contributor.
-		(ws as any).repository = { currentBranch: "main", branches: ["main"], switchBranch: async () => ({ status: "switched" }) };
-		(ws as any).repositoryOwnerId = "vcs-owner";
+		(ws as any).project.repository = { currentBranch: "main", branches: ["main"], switchBranch: async () => ({ status: "switched" }) };
+		(ws as any).project.repositoryOwnerId = "vcs-owner";
 
 		expect((ws as any).isRepositoryActive).toBe(true);
 		expect(ws.currentBranch).toBe("main");

@@ -187,19 +187,21 @@ describe("hideMarkersPlugin with WikiLinks", () => {
 
 describe("wikilinkAutocompletion", () => {
 	const mockWorkspace: any = {
-		projectTree: {
-			nodes: [
-				{
-					kind: "file",
-					name: "Note A.md",
-					origin: { scheme: "file", path: "/worktree/Note A.md", name: "Note A.md" },
-				},
-				{
-					kind: "file",
-					name: "Research.md",
-					origin: { scheme: "file", path: "/worktree/Research.md", name: "Research.md" },
-				},
-			],
+		project: {
+			projectTree: {
+				nodes: [
+					{
+						kind: "file",
+						name: "Note A.md",
+						origin: { scheme: "file", path: "/worktree/Note A.md", name: "Note A.md" },
+					},
+					{
+						kind: "file",
+						name: "Research.md",
+						origin: { scheme: "file", path: "/worktree/Research.md", name: "Research.md" },
+					},
+				],
+			},
 		},
 		documents: [],
 	};

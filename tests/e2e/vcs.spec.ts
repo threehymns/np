@@ -22,7 +22,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				const root = new (window as any).MockDirectoryHandle('test-project');
 				const origin = { scheme: 'browser', path: root.name, name: root.name };
 				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
-				const repository = new RepositoryClass(origin, appState.workspace.vcsFactory);
+				const repository = new RepositoryClass(origin, appState.workspace.project.vcsFactory);
 				const adapter = repository.adapter;
 
 				// Create dummy .git folder to allow adapter to initialize its fs
@@ -50,10 +50,10 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				await repository.refresh();
 
 				// Expose workspace details
-				appState.workspace.rootOrigin = origin;
+				appState.workspace.project.rootOrigin = origin;
 				appState.workspace.rootHandle = root;
-				appState.workspace.hasRootPermission = true;
-				appState.workspace.repository = repository;
+				appState.workspace.project.hasRootPermission = true;
+				appState.workspace.project.repository = repository;
 
 				return { root, repository, gitFs };
 			};
@@ -297,7 +297,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 
 			// 6. Switch back to main (where file exists)
 			await git.checkout({ fs: gitFs, dir: '/repo', ref: 'main' });
-			await appState.workspace.repository?.refresh();
+			await appState.workspace.project.repository?.refresh();
 
 			// 7. Switch branch to delete-branch (where file is deleted)
 			await appState.workspace.switchBranch('delete-branch');

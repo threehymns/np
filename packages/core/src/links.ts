@@ -612,9 +612,9 @@ export async function resolveTargetOrigin(
 		? [normalizedTarget]
 		: [normalizedTarget, `${normalizedTarget}.md`];
 
-	if (workspace.rootOrigin) {
-		const rootPath = workspace.rootOrigin.path.replace(/\/$/, '');
-		const scheme = workspace.rootOrigin.scheme;
+	if (workspace.project.rootOrigin) {
+		const rootPath = workspace.project.rootOrigin.path.replace(/\/$/, '');
+		const scheme = workspace.project.rootOrigin.scheme;
 
 		for (const candidate of candidates) {
 			const candidateName = candidate.split('/').pop()!;
@@ -632,7 +632,7 @@ export async function resolveTargetOrigin(
 					name: candidateName,
 				};
 				try {
-					await workspace.storage.readFile(directRootOrigin);
+					await workspace.project.storage.readFile(directRootOrigin);
 					return directRootOrigin;
 				} catch {
 					// Not found directly at root
@@ -657,7 +657,7 @@ export async function resolveTargetOrigin(
 							name: candidateName,
 						};
 						try {
-							await workspace.storage.readFile(currentDirOrigin);
+							await workspace.project.storage.readFile(currentDirOrigin);
 							return currentDirOrigin;
 						} catch {
 							// Not found relative to current file
@@ -668,8 +668,8 @@ export async function resolveTargetOrigin(
 
 			// 3. Worktree-wide search
 			const worktreeFound = await searchWorktreeForFile(
-				workspace.storage,
-				workspace.rootOrigin,
+				workspace.project.storage,
+				workspace.project.rootOrigin,
 				candidateName,
 				candidate
 			);
@@ -704,7 +704,7 @@ export async function resolveTargetOrigin(
 			name: newPath.split('/').pop()!,
 		};
 		// Create empty file
-		await workspace.storage.saveFile('', newOrigin);
+		await workspace.project.storage.saveFile('', newOrigin);
 		return newOrigin;
 	}
 
@@ -799,7 +799,7 @@ export async function openInternalLink(
 		if (targetOrigin) {
 			const opened = await workspace.openFile(targetOrigin);
 			targetDoc = opened ?? null;
-		} else if (!workspace.rootOrigin) {
+		} else if (!workspace.project.rootOrigin) {
 			// No folder open, check open documents
 			const existing = workspace.documents.find(
 				(d) =>

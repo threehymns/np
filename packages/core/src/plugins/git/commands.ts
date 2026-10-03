@@ -41,8 +41,8 @@ export interface HunkRange {
 }
 
 /**
- * Single owner of the `getWorkspace()?.repository` + adapter-capability
- * guard: resolves the workspace repository only when it offers the named
+ * Single owner of the `getWorkspace()?.project.repository` + adapter-capability
+ * guard: resolves the project repository only when it offers the named
  * optional adapter method, otherwise undefined so the caller degrades to
  * `false`/no-op (matching pre-plugin repository-less behavior). Hunk
  * actions keep their own throwing guards (they need per-action messages),
@@ -51,8 +51,8 @@ export interface HunkRange {
 function requireRepositoryWithAdapter<M extends keyof VCSAdapter>(
 	ctx: GitCommandContext,
 	method: M
-): NonNullable<WorkspaceLike['repository']> | undefined {
-	const repo = ctx.getWorkspace()?.repository;
+): NonNullable<WorkspaceLike['project']['repository']> | undefined {
+	const repo = ctx.getWorkspace()?.project.repository;
 	if (!repo || !repo.adapter[method]) return undefined;
 	return repo;
 }
@@ -121,9 +121,9 @@ export function createGitCommands(
 
 	async function runGitOp(
 		label: string,
-		op: (repo: NonNullable<WorkspaceLike['repository']>) => Promise<void>
+		op: (repo: NonNullable<WorkspaceLike['project']['repository']>) => Promise<void>
 	): Promise<boolean> {
-		const repo = ctx.getWorkspace()?.repository;
+		const repo = ctx.getWorkspace()?.project.repository;
 		if (!repo) return false;
 		try {
 			return await runExclusively(repo, async () => {
@@ -289,8 +289,8 @@ export function createGitCommands(
 				ws.tabs.push({ id, type: 'diff', pluginId: manifest.id });
 			}
 			ws.activeTabId = id;
-			if (ws.repository) {
-				ws.repository.setActiveDiffFileByPath(filepath);
+			if (ws.project.repository) {
+				ws.project.repository.setActiveDiffFileByPath(filepath);
 			}
 		}
 	});
@@ -332,7 +332,7 @@ export function createGitCommands(
  * the file. Callers must have already verified both adapter methods exist.
  */
 async function updateFileWithIndexRollback(
-	repo: NonNullable<WorkspaceLike['repository']>,
+	repo: NonNullable<WorkspaceLike['project']['repository']>,
 	filepath: string,
 	newWorkingTreeContent: string,
 	stagedText: Text,
@@ -359,7 +359,7 @@ export async function applyHunkAction(
 	hunk: HunkRange,
 	action: 'stage' | 'unstage' | 'discard'
 ) {
-	const repo = ctx.getWorkspace()?.repository;
+	const repo = ctx.getWorkspace()?.project.repository;
 	if (!repo) return;
 
 	await runExclusively(repo, () => performHunkAction(ctx, repo, change, hunk, action));
@@ -367,7 +367,7 @@ export async function applyHunkAction(
 
 async function performHunkAction(
 	ctx: GitCommandContext,
-	repo: NonNullable<WorkspaceLike['repository']>,
+	repo: NonNullable<WorkspaceLike['project']['repository']>,
 	change: GitChange,
 	hunk: HunkRange,
 	action: 'stage' | 'unstage' | 'discard'

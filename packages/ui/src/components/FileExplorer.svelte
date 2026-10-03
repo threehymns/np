@@ -28,21 +28,21 @@
 	function toggleFilter() {
 		showFilter = !showFilter;
 		if (!showFilter) {
-			appState.workspace.projectTree.searchQuery = "";
+			appState.workspace.project.projectTree.searchQuery = "";
 		}
 	}
 
 	async function refresh() {
-		if (appState.workspace.rootOrigin) {
-			if (appState.workspace.isRepositoryActive && appState.workspace.repository) {
-				await appState.workspace.repository.refresh();
+		if (appState.workspace.project.rootOrigin) {
+			if (appState.workspace.isRepositoryActive && appState.workspace.project.repository) {
+				await appState.workspace.project.repository.refresh();
 			}
-			await appState.workspace.projectTree.scan(appState.workspace.rootOrigin);
+			await appState.workspace.project.projectTree.scan(appState.workspace.project.rootOrigin);
 		}
 	}
 
 	function clearSearch() {
-		appState.workspace.projectTree.searchQuery = "";
+		appState.workspace.project.projectTree.searchQuery = "";
 	}
 
 	function closeAndFocusTrigger() {
@@ -59,8 +59,8 @@
 </script>
 
 <div class="flex flex-col h-full text-sidebar-foreground overflow-hidden select-none">
-	{#if mounted && appState.workspace.rootOrigin}
-		{@const rootOrigin = appState.workspace.rootOrigin}
+	{#if mounted && appState.workspace.project.rootOrigin}
+		{@const rootOrigin = appState.workspace.project.rootOrigin}
 		<div class="px-2 py-1 shrink-0">
 			<div class="flex items-center justify-between px-2 py-1 text-[11px] font-semibold opacity-60 group/header">
 				<div class="flex items-center gap-1 min-w-0">
@@ -183,10 +183,10 @@
 							type="text"
 							autofocus
 							placeholder="Filter files by name..."
-							bind:value={appState.workspace.projectTree.searchQuery}
+							bind:value={appState.workspace.project.projectTree.searchQuery}
 							class="w-full bg-sidebar-accent/50 border-none rounded-md pl-7 pr-7 py-1 text-[11px] outline-none ring-1 ring-sidebar-border/50 focus:ring-sidebar-ring/40 transition-all placeholder:opacity-50"
 						/>
-						{#if appState.workspace.projectTree.searchQuery}
+						{#if appState.workspace.project.projectTree.searchQuery}
 							<button 
 								onclick={clearSearch}
 								class="absolute right-2 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-100 transition-opacity"
@@ -202,10 +202,10 @@
 
 	<ScrollArea class="flex-1 min-h-0 py-1">
 		{#if mounted}
-			{#if appState.workspace.rootOrigin}
+			{#if appState.workspace.project.rootOrigin}
 				<div class="space-y-0.5">
-					{#if appState.workspace.hasRootPermission}
-						{#each appState.workspace.projectTree.visualNodes as visualNode (toURI(visualNode.originalNode.origin))}
+					{#if appState.workspace.project.hasRootPermission}
+						{#each appState.workspace.project.projectTree.visualNodes as visualNode (toURI(visualNode.originalNode.origin))}
 							<FileTreeItem {visualNode} />
 						{/each}
 					{:else}
@@ -224,12 +224,12 @@
 					{/if}
 				</div>
 				
-				{#if appState.workspace.projectTree.searchQuery && appState.workspace.projectTree.isSearching}
+				{#if appState.workspace.project.projectTree.searchQuery && appState.workspace.project.projectTree.isSearching}
 					<div class="px-6 py-10 text-center">
 						<div class="inline-block animate-spin size-4 border-2 border-primary border-t-transparent rounded-full mb-2"></div>
 						<p class="text-xs opacity-40">Searching...</p>
 					</div>
-				{:else if appState.workspace.projectTree.searchQuery && appState.workspace.projectTree.visualNodes.length === 0}
+				{:else if appState.workspace.project.projectTree.searchQuery && appState.workspace.project.projectTree.visualNodes.length === 0}
 					<div class="px-6 py-10 text-center">
 						<p class="text-xs opacity-40">No matches found</p>
 					</div>

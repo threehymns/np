@@ -41,7 +41,7 @@
 
 </script>
 
-{#if appState.workspace.hasRootPermission && appState.workspace.currentBranch}
+{#if appState.workspace.project.hasRootPermission && appState.workspace.currentBranch}
 	<Popover.Root bind:open={branchComboOpen}>
 		<Popover.Trigger>
 			{#snippet child({ props })}
@@ -49,7 +49,7 @@
 					{...props}
 					class={cn("flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate", className)}
 				>
-					{#if appState.workspace.repository?.isBusy}
+					{#if appState.workspace.project.repository?.isBusy}
 						<div class="size-3 animate-spin border-2 border-sidebar-foreground/50 border-t-sidebar-foreground rounded-full"></div>
 					{:else}
 						<GitBranchIcon class="size-3 shrink-0" />

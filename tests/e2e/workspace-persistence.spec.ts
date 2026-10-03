@@ -79,8 +79,8 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			await (window as any).browserHandleRegistry.register('browser://project-b', folderB);
 
 			// Register permission mock to return granted
-			const verifyPermission = appState.workspace.storage.verifyPermission;
-			appState.workspace.storage.verifyPermission = async () => true;
+			const verifyPermission = appState.workspace.project.storage.verifyPermission;
+			appState.workspace.project.storage.verifyPermission = async () => true;
 
 			// Switch to Folder A, create a tab and Untitled tab
 			await appState.workspace.openDirectory(originA);
@@ -108,7 +108,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			const docsA = appState.workspace.documents.map((d: any) => d.content);
 
 			// Restore verifyPermission
-			appState.workspace.storage.verifyPermission = verifyPermission;
+			appState.workspace.project.storage.verifyPermission = verifyPermission;
 
 			return {
 				docsB,
@@ -147,7 +147,7 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			const startTime = Date.now();
 			let flushed = false;
 			while (Date.now() - startTime < 5000) {
-				const persisted = await appState.workspace.persistence.loadOpenFiles('');
+				const persisted = await appState.workspace.project.persistence.loadOpenFiles('');
 				if (persisted.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
 					flushed = true;
 					break;

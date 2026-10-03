@@ -893,13 +893,13 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const workspace = new Workspace(storage, vcsFactory, persistence, host);
 			await host.activate('git');
 
-			// Open a folder so workspace.repository is initialized
+			// Open a folder so workspace.project.repository is initialized
 			const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			const repo = new Repository(rootOrigin, vcsFactory);
 			const refreshSpy = spyOn(repo, 'refresh');
-			workspace.repository = repo;
+			workspace.project.repository = repo;
 
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/file.md', name: 'file.md' };
 			const doc = new DocumentSession(storage, '', fileOrigin);
@@ -925,11 +925,11 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			const workspace = new Workspace(storage, vcsFactory, persistence, host);
 
 			const rootOrigin: FileOrigin = { scheme: 'file', path: '/repo', name: 'repo' };
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 			const repo = new Repository(rootOrigin, vcsFactory);
 			const refreshSpy = spyOn(repo, 'refresh');
-			workspace.repository = repo;
+			workspace.project.repository = repo;
 
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/file.md', name: 'file.md' };
 			const doc = new DocumentSession(storage, '', fileOrigin);
@@ -1027,7 +1027,7 @@ describe('Events and Document Save Hooks (#197, ADR 0013)', () => {
 			// Folder open proceeds instead of aborting: no throw, empty
 			// slot (never stale), tree scan still ran.
 			await workspace.openDirectory({ scheme: 'file', path: '/repo', name: 'repo' });
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			expect(storage.readDirectory).toHaveBeenCalled();
 			expect(host.lastHookError?.pluginId).toBe('git');
 
