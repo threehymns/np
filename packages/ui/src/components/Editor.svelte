@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, bufferWordCompletionChain } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, hostCompletionChain } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -315,17 +315,23 @@
 	// language one because a source registered there appends to the language's
 	// own autocomplete chain rather than replacing it (`override` would drop
 	// the table and wikilink sources). Reads the language revision with
-	// doc.language for the same reason the language compartment above does.
+	// doc.language for the same reason the language compartment above does,
+	// and the snippet revision so enabling, disabling or refreshing a plugin
+	// pack rebuilds the chain instead of leaving the previous triggers behind.
 	$effect(() => {
 		const _langRev = appState.plugins?.languageRevision;
+		const _snippetRev = appState.plugins?.snippetRevision;
 		const lang = doc.language;
 		const languageName = lang?.name ?? null;
+		const snippets = languageName
+			? (appState.plugins?.getSnippetsForLanguage(languageName) ?? [])
+			: [];
 		if (view && active) {
 			resolveActiveLanguage(lang).then((language) => {
 				if (view) {
 					view.dispatch({
 						effects: completionCompartment.reconfigure(
-							bufferWordCompletionChain({ language, languageName }),
+							hostCompletionChain({ language, languageName, snippets }),
 						),
 					});
 				}

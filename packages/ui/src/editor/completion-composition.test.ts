@@ -9,13 +9,18 @@ import {
 	type CompletionResult,
 } from "@codemirror/autocomplete";
 import { workspaceFacet, currentDocFacet } from "./extensions/wikilinks";
-import { bufferWordCompletionChain } from "./extensions/completion-sources";
+import {
+	COMPLETION_RANK_TIERS,
+	hostCompletionChain,
+} from "./extensions/completion-sources";
+import type { RegisteredSnippet } from "@np/core";
 
 /**
- * Composition regression net for the buffer-word source (issue #260).
+ * Composition regression net for the host completion chain (issue #260 for the
+ * buffer-word source, issue #262 for the snippet source).
  *
  * Everything here drives the real editor wiring: the extension array
- * `createEditorExtensions` builds, with the new completion compartment placed
+ * `createEditorExtensions` builds, with the completion compartment placed
  * after the language one. The assertions are on offered labels and their
  * order, never on source internals.
  */
@@ -80,7 +85,7 @@ function description(name: string): LanguageDescription {
  */
 async function composedExtensions(
 	desc: LanguageDescription,
-	opts: { words?: boolean } = {},
+	opts: { words?: boolean; snippets?: readonly RegisteredSnippet[] } = {},
 ): Promise<Extension[]> {
 	const languageCompartment = new Compartment();
 	const completionCompartment = new Compartment();
@@ -88,7 +93,11 @@ async function composedExtensions(
 	const completion =
 		opts.words === false
 			? []
-			: bufferWordCompletionChain({ language, languageName: desc.name });
+			: hostCompletionChain({
+					language,
+					languageName: desc.name,
+					snippets: opts.snippets ?? [],
+				});
 
 	return [
 		workspaceFacet.of(mockWorkspace),
@@ -122,7 +131,31 @@ function offeredLabels(
 	return offeredOptions(state, pos, explicit).map((o) => o.label);
 }
 
-function markdownState(doc: string, opts?: { words?: boolean }): Promise<EditorState> {
+/**
+ * Offer labels in the order CodeMirror's popover would show them. CodeMirror
+ * sorts on `fuzzy score + boost` descending; every option in these fixtures
+ * is the same shape of match for the same typed prefix, so the fuzzy score is
+ * equal and the boost alone decides. The index breaks ties so note options
+ * keep the order the note sources produced them in.
+ */
+function rankedLabels(
+	state: EditorState,
+	pos: number,
+	explicit: boolean,
+): string[] {
+	return offeredOptions(state, pos, explicit)
+		.map((option, index) => ({
+			label: option.label,
+			key: (option.boost ?? COMPLETION_RANK_TIERS.noteSources) * 1000 - index,
+		}))
+		.sort((a, b) => b.key - a.key)
+		.map((entry) => entry.label);
+}
+
+function markdownState(
+	doc: string,
+	opts?: { words?: boolean; snippets?: readonly RegisteredSnippet[] },
+): Promise<EditorState> {
 	return composedExtensions(description("Markdown"), opts).then((extensions) =>
 		EditorState.create({ doc, selection: { anchor: doc.length }, extensions }),
 	);
@@ -279,5 +312,142 @@ describe("completion composition — code files", () => {
 		// nothing rather than throw.
 		expect(await resolveActiveLanguage(null)).toBeNull();
 		expect(offeredOptions(plain, doc.length, true)).toEqual([]);
+	});
+});
+
+/**
+ * The snippet source joins on a registered language, so a fixture pack stands
+ * in for whatever plugin registered the real one; the registry side is proven
+ * in `packages/core/src/plugins/completions.test.ts`.
+ */
+function snippet(
+	id: string,
+	trigger: string,
+	opts: { language?: string; body?: string; description?: string } = {},
+): RegisteredSnippet {
+	return {
+		id,
+		language: opts.language ?? "Markdown",
+		trigger,
+		body: opts.body ?? `${trigger} body`,
+		description: opts.description ?? `${trigger} description`,
+		owner: "fixture",
+	};
+}
+
+describe("completion composition — snippet source", () => {
+	it("offers a registered trigger with its body as the inserted text", async () => {
+		const body = "{#each items as item}\n\t\n{/each}";
+		const doc = "ea";
+		const state = await markdownState(doc, {
+			snippets: [snippet("each", "each", { body })],
+		});
+
+		const options = offeredOptions(state, doc.length, true);
+		expect(options.map((o) => o.label)).toEqual(["each"]);
+		expect(options[0].detail).toBe("each description");
+		expect(options[0].type).toBe("keyword");
+		// The match range is the trigger itself, so accepting replaces the
+		// typed prefix rather than inserting in front of it.
+		expect(options[0].apply).toBeDefined();
+	});
+
+	it("answers a typing trigger as well as the explicit one", async () => {
+		const doc = "rea";
+		const state = await markdownState(doc, {
+			snippets: [snippet("reactive", "reactive")],
+		});
+
+		expect(offeredLabels(state, doc.length, false)).toEqual(["reactive"]);
+	});
+
+	it("offers only triggers extending the typed prefix", async () => {
+		const doc = "pro";
+		const state = await markdownState(doc, {
+			snippets: [snippet("props", "props"), snippet("transition", "transition")],
+		});
+
+		expect(offeredLabels(state, doc.length, true)).toEqual(["props"]);
+	});
+
+	it("contributes nothing for another language and nothing for an empty prefix", async () => {
+		const otherLanguage = "each";
+		const state = await markdownState(otherLanguage, {
+			snippets: [snippet("each", "each", { language: "svelte" })],
+		});
+		expect(offeredOptions(state, otherLanguage.length, true)).toEqual([]);
+
+		const empty = await markdownState("see ", {
+			snippets: [snippet("each", "each")],
+		});
+		expect(offeredOptions(empty, 4, true)).toEqual([]);
+	});
+
+	it("ranks an exact snippet-trigger match below note sources and above words", async () => {
+		// "Not" reaches all three tiers: the wikilink source offers the note
+		// "Note A", the fixture pack offers the trigger "Notebook", and the
+		// buffer offers the word "Notebook".
+		const doc = "Notebook notes\n\nSee [[Not";
+		const state = await markdownState(doc, {
+			snippets: [snippet("notebook", "Notebook", { body: "snippet body" })],
+		});
+		const options = offeredOptions(state, doc.length, true);
+
+		const note = options.find((o) => o.label === "Note A")!;
+		const triggers = options.filter((o) => o.label === "Notebook");
+		const words = options.filter((o) => o.label === "Notebook" && o.type === "text");
+		const snippetOption = triggers.find((o) => o.type === "keyword")!;
+		expect(note).toBeDefined();
+		expect(words.length).toBe(1);
+
+		expect(note.boost ?? COMPLETION_RANK_TIERS.noteSources).toBe(
+			COMPLETION_RANK_TIERS.noteSources,
+		);
+		expect(snippetOption.boost).toBe(COMPLETION_RANK_TIERS.snippets);
+		expect(words[0].boost).toBe(COMPLETION_RANK_TIERS.words);
+		expect(COMPLETION_RANK_TIERS.noteSources).toBeGreaterThan(
+			COMPLETION_RANK_TIERS.snippets,
+		);
+		expect(COMPLETION_RANK_TIERS.snippets).toBeGreaterThan(COMPLETION_RANK_TIERS.words);
+
+		// Both boosts stay below CodeMirror's fuzzy-score floor, so the tiers
+		// hold for any note label rather than only for this fixture.
+		const fuzzyFloor = -3000;
+		expect(COMPLETION_RANK_TIERS.snippets).toBeLessThan(fuzzyFloor);
+		expect(COMPLETION_RANK_TIERS.words).toBeLessThan(fuzzyFloor);
+
+		expect(rankedLabels(state, doc.length, true)).toEqual([
+			"Note A",
+			"Notebook",
+			"Notebook",
+			"notes",
+		]);
+	});
+
+	it("registers the snippet source ahead of the word source in the chain", async () => {
+		const doc = "each";
+		const state = await markdownState(doc, {
+			snippets: [snippet("each", "each")],
+		});
+		const labels = offeredLabels(state, doc.length, true);
+
+		// Chain order, not ranked order: the snippet source is consulted
+		// before the word source.
+		expect(labels.indexOf("each")).toBe(0);
+	});
+
+	it("leaves the note sources' own offers unchanged when a pack is registered", async () => {
+		const doc = "Notebook notes\n\nSee [[Not";
+		const withoutSnippets = await markdownState(doc);
+		const withSnippets = await markdownState(doc, {
+			snippets: [snippet("notebook", "Notebook")],
+		});
+
+		const notes = (state: EditorState) =>
+			offeredOptions(state, doc.length, true)
+				.filter((o) => o.type !== "text" && o.type !== "keyword")
+				.map((o) => o.label);
+		expect(notes(withSnippets)).toEqual(notes(withoutSnippets));
+		expect(notes(withSnippets)).toEqual(["Note A"]);
 	});
 });
