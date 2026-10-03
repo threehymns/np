@@ -1,6 +1,6 @@
 import type { Extension } from "@codemirror/state";
 import type { Language } from "@codemirror/language";
-import type { CompletionSource } from "@codemirror/autocomplete";
+import { autocompletion, type CompletionSource } from "@codemirror/autocomplete";
 import {
 	bufferWordCompletions,
 	type BufferWordSettings,
@@ -34,8 +34,8 @@ export interface CompletionChainOptions {
 
 /**
  * The host-owned chain that follows the note sources the language compartment
- * already registers. #260 adds words only; #262 prepends snippets to this list,
- * which is why the word source is last here rather than the whole chain.
+ * already registers. Snippets prepend to this list, which is why the word
+ * source is last here rather than the whole chain.
  */
 export function bufferWordCompletionChain(
 	options: CompletionChainOptions,
@@ -46,4 +46,39 @@ export function bufferWordCompletionChain(
 			readSettings: options.readSettings,
 		}),
 	]);
+}
+
+export interface CompletionCompartmentOptions extends CompletionChainOptions {
+	/**
+	 * The global popup toggle. `false` stops every *automatic* offer — including
+	 * the table and wikilink sources, which are registered through the
+	 * language-data facet and cannot be gated per source without editing them.
+	 *
+	 * `activateOnTyping` is therefore the only lever that covers the whole
+	 * chain, and it happens to keep the explicit trigger: `startCompletion`
+	 * dispatches its own effect rather than relying on typing
+	 * (`@codemirror/autocomplete/dist/index.js`, `ActiveSource.update` reads
+	 * the flag only for the `input.type` path).
+	 */
+	readonly automaticCompletions: boolean;
+}
+
+/**
+ * Everything the completion compartment carries: the popup gate and the host
+ * source chain.
+ *
+ * The gate lives here rather than in the static extension array because only
+ * one `autocompletion()` may exist per state — `completionConfig` merges
+ * facet inputs first-value-wins and throws on a conflict — so the compartment
+ * is the one place the setting can be expressed. Its content changes when the
+ * setting changes, which is a reconfiguration; the word source reads its own
+ * settings per query and needs none.
+ */
+export function completionCompartmentExtensions(
+	options: CompletionCompartmentOptions,
+): Extension[] {
+	return [
+		autocompletion({ activateOnTyping: options.automaticCompletions }),
+		...bufferWordCompletionChain(options),
+	];
 }

@@ -14,6 +14,13 @@ export type Theme =
 
 export type AppearanceMode = 'light' | 'dark' | 'system';
 
+/**
+ * Whether automatic word offers are permitted. `'disabled'` silences the
+ * typing trigger only — the explicit one keeps answering. Mirrors
+ * `BufferWordMode` in `@np/ui`, which is where it is consumed.
+ */
+export type CompletionWordsMode = 'enabled' | 'disabled';
+
 export interface PreferenceStorage {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;
@@ -37,6 +44,9 @@ const DEFAULTS = {
 	vimSyncClipboard: true,
 	tabSize: 2,
 	lineNumbers: true,
+	completionWords: 'enabled' as CompletionWordsMode,
+	minWordLength: 3,
+	automaticCompletions: true,
 	zoom: 100,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,
@@ -123,6 +133,27 @@ export class Preferences {
 		if (this._data.lineNumbers === val) return;
 		this._data.lineNumbers = val;
 		this.syncToSettingsAndSave('editor', 'line_numbers', val);
+	}
+
+	get completionWords(): CompletionWordsMode { return this._data.completionWords; }
+	set completionWords(val: CompletionWordsMode) {
+		if (this._data.completionWords === val) return;
+		this._data.completionWords = val;
+		this.syncToSettingsAndSave('editor', 'words', val);
+	}
+
+	get minWordLength(): number { return this._data.minWordLength; }
+	set minWordLength(val: number) {
+		if (this._data.minWordLength === val) return;
+		this._data.minWordLength = val;
+		this.syncToSettingsAndSave('editor', 'min_word_length', val);
+	}
+
+	get automaticCompletions(): boolean { return this._data.automaticCompletions; }
+	set automaticCompletions(val: boolean) {
+		if (this._data.automaticCompletions === val) return;
+		this._data.automaticCompletions = val;
+		this.syncToSettingsAndSave('editor', 'automatic_completions', val);
 	}
 
 	get zoom(): number { return this._data.zoom; }
@@ -297,6 +328,9 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this._data.completionWords = this.settings.resolve('editor', 'words').value;
+			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
+			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
 
 			this._data.theme = this.settings.resolve('ui', 'theme').value;
 			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
@@ -359,6 +393,9 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this._data.completionWords = this.settings.resolve('editor', 'words').value;
+			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
+			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
 
 			// Resolve UI settings
 			this._data.theme = this.settings.resolve('ui', 'theme').value;
