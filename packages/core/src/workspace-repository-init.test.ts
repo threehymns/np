@@ -70,21 +70,21 @@ const rootOrigin: FileOrigin = { scheme: "file", path: "/projects/np", name: "np
 const fileOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/a.ts", name: "a.ts" };
 
 describe("repository initialization respects VCS detect (issue #64)", () => {
-	it("leaves workspace.repository null when the opened folder is not a git repository", async () => {
+	it("leaves workspace.project.repository null when the opened folder is not a git repository", async () => {
 		const { ws } = await makeWorkspace(false);
 		await ws.openDirectory();
 		// Regression: previously the detect result was discarded and a Repository
 		// was created unconditionally, so the Git panel's "No Git Repository"
 		// empty state (guarded on repository === null) was unreachable.
-		expect(ws.repository).toBeNull();
+		expect(ws.project.repository).toBeNull();
 	});
 
 	it("creates a Repository when the opened folder contains a git repository", async () => {
 		const { ws } = await makeWorkspace(true);
 		await ws.openDirectory();
-		expect(ws.repository).not.toBeNull();
+		expect(ws.project.repository).not.toBeNull();
 	});
-	it("leaves workspace.repository null without the Git plugin even when detection would succeed", async () => {
+	it("leaves workspace.project.repository null without the Git plugin even when detection would succeed", async () => {
 		const storage = createMockStorage({
 			pickDirectory: async () => rootOrigin,
 			verifyPermission: async () => true
@@ -101,7 +101,7 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 		// No plugin host wiring: the core performs no repository probe on its own (#202).
 		const ws = new WorkspaceClass(storage, vcsFactory, new MemorySessionPersistence());
 		await ws.openDirectory();
-		expect(ws.repository).toBeNull();
+		expect(ws.project.repository).toBeNull();
 	});
 	it("keeps repository null and scans project tree in requestRootPermission when the folder is not a git repository", async () => {
 		const storage = createMockStorage({
@@ -117,9 +117,9 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 			switchBranch: mock(async () => ({ status: "switched" as const }))
 		});
 		const { ws } = await withGitPlugin(storage, vcsFactory, new MemorySessionPersistence());
-		ws.rootOrigin = rootOrigin;
+		ws.project.rootOrigin = rootOrigin;
 		let scannedWith: FileOrigin | null = null;
-		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
+		ws.project.projectTree.scan = mock(async (origin: FileOrigin) => {
 			scannedWith = origin;
 		});
 
@@ -127,9 +127,9 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 
 		// Permission is granted, but because detect() reports no git repo, the
 		// second repository-init path (requestRootPermission) must also leave
-		// workspace.repository null (issue #64).
+		// workspace.project.repository null (issue #64).
 		expect(granted).toBe(true);
-		expect(ws.repository).toBeNull();
+		expect(ws.project.repository).toBeNull();
 		// Project tree scan must still execute so the file explorer is populated.
 		expect(scannedWith).toEqual(rootOrigin);
 	});
@@ -152,14 +152,14 @@ describe("repository initialization respects VCS detect (issue #64)", () => {
 
 		const { ws } = await withGitPlugin(storage, vcsFactory, persistence);
 		let scannedWith: FileOrigin | null = null;
-		ws.projectTree.scan = mock(async (origin: FileOrigin) => {
+		ws.project.projectTree.scan = mock(async (origin: FileOrigin) => {
 			scannedWith = origin;
 		});
 
 		await ws.restoreSession();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
-		expect(ws.repository).toBeNull();
+		expect(ws.project.repository).toBeNull();
 		expect(scannedWith).toEqual(rootOrigin);
 	});
 });

@@ -1,0 +1,125 @@
+import type { FileOrigin, Storage } from '../storage';
+import type { SerializedDocument, SessionPersistence } from '../persistence';
+import type { VCSAdapter } from './vcs';
+import { Worktree } from './worktree.svelte';
+import { ProjectTree } from './tree.svelte';
+import type { Repository } from './repository.svelte';
+
+/**
+ * The shared backing store behind one Workspace: its search scope, its
+ * repositories and git state, and its settings. One Project per Workspace —
+ * switching Workspaces switches Projects.
+ *
+ * Project owns everything about the opened folder: its Worktrees, its
+ * Repository, its root-permission flag, and the storage and VCS seams those
+ * need. Workspace holds exactly one Project and retains only window state
+ * (open documents, tabs, active tab, pending close).
+ *
+ * Opening a folder replaces the current one, exactly as before: the caller
+ * drops the previous folder's repository before the asynchronous VCS probe
+ * so the UI never shows stale branch or change state for a folder that is
+ * going away. Making opening additive (held-project list, active-project
+ * notion, pinning, recency, per-project persistence) is separate work.
+ *
+ * Today the Project holds exactly one Worktree — the single root the product
+ * opens — so the level is exercised by real code rather than introduced
+ * empty. Nothing creates a second Worktree yet.
+ */
+export class Project {
+	worktrees = $state<Worktree[]>([]);
+	repository = $state<Repository | null>(null);
+	repositoryOwnerId = $state<string | null>(null);
+	hasRootPermission = $state(false);
+
+	storage: Storage;
+	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
+	persistence: SessionPersistence;
+	projectTree: ProjectTree;
+
+	constructor(
+		storage: Storage,
+		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
+		persistence: SessionPersistence
+	) {
+		this.storage = storage;
+		this.vcsFactory = vcsFactory;
+		this.persistence = persistence;
+		this.projectTree = new ProjectTree(this);
+	}
+
+	/**
+	 * Per-folder session persistence pass-throughs (#254). Same keys, same
+	 * format, no key change: each delegates to `this.persistence` with the
+	 * identical folderUri the caller derived, so existing sessions load
+	 * unchanged. Expanded paths need no duplicate here — the tree already
+	 * calls them through the Project (`project.persistence`, same folder URI).
+	 */
+	saveOpenFiles(docs: SerializedDocument[], folderUri?: string): Promise<void> {
+		return this.persistence.saveOpenFiles(docs, folderUri);
+	}
+
+	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]> {
+		return this.persistence.loadOpenFiles(folderUri);
+	}
+
+	saveActiveDocumentId(id: string, folderUri?: string): Promise<void> {
+		return this.persistence.saveActiveDocumentId(id, folderUri);
+	}
+
+	loadActiveDocumentId(folderUri?: string): Promise<string | null> {
+		return this.persistence.loadActiveDocumentId(folderUri);
+	}
+
+	get rootOrigin(): FileOrigin | null {
+		return this.worktrees[0]?.root ?? null;
+	}
+
+	set rootOrigin(origin: FileOrigin | null) {
+		if (!origin) {
+			this.worktrees = [];
+			return;
+		}
+		const current = this.worktrees[0];
+		if (current && current.root.scheme === origin.scheme && current.root.path === origin.path) {
+			return;
+		}
+		this.worktrees = [new Worktree(origin)];
+	}
+
+	get worktree(): Worktree | null {
+		return this.worktrees[0] ?? null;
+	}
+
+	/**
+	 * Is this origin covered by the granted project root? Synchronous and
+	 * side-effect free: the Project owns the root, so Documents never check
+	 * this themselves — coverage travels to them as plain call-time data.
+	 * Single owner of the scheme + path-prefix rule.
+	 */
+	coversOrigin(origin: FileOrigin): boolean {
+		return this.relativePath(origin) !== null;
+	}
+
+	/**
+	 * Path of `origin` relative to the granted project root, or null when
+	 * not covered. Returns '' for the root itself. Single owner of the
+	 * scheme + path-prefix rule so callers never re-implement it.
+	 */
+	relativePath(origin: FileOrigin): string | null {
+		const rootOrigin = this.rootOrigin;
+		if (!rootOrigin || !this.hasRootPermission) {
+			return null;
+		}
+		if (origin.scheme !== rootOrigin.scheme) {
+			return null;
+		}
+		if (origin.path === rootOrigin.path) {
+			return '';
+		}
+		const normalizedRoot = rootOrigin.path.replace(/\/+$/, '');
+		if (origin.path.startsWith(normalizedRoot + '/')) {
+			return origin.path.slice(normalizedRoot.length + 1);
+		}
+		return null;
+	}
+}

@@ -54,7 +54,7 @@ describe("repository git operations serialize", () => {
 			isBusy: false,
 			refresh: mock(async () => {})
 		};
-		const appState = { workspace: { repository: repo }, dialogService: { alert: mock(async () => {}) } } as any;
+		const appState = { workspace: { project: { repository: repo } }, dialogService: { alert: mock(async () => {}) } } as any;
 		const ctx = {
 			getWorkspace: () => appState.workspace,
 			alert: (message: string) => appState.dialogService.alert(message),
@@ -90,7 +90,7 @@ describe("repository git operations serialize", () => {
 			refresh: mock(async () => {})
 		};
 		const commands = new CommandRegistry();
-		const workspace = { repository: repo };
+		const workspace = { project: { repository: repo } };
 		commands.registerCommands('git', createGitCommands({
 			getWorkspace: () => workspace as any,
 			alert: mock(async () => {}),

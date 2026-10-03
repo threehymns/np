@@ -228,7 +228,7 @@ export function wikilinkAutocompletion(
 	const noteQuery = fullInside.trim().toLowerCase();
 
 	if (workspace) {
-		const allTreeFiles = getAllFilesFromTree(workspace.projectTree.nodes);
+		const allTreeFiles = getAllFilesFromTree(workspace.project.projectTree.nodes);
 		for (const f of allTreeFiles) {
 			const nameWithoutExt = f.name.replace(/\.md$/, "");
 			options.push({

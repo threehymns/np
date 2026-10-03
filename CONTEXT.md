@@ -20,30 +20,29 @@ The visual interface for interacting with a Document's content, powered by CodeM
 - **Extension**: A modular piece of functionality added to the Editor (e.g., list renumbering, checkbox toggling).
 
 ## Workspace
-A unit the user switches between inside one window: it owns the panes, tabs, docks, layout, and
-focus, and exactly one **Project**. Several Workspaces can be held by one window at a time, ordered
-by when each was last shown; pinned ones survive navigating away.
-- _Avoid_: window, tab, vault
-  _Note: a Workspace is the "tab", not the window. The `Workspace` class here is not yet this: it
-  also owns the folder on disk, its repository, and its file tree. The Window/Workspace/Project
-  split is tracked follow-up work; until then "workspace" names one merged concept._
+The window state: the open documents and tabs, the active tab, and a pending close — plus
+exactly one **Project**. It owns no folder, repository, permission, or file tree itself; all
+of those live on its Project. One Project per Workspace. Window-scoped session persistence
+(recent folders, root folder) is driven from Workspace, while per-folder state lives on its
+Project keyed by folder URI.
+- _Avoid_: tab, vault
 
 ## Project
 The shared backing store behind one **Workspace**: its search scope, its repositories and git
-state, and its settings. One Project per Workspace — switching Workpaces switches Projects.
+state, and its settings. One Project per Workspace — switching Workspaces switches Projects.
+A `Project` is a distinct type in code: it owns its Worktrees, its Repository, its
+root-permission flag, and the storage and VCS seams those need.
 - _Avoid_: workspace, folder, vault
-  _Not yet a distinct type in code: today a Project is the root folder a `Workspace` holds._
 
 ## Worktree
-A checkout within a **Project**, holding a root path and the file entries scanned beneath it. A
-Project has several: its main checkout plus any linked ones, each independently scannable and
-searchable.
+A checkout within a **Project**, holding a root path and the file entries scanned beneath it.
+Today a Project holds exactly one Worktree — its root — until a linked-worktree feature exists.
 - _Avoid_: vault, folder, repository, project
   _Note: replaces "vault". A Worktree is a checkout, not a repository and not a project root —
-  those live one and two levels up respectively. Today a Project has exactly one Worktree — its
-  root — so **Root** is the in-use term for that single directory until linked worktrees arrive.
-  The persistence-layer `root-folder` naming, recent-folders, and the "Open Folder" label all stay._
-- **Root**: The folder path a Project is opened on. _Avoid_: root folder, vault
+  the repository and the opened-on root both live on its Project. **Root** is the in-use term
+  for that single directory until linked worktrees arrive. The persistence-layer `root-folder`
+  naming, recent-folders, and the "Open Folder" label all stay._
+- **Root**: The folder path a Project is opened on — the root of its single Worktree. _Avoid_: root folder, vault
 
 _Git vocabulary:_ `worktree` is a registered working root (git-worktree(1)), which includes git's
 own `--worktree` flags — those stay verbatim. "working tree" is the on-disk state that HEAD and the

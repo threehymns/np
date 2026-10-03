@@ -140,7 +140,7 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 
 			// Browse a folder: workspace-owned tree scan runs, Git stays out.
 			await workspace.openDirectory();
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 			expect(readDirectory).toHaveBeenCalled();
 			expect(counters.factory).toBe(0);
 			expect(counters.detect).toBe(0);
@@ -157,7 +157,7 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			expect(counters.detect).toBe(0);
 			expect(counters.init).toBe(0);
 			expect(counters.getChanges).toBe(0);
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 
 			// Zero contributions: no commands, panels, status, or decorations.
 			expect(host.getCommand('git.init')).toBeUndefined();
@@ -254,7 +254,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.isPluginActive('git')).toBe(true);
 
 			await app.workspace.openDirectory();
-			expect(app.workspace.repository).not.toBeNull();
+			expect(app.workspace.project.repository).not.toBeNull();
 			expect(host.getCommand('git.stage')).toBeDefined();
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
 			app.activeSidebarTab = GIT_PANEL_ID;
@@ -264,7 +264,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.setPluginEnabled('git', false);
 			expect(host.isPluginActive('git')).toBe(false);
 			expect(host.getPluginState('git')).toBe('inactive');
-			expect(app.workspace.repository).toBeNull();
+			expect(app.workspace.project.repository).toBeNull();
 			expect(host.getCommand('git.stage')).toBeUndefined();
 			expect(host.getCommandsByCategory('Source Control')).toHaveLength(0);
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeUndefined();
@@ -276,13 +276,13 @@ describe('toggle off/on round trip restores full function without restart', () =
 			const detectWhileOff = counters.detect;
 			const factoryWhileOff = counters.factory;
 			await app.workspace.openDirectory();
-			expect(app.workspace.repository).toBeNull();
+			expect(app.workspace.project.repository).toBeNull();
 			expect(counters.detect).toBe(detectWhileOff);
 			expect(counters.factory).toBe(factoryWhileOff);
 
 			// Ordinary editing still works while off.
 			const fileOrigin: FileOrigin = { scheme: 'file', path: '/repo/notes.md', name: 'notes.md' };
-			const doc = new DocumentSession(app.workspace.storage, 'saved content', fileOrigin);
+			const doc = new DocumentSession(app.workspace.project.storage, 'saved content', fileOrigin);
 			doc.content = 'edited while off';
 			expect(await app.workspace.saveDocument(doc)).toBe(true);
 
@@ -312,12 +312,12 @@ describe('toggle off/on round trip restores full function without restart', () =
 			expect(host.getCommand('git.stage')).toBeDefined();
 			expect(host.getSidebarPanel(GIT_PANEL_ID)).toBeDefined();
 			expect(host.getEditorContributions().some((e) => e.pluginId === 'git')).toBe(true);
-			expect(app.workspace.repository).not.toBeNull();
-			expect(app.workspace.repository?.currentBranch).toBe('main');
+			expect(app.workspace.project.repository).not.toBeNull();
+			expect(app.workspace.project.repository?.currentBranch).toBe('main');
 
 			await app.workspace.openDirectory();
-			expect(app.workspace.repository).not.toBeNull();
-			expect(app.workspace.repository?.currentBranch).toBe('main');
+			expect(app.workspace.project.repository).not.toBeNull();
+			expect(app.workspace.project.repository?.currentBranch).toBe('main');
 		});
 
 		it('closes Git-owned diff views on disable and keeps them closed on re-enable', async () => {
@@ -330,7 +330,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.setPluginEnabled('git', false);
 			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
 			expect(app.activeTabId).not.toBe('__project_diff__');
-			const saved = await app.workspace.persistence.loadOpenFiles(toURI(app.workspace.rootOrigin!));
+			const saved = await app.workspace.project.persistence.loadOpenFiles(toURI(app.workspace.project.rootOrigin!));
 			expect(saved.some((entry) => entry.pluginId === 'git')).toBe(false);
 
 			await app.setPluginEnabled('git', true);
@@ -340,7 +340,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 		it('preserves unsaved drafts across the round trip', async () => {
 			const { app, host } = await makeApp();
 			await app.workspace.openDirectory();
-			const folderUri = toURI(app.workspace.rootOrigin!);
+			const folderUri = toURI(app.workspace.project.rootOrigin!);
 
 			// Open through the workspace so the tab is tracked, then type so
 			// the draft is persisted (not just live in memory).
@@ -351,7 +351,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.workspace.flushSaveOpenFiles();
 
 			// The draft is on disk in session persistence before the toggle.
-			const persisted = await app.workspace.persistence.loadOpenFiles(folderUri);
+			const persisted = await app.workspace.project.persistence.loadOpenFiles(folderUri);
 			const entry = persisted.find((s) => s.origin?.path === '/repo/notes.md');
 			expect(entry?.draftContent).toBe('unsaved draft edits');
 
@@ -513,8 +513,8 @@ describe('toggle off/on round trip restores full function without restart', () =
 			);
 			provideDialogs(host);
 			await host.activate('git');
-			workspace.rootOrigin = rootOrigin;
-			workspace.hasRootPermission = true;
+			workspace.project.rootOrigin = rootOrigin;
+			workspace.project.hasRootPermission = true;
 
 			const initTask = host.executeCommand('git.init');
 			for (let i = 0; i < 50 && !initCalled; i++) await tick(1);
@@ -538,7 +538,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			// ...but its stale result is dropped: disable wins.
 			expect(initResult).toBe(false);
 			expect(host.getPluginState('git')).toBe('inactive');
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 
 		it('refuses new Git writes and waits for an active write before completing disablement', async () => {
@@ -569,7 +569,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			provideDialogs(host);
 			await host.activate('git');
 			await workspace.openDirectory();
-			expect(workspace.repository).not.toBeNull();
+			expect(workspace.project.repository).not.toBeNull();
 
 			const firstWrite = host.executeCommand('git.stage', 'first.md') as Promise<boolean>;
 			for (let i = 0; i < 50 && stagedFiles.length === 0; i++) await tick(1);
@@ -589,7 +589,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 
 			expect(stagedFiles).toEqual(['first.md']);
 			expect(host.getPluginState('git')).toBe('inactive');
-			expect(workspace.repository).toBeNull();
+			expect(workspace.project.repository).toBeNull();
 		});
 	});
 

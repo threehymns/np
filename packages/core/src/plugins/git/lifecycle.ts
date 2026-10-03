@@ -63,11 +63,11 @@ function track<T>(state: WorkspaceGitState, promise: Promise<T>): Promise<T> {
  */
 export function disposePublishedRepository(state: WorkspaceGitState): void {
 	const workspace = state.workspace;
-	if (workspace.repository === null || workspace.repository === state.repository) {
-		workspace.repository = null;
+	if (workspace.project.repository === null || workspace.project.repository === state.repository) {
+		workspace.project.repository = null;
 	}
-	if (workspace.repositoryOwnerId === null || workspace.repositoryOwnerId === state.ownerId) {
-		workspace.repositoryOwnerId = null;
+	if (workspace.project.repositoryOwnerId === null || workspace.project.repositoryOwnerId === state.ownerId) {
+		workspace.project.repositoryOwnerId = null;
 	}
 	state.repository = null;
 }
@@ -81,10 +81,10 @@ export function disposePublishedRepository(state: WorkspaceGitState): void {
  */
 function disposeSpecificRepository(state: WorkspaceGitState, repo: Repository): void {
 	const workspace = state.workspace;
-	if (workspace.repository === repo) {
-		workspace.repository = null;
-		if (workspace.repositoryOwnerId === state.ownerId) {
-			workspace.repositoryOwnerId = null;
+	if (workspace.project.repository === repo) {
+		workspace.project.repository = null;
+		if (workspace.project.repositoryOwnerId === state.ownerId) {
+			workspace.project.repositoryOwnerId = null;
 		}
 	}
 	if (state.repository === repo) {
@@ -115,22 +115,22 @@ export async function openFolderRepository(
 	if (state.disposed || !state.isActive()) return;
 
 	const targetUri = toURI(origin);
-	const repo = new Repository(origin, state.workspace.vcsFactory);
+	const repo = new Repository(origin, state.workspace.project.vcsFactory);
 	const detected = await track(state, repo.adapter.detect(origin.path));
 
 	if (
 		state.disposed ||
 		!state.isActive() ||
 		state.currentOpenId !== openId ||
-		!state.workspace.rootOrigin ||
-		toURI(state.workspace.rootOrigin) !== targetUri
+		!state.workspace.project.rootOrigin ||
+		toURI(state.workspace.project.rootOrigin) !== targetUri
 	) {
 		return;
 	}
 
 	if (detected) {
-		state.workspace.repository = repo;
-		state.workspace.repositoryOwnerId = state.ownerId;
+		state.workspace.project.repository = repo;
+		state.workspace.project.repositoryOwnerId = state.ownerId;
 		state.repository = repo;
 		await track(state, repo.refresh());
 
@@ -138,8 +138,8 @@ export async function openFolderRepository(
 			state.disposed ||
 			!state.isActive() ||
 			state.currentOpenId !== openId ||
-			!state.workspace.rootOrigin ||
-			toURI(state.workspace.rootOrigin) !== targetUri
+			!state.workspace.project.rootOrigin ||
+			toURI(state.workspace.project.rootOrigin) !== targetUri
 		) {
 			disposeSpecificRepository(state, repo);
 			return;
@@ -156,11 +156,11 @@ export async function openFolderRepository(
  */
 export async function initializeWorkspaceRepository(state: WorkspaceGitState): Promise<boolean> {
 	const workspace = state.workspace;
-	if (!workspace.rootOrigin || !workspace.hasRootPermission) {
+	if (!workspace.project.rootOrigin || !workspace.project.hasRootPermission) {
 		return false;
 	}
 
-	const targetOrigin = workspace.rootOrigin;
+	const targetOrigin = workspace.project.rootOrigin;
 	const targetUri = toURI(targetOrigin);
 
 	// Ownership guard (ADR 0009: runtime resources are scoped to their
@@ -169,7 +169,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// by another contributor is never dropped. Aborting with an actionable
 	// diagnostic keeps the failure AI-fixable instead of silently
 	// clobbering state this plugin does not own.
-	if (workspace.repository !== null && workspace.repository !== state.repository) {
+	if (workspace.project.repository !== null && workspace.project.repository !== state.repository) {
 		throw new Error(
 			`Cannot initialize repository: the workspace slot holds a repository owned by another contributor, not the Git plugin.\n` +
 				`Action: Remove or disable the owning contributor before running "Git: Initialize Repository", or publish through the Git plugin's folder-open lifecycle instead.`
@@ -180,12 +180,12 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// foreign publication, which the guard above already rejected); the
 	// staleness guards below still protect newer folders from stale
 	// publication.
-	workspace.repository = null;
-	workspace.repositoryOwnerId = null;
+	workspace.project.repository = null;
+	workspace.project.repositoryOwnerId = null;
 	state.repository = null;
 	if (state.disposed || !state.isActive()) return false;
 
-	const repo = new Repository(targetOrigin, workspace.vcsFactory);
+	const repo = new Repository(targetOrigin, workspace.project.vcsFactory);
 	const adapter = repo.adapter;
 
 	if (!adapter.init || typeof adapter.init !== 'function') {
@@ -198,32 +198,32 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 	// publish results for an outdated folder. Likewise, never clobber a
 	// foreign repository another contributor published while init was in
 	// flight (ADR 0009): drop the stale result instead.
-	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.project.rootOrigin || toURI(workspace.project.rootOrigin) !== targetUri) {
 		return false;
 	}
-	if (workspace.repository !== null && workspace.repository !== state.repository) {
+	if (workspace.project.repository !== null && workspace.project.repository !== state.repository) {
 		return false;
 	}
 
-	workspace.repository = repo;
-	workspace.repositoryOwnerId = state.ownerId;
+	workspace.project.repository = repo;
+	workspace.project.repositoryOwnerId = state.ownerId;
 	state.repository = repo;
 	const refreshed = await track(state, repo.refresh());
 	if (!refreshed) {
 		disposeSpecificRepository(state, repo);
 		return false;
 	}
-	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.project.rootOrigin || toURI(workspace.project.rootOrigin) !== targetUri) {
 		disposeSpecificRepository(state, repo);
 		return false;
 	}
 	try {
-		await workspace.projectTree.scan(targetOrigin);
+		await workspace.project.projectTree.scan(targetOrigin);
 	} catch (e) {
 		disposeSpecificRepository(state, repo);
 		throw e;
 	}
-	if (state.disposed || !state.isActive() || !workspace.rootOrigin || toURI(workspace.rootOrigin) !== targetUri) {
+	if (state.disposed || !state.isActive() || !workspace.project.rootOrigin || toURI(workspace.project.rootOrigin) !== targetUri) {
 		disposeSpecificRepository(state, repo);
 		return false;
 	}
@@ -237,7 +237,7 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
  */
 export async function refreshWorkspaceRepository(state: WorkspaceGitState): Promise<void> {
 	if (state.disposed || !state.isActive()) return;
-	const repo = state.workspace.repository;
+	const repo = state.workspace.project.repository;
 	if (!repo) return;
 	try {
 		await track(state, repo.refresh());

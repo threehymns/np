@@ -141,8 +141,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	);
 
 	const current = getWorkspace();
-	if (current?.rootOrigin && current.hasRootPermission) {
-		await openFolderRepository(stateFor(current), current.rootOrigin);
+	if (current?.project.rootOrigin && current.project.hasRootPermission) {
+		await openFolderRepository(stateFor(current), current.project.rootOrigin);
 	}
 
 	return async () => {
@@ -162,8 +162,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			// workspace with no root folder has nothing of Git's to close, and
 			// the unscoped (folder-less) session bucket is not Git's to rewrite,
 			// so no empty URI is handed to the workspace.
-			if (workspace.rootOrigin) {
-				await workspace.saveFolderState(toURI(workspace.rootOrigin));
+			if (workspace.project.rootOrigin) {
+				await workspace.saveFolderState(toURI(workspace.project.rootOrigin));
 			}
 		}
 		states.clear();

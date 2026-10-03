@@ -51,7 +51,7 @@ describe("save picker defaults (issue #174)", () => {
 		const persistence = new MemorySessionPersistence();
 		const ws = makeWorkspace(storage, persistence);
 		await ws.restoreSession();
-		ws.rootOrigin = { scheme: "file", path: "/projects/np", name: "np" };
+		ws.project.rootOrigin = { scheme: "file", path: "/projects/np", name: "np" };
 
 		const doc = makeDocSession(storage, "hello", null, "My Draft");
 		storage.saveFile = mock(async () => ({ scheme: "file", path: "/projects/np/My Draft.md", name: "My Draft.md" })) as any;
@@ -70,7 +70,7 @@ describe("save picker defaults (issue #174)", () => {
 		const persistence = new MemorySessionPersistence();
 		const ws = makeWorkspace(storage, persistence);
 		await ws.restoreSession();
-		expect(ws.rootOrigin).toBeNull();
+		expect(ws.project.rootOrigin).toBeNull();
 
 		const doc = makeDocSession(storage, "hello", null, "Untitled 1");
 		storage.saveFile = mock(async () => ({ scheme: "file", path: "/tmp/Untitled 1.md", name: "Untitled 1.md" })) as any;
@@ -90,7 +90,7 @@ describe("save picker defaults (issue #174)", () => {
 		const persistence = new MemorySessionPersistence();
 		const ws = makeWorkspace(storage, persistence);
 		await ws.restoreSession();
-		ws.rootOrigin = { scheme: "file", path: "/projects/np", name: "np" };
+		ws.project.rootOrigin = { scheme: "file", path: "/projects/np", name: "np" };
 
 		const origin = { scheme: "file", path: "/projects/np/existing.md", name: "existing.md" } as FileOrigin;
 		const doc = makeDocSession(storage, "updated", origin);

@@ -22,28 +22,32 @@ import type { FileOrigin } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import type { Repository } from '../project/repository.svelte';
 
-export interface WorkspaceLike {
+export interface ProjectLike {
 	readonly rootOrigin: FileOrigin | null;
 	readonly hasRootPermission: boolean;
 	repository: Repository | null;
 	/**
 	 * Owning contributor for the published repository slot (generic, no
 	 * feature names). Set alongside `repository` by whichever contributor
-	 * publishes it; the workspace exposes repository state only while the
+	 * publishes it; the project exposes repository state only while the
 	 * owner is active, so a slot left behind by a bounded-cleanup timeout
 	 * stays inert in the UI.
 	 */
 	repositoryOwnerId: string | null;
+	readonly vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
+	readonly projectTree: {
+		scan(origin: FileOrigin): Promise<void>;
+	};
+}
+
+export interface WorkspaceLike {
+	readonly project: ProjectLike;
 	tabs: Array<{
 		id: string;
 		type: 'document' | 'diff';
 		pluginId?: string;
 	}>;
 	activeTabId: string;
-	readonly vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
-	readonly projectTree: {
-		scan(origin: FileOrigin): Promise<void>;
-	};
 	closeTab(id: string): void;
 	saveFolderState(folderUri: string): Promise<void>;
 }

@@ -82,7 +82,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 			throw err;
 		});
 
-		await ws.projectTree.deleteEntry({
+		await ws.project.projectTree.deleteEntry({
 			name: fileOrigin.name,
 			kind: "file",
 			origin: fileOrigin,
@@ -108,7 +108,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 			throw err;
 		});
 
-		await ws.projectTree.deleteEntry({
+		await ws.project.projectTree.deleteEntry({
 			name: fileOrigin.name,
 			kind: "file",
 			origin: fileOrigin,
@@ -125,7 +125,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 		// Reset to a controlled pair: one file under the deleted dir, one sibling.
 		ws.documents = [];
 		ws.tabs = [];
-		const storage = (ws as any).storage;
+		const storage = (ws as any).project.storage;
 		storage.readFile = mock(async (o: FileOrigin) => `content of ${o.path}\n`);
 		const underOrigin: FileOrigin = { scheme: "file", path: "/projects/np/dir/a.txt", name: "a.txt" };
 		const siblingOrigin: FileOrigin = { scheme: "file", path: "/projects/np/other/b.txt", name: "b.txt" };
@@ -143,7 +143,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 			return `content of ${o.path}\n`;
 		});
 
-		await ws.projectTree.deleteEntry({
+		await ws.project.projectTree.deleteEntry({
 			name: "dir",
 			kind: "directory",
 			origin: { scheme: "file", path: "/projects/np/dir", name: "dir" },
@@ -160,7 +160,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 		const { ws, doc } = await makeWsWithOpenFile();
 		const otherOrigin: FileOrigin = { scheme: "file", path: "/projects/np/src/b.ts", name: "b.ts" };
 
-		await ws.projectTree.deleteEntry({
+		await ws.project.projectTree.deleteEntry({
 			name: otherOrigin.name,
 			kind: "file",
 			origin: otherOrigin,
@@ -208,7 +208,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 		});
 
 		// Delete the file via filetree
-		await ws1.projectTree.deleteEntry({
+		await ws1.project.projectTree.deleteEntry({
 			name: fileOrigin.name,
 			kind: "file",
 			origin: fileOrigin,
@@ -263,7 +263,7 @@ describe("filetree delete marks open tabs deleted-on-disk (issue #173)", () => {
 			throw err;
 		});
 
-		await ws1.projectTree.deleteEntry({
+		await ws1.project.projectTree.deleteEntry({
 			name: fileOrigin.name,
 			kind: "file",
 			origin: fileOrigin,

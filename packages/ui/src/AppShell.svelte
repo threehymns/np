@@ -39,8 +39,8 @@
 		};
 		const handleFocus = () => {
 			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-			if (appState.workspace.isRepositoryActive && appState.workspace.repository) {
-				appState.workspace.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
+			if (appState.workspace.isRepositoryActive && appState.workspace.project.repository) {
+				appState.workspace.project.repository.refresh().catch(e => console.error('[AppShell] Auto-refresh failed', e));
 			}
 			// Surface externally deleted open files (#175) with the same
 			// deleted-on-disk tab state as in-app deletes, edits preserved.
