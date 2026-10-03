@@ -453,13 +453,14 @@
 		fireReadyResolvers(filepath);
 	}
 
-	// Shared-Document binding for the split Working-copy pane (#269).
-	// The b-pane edits the same Document an Editor tab shows; rules live in
-	// diff-split-binding.ts, this component only wires workspace state.
+	// Shared-Document binding for the Working-copy pane (#269 split, #270
+	// inline). Both modes edit the same Document an Editor tab shows; rules
+	// live in diff-split-binding.ts, this component only wires workspace
+	// state. The `split*` names predate inline support and cover both modes.
 	const splitBoundDocIds = new Map<string, string>();
 	let lastFocusedDiffFilepath = $state<string | null>(null);
-	// Tags b-pane dispatches that replay external Document state (tab
-	// keystrokes) so the updateListener below never routes them back as
+	// Tags working-copy pane dispatches that replay external Document state
+	// (tab keystrokes) so the updateListeners below never route them back as
 	// new edits. Mirrors Editor.svelte's syncAnnotation.
 	const splitSyncAnnotation = Annotation.define<boolean>();
 
@@ -560,13 +561,20 @@
 		return () => view.dom.removeEventListener('focusin', onFocusIn);
 	}
 
-	// Svelte action to initialize CodeMirror editor for inline unified diff
+	// Svelte action to initialize CodeMirror editor for inline unified diff.
+	// The unified editor is the Working-copy pane in inline mode (#270): it
+	// edits the same shared Document as the split b-pane. Removed
+	// (original-only) lines render as uneditable CodeMirror widgets above the
+	// working-copy text, so they hold no doc positions and can never receive
+	// keystrokes; the editable doc holds working-copy text only, and the
+	// Original side (originalDoc) is never dispatched to from here.
 	function setupEditor(
 		node: HTMLDivElement,
 		options: {
-			content: string; // modified content
+			content: string; // Document-driven working-copy content
 			originalContent: string;
-			readOnly: boolean;
+			editable: boolean;
+			onDocChange?: (newVal: string) => void;
 			filepath: string;
 			fileChange: GitChange;
 			wrap: boolean;
@@ -581,6 +589,8 @@
 		const wrapCompartment = new Compartment();
 		const diffCompartment = new Compartment();
 		const hunkCompartment = new Compartment();
+		const readOnlyCompartment = new Compartment();
+		let inlineEditable = options.editable;
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
@@ -588,7 +598,10 @@
 			const state = EditorState.create({
 				doc: currentOptions.content,
 				extensions: [
-					EditorState.readOnly.of(currentOptions.readOnly),
+					// Working-copy pane: editable when bound to the shared
+					// Document (#270). Removed lines stay non-editable as
+					// widgets regardless of this toggle.
+					readOnlyCompartment.of(EditorState.readOnly.of(!currentOptions.editable)),
 					diffCompartment.of(
 						unifiedMergeView({
 							original: currentOptions.originalContent,
@@ -604,6 +617,19 @@
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
 					diffTheme,
+					EditorView.updateListener.of((update) => {
+						// Pane -> Document: keystrokes become ordinary
+						// in-memory edits on the shared Document via the
+						// canonical keystroke path. Sync-tagged transactions
+						// (Document -> pane replays below) never echo back.
+						if (
+							update.docChanged &&
+							!update.transactions.some((tr) => tr.annotation(splitSyncAnnotation)) &&
+							currentOptions.onDocChange
+						) {
+							currentOptions.onDocChange(update.state.doc.toString());
+						}
+					}),
 					createFileNavKeymap(options.filepath),
 					cursorSyncExtension(() => currentOptions.filepath),
 					wrapCompartment.of(currentOptions.wrap ? EditorView.lineWrapping : [])
@@ -637,6 +663,14 @@
 							)
 						);
 					}
+					if (currentOptions.editable !== inlineEditable) {
+						inlineEditable = currentOptions.editable;
+						effects.push(
+							readOnlyCompartment.reconfigure(
+								EditorState.readOnly.of(!inlineEditable)
+							)
+						);
+					}
 					if (currentOptions.originalContent !== oldOptions.originalContent) {
 						effects.push(
 							diffCompartment.reconfigure(
@@ -658,16 +692,40 @@
 					}
 
 					if (hasDocChange || effects.length > 0) {
+						// Document -> pane sync (e.g. tab keystrokes): tagged
+						// so the updateListener above never routes it back,
+						// kept out of the pane's undo history, with selection
+						// and scroll preserved. Snapshot refreshes never reach
+						// this branch: content is driven by Document content,
+						// not the git snapshot.
+						const insert = currentOptions.content;
+						const sel = view.state.selection;
+						const clamped = EditorSelection.create(
+							sel.ranges.map((r) =>
+								EditorSelection.range(Math.min(r.anchor, insert.length), Math.min(r.head, insert.length))
+							),
+							sel.mainIndex
+						);
+						const prevTop = view.scrollDOM.scrollTop;
+						const prevLeft = view.scrollDOM.scrollLeft;
 						view.dispatch({
 							changes: hasDocChange
 								? {
 										from: 0,
 										to: view.state.doc.length,
-										insert: currentOptions.content
+										insert
 								  }
 								: undefined,
-							effects: effects.length > 0 ? effects : undefined
+							selection: hasDocChange ? clamped : undefined,
+							effects: effects.length > 0 ? effects : undefined,
+							annotations: hasDocChange
+								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
+								: undefined
 						});
+						if (hasDocChange) {
+							view.scrollDOM.scrollTop = prevTop;
+							view.scrollDOM.scrollLeft = prevLeft;
+						}
 					}
 				}
 			},
@@ -1596,12 +1654,14 @@
 									stagedContent: diff.stagedContent
 								}}
 								{#if viewMode === 'inline'}
-									<!-- Inline View: Single Editor showing unified diff of the whole file -->
+									<!-- Inline View: unified Working-copy editor over the shared Document -->
+									{@const inlineDoc = findSplitDoc(fileChange.filepath)}
 									<div class="flex-1 overflow-hidden bg-background">
 										<div use:setupEditor={{
-											content: diff.modifiedContent,
+											content: resolveSplitRightContent(inlineDoc, diff.modifiedContent),
 											originalContent: diff.originalContent,
-											readOnly: true,
+											editable: isSplitWorkingCopyEditable(fileChange.status, inlineDoc),
+											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text),
 											filepath: fileChange.filepath,
 											fileChange: effectiveChange,
 											wrap: appState.prefs.wordWrap,

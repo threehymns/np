@@ -38,8 +38,8 @@ describe("DiffViewer split Working-copy pane binding", () => {
 		expect(src).toContain('aria-label="Unsaved changes"');
 	});
 
-	it("leaves inline mode read-only (ticket #270 owns it)", () => {
-		expect(src).toContain("readOnly: true,");
-		expect(src).toContain("EditorState.readOnly.of(currentOptions.readOnly)");
+	it("no longer pins inline mode read-only (ticket #270 made it editable)", () => {
+		expect(src).not.toContain("readOnly: true,");
+		expect(src).not.toContain("EditorState.readOnly.of(currentOptions.readOnly)");
 	});
 });
