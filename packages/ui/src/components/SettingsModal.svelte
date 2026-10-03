@@ -9,7 +9,7 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { cn } from '@np/core';
-	import type { AppearanceMode } from '@np/core';
+	import type { AppearanceMode, CompletionWordsMode } from '@np/core';
 
 	const appState = useAppState();
 
@@ -162,6 +162,42 @@
 
 	let searchQuery = $state('');
 	let recordingCmdId = $state<string | null>(null);
+
+	// The stored schema owns the bounds; clamping here keeps an emptied number
+	// field from handing SettingsManager a value it rejects outright.
+	function setMinWordLength(raw: string) {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) return;
+		appState.prefs.minWordLength = Math.max(1, Math.trunc(parsed));
+	}
+
+	// The per-language override map is a nested object, so its control is the
+	// same raw JSON box GeneratedSettingControl gives every other object
+	// setting. A per-language list would be a better control and is a
+	// settings-UI project of its own; this keeps the map reachable in the
+	// meantime instead of leaving it settable only by hand-editing storage.
+	let languageOverridesDraft = $state('');
+	let languageOverridesError = $state<string | null>(null);
+
+	$effect(() => {
+		// `settingsVersion` is the reactive handle for a resolved value.
+		appState.prefs.settingsVersion;
+		languageOverridesDraft = JSON.stringify(appState.prefs.get('editor', 'languages'), null, 2);
+	});
+
+	function saveLanguageOverrides() {
+		try {
+			appState.prefs.set(
+				'editor',
+				'languages',
+				JSON.parse(languageOverridesDraft),
+				appState.prefs.activeScope,
+			);
+			languageOverridesError = null;
+		} catch (e) {
+			languageOverridesError = e instanceof Error ? e.message : String(e);
+		}
+	}
 
 	const allCommands = $derived(appState.commands.getAll());
 	const filteredCommands = $derived(
@@ -554,6 +590,71 @@
 											<p class="text-[10px] text-muted-foreground">Coming soon</p>
 										</div>
 										<Switch checked={false} disabled />
+									</div>
+
+									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+										<div class="space-y-0.5">
+											<Label class="text-sm font-medium">Automatic Completions</Label>
+											<p class="text-[10px] text-muted-foreground">Suggest while typing. Off keeps Ctrl-Space working</p>
+										</div>
+										<Switch bind:checked={appState.prefs.automaticCompletions} />
+									</div>
+								</div>
+
+								<div class="space-y-4">
+									<h4 class="text-sm font-semibold">Completions</h4>
+									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Words</Label>
+											<p class="text-[10px] text-muted-foreground">Offer words from this document while typing. Off silences the automatic trigger only</p>
+											<select
+												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={appState.prefs.completionWords}
+												onchange={(e) => {
+													appState.prefs.completionWords = (e.currentTarget as HTMLSelectElement)
+														.value as CompletionWordsMode;
+												}}
+											>
+												<option value="enabled">enabled</option>
+												<option value="disabled">disabled</option>
+											</select>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Minimum Word Length</Label>
+											<p class="text-[10px] text-muted-foreground">Shortest word offered, and the shortest typed prefix that summons suggestions while typing</p>
+											<input
+												type="number"
+												min="1"
+												step="1"
+												value={appState.prefs.minWordLength}
+												onchange={(e) => setMinWordLength((e.currentTarget as HTMLInputElement).value)}
+												class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+											/>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Per-Language Overrides</Label>
+											<p class="text-[10px] text-muted-foreground">
+												Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is
+												ignored here.
+											</p>
+											<textarea
+												bind:value={languageOverridesDraft}
+												onblur={saveLanguageOverrides}
+												rows="4"
+												spellcheck="false"
+												class={cn(
+													'w-full max-w-md text-xs font-mono rounded-lg border bg-background p-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary leading-normal',
+													languageOverridesError
+														? 'border-destructive focus:ring-destructive'
+														: 'border-border',
+												)}
+											></textarea>
+											{#if languageOverridesError}
+												<p class="text-[11px] text-destructive">{languageOverridesError}</p>
+											{/if}
+										</div>
 									</div>
 								</div>
 
