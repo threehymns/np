@@ -1,5 +1,6 @@
 import type { PluginCleanup, PluginHostInterface } from '../types';
 import { manifest } from './manifest';
+import { SVELTE_SNIPPETS } from './snippets';
 
 /**
  * Setup for the Svelte Language Core Plugin.
@@ -10,6 +11,10 @@ import { manifest } from './manifest';
  * Enabling costs nothing at startup (metadata only); the host calls the
  * loader on first tab mount, language switch, or fenced-block render, and
  * the module cache makes later loads free.
+ *
+ * The snippet pack registers in the same `setup` as the language it joins
+ * on, so the triggers cannot outlive the language that gives them a
+ * completion source to attach to.
  */
 export function setup(host: PluginHostInterface): PluginCleanup | void {
 	host.registerLanguages(manifest.id, [
@@ -23,4 +28,5 @@ export function setup(host: PluginHostInterface): PluginCleanup | void {
 			}
 		}
 	]);
+	host.registerSnippets(manifest.id, SVELTE_SNIPPETS);
 }

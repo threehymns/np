@@ -11,12 +11,16 @@ import {
 	type CompletionResult,
 } from "@codemirror/autocomplete";
 import { workspaceFacet, currentDocFacet } from "./extensions/wikilinks";
-import { completionCompartmentExtensions } from "./extensions/completion-sources";
+import {
+	COMPLETION_RANK_TIERS,
+	completionCompartmentExtensions,
+} from "./extensions/completion-sources";
 import { readBufferWordSettings, type SettingReader } from "./extensions/completion-settings";
 import {
 	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
 } from "./extensions/buffer-words";
+import type { RegisteredSnippet } from "@np/core";
 
 /** A settings reader over editor-level values plus one per-language map. */
 function scopedSettingReader(
@@ -33,7 +37,9 @@ function scopedSettingReader(
 }
 
 /**
- * Composition regression net for the buffer-word source (issues #260, #261).
+ * Composition regression net for the host completion chain: issue #260 for the
+ * buffer-word source, #261 for the trigger split and the settings behind it,
+ * #262 for the snippet source.
  *
  * Everything here drives the real editor wiring: the extension array
  * `createEditorExtensions` builds, with the completion compartment placed
@@ -105,6 +111,7 @@ async function composedExtensions(
 	desc: LanguageDescription,
 	opts: {
 		words?: boolean;
+		snippets?: readonly RegisteredSnippet[];
 		settings?: Partial<BufferWordSettings>;
 		automaticCompletions?: boolean;
 	} = {},
@@ -122,6 +129,7 @@ async function composedExtensions(
 			: completionCompartmentExtensions({
 					language,
 					languageName: desc.name,
+					snippets: opts.snippets ?? [],
 					automaticCompletions: opts.automaticCompletions ?? true,
 					readSettings: () => settings,
 				});
@@ -159,9 +167,31 @@ function offeredLabels(
 }
 
 /**
+ * Offer labels in the order CodeMirror's popover would show them. CodeMirror
+ * sorts on `fuzzy score + boost` descending; every option in these fixtures
+ * is the same shape of match for the same typed prefix, so the fuzzy score is
+ * equal and the boost alone decides. The index breaks ties so note options
+ * keep the order the note sources produced them in.
+ */
+function rankedLabels(
+	state: EditorState,
+	pos: number,
+	explicit: boolean,
+): string[] {
+	return offeredOptions(state, pos, explicit)
+		.map((option, index) => ({
+			label: option.label,
+			key: (option.boost ?? COMPLETION_RANK_TIERS.noteSources) * 1000 - index,
+		}))
+		.sort((a, b) => b.key - a.key)
+		.map((entry) => entry.label);
+}
+
+/**
  * Only the buffer-word offers. A code language brings its own completion
- * source (JavaScript offers its keywords), so an exact list of everything on
- * the chain would say more about the grammar than about this ticket.
+ * source (JavaScript offers its keywords) and the snippet pack offers its
+ * triggers, so an exact list of everything on the chain would say more about
+ * the other sources than about this ticket.
  */
 function offeredWordLabels(
 	state: EditorState,
@@ -177,6 +207,7 @@ function markdownState(
 	doc: string,
 	opts: {
 		words?: boolean;
+		snippets?: readonly RegisteredSnippet[];
 		settings?: Partial<BufferWordSettings>;
 		automaticCompletions?: boolean;
 	} = {},
@@ -184,6 +215,69 @@ function markdownState(
 	return composedExtensions(description("Markdown"), opts).then((extensions) =>
 		EditorState.create({ doc, selection: { anchor: doc.length }, extensions }),
 	);
+}
+
+/**
+ * Which of the language's completion sources CodeMirror would query.
+ *
+ * `active` is the completion state field's own bookkeeping: an inactive source
+ * is never queried, so a pending one means exactly "this trigger summons an
+ * offer". The field has no public accessor without an `EditorView`, and
+ * `autocompletion()` publishes it as the second entry of the array it returns,
+ * so it is taken from there — nothing here reaches into CodeMirror's internals
+ * beyond that.
+ */
+function activeSources(state: EditorState): { pending: number; explicit: boolean } {
+	const field = (autocompletion() as unknown as Record<string, unknown>[])[1];
+	const completion = state.field(field as never) as unknown as {
+		active: { state: number; explicit: boolean }[];
+	};
+	return {
+		pending: completion.active.filter((source) => source.state !== 0).length,
+		explicit: completion.active.every((source) => source.explicit),
+	};
+}
+
+/** The state a single keystroke leaves behind. */
+function afterTyping(state: EditorState): EditorState {
+	return state.update({ userEvent: "input.type" }).state;
+}
+
+/**
+ * The state the explicit trigger leaves behind, using the real
+ * `startCompletion` effect dispatched through a stub view. The toggle is not
+ * supposed to touch this path, so it must go through the library's own effect
+ * rather than a hand-rolled flag.
+ */
+function afterExplicitTrigger(state: EditorState): EditorState {
+	let effects: unknown;
+	startCompletion({
+		state,
+		dispatch: (spec: { effects: unknown }) => {
+			effects = spec.effects;
+		},
+	} as never);
+	return state.update({ effects: [effects as never] }).state;
+}
+
+/**
+ * The snippet source joins on a registered language, so a fixture pack stands
+ * in for whatever plugin registered the real one; the registry side is proven
+ * in `packages/core/src/plugins/completions.test.ts`.
+ */
+function snippet(
+	id: string,
+	trigger: string,
+	opts: { language?: string; body?: string; description?: string } = {},
+): RegisteredSnippet {
+	return {
+		id,
+		language: opts.language ?? "Markdown",
+		trigger,
+		body: opts.body ?? `${trigger} body`,
+		description: opts.description ?? `${trigger} description`,
+		owner: "fixture",
+	};
 }
 
 describe("completion composition — Markdown", () => {
@@ -397,50 +491,145 @@ describe("completion composition — code files", () => {
 	});
 });
 
+describe("completion composition — snippet source", () => {
+	it("offers a registered trigger with its body as the inserted text", async () => {
+		const body = "{#each items as item}\n\t\n{/each}";
+		const doc = "ea";
+		const state = await markdownState(doc, {
+			snippets: [snippet("each", "each", { body })],
+		});
+
+		const options = offeredOptions(state, doc.length, true);
+		expect(options.map((o) => o.label)).toEqual(["each"]);
+		expect(options[0].detail).toBe("each description");
+		expect(options[0].type).toBe("keyword");
+		// The match range is the trigger itself, so accepting replaces the
+		// typed prefix rather than inserting in front of it.
+		expect(options[0].apply).toBeDefined();
+	});
+
+	it("answers a typing trigger as well as the explicit one", async () => {
+		const doc = "rea";
+		const state = await markdownState(doc, {
+			snippets: [snippet("reactive", "reactive")],
+		});
+
+		expect(offeredLabels(state, doc.length, false)).toEqual(["reactive"]);
+	});
+
+	it("offers only triggers extending the typed prefix", async () => {
+		const doc = "pro";
+		const state = await markdownState(doc, {
+			snippets: [snippet("props", "props"), snippet("transition", "transition")],
+		});
+
+		expect(offeredLabels(state, doc.length, true)).toEqual(["props"]);
+	});
+
+	it("contributes nothing for another language and nothing for an empty prefix", async () => {
+		const otherLanguage = "each";
+		const state = await markdownState(otherLanguage, {
+			snippets: [snippet("each", "each", { language: "svelte" })],
+		});
+		expect(offeredOptions(state, otherLanguage.length, true)).toEqual([]);
+
+		const empty = await markdownState("see ", {
+			snippets: [snippet("each", "each")],
+		});
+		expect(offeredOptions(empty, 4, true)).toEqual([]);
+	});
+
+	it("ranks an exact snippet-trigger match below note sources and above words", async () => {
+		// "Not" reaches all three tiers: the wikilink source offers the note
+		// "Note A", the fixture pack offers the trigger "Notebook", and the
+		// buffer offers the word "Notebook".
+		const doc = "Notebook notes\n\nSee [[Not";
+		const state = await markdownState(doc, {
+			snippets: [snippet("notebook", "Notebook", { body: "snippet body" })],
+		});
+		const options = offeredOptions(state, doc.length, true);
+
+		const note = options.find((o) => o.label === "Note A")!;
+		const triggers = options.filter((o) => o.label === "Notebook");
+		const words = options.filter((o) => o.label === "Notebook" && o.type === "text");
+		const snippetOption = triggers.find((o) => o.type === "keyword")!;
+		expect(note).toBeDefined();
+		expect(words.length).toBe(1);
+
+		expect(note.boost ?? COMPLETION_RANK_TIERS.noteSources).toBe(
+			COMPLETION_RANK_TIERS.noteSources,
+		);
+		expect(snippetOption.boost).toBe(COMPLETION_RANK_TIERS.snippets);
+		expect(words[0].boost).toBe(COMPLETION_RANK_TIERS.words);
+		expect(COMPLETION_RANK_TIERS.noteSources).toBeGreaterThan(
+			COMPLETION_RANK_TIERS.snippets,
+		);
+		expect(COMPLETION_RANK_TIERS.snippets).toBeGreaterThan(COMPLETION_RANK_TIERS.words);
+
+		// Both boosts stay below CodeMirror's fuzzy-score floor, so the tiers
+		// hold for any note label rather than only for this fixture.
+		const fuzzyFloor = -3000;
+		expect(COMPLETION_RANK_TIERS.snippets).toBeLessThan(fuzzyFloor);
+		expect(COMPLETION_RANK_TIERS.words).toBeLessThan(fuzzyFloor);
+
+		expect(rankedLabels(state, doc.length, true)).toEqual([
+			"Note A",
+			"Notebook",
+			"Notebook",
+			"notes",
+		]);
+	});
+
+	it("registers the snippet source ahead of the word source in the chain", async () => {
+		const doc = "each";
+		const state = await markdownState(doc, {
+			snippets: [snippet("each", "each")],
+		});
+		const labels = offeredLabels(state, doc.length, true);
+
+		// Chain order, not ranked order: the snippet source is consulted
+		// before the word source.
+		expect(labels.indexOf("each")).toBe(0);
+	});
+
+	it("leaves the note sources' own offers unchanged when a pack is registered", async () => {
+		const doc = "Notebook notes\n\nSee [[Not";
+		const withoutSnippets = await markdownState(doc);
+		const withSnippets = await markdownState(doc, {
+			snippets: [snippet("notebook", "Notebook")],
+		});
+
+		const notes = (state: EditorState) =>
+			offeredOptions(state, doc.length, true)
+				.filter((o) => o.type !== "text" && o.type !== "keyword")
+				.map((o) => o.label);
+		expect(notes(withSnippets)).toEqual(notes(withoutSnippets));
+		expect(notes(withSnippets)).toEqual(["Note A"]);
+	});
+
+	it("adds no snippet offer on a typing trigger while the popup toggle is off, and still answers the explicit one", async () => {
+		const doc = "ea";
+		const pack = [snippet("each", "each")];
+		const on = await markdownState(doc, { snippets: pack });
+		const off = await markdownState(doc, {
+			snippets: pack,
+			automaticCompletions: false,
+		});
+
+		// The toggle is the whole gate, so the snippet source itself is
+		// unchanged — only whether CodeMirror wakes it on the keystroke.
+		expect(activeSources(afterTyping(on)).pending).toBeGreaterThan(0);
+		expect(activeSources(afterTyping(off)).pending).toBe(0);
+
+		// And the trigger that asked for them still gets them.
+		const activation = activeSources(afterExplicitTrigger(off));
+		expect(activation.pending).toBeGreaterThan(0);
+		expect(activation.explicit).toBe(true);
+		expect(offeredLabels(off, doc.length, true)).toEqual(["each"]);
+	});
+});
+
 describe("completion composition — the global popup toggle", () => {
-	/**
-	 * Which of the language's completion sources CodeMirror would query.
-	 *
-	 * `active` is the completion state field's own bookkeeping: an inactive
-	 * source is never queried, so a pending one means exactly "this trigger
-	 * summons an offer". The field has no public accessor without an
-	 * `EditorView`, and `autocompletion()` publishes it as the second entry of
-	 * the array it returns, so it is taken from there — nothing here reaches
-	 * into CodeMirror's internals beyond that.
-	 */
-	function activeSources(state: EditorState): { pending: number; explicit: boolean } {
-		const field = (autocompletion() as unknown as Record<string, unknown>[])[1];
-		const completion = state.field(field as never) as unknown as {
-			active: { state: number; explicit: boolean }[];
-		};
-		return {
-			pending: completion.active.filter((source) => source.state !== 0).length,
-			explicit: completion.active.every((source) => source.explicit),
-		};
-	}
-
-	/** The state a single keystroke leaves behind. */
-	function afterTyping(state: EditorState): EditorState {
-		return state.update({ userEvent: "input.type" }).state;
-	}
-
-	/**
-	 * The state the explicit trigger leaves behind, using the real
-	 * `startCompletion` effect dispatched through a stub view. The toggle is
-	 * not supposed to touch this path, so it must go through the library's own
-	 * effect rather than a hand-rolled flag.
-	 */
-	function afterExplicitTrigger(state: EditorState): EditorState {
-		let effects: unknown;
-		startCompletion({
-			state,
-			dispatch: (spec: { effects: unknown }) => {
-				effects = spec.effects;
-			},
-		} as never);
-		return state.update({ effects: [effects as never] }).state;
-	}
-
 	it("stops every automatic offer when off, tables and wikilinks included", async () => {
 		const on = await markdownState("Intro\n| See [[Not");
 		const off = await markdownState("Intro\n| See [[Not", {

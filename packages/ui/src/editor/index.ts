@@ -244,6 +244,7 @@ const markdownTableTheme = {
 const INITIAL_COMPLETION_EXTENSIONS = completionCompartmentExtensions({
 	language: null,
 	languageName: null,
+	snippets: [],
 	automaticCompletions: true,
 });
 
