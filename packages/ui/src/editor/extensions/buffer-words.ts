@@ -5,22 +5,40 @@ import type {
 	CompletionSource,
 } from "@codemirror/autocomplete";
 
+/** Whether automatic word offers are permitted at all. */
+export type BufferWordMode = "enabled" | "disabled";
+
 /**
  * Per-query knobs for the buffer-word source. Read through an injected reader
  * on every query instead of being captured when the source is built, so a
- * settings change never needs an editor reconfiguration (#261 owns the schema
- * and the per-language scoping).
+ * settings change never needs an editor reconfiguration.
  */
 export interface BufferWordSettings {
 	/**
-	 * Shortest token admitted to the vocabulary. #260 answers the explicit
-	 * trigger only, so this bounds the vocabulary rather than a trigger; #261
-	 * gives the automatic trigger its own threshold off the same setting.
+	 * Shortest word the source deals in, enforced at both ends.
+	 *
+	 * On the automatic path it is a *trigger* threshold: the typed prefix must
+	 * already reach this length before a popover appears, so the popup never
+	 * interrupts the first characters of a word. On the explicit path the user
+	 * asked, so it is only a *vocabulary* floor: candidates shorter than it are
+	 * not offered.
+	 *
+	 * The two readings are the same question — how short a word may be and
+	 * still be a completion — asked of the two words involved: the one being
+	 * typed and the one being offered. Neither is ever allowed below it.
 	 */
 	readonly minWordLength: number;
+	/**
+	 * Gates automatic offers only. `'disabled'` means quiet, not unavailable:
+	 * the explicit trigger still answers, in every language.
+	 */
+	readonly words: BufferWordMode;
 }
 
-export const DEFAULT_BUFFER_WORD_SETTINGS: BufferWordSettings = { minWordLength: 3 };
+export const DEFAULT_BUFFER_WORD_SETTINGS: BufferWordSettings = {
+	minWordLength: 3,
+	words: "enabled",
+};
 
 /**
  * Rank offset carried by every buffer word. CodeMirror adds `boost` to the
@@ -42,34 +60,66 @@ const BUFFER_WORD_PATTERN = /[A-Za-z_$][A-Za-z0-9_$]*/g;
 export interface BufferWordPolicy {
 	/** Whether a typing trigger may offer words, as opposed to an explicit one. */
 	readonly automatic: boolean;
-	/** Shortest token admitted to the vocabulary. */
+	/** Shortest word admitted to the vocabulary and to the automatic trigger. */
 	readonly minWordLength: number;
 }
 
 /**
- * The single place deciding what a query may offer, so #261 changes the trigger
- * split and the per-language resolution here instead of in the source body.
+ * Prose is identified by language identity, matched case-insensitively on the
+ * lowercased name — the same rule `getContributionsForType`
+ * (`plugins/editor.ts`) and the language registry use when they join on a
+ * language name. A document's language is its description `name`, which is
+ * `"Markdown"` for a note; aliases are not part of that identity and are
+ * deliberately not matched.
+ */
+const MARKDOWN_LANGUAGE_NAME = "markdown";
+
+export function isMarkdownProse(languageName: string | null | undefined): boolean {
+	return (
+		typeof languageName === "string" &&
+		languageName.trim().toLowerCase() === MARKDOWN_LANGUAGE_NAME
+	);
+}
+
+/**
+ * The single place deciding what a query may offer, so the trigger split and
+ * the settings land here instead of in the source body.
  *
- * #260 keeps automatic offers off everywhere, which is the whole of the
- * "no automatic behavior changes" bar. `_languageName` is unused until #261
- * turns `automatic` on outside Markdown prose; it is already threaded so that
- * change is local.
+ * Two independent brakes on the automatic path, and neither of them touches
+ * the explicit one:
+ *
+ * - Markdown prose is always quiet on a typing trigger. A note is prose being
+ *   written, not code being recalled, and words fire constantly while writing.
+ *   #259 asks for silence here; the explicit trigger stays available so prose
+ *   is never worse off than before.
+ * - `words: 'disabled'` silences the automatic path in every language. Off
+ *   means quiet, not unavailable.
  */
 export function resolveBufferWordPolicy(
-	_languageName: string | null,
+	languageName: string | null,
 	settings: BufferWordSettings,
 ): BufferWordPolicy {
 	return {
-		automatic: false,
-		minWordLength: Math.max(1, Math.trunc(settings.minWordLength)),
+		automatic: settings.words !== "disabled" && !isMarkdownProse(languageName),
+		minWordLength: normalizeMinWordLength(settings.minWordLength),
 	};
 }
 
+/**
+ * The threshold reaches the source through storage, a per-language override
+ * map, or a hand-edited settings file, so it is normalized once here instead
+ * of being trusted. A value that is not a usable number falls back to the
+ * default rather than silently disabling every offer.
+ */
+function normalizeMinWordLength(value: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return DEFAULT_BUFFER_WORD_SETTINGS.minWordLength;
+	}
+	return Math.max(1, Math.trunc(value));
+}
+
 export interface BufferWordSourceOptions {
-	/**
-	 * Name of the language the editor currently holds. #261 reads it to keep
-	 * automatic offers out of Markdown prose.
-	 */
+	/** Name of the language the editor currently holds. */
 	readonly languageName: string | null;
 	/** Defaults to {@link DEFAULT_BUFFER_WORD_SETTINGS}. */
 	readonly readSettings?: () => BufferWordSettings;
@@ -80,8 +130,11 @@ function staticDefaultSettings(): BufferWordSettings {
 }
 
 /**
- * Current-document words, answered on the explicit trigger in every file and
- * ranked behind every other completion source.
+ * Current-document words, ranked behind every other completion source.
+ *
+ * Offered on the explicit trigger in every language and file type, and on a
+ * typing trigger wherever {@link resolveBufferWordPolicy} allows it — code
+ * files only, and only past the minimum word length.
  *
  * The vocabulary is the open document and nothing else: there is no index
  * behind it, so every query re-reads `context.state.doc` and no staleness rule
@@ -94,11 +147,17 @@ export function bufferWordCompletions(
 
 	return (context: CompletionContext): CompletionResult | null => {
 		const policy = resolveBufferWordPolicy(languageName, readSettings());
-		if (!context.explicit && !policy.automatic) return null;
 
 		const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
 		// An empty typed prefix would dump the whole vocabulary into the popover.
 		if (!typed || typed.from === context.pos) return null;
+
+		if (!context.explicit) {
+			if (!policy.automatic) return null;
+			// Past the minimum length, or the popup interrupts the first
+			// characters of every word.
+			if (typed.text.length < policy.minWordLength) return null;
+		}
 
 		const prefix = typed.text.toLowerCase();
 		const labels = bufferVocabulary(

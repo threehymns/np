@@ -239,6 +239,46 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			description: 'Synchronizes the Vim yank/paste register with the system clipboard',
 			control: 'toggle',
 			alias: 'vimSyncClipboard'
+		},
+		words: {
+			type: 'string',
+			default: 'enabled',
+			title: 'Words',
+			description: 'Offer words from the current document while typing. Off silences automatic suggestions; the explicit trigger still answers',
+			enum: ['enabled', 'disabled'],
+			control: 'select'
+		},
+		min_word_length: {
+			type: 'number',
+			default: 3,
+			title: 'Minimum Word Length',
+			description: 'Shortest word offered, and the shortest typed prefix that summons suggestions while typing',
+			minimum: 1,
+			control: 'input'
+		},
+		automatic_completions: {
+			type: 'boolean',
+			default: true,
+			title: 'Automatic Completions',
+			description: 'Show suggestions while typing. Off leaves the explicit trigger working',
+			control: 'toggle'
+		},
+		/**
+		 * Per-language overrides for the keys above, keyed by language name and
+		 * matched case-insensitively. Read by `resolveLanguageScoped`, which
+		 * deliberately ignores `automatic_completions`: that one is the global
+		 * popup toggle, and scoping it would contradict what it is for.
+		 *
+		 * The control is a raw JSON box, like every other object setting: the
+		 * proper control is a per-language list, which is a settings-UI project
+		 * of its own.
+		 */
+		languages: {
+			type: 'object',
+			default: {},
+			title: 'Per-Language Completions',
+			description: 'Per-language overrides, e.g. { "Markdown": { "words": "disabled" } }',
+			control: 'json'
 		}
 	}
 };
