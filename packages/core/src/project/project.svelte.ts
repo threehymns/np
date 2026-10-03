@@ -63,4 +63,37 @@ export class Project {
 	get worktree(): Worktree | null {
 		return this.worktrees[0] ?? null;
 	}
+
+	/**
+	 * Is this origin covered by the granted project root? Synchronous and
+	 * side-effect free: the Project owns the root, so Documents never check
+	 * this themselves — coverage travels to them as plain call-time data.
+	 * Single owner of the scheme + path-prefix rule.
+	 */
+	coversOrigin(origin: FileOrigin): boolean {
+		return this.relativePath(origin) !== null;
+	}
+
+	/**
+	 * Path of `origin` relative to the granted project root, or null when
+	 * not covered. Returns '' for the root itself. Single owner of the
+	 * scheme + path-prefix rule so callers never re-implement it.
+	 */
+	relativePath(origin: FileOrigin): string | null {
+		const rootOrigin = this.rootOrigin;
+		if (!rootOrigin || !this.hasRootPermission) {
+			return null;
+		}
+		if (origin.scheme !== rootOrigin.scheme) {
+			return null;
+		}
+		if (origin.path === rootOrigin.path) {
+			return '';
+		}
+		const normalizedRoot = rootOrigin.path.replace(/\/+$/, '');
+		if (origin.path.startsWith(normalizedRoot + '/')) {
+			return origin.path.slice(normalizedRoot.length + 1);
+		}
+		return null;
+	}
 }

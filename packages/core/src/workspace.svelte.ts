@@ -93,34 +93,22 @@ export class Workspace {
 
 	/**
 	 * Is this origin covered by the granted workspace root? Synchronous and
-	 * side-effect free: the Workspace owns the root, so Documents never check
-	 * this themselves — coverage travels to them as plain call-time data.
+	 * side-effect free. Deprecated forwarder — the single owner is
+	 * Project.coversOrigin; Documents still receive coverage as plain
+	 * call-time data. Will be removed in #253 when all consumers route
+	 * through Project.
 	 */
 	coversOrigin(origin: FileOrigin): boolean {
-		return this.relativePath(origin) !== null;
+		return this.project.coversOrigin(origin);
 	}
 
 	/**
 	 * Path of `origin` relative to the granted workspace root, or null when
-	 * not covered. Returns '' for the root itself. Single owner of the
-	 * scheme + path-prefix rule so callers never re-implement it.
+	 * not covered. Returns '' for the root itself. Deprecated forwarder —
+	 * the single owner is Project.relativePath. Will be removed in #253.
 	 */
 	relativePath(origin: FileOrigin): string | null {
-		const rootOrigin = this.rootOrigin;
-		if (!rootOrigin || !this.hasRootPermission) {
-			return null;
-		}
-		if (origin.scheme !== rootOrigin.scheme) {
-			return null;
-		}
-		if (origin.path === rootOrigin.path) {
-			return '';
-		}
-		const normalizedRoot = rootOrigin.path.replace(/\/+$/, '');
-		if (origin.path.startsWith(normalizedRoot + '/')) {
-			return origin.path.slice(normalizedRoot.length + 1);
-		}
-		return null;
+		return this.project.relativePath(origin);
 	}
 
 	/**
@@ -138,7 +126,7 @@ export class Workspace {
 	/** Root fast-path first, storage verify second. Used by the permission overlay. */
 	requestFilePermission(doc: DocumentSession): Promise<boolean> {
 		if (!doc.origin) return Promise.resolve(true);
-		return doc.requestPermission(this.coversOrigin(doc.origin));
+		return doc.requestPermission(this.project.coversOrigin(doc.origin));
 	}
 
 	/**
@@ -174,7 +162,7 @@ export class Workspace {
 		}
 
 		this.lastSaveCancellationReason = null;
-		const covered = doc.origin ? this.coversOrigin(doc.origin) : false;
+		const covered = doc.origin ? this.project.coversOrigin(doc.origin) : false;
 		const needsPicker = !doc.origin || options.forceNewOrigin;
 
 		// A save that throws still has to reach the after-save consumers: they
@@ -489,7 +477,7 @@ export class Workspace {
 
 		const content = await this.storage.readFile(origin);
 		const newDoc = new DocumentSession(this.storage, content, origin);
-		newDoc.refreshPermissionState(this.coversOrigin(origin));
+		newDoc.refreshPermissionState(this.project.coversOrigin(origin));
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
@@ -554,7 +542,7 @@ export class Workspace {
 
 		// Refresh permissions for already open files
 		for (const doc of this.documents) {
-			if (doc.origin && this.coversOrigin(doc.origin)) {
+			if (doc.origin && this.project.coversOrigin(doc.origin)) {
 				doc.markPermissionGranted();
 			}
 		}
@@ -580,7 +568,7 @@ export class Workspace {
 
 			// Refresh permissions for already open files
 			for (const doc of this.documents) {
-				if (doc.origin && this.coversOrigin(doc.origin)) {
+				if (doc.origin && this.project.coversOrigin(doc.origin)) {
 					doc.markPermissionGranted();
 				}
 			}
@@ -673,7 +661,7 @@ export class Workspace {
 				.filter(doc => doc.isModified)
 				.map(async doc => {
 					if (doc.origin) {
-						const rel = this.relativePath(doc.origin);
+						const rel = this.project.relativePath(doc.origin);
 						if (rel !== null) return rel;
 					}
 					return doc.fileName;
@@ -848,7 +836,7 @@ export class Workspace {
 							doc.deletedOnDisk = true;
 						}
 						if (serialized.origin) {
-							doc.refreshPermissionState(this.coversOrigin(serialized.origin));
+							doc.refreshPermissionState(this.project.coversOrigin(serialized.origin));
 						}
 						if (serialized.draftContent !== undefined) {
 							doc.restoreDraft(serialized.draftContent);
@@ -857,7 +845,7 @@ export class Workspace {
 						// Old schema compatibility
 						const origin = serialized as unknown as FileOrigin;
 						doc = new DocumentSession(this.storage, '', origin);
-						doc.refreshPermissionState(this.coversOrigin(origin));
+						doc.refreshPermissionState(this.project.coversOrigin(origin));
 					}
 					restoredDocs.push(doc);
 					restoredTabs.push({
