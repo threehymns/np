@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, bufferWordCompletionChain } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -33,6 +33,10 @@
 	let pendingScrollGen = 0;
 	const wrapCompartment = new Compartment();
 	const languageCompartment = new Compartment();
+	// Sits after the language compartment so word completions append to the note
+	// sources it registers. #261 reconfigures this same compartment for the
+	// completion settings and the popup toggle.
+	const completionCompartment = new Compartment();
 	const vimCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
@@ -77,6 +81,7 @@
 				...createEditorExtensions({
 					wrapCompartment,
 					languageCompartment,
+					completionCompartment,
 					vimCompartment,
 					editorCompartments: appState.plugins?.editorCompartments,
 					pluginContributions: appState.plugins?.getEditorContributions?.() ?? [],
@@ -300,6 +305,28 @@
 				if (view) {
 					view.dispatch({
 						effects: languageCompartment.reconfigure(extensions),
+					});
+				}
+			});
+		}
+	});
+
+	// Sync the completion chain. It lives in its own compartment after the
+	// language one because a source registered there appends to the language's
+	// own autocomplete chain rather than replacing it (`override` would drop
+	// the table and wikilink sources). Reads the language revision with
+	// doc.language for the same reason the language compartment above does.
+	$effect(() => {
+		const _langRev = appState.plugins?.languageRevision;
+		const lang = doc.language;
+		const languageName = lang?.name ?? null;
+		if (view && active) {
+			resolveActiveLanguage(lang).then((language) => {
+				if (view) {
+					view.dispatch({
+						effects: completionCompartment.reconfigure(
+							bufferWordCompletionChain({ language, languageName }),
+						),
 					});
 				}
 			});
