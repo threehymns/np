@@ -88,6 +88,26 @@ describe('Project-root scoping (#264)', () => {
 		expect(result).toEqual({ root: '/work/other/src', marker: null, usedFallback: true });
 	});
 
+	it('does not reach the parent directory the boundary excludes', async () => {
+		// The two cases above only differ from a width compare when nothing is
+		// found in the directory the wrong walk would have reached. A document
+		// outside the boundary still has a parent, and a project configuration
+		// there belongs to whatever that parent is for — not to this file. So the
+		// marker has to sit exactly one level up, where only a walk that ignored
+		// containment would land.
+		const result = await findProjectRoot({
+			startDir: '/elsewhere/project/src',
+			markers: ['tsconfig.json'],
+			probe: probeFor(['/elsewhere/project/tsconfig.json', '/elsewhere/tsconfig.json']),
+			boundary: '/work/app'
+		});
+		expect(result).toEqual({
+			root: '/elsewhere/project/src',
+			marker: null,
+			usedFallback: true
+		});
+	});
+
 	it('does not let a boundary with a shared prefix claim a sibling directory', async () => {
 		const result = await findProjectRoot({
 			startDir: '/repo/application/src',
