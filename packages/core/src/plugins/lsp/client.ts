@@ -226,11 +226,31 @@ export class LspClient {
 		const result = await this.request(
 			'initialize',
 			{
-				processId: null,
+				processId: await this.resolveProcessId(),
 				clientInfo: { name: 'np' },
 				...params,
 				capabilities: {
 					textDocumentSync: 1,
+					completionProvider: {
+						// The client issues `textDocument/completion` (see
+						// `LspRuntime.fetch`) and must say so. Declaring nothing while
+						// asking for the answers anyway is a protocol error: a server is
+						// entitled to answer "no completions here" for a client that never
+						// advertised that it wanted any, and vtsls does exactly that.
+						resolveProvider: false,
+						// No `triggerCharacters`, deliberately, and the reasoning is the
+						// same as `resolveProvider` above. The characters are the client's
+						// to honour, and this client has no per-character trigger to
+						// declare: CodeMirror decides when to ask, the trigger policy
+						// filters it (`min_word_length`, prose silence, the global popup
+						// toggle), and a server that trimmed its answer to "the next
+						// character is one of these" would be trimming for a request this
+						// client never sends. Declaring them would also make the field
+						// descriptor data, and ADR 0019's boundary is exactly that the
+						// client's capability table is the client's: a descriptor that
+						// could claim a trigger character is a descriptor claiming a client
+						// behaviour it does not implement.
+					},
 					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
 				}
 			},
@@ -238,6 +258,32 @@ export class LspClient {
 		);
 		this.notify('initialized', {});
 		return result;
+	}
+
+	/**
+	 * The client pid to declare in `initialize`, or null when the transport cannot
+	 * name the process.
+	 *
+	 * The spec uses `processId` for one thing: a server watches the parent and exits
+	 * when it dies, so a renderer that crashes does not leave a server running for
+	 * the rest of the login. `null` is the spec's own "no process id available", so
+	 * it stays the honest answer — but the desktop transport *does* have the pid and
+	 * arrives at it over IPC, two round trips after `spawn()` returned. Reading
+	 * `process.pid` while building the params therefore finds nothing and sends
+	 * nothing, which is why the value is awaited rather than read once.
+	 *
+	 * Bounded by the handshake budget and degrading to `null` rather than hanging:
+	 * a transport that never names its process must not strand the runtime on a
+	 * document it can never serve. Waiting cannot cost more than it already did —
+	 * this client's first write is deferred until the transport names the process
+	 * anyway — so the bound is a guard against a broken transport, not against IPC.
+	 */
+	private async resolveProcessId(): Promise<number | null> {
+		const known = this.options.process.pid;
+		if (known !== undefined) return known;
+		const ready = this.options.process.ready;
+		if (!ready) return null;
+		return (await settleWithin(ready, this.options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS)) ?? null;
 	}
 
 	/**
@@ -373,6 +419,25 @@ async function withTimeout<T>(
 	});
 	try {
 		return await Promise.race([settled, expiry]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
+
+/**
+ * A value, or null when it did not arrive in time. Unlike {@link withTimeout}
+ * this does not fail the operation it is waiting on: a late answer to a question
+ * whose default is "none" is the same answer as no answer, and raising here would
+ * turn a slow transport into a failed handshake.
+ */
+async function settleWithin<T>(pending: Promise<T>, timeoutMs: number): Promise<T | null> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expiry = new Promise<'timeout'>((resolve) => {
+		timer = setTimeout(() => resolve('timeout'), timeoutMs);
+	});
+	try {
+		const outcome = await Promise.race([pending, expiry]);
+		return outcome === 'timeout' ? null : outcome;
 	} finally {
 		if (timer !== undefined) clearTimeout(timer);
 	}

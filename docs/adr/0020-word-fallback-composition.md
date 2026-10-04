@@ -80,13 +80,24 @@ degrade into `replace_suffix`. A range is clamped into the document at apply tim
 because a range the server computed against an older revision can point past its
 end, and an out-of-bounds offset throws in every consumer of one.
 
-`completionItem/resolve` is not used. vtsls advertises `resolveProvider: true`, and
-a real server often withholds documentation until it is asked — so most items will
-show a signature and no JSDoc. CodeMirror has no public hook for "the popover is
-now showing this option", so the round trip has nowhere to hang. Doing it anyway
-means N requests per keystroke, or a cache that lands the docs one keystroke late.
-That is a design of its own and it belongs with hover, which spec #263 defers for
-the same reason.
+`completionItem/resolve` is not used, and the client says so. vtsls advertises
+`resolveProvider: true`, and a real server often withholds documentation until it
+is asked — so most items will show a signature and no JSDoc. CodeMirror has no
+public hook for "the popover is now showing this option", so the round trip has
+nowhere to hang. Doing it anyway means N requests per keystroke, or a cache that
+lands the docs one keystroke late. That is a design of its own and it belongs
+with hover, which spec #263 defers for the same reason.
+
+So `initialize` declares `completionProvider: { resolveProvider: false }`, and the
+declared absence is the point: the client *issues* `textDocument/completion`, so
+declaring nothing would be a protocol error — a server is entitled to answer "no
+completions here" for a client that never advertised it wanted any, and vtsls
+does exactly that. `triggerCharacters` is declared absent for the same reason:
+the characters are the client's to honour, and this client has no per-character
+trigger, because CodeMirror decides when to ask and the trigger policy filters
+it. The client's capability table is the client's and not the descriptor's for
+the reason ADR 0019 gives, so neither of these is a field a second server could
+fill in.
 
 ## What is asserted, and where
 

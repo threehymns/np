@@ -512,12 +512,9 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	}
 
 	private reportContained(what: string, error: unknown): void {
-		console.error(
-			`[${this.options.pluginId}] ${what} failed: ${describeError(error)}`
-		);
+console.error(
+				`[${this.options.pluginId}] ${what} failed: ${describeError(error)}`
+			);
 	}
 }
-
-/** Enough recent files to cover a working session without growing forever. */
-const MAX_RESOLVED_TARGETS = 128;
 

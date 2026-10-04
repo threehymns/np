@@ -208,6 +208,59 @@ describe('createElectronLspPlatform', () => {
 		expect(spawned.pid).toBe(77);
 	});
 
+	it('resolves `ready` with the pid the spawn round trip brings back', async () => {
+		// The client waits on this before declaring `processId`, and that value is the
+		// only thing that lets a server notice its parent died — so a `ready` that
+		// resolved early or never would be a server told `null`, silently.
+		let resolveSpawn: ((value: { processId: string; pid: number }) => void) | undefined;
+		mockSpawn.mockImplementation(
+			() =>
+				new Promise<{ processId: string; pid: number }>((resolve) => {
+					resolveSpawn = resolve;
+				})
+		);
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+		expect(spawned.pid).toBeUndefined();
+
+		resolveSpawn!({ processId: 'p9', pid: 77 });
+		expect(await spawned.ready).toBe(77);
+	});
+
+	it('resolves `ready` even when the spawn never produced a process', async () => {
+		// A client waiting for a pid that is never coming would hang the handshake
+		// until its timeout instead of failing on the exit that is already known.
+		mockSpawn.mockImplementation(async () => {
+			throw new Error('spawn vtsls ENOENT');
+		});
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+
+		expect(await spawned.ready).toBeUndefined();
+		await expect(spawned.exit).resolves.toMatchObject({ error: 'spawn vtsls ENOENT' });
+	});
+
+	it('resolves `ready` when a kill lands before the spawn reply does', async () => {
+		// A stop can arrive mid-handshake. Leaving `ready` pending here would strand a
+		// client on a server that has already been killed.
+		let resolveSpawn: ((value: { processId: string; pid: number }) => void) | undefined;
+		mockSpawn.mockImplementation(
+			() =>
+				new Promise<{ processId: string; pid: number }>((resolve) => {
+					resolveSpawn = resolve;
+				})
+		);
+		const platform = createElectronLspPlatform(bridgeHost());
+		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		spawned.kill();
+
+		expect(await spawned.ready).toBeUndefined();
+		// And the later attach cannot contradict an already-resolved one.
+		resolveSpawn!({ processId: 'p9', pid: 77 });
+		expect(await spawned.ready).toBeUndefined();
+	});
+
 	it('resolves exit once, and kills a server on request', async () => {
 		const platform = createElectronLspPlatform(bridgeHost());
 		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });

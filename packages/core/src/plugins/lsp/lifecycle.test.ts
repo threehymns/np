@@ -224,6 +224,19 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			'"text":"export const a = 1;'
 		);
 
+		// The handshake carries the client's real pid, which is what lets a server
+		// watch its parent and exit rather than linger after the editor dies. Read
+		// off the wire and matched against the pid this platform actually spawned,
+		// because the claim is only true if it is *this* process — a hard-coded value
+		// would satisfy a check that only looked for "not null".
+		const initialize = JSON.parse(received(harness).find((line) => line.includes('"initialize"'))!);
+		expect(initialize.params.processId).toBe(harness.platform.pids[0]);
+		// And the completion support the client then asks about with
+		// `textDocument/completion`: undeclared, a server is entitled to refuse.
+		expect(initialize.params.capabilities.completionProvider).toEqual({
+			resolveProvider: false
+		});
+
 		expect(harness.runtime.getServers()).toEqual([
 			{
 				server: lspServerKey('typescript', root),

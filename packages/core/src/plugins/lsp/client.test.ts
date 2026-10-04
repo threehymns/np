@@ -70,7 +70,9 @@ describe('JSON-RPC framing (#264)', () => {
 });
 
 /** A process whose streams the test drives by hand. */
-function fakeProcess(): LspProcess & {
+function fakeProcess(
+	overrides: Partial<LspProcess> = {}
+): LspProcess & {
 	feedStdout(chunk: Uint8Array): void;
 	feedStderr(chunk: Uint8Array): void;
 	written(): string[];
@@ -95,9 +97,46 @@ function fakeProcess(): LspProcess & {
 		feedStdout: (chunk) => stdout?.(chunk),
 		feedStderr: (chunk) => stderr?.(chunk),
 		written: () => writes,
-		ended: () => isEnded
+		ended: () => isEnded,
+		...overrides
 	};
 }
+
+/** Every JSON message the client has written, decoded back out of its frames. */
+function sentMessages(process: { written(): string[] }): Record<string, unknown>[] {
+	const parser = createFrameParser();
+	const bodies: string[] = [];
+	for (const chunk of process.written()) bodies.push(...parser.push(new TextEncoder().encode(chunk)));
+	return bodies.map((body) => JSON.parse(body) as Record<string, unknown>);
+}
+
+/**
+ * Runs one `initialize` handshake and returns the request as it went out.
+ *
+ * Answers the request itself, so the client's promise settles and the test does
+ * not leak a pending waiter — and asserts on the request rather than on anything
+ * internal, because what the server receives is the whole of the claim.
+ */
+async function handshakeParams(process: ReturnType<typeof fakeProcess>): Promise<Record<string, unknown>> {
+	const { LspClient } = await import('./client');
+	const client = new LspClient({ process, server: 'typescript@/repo', logs: new LspLogStore() });
+	const settled = client.initialize({ rootUri: 'file:///repo', capabilities: {} });
+	const sent = () => sentMessages(process).find((m) => m.method === 'initialize');
+	// Polled rather than a fixed number of microtasks: a transport that names its
+	// process late settles the pid on a macrotask, and the count of ticks that
+	// takes is not something this test should encode.
+	for (let attempt = 0; attempt < 500 && !sent(); attempt++) {
+		await new Promise((resolve) => setTimeout(resolve, 1));
+	}
+	const request = sent();
+	if (!request) throw new Error('The client never sent initialize.');
+	process.feedStdout(
+		framed(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { capabilities: {} } }))
+	);
+	await settled;
+	return request.params as Record<string, unknown>;
+}
+
 
 describe('Protocol trace and stderr feeds (#264)', () => {
 	it('records every message it sends and receives under the server it belongs to', async () => {
@@ -149,5 +188,65 @@ describe('Protocol trace and stderr feeds (#264)', () => {
 			['info', 'partial line'],
 			['info', 'ready']
 		]);
+	});
+});
+
+/**
+ * What the client claims about itself in `initialize`.
+ *
+ * Asserted on the request that goes out on the wire, because the declaration is
+ * a claim made to the server: the defect these cover was invisible from inside
+ * the client and fatal to it, since a server is entitled to answer "I do not do
+ * completions" for a client that never advertised that it wanted any.
+ */
+describe('The initialize handshake declares what the client will do (#264)', () => {
+	it('declares completion support, because it issues textDocument/completion', async () => {
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		expect(capabilities.completionProvider).toBeDefined();
+	});
+
+	it('declares no completionItem/resolve, which nothing in the client implements', async () => {
+		// ADR 0020 records why: CodeMirror has no "this option is now selected" hook,
+		// so the round trip has nowhere to hang. Advertising it would be a claim the
+		// client cannot keep, and it would cost a request per keystroke.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		expect(capabilities.completionProvider).toEqual({ resolveProvider: false });
+	});
+
+	it('declares no trigger characters, which is the same kind of lie', async () => {
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		expect(capabilities.completionProvider).not.toHaveProperty('triggerCharacters');
+	});
+
+	it('declares the client process id, so a server can notice the client died', async () => {
+		// A server told `null` cannot watch its parent, so a crashed editor leaves it
+		// running for the rest of the login — the orphan `initialize` exists to
+		// prevent. The seam already carries the pid; this is what consumes it.
+		expect((await handshakeParams(fakeProcess())).processId).toBe(4242);
+	});
+
+	it('waits for a transport that names its process late rather than sending nothing', async () => {
+		// The desktop transport learns the pid over IPC, two round trips after
+		// `spawn()` returned. Reading `pid` while building the params finds nothing,
+		// and `processId: undefined` vanishes from the JSON entirely — which is a
+		// *worse* lie than null, because the server sees no field at all.
+		let nameIt!: (pid: number | undefined) => void;
+		const process = fakeProcess({
+			pid: undefined,
+			ready: new Promise<number | undefined>((resolve) => {
+				nameIt = resolve;
+			})
+		});
+		const pending = handshakeParams(process);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(sentMessages(process)).toEqual([]);
+		nameIt(31337);
+		expect((await pending).processId).toBe(31337);
+	});
+
+	it('declares the spec null when the transport never names a process', async () => {
+		// `null` is LSP's own "no process id available", so it is the honest answer
+		// rather than an omission — and a missing field is not.
+		expect((await handshakeParams(fakeProcess({ pid: undefined }))).processId).toBeNull();
 	});
 });

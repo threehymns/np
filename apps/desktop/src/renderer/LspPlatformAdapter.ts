@@ -84,6 +84,15 @@ class IpcLspProcess implements LspProcess {
 		signal: string | null;
 		error?: string;
 	}>();
+	/**
+	 * Settled once `attach` names the process, so the client can declare a real
+	 * parent pid in `initialize` instead of a hard-coded `null` (LSP's "I have no
+	 * process id"). A server told `null` cannot watch its parent, so a crashed
+	 * renderer leaves it running — the orphan `lsp: false` and plugin disable both
+	 * have to be able to prevent. Settled to `undefined` by `reportExit`, because a
+	 * spawn that never produced a process never will.
+	 */
+	private readonly readyDeferred = createDeferred<number | undefined>();
 	private disposed = false;
 
 	/** Work the client asked for before the spawn resolved, applied on arrival. */
@@ -118,6 +127,10 @@ class IpcLspProcess implements LspProcess {
 		return this.osPid;
 	}
 
+	get ready(): Promise<number | undefined> {
+		return this.readyDeferred.promise;
+	}
+
 	get exit(): Promise<{ code: number | null; signal: string | null; error?: string }> {
 		return this.exitDeferred.promise;
 	}
@@ -126,6 +139,9 @@ class IpcLspProcess implements LspProcess {
 	attach(processId: string, pid: number | null): void {
 		this.processId = processId;
 		this.osPid = pid ?? undefined;
+		// Released before anything is replayed, so a client already waiting on the
+		// pid to declare its parent is not left waiting on the replay.
+		this.readyDeferred.resolve(this.osPid);
 		// Registered before anything is replayed, so an exit arriving immediately
 		// after the spawn reply still reaches this process.
 		this.route.register(processId, this);
@@ -143,6 +159,11 @@ class IpcLspProcess implements LspProcess {
 
 	/** Reports a server that died, or a spawn that never happened at all. */
 	reportExit(code: number | null, signal: string | null, error?: string): void {
+		// A spawn that failed can never name itself, and the client is waiting on
+		// that name before it can declare a parent. Left pending it would hold the
+		// handshake until the timeout instead of failing it on the exit that is
+		// already known.
+		this.readyDeferred.resolve(this.osPid);
 		this.exitDeferred.resolve({ code, signal, error });
 	}
 
@@ -150,8 +171,12 @@ class IpcLspProcess implements LspProcess {
 		if (this.disposed) return;
 		this.disposed = true;
 		if (this.processId) void this.bridge.killLspServer(this.processId);
-		// A process killed before the exit arrives would otherwise leave `exit`
-		// pending forever, and the client waits on it to close the handshake.
+		// Both are resolved rather than left pending: `exit` because the client
+		// waits on it to close the shutdown handshake, and `ready` because a
+		// stop landing before the spawn round trip returns would otherwise strand a
+		// client waiting for a parent pid that is never coming. Both resolve
+		// idempotently, so the later `attach` cannot contradict a resolved one.
+		this.readyDeferred.resolve(this.osPid);
 		this.exitDeferred.resolve({ code: null, signal: null });
 	}
 

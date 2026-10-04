@@ -140,6 +140,18 @@ export interface LspProcessExit {
 export interface LspProcess {
 	/** Reported so a disable can assert the process is actually gone. */
 	readonly pid?: number;
+	/**
+	 * Settles once the transport can name the process, with its pid when it has
+	 * one and `undefined` when it never will.
+	 *
+	 * Optional because a transport that spawns in-process knows the pid before
+	 * `spawn` returns. The desktop one does not: the renderer has no process host,
+	 * so the pid arrives over IPC two round trips later — which is why this is a
+	 * separate fact from `pid` rather than a promise the getter makes on demand.
+	 * The client waits for it before declaring `processId`, so a server is told the
+	 * parent it should watch and can exit when it dies instead of lingering.
+	 */
+	readonly ready?: Promise<number | undefined>;
 	readonly stdin: LspWritableStream;
 	readonly stdout: LspReadableStream;
 	readonly stderr: LspReadableStream;
