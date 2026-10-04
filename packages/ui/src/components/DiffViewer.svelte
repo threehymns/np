@@ -515,6 +515,10 @@
 	// the open one when present. Creation reads the already-loaded git
 	// snapshot (content == baseline, so clean) and opens no tab; files
 	// whose diff has not loaded yet bind on the refresh that delivers it.
+	// Staged-only entries never seed a working-tree Document (their snapshot
+	// is index content); combined and unstaged entries bind as before. Clean
+	// binding-owned tab-less Documents for files that left are pruned;
+	// dirty Documents and tab-bound Documents are preserved.
 	$effect(() => {
 		const files = activeChanges;
 		const root = appState.workspace.project.rootOrigin;
@@ -527,9 +531,28 @@
 			coversOrigin: (origin: Parameters<typeof workspace.project.coversOrigin>[0]) =>
 				workspace.project.coversOrigin(origin)
 		};
+		const boundIds = appState.workspace.diffBoundDocIds;
 		for (const file of files) {
+			if (file.staged && !file.combined) continue;
 			const detail = resolveFileDiff(file);
-			ensureSplitDocument(scope, appState.workspace.diffBoundDocIds, file, detail?.modifiedContent ?? file.modifiedContent);
+			ensureSplitDocument(scope, boundIds, file, detail?.modifiedContent ?? file.modifiedContent);
+		}
+		const active = new Set(files.map((f) => f.filepath));
+		for (const filepath of [...boundIds.keys()]) {
+			if (active.has(filepath)) continue;
+			const docId = boundIds.get(filepath);
+			if (!docId) continue;
+			const doc = workspace.documents.find((d) => d.id === docId);
+			if (!doc) {
+				boundIds.delete(filepath);
+				continue;
+			}
+			const hasTab = workspace.tabs.some((t) => t.id === doc.id);
+			if (!hasTab && !doc.isModified) {
+				const idx = workspace.documents.indexOf(doc);
+				if (idx !== -1) workspace.documents.splice(idx, 1);
+				boundIds.delete(filepath);
+			}
 		}
 	});
 
