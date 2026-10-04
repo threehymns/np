@@ -22,7 +22,7 @@ describe("DiffViewer refresh-safe edits plus staged and file-edge semantics (#27
 
 	it("re-derives navigation hunks around live Document content", () => {
 		expect(src).toContain("computeLiveHunks(diff.originalContent, effectiveModified)");
-		expect(src).toContain("const bound = findSplitDoc(change.filepath)");
+		expect(src).toContain("const bound = findDiffDoc(change.filepath)");
 		expect(src).toContain("const effectiveModified = bound ? bound.content : diff.modifiedContent");
 	});
 
@@ -42,14 +42,14 @@ describe("DiffViewer refresh-safe edits plus staged and file-edge semantics (#27
 	});
 
 	it("keeps save routing and dirty indication on the shared Document", () => {
-		expect(src).toContain("appState.activeDiffDocument = target ? findSplitDoc(target) : undefined;");
+		expect(src).toContain("appState.activeDiffDocument = target ? findDiffDoc(target) : undefined;");
 		expect(src).toContain("isDiffHeaderDirty(headerDoc)");
 	});
 
 	it("leaves hunk-action splices to #273 (no index writes from typing)", () => {
 		expect(binding).not.toContain("updateIndexContent");
 		expect(binding).not.toContain("updateFileContent");
-		expect(src).toContain("onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)");
+		expect(src).toContain("onDocChange: (text) => handleDiffDocChange(fileChange.filepath, text)");
 		expect(src).toContain("appState.workspace.updateDocumentContent(doc, text)");
 	});
 });

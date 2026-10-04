@@ -129,6 +129,93 @@ describe("DiffViewer Working-copy pane parity (#271)", () => {
 	});
 });
 
+describe("DiffViewer inline Working-copy pane parity (#271 review)", () => {
+	function setupEditorBody() {
+		const setupIdx = src.indexOf("function setupEditor(");
+		expect(setupIdx).toBeGreaterThan(-1);
+		const afterSetup = src.slice(setupIdx);
+		// Cut before setupMergeView so assertions only see the inline action.
+		const endIdx = afterSetup.indexOf("function setupMergeView(");
+		expect(endIdx).toBeGreaterThan(0);
+		return afterSetup.slice(0, endIdx);
+	}
+
+	it("gives the inline pane an independent undo history like the b-pane", () => {
+		expect(setupEditorBody()).toContain("history(),");
+	});
+
+	it("wires vim bindings in the inline pane through a reconfigurable compartment", () => {
+		const body = setupEditorBody();
+		expect(body).toContain("vimCompartment.of(currentOptions.vimEnabled ? vim() : [])");
+		expect(body).toContain("vimCompartment.reconfigure(inlineVimEnabled ? vim() : [])");
+		expect(body).toContain("if (inlineVimToggled) syncInlineVimModeListener();");
+		expect(body).toContain("vim_mode', readInlineVimMode(view!)");
+	});
+
+	it("wires completions with workspace context in the inline pane", () => {
+		const body = setupEditorBody();
+		expect(body).toContain("autocompletion(),");
+		expect(body).toContain("workspaceFacet.of(appState.workspace)");
+		expect(body).toContain("currentDocFacet.of(");
+	});
+
+	it("drives the inline pane language from the bound Document with registry refresh", () => {
+		const body = setupEditorBody();
+		expect(body).toContain("languageCompartment.of(langExtensions)");
+		expect(body).toContain("languageCompartment.reconfigure(langExtensions)");
+		// Call-site wiring (template, outside the action body).
+		expect(src).toContain("docLanguage: inlineDoc?.language");
+		expect(src).toContain("languageRevision: appState.plugins?.languageRevision");
+	});
+
+	it("matches tab editing keybindings and behaviors in the inline pane", () => {
+		const body = setupEditorBody();
+		for (const token of [
+			"...closeBracketsKeymap",
+			"...defaultKeymap",
+			"...searchKeymap",
+			"...historyKeymap",
+			'smartIndent("more")',
+			"indentOnInput(),",
+			"bracketMatching(),",
+			"closeBrackets(),"
+		]) {
+			expect(body).toContain(token);
+		}
+	});
+
+	it("syncs Document -> inline pane as a minimal hunk out of undo history", () => {
+		expect(setupEditorBody()).toContain("minimalTextChange(currentDoc, insert)");
+	});
+
+	it("publishes the focused inline pane as the active editor with identity-checked cleanup", () => {
+		const body = setupEditorBody();
+		expect(body).toContain("appState.activeEditorView = view;");
+		expect(body).toContain("if (appState.activeEditorView === view)");
+	});
+
+	it("keeps the bare deleted-file Original pane out of the edit-target slot", () => {
+		const body = setupEditorBody();
+		// Exactly one publish site (the inline Working-copy pane); the bare
+		// branch only tears down.
+		expect(body.match(/appState\.activeEditorView = view;/g)?.length).toBe(1);
+	});
+});
+
+describe("Original pane non-focusable for editing (#268)", () => {
+	it("marks both Original surfaces non-editable while the Working-copy panes stay editable", () => {
+		// One in the split a-pane, one in the bare deleted-file branch of
+		// setupEditor. Neither Working-copy pane (split b, inline) sets it.
+		expect(src.match(/EditorView\.editable\.of\(false\)/g)?.length).toBe(2);
+	});
+
+	it("keeps hunk navigation targeting the Working-copy pane with panel highlight following scroll", () => {
+		expect(src).toContain("const editor = await getOrWaitEditor(targetHunk.filepath, viewMode);");
+		expect(src).toContain("syncActiveFileSilent(fileChange.filepath)");
+		expect(src).toContain("onfocusin={() => syncActiveFileSilent(fileChange.filepath)}");
+	});
+});
+
 describe("tab editor undo independence (#271)", () => {
 	it("syncs external content as a minimal hunk out of undo history", () => {
 		expect(editorSrc).toContain("minimalTextChange(currentDoc, c)");

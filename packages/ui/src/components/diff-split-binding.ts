@@ -1,8 +1,21 @@
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
-import { DocumentSession } from "../../../core/src/document.svelte";
-import { toURI, type FileOrigin, type Storage } from "../../../core/src/storage";
-import { DEFAULT_DIFF_CONFIG, type GitChange } from "../../../core/src/project/vcs";
+import {
+	DocumentSession,
+	diffOriginForFilepath,
+	findBoundDocument,
+	DEFAULT_DIFF_CONFIG,
+	type FileOrigin,
+	type GitChange,
+	type Storage
+} from "@np/core";
+
+// Single implementation of the diff-filepath origin + bound-Document lookup
+// lives in `@np/core` (`diff-binding`); re-exported here under the binding's
+// historic names so existing seams keep working. The Git Hunk Actions choke
+// point resolves through the same core lookup, so the pane and the commands
+// agree — including after a Save As moves the Document's origin.
+export { findBoundDocument } from "@np/core";
 
 /**
  * Shared-Document binding for the split Diff Viewer Working-copy pane
@@ -14,42 +27,17 @@ import { DEFAULT_DIFF_CONFIG, type GitChange } from "../../../core/src/project/v
  * Svelte or CodeMirror:
  *
  * - origin construction mirrors `openFileInRegularTab` (root + filepath),
- *   so URI lookup reuses the already-open Document when present;
- * - a filepath -> document-id map survives Save As origin changes;
+ *   so URI lookup reuses the already-open Document when present (see
+ *   `diffOriginForFilepath` in `@np/core`);
+ * - a filepath -> document-id map survives Save As origin changes (see
+ *   `findBoundDocument` in `@np/core`; the map itself is workspace-owned so
+ *   Hunk Actions resolve the same Document);
  * - deleted files never bind (their presentation stays read-only; file-edge
  *   semantics belong to #272).
  */
 
 /** Build the workspace origin for a repo-relative diff filepath. */
-export function originForDiffFilepath(root: FileOrigin, filepath: string): FileOrigin {
-	return {
-		scheme: root.scheme,
-		path: root.path + "/" + filepath,
-		name: filepath.split("/").pop() || filepath
-	};
-}
-
-/**
- * Find the shared Document for a diff filepath: the explicitly bound id
- * first (survives Save As origin changes), then a URI match against open
- * documents. Stale id entries are pruned.
- */
-export function findBoundDocument(
-	documents: DocumentSession[],
-	boundDocIds: Map<string, string>,
-	root: FileOrigin | null,
-	filepath: string
-): DocumentSession | undefined {
-	const boundId = boundDocIds.get(filepath);
-	if (boundId) {
-		const byId = documents.find((d) => d.id === boundId);
-		if (byId) return byId;
-		boundDocIds.delete(filepath);
-	}
-	if (!root) return undefined;
-	const uri = toURI(originForDiffFilepath(root, filepath));
-	return documents.find((d) => d.origin && toURI(d.origin) === uri);
-}
+export const originForDiffFilepath = diffOriginForFilepath;
 
 /**
  * Whether the split Working-copy pane is editable: a shared Document is

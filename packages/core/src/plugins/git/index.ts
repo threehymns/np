@@ -84,6 +84,14 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	type DocumentBearer = {
 		documents?: readonly DirtyDocumentLike[];
 		updateDocumentContent?: (doc: DirtyDocumentLike, content: string) => void;
+		/**
+		 * Diff-filepath -> bound Document id map the mounted Diff Viewer
+		 * writes (owned by the Workspace). Threaded into the shared lookup
+		 * so Hunk Actions find the same Document as the pane, including
+		 * after a Save As moved its origin. Absent in headless contexts,
+		 * which stay on URI matching.
+		 */
+		diffBoundDocIds?: Map<string, string>;
 	};
 	const bearerOf = (): DocumentBearer | undefined =>
 		getWorkspace() as unknown as DocumentBearer | undefined;
@@ -99,7 +107,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			const doc = findDirtyDocument(
 				bearerOf()?.documents,
 				workspace.project.rootOrigin,
-				filepath
+				filepath,
+				bearerOf()?.diffBoundDocIds
 			);
 			return doc ? { content: doc.content } : undefined;
 		},
@@ -110,7 +119,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 			const doc = findDirtyDocument(
 				bearer?.documents,
 				workspace.project.rootOrigin,
-				filepath
+				filepath,
+				bearer?.diffBoundDocIds
 			);
 			if (!doc || !bearer?.updateDocumentContent) return false;
 			if (doc.content === content) return true;

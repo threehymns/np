@@ -431,6 +431,33 @@ describe("dirty-hunk range helpers (#273)", () => {
 		expect(findDirtyDocument(undefined, root, "src/a.ts")).toBeUndefined();
 	});
 
+	it("prefers the bound id after a Save As moved the Document origin", () => {
+		// The pane stays bound to the same Document by id while the diff
+		// filepath still names the old path; Hunk Actions must resolve that
+		// same Document (not fall back to snapshot text) through the shared
+		// lookup the UI binding uses.
+		const doc: FakeDoc & { id: string } = {
+			id: "doc-1",
+			origin: documentOriginForFilepath(root, "renamed.ts"),
+			content: "edited",
+			isModified: true
+		};
+		const boundIds = new Map([["src/a.ts", "doc-1"]]);
+		expect(findDirtyDocument([doc], root, "src/a.ts", boundIds)).toBe(doc);
+	});
+
+	it("prunes stale bound ids and falls back to a URI match", () => {
+		const doc: FakeDoc & { id: string } = {
+			id: "doc-2",
+			origin: documentOriginForFilepath(root, "src/a.ts"),
+			content: "x",
+			isModified: false
+		};
+		const boundIds = new Map([["src/a.ts", "gone-id"]]);
+		expect(findDirtyDocument([doc], root, "src/a.ts", boundIds)).toBe(doc);
+		expect(boundIds.has("src/a.ts")).toBe(false);
+	});
+
 	it("clamps positions into live text", () => {
 		expect(clampHunkPos(-3, 10)).toBe(0);
 		expect(clampHunkPos(4, 10)).toBe(4);
