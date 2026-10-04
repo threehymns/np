@@ -4,6 +4,7 @@
 	import { ArrowClockwiseIcon, StopIcon } from 'phosphor-svelte';
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
+	import * as Tooltip from '../../components/ui/tooltip/index';
 	import { lspStatusItemView, type LspStatusAction } from './status-view';
 
 	/**
@@ -44,76 +45,87 @@
 	}
 </script>
 
-<DropdownMenu.Root>
-	<DropdownMenu.Trigger>
-		{#snippet child({ props })}
-			<button
-				{...props}
-				type="button"
-				class="flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
-				title={view.title}
-				aria-label="Language servers"
-			>
-				<span class="size-1.5 rounded-full {view.indicator}"></span>
-				<span class="text-xs">LSP</span>
-				{#if view.count}
-					<span class="text-[10px] text-muted-foreground">{view.count}</span>
-				{/if}
-			</button>
-		{/snippet}
-	</DropdownMenu.Trigger>
-	<DropdownMenu.Content align="start" class="w-72 font-sans">
-		{#if view.empty}
-			<DropdownMenu.Item disabled>No language servers yet</DropdownMenu.Item>
-		{:else}
-			{#each view.rows as row (row.server)}
-				<DropdownMenu.Sub>
-					<DropdownMenu.SubTrigger title={row.title}>
-						<span class="size-1.5 shrink-0 rounded-full {row.dot}"></span>
-						<span class="truncate">{row.descriptorId}</span>
-						<span class="ml-auto text-muted-foreground">{row.label}</span>
-						<!-- The details slot: empty until the version and memory
+<Tooltip.Provider>
+	<DropdownMenu.Root>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				{#snippet child({ props })}
+					<DropdownMenu.Trigger
+						{...props}
+						class="flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
+						aria-label="Language servers"
+					>
+						<span class="size-1.5 rounded-full {view.indicator}"></span>
+						<span class="text-xs">LSP</span>
+						{#if view.count}
+							<span class="text-[10px] text-muted-foreground">{view.count}</span>
+						{/if}
+					</DropdownMenu.Trigger>
+				{/snippet}
+			</Tooltip.Trigger>
+			<Tooltip.Content>{view.title}</Tooltip.Content>
+		</Tooltip.Root>
+		<DropdownMenu.Content align="start" class="w-56 font-sans">
+			{#if view.empty}
+				<DropdownMenu.Item disabled>No language servers yet</DropdownMenu.Item>
+			{:else}
+				{#each view.rows as row (row.server)}
+					<DropdownMenu.Sub>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<!-- The dot carries the state; the label rides along for assistive
+									     tech, which cannot read a colour. -->
+									<DropdownMenu.SubTrigger {...props} aria-label={`${row.descriptorId} (${row.label})`}>
+										<span class="size-1.5 shrink-0 rounded-full {row.dot}"></span>
+										<span class="truncate">{row.descriptorId}</span>
+										<!-- The details slot: empty until the version and memory
 						     follow-ups land, and already in the row when they do. -->
-						{#each row.details as detail (detail.label)}
-							<span class="ml-2 text-muted-foreground">{detail.label} {detail.value}</span>
-						{/each}
-					</DropdownMenu.SubTrigger>
-					<DropdownMenu.SubContent>
-						<DropdownMenu.Item onclick={() => run(row.actions.restart)}>
-							<ArrowClockwiseIcon />
-							{row.actions.restart.label}
-						</DropdownMenu.Item>
-						<DropdownMenu.Item
-							onclick={() => run(row.actions.stop)}
-							variant="destructive"
-							disabled={row.actions.stop.disabled}
-						>
-							<StopIcon />
-							{row.actions.stop.label}
-						</DropdownMenu.Item>
-					</DropdownMenu.SubContent>
-				</DropdownMenu.Sub>
-			{/each}
-		{/if}
-		<DropdownMenu.Separator />
-		<DropdownMenu.Item
-			onclick={() => run(view.actions.restartAll)}
-			disabled={view.actions.restartAll.disabled}
-		>
-			<ArrowClockwiseIcon />
-			{view.actions.restartAll.label}
-		</DropdownMenu.Item>
-		<DropdownMenu.Item
-			onclick={() => run(view.actions.stopAll)}
-			variant="destructive"
-			disabled={view.actions.stopAll.disabled}
-		>
-			<StopIcon />
-			{view.actions.stopAll.label}
-		</DropdownMenu.Item>
-		<DropdownMenu.Separator />
-		<DropdownMenu.Item onclick={() => run(view.actions.viewLogs)}>
-			{view.actions.viewLogs.label}
-		</DropdownMenu.Item>
-	</DropdownMenu.Content>
-</DropdownMenu.Root>
+										{#each row.details as detail (detail.label)}
+											<span class="ml-2 text-muted-foreground">{detail.label} {detail.value}</span>
+										{/each}
+									</DropdownMenu.SubTrigger>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content>{row.title}</Tooltip.Content>
+						</Tooltip.Root>
+						<DropdownMenu.SubContent>
+							<DropdownMenu.Item onclick={() => run(row.actions.restart)}>
+								<ArrowClockwiseIcon />
+								{row.actions.restart.label}
+							</DropdownMenu.Item>
+							<DropdownMenu.Item
+								onclick={() => run(row.actions.stop)}
+								variant="destructive"
+								disabled={row.actions.stop.disabled}
+							>
+								<StopIcon />
+								{row.actions.stop.label}
+							</DropdownMenu.Item>
+						</DropdownMenu.SubContent>
+					</DropdownMenu.Sub>
+				{/each}
+			{/if}
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item
+				onclick={() => run(view.actions.restartAll)}
+				disabled={view.actions.restartAll.disabled}
+			>
+				<ArrowClockwiseIcon />
+				{view.actions.restartAll.label}
+			</DropdownMenu.Item>
+			<DropdownMenu.Item
+				onclick={() => run(view.actions.stopAll)}
+				variant="destructive"
+				disabled={view.actions.stopAll.disabled}
+			>
+				<StopIcon />
+				{view.actions.stopAll.label}
+			</DropdownMenu.Item>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item onclick={() => run(view.actions.viewLogs)}>
+				{view.actions.viewLogs.label}
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+</Tooltip.Provider>

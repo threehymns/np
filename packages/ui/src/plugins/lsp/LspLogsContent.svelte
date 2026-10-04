@@ -4,6 +4,7 @@
 	import { BroomIcon, CaretDownIcon } from 'phosphor-svelte';
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
+	import * as Tooltip from '../../components/ui/tooltip/index';
 	import { lspLogFilter, lspLogsView, shortServer } from './logs-view';
 
 	/**
@@ -148,18 +149,28 @@
 				No lines match. A server writes here as it starts, syncs a document, and fails.
 			</p>
 		{:else}
-			<ul class="flex flex-col gap-px">
-				{#each view.entries as entry (entry.sequence)}
-					<li class="flex gap-2 font-mono text-[11px] leading-relaxed">
-						<span class="w-8 shrink-0 {LEVEL_STYLES[entry.level]}">{entry.level}</span>
-						<span class="w-32 shrink-0 truncate text-muted-foreground/80" title={entry.server}>
-							{shortServer(entry.server)}
-						</span>
-						<span class="shrink-0 text-muted-foreground/60">{entry.kind}</span>
-						<span class="min-w-0 break-all whitespace-pre-wrap text-foreground/90">{entry.message}</span>
-					</li>
-				{/each}
-			</ul>
+			<Tooltip.Provider>
+				<ul class="flex flex-col gap-px">
+					{#each view.entries as entry (entry.sequence)}
+						<li class="flex gap-2 font-mono text-[11px] leading-relaxed">
+							<span class="w-8 shrink-0 {LEVEL_STYLES[entry.level]}">{entry.level}</span>
+							<!-- The column is truncated, so the full server key is the tooltip. -->
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									{#snippet child({ props })}
+										<span {...props} class="w-32 shrink-0 truncate text-muted-foreground/80">
+											{shortServer(entry.server)}
+										</span>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Content>{entry.server}</Tooltip.Content>
+							</Tooltip.Root>
+							<span class="shrink-0 text-muted-foreground/60">{entry.kind}</span>
+							<span class="min-w-0 break-all whitespace-pre-wrap text-foreground/90">{entry.message}</span>
+						</li>
+					{/each}
+				</ul>
+			</Tooltip.Provider>
 		{/if}
 	</div>
 </div>
