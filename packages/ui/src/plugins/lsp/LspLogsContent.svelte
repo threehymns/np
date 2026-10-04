@@ -1,20 +1,16 @@
 <script lang="ts">
-	import {
-		lspManifest,
-		type LspLogKind,
-		type LspLogLevel,
-		type LspLogStore
-	} from '@np/core';
+	import { lspManifest, type LspLogKind, type LspLogLevel, type LspLogStore } from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
 	import { BroomIcon, CaretDownIcon } from 'phosphor-svelte';
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
+	import { lspLogFilter, lspLogsView, shortServer } from './logs-view';
 
 	/**
 	 * The Logs tab: the buffers the plugin already keeps (ADR 0019), filtered
 	 * rather than scrolled. Reading the store through its service key keeps the
 	 * tab from importing plugin state, and every line shown here came out of a
-	 * real pipe.
+	 * real pipe. What the three selections select is `logs-view`'s decision.
 	 */
 	const appState = useAppState();
 	const logs = appState.plugins.getService<LspLogStore>(`${lspManifest.id}:log-store`);
@@ -28,8 +24,6 @@
 		revision++;
 	}));
 
-	// Empty string means "no filter", which is what the store's own optional
-	// fields mean; translating here keeps undefined out of the component.
 	let serverFilter = $state('');
 	let kindFilter = $state('');
 	let levelFilter = $state('');
@@ -37,40 +31,18 @@
 	const KINDS: readonly LspLogKind[] = ['server', 'protocol'];
 	const LEVELS: readonly LspLogLevel[] = ['error', 'warn', 'info', 'trace'];
 
-	const entries = $derived.by(() => {
+	// One read of the store per change, whatever changed: the filter and the
+	// counter come off the same revision so a truncated buffer cannot report a
+	// line count the drop count does not explain.
+	const view = $derived.by(() => {
 		revision;
-		return logs?.read(currentFilter()) ?? [];
+		return lspLogsView(logs, lspLogFilter(serverFilter, kindFilter, levelFilter));
 	});
-
-	const servers = $derived.by(() => {
-		revision;
-		return logs?.servers() ?? [];
-	});
-
-	// Follows the same counter as the list: a truncated buffer that never mentioned
-	// its own drops would read as complete.
-	const dropped = $derived.by(() => {
-		revision;
-		return logs?.droppedCount ?? 0;
-	});
-
-	function currentFilter(): { server?: string; kind?: LspLogKind; level?: LspLogLevel } {
-		return {
-			...(serverFilter ? { server: serverFilter } : {}),
-			...(kindFilter ? { kind: kindFilter as LspLogKind } : {}),
-			...(levelFilter ? { level: levelFilter as LspLogLevel } : {})
-		};
-	}
 
 	function clear(): void {
 		// Clearing the selected server when one is picked, everything otherwise:
 		// the buffer that is on screen is the one worth emptying.
 		logs?.clear(serverFilter || undefined);
-	}
-
-	function shortServer(server: string): string {
-		const at = server.lastIndexOf('@');
-		return at === -1 ? server : server.slice(at + 1);
 	}
 
 	const LEVEL_STYLES: Record<LspLogLevel, string> = {
@@ -100,8 +72,8 @@
 			<DropdownMenu.Content align="start">
 				<DropdownMenu.RadioGroup bind:value={serverFilter}>
 					<DropdownMenu.RadioItem value="">All servers</DropdownMenu.RadioItem>
-					{#each servers as server (server)}
-						<DropdownMenu.RadioItem value={server}>{shortServer(server)}</DropdownMenu.RadioItem>
+					{#each view.serverOptions as option (option.value)}
+						<DropdownMenu.RadioItem value={option.value}>{option.label}</DropdownMenu.RadioItem>
 					{/each}
 				</DropdownMenu.RadioGroup>
 			</DropdownMenu.Content>
@@ -158,7 +130,7 @@
 		<div class="flex-1"></div>
 
 		<span class="text-[10px] text-muted-foreground">
-			{entries.length} {entries.length === 1 ? 'line' : 'lines'}{#if dropped > 0}&nbsp;· {dropped} dropped{/if}
+			{view.lineCount}{#if view.droppedNote}&nbsp;· {view.droppedNote}{/if}
 		</span>
 		<button
 			type="button"
@@ -171,13 +143,13 @@
 	</div>
 
 	<div class="flex-1 overflow-y-auto px-3 py-2">
-		{#if entries.length === 0}
+		{#if view.empty}
 			<p class="text-xs text-muted-foreground">
 				No lines match. A server writes here as it starts, syncs a document, and fails.
 			</p>
 		{:else}
 			<ul class="flex flex-col gap-px">
-				{#each entries as entry (entry.sequence)}
+				{#each view.entries as entry (entry.sequence)}
 					<li class="flex gap-2 font-mono text-[11px] leading-relaxed">
 						<span class="w-8 shrink-0 {LEVEL_STYLES[entry.level]}">{entry.level}</span>
 						<span class="w-32 shrink-0 truncate text-muted-foreground/80" title={entry.server}>
