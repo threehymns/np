@@ -20,7 +20,7 @@ describe("DiffViewer split Working-copy pane binding", () => {
 	});
 
 	it("wires the b-pane change seam to the shared Document", () => {
-		expect(src).toContain("onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)");
+		expect(src).toContain("onDocChange: (text) => handleDiffDocChange(fileChange.filepath, text)");
 		expect(src).toContain("appState.workspace.updateDocumentContent(doc, text)");
 	});
 

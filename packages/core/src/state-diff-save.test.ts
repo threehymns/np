@@ -116,3 +116,41 @@ describe("diff pane save routing (#269)", () => {
 		expect(storage.saveFile).not.toHaveBeenCalled();
 	});
 });
+
+describe("diff pane save uniformity (#268)", () => {
+	it("runs before-save participants (formatting) for diff-pane saves exactly like tab saves", async () => {
+		// The spec routes diff saves through the standard file-save
+		// operation with autosave/formatting applying uniformly. There is
+		// no separate diff save path: both go through
+		// Workspace.saveDocument, so every registered before-save
+		// participant (e.g. a formatter) observes both. This locks that
+		// uniformity with a witness hook instead of adding diff-specific
+		// save semantics.
+		const { appState } = makeApp();
+		appState.plugins.register({
+			manifest: { id: "save-witness", name: "save-witness", version: 0 },
+			setup: () => undefined
+		});
+		await appState.plugins.activate("save-witness");
+		const seen: string[] = [];
+		appState.plugins.registerBeforeSaveHook("save-witness", async ({ document }) => {
+			seen.push(document.id);
+		});
+
+		const origin: FileOrigin = { scheme: "file", path: "/projects/np/src/a.ts", name: "a.ts" };
+		const doc = await appState.workspace.openFile(origin);
+
+		appState.workspace.updateDocumentContent(doc, "tab edit\n");
+		await appState.saveFile();
+		expect(seen).toEqual([doc.id]);
+
+		// Same Document, now saved with focus in the diff pane (tab-less
+		// as far as the save path is concerned): the hook still runs.
+		activateDiffTab(appState);
+		expect(appState.activeDocument).toBeUndefined();
+		appState.activeDiffDocument = doc;
+		appState.workspace.updateDocumentContent(doc, "pane edit\n");
+		await appState.saveFile();
+		expect(seen).toEqual([doc.id, doc.id]);
+	});
+});

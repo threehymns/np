@@ -2,9 +2,7 @@ import { describe, it, expect } from "bun:test";
 import pathlib from "node:path";
 import { EditorState, Text } from "@codemirror/state";
 import { unifiedMergeView, getOriginalDoc, Chunk } from "@codemirror/merge";
-import { DocumentSession } from "../../../core/src/document.svelte";
-import type { FileOrigin } from "../../../core/src/storage";
-import { DEFAULT_DIFF_CONFIG } from "../../../core/src/project/vcs";
+import { DocumentSession, DEFAULT_DIFF_CONFIG, type FileOrigin } from "@np/core";
 import { createMockStorage } from "../../../../tests/mock-storage";
 import {
 	originForDiffFilepath,
@@ -41,7 +39,7 @@ describe("DiffViewer inline Working-copy pane binding", () => {
 	it("wires both panes to the shared Document change seam", () => {
 		// Split b-pane and inline editor route keystrokes through the same
 		// canonical keystroke path.
-		const seam = src.match(/onDocChange: \(text\) => handleSplitDocChange\(fileChange\.filepath, text\)/g) ?? [];
+		const seam = src.match(/onDocChange: \(text\) => handleDiffDocChange\(fileChange\.filepath, text\)/g) ?? [];
 		expect(seam.length).toBe(2);
 		expect(src).toContain("appState.workspace.updateDocumentContent(doc, text)");
 	});
@@ -158,6 +156,67 @@ describe("inline unified editor behavior", () => {
 	});
 });
 
+// Caret/edit exclusion around removed-line widgets in the inline pane
+// (#270 review): removed (original-only) lines render as uneditable widgets
+// above the working-copy text, so they hold no doc positions. These lock the
+// positional consequence headlessly: every deletion chunk is zero-width in
+// the editable doc, so the caret and selections can only ever sit in
+// working-copy text, and edits there never touch removed lines.
+describe("inline removed-line caret and edit exclusion", () => {
+	const ORIGINAL = "keep1\nREMOVE A\nkeep2\nREMOVE B\nkeep3\n";
+	const WORKING = "keep1\nkeep2\nkeep3\n";
+
+	function deletionGaps() {
+		const origText = Text.of(ORIGINAL.split(/\r?\n/));
+		const modText = Text.of(WORKING.split(/\r?\n/));
+		return Chunk.build(origText, modText, DEFAULT_DIFF_CONFIG).filter(
+			(c) => c.fromB === c.toB && c.fromA < c.toA
+		);
+	}
+
+	function gapState() {
+		return EditorState.create({
+			doc: WORKING,
+			extensions: [
+				EditorState.readOnly.of(false),
+				unifiedMergeView({ original: ORIGINAL, mergeControls: false })
+			]
+		});
+	}
+
+	it("gives removed lines zero caret positions in the editable doc", () => {
+		const gaps = deletionGaps();
+		expect(gaps.length).toBeGreaterThan(0);
+		const origText = Text.of(ORIGINAL.split(/\r?\n/));
+		for (const gap of gaps) {
+			expect(gap.fromB).toBe(gap.toB);
+			expect(origText.sliceString(gap.fromA, gap.toA).length).toBeGreaterThan(0);
+		}
+	});
+
+	it("parks the caret at the widget gap inside working-copy text only", () => {
+		const state = gapState();
+		const [firstGap] = deletionGaps();
+		const parked = state.update({ selection: { anchor: firstGap.fromB } }).state;
+		expect(parked.selection.main.head).toBe(firstGap.fromB);
+		expect(parked.doc.toString()).not.toContain("REMOVE");
+		const line = parked.doc.lineAt(firstGap.fromB);
+		expect(line.text).not.toContain("REMOVE");
+	});
+
+	it("confines a replacement spanning the gap to working-copy text", () => {
+		let state = gapState();
+		const [gap] = deletionGaps();
+		// Replace one char on each side of the gap: only working-copy bytes change.
+		const tr = state.update({
+			changes: { from: gap.fromB - 1, to: gap.fromB + 1, insert: "X" }
+		});
+		state = tr.state;
+		expect(state.doc.toString()).not.toContain("REMOVE A");
+		expect(getOriginalDoc(state).toString()).toBe(ORIGINAL);
+	});
+});
+// same Document, same editability rule, same dirty semantics.
 // The inline pane reuses the shared working-copy binding (#269 helpers):
 // same Document, same editability rule, same dirty semantics.
 describe("inline Working-copy binding reuse", () => {

@@ -481,20 +481,22 @@
 	}
 
 	// Shared-Document binding for the Working-copy pane (#269 split, #270
-	// inline). Both modes edit the same Document an Editor tab shows; rules
-	// live in diff-split-binding.ts, this component only wires workspace
-	// state. The `split*` names predate inline support and cover both modes.
-	const splitBoundDocIds = new Map<string, string>();
+	// inline). Both modes edit the same Document an Editor tab shows; lookup
+	// rules live in `@np/core` (`diff-binding`), this component only wires
+	// workspace state. The filepath->id map is workspace-owned (not
+	// component-local) so the Git Hunk Actions choke point resolves the same
+	// Document through the same lookup — including after a Save As moves the
+	// Document's origin without changing the diff filepath.
 	let lastFocusedDiffFilepath = $state<string | null>(null);
 	// Tags working-copy pane dispatches that replay external Document state
 	// (tab keystrokes) so the updateListeners below never route them back as
 	// new edits. Mirrors Editor.svelte's syncAnnotation.
 	const splitSyncAnnotation = Annotation.define<boolean>();
 
-	function findSplitDoc(filepath: string) {
+	function findDiffDoc(filepath: string) {
 		return findBoundDocument(
 			appState.workspace.documents,
-			splitBoundDocIds,
+			appState.workspace.diffBoundDocIds,
 			appState.workspace.project.rootOrigin,
 			filepath
 		);
@@ -502,8 +504,8 @@
 
 	// Pane -> Document: keystrokes become ordinary in-memory edits on the
 	// shared Document via the canonical keystroke path.
-	function handleSplitDocChange(filepath: string, text: string) {
-		const doc = findSplitDoc(filepath);
+	function handleDiffDocChange(filepath: string, text: string) {
+		const doc = findDiffDoc(filepath);
 		if (doc && text !== doc.content) {
 			appState.workspace.updateDocumentContent(doc, text);
 		}
@@ -527,7 +529,7 @@
 		};
 		for (const file of files) {
 			const detail = resolveFileDiff(file);
-			ensureSplitDocument(scope, splitBoundDocIds, file, detail?.modifiedContent ?? file.modifiedContent);
+			ensureSplitDocument(scope, appState.workspace.diffBoundDocIds, file, detail?.modifiedContent ?? file.modifiedContent);
 		}
 	});
 
@@ -540,7 +542,7 @@
 		const focused = lastFocusedDiffFilepath;
 		const activeFile = repo?.activeDiffFile?.filepath;
 		const target = focused ?? activeFile ?? null;
-		appState.activeDiffDocument = target ? findSplitDoc(target) : undefined;
+		appState.activeDiffDocument = target ? findDiffDoc(target) : undefined;
 		return () => {
 			appState.activeDiffDocument = undefined;
 		};
@@ -611,28 +613,71 @@
 			hunks?: readonly Chunk[];
 			unstagedChunks?: readonly Chunk[];
 			registerAs?: 'inline' | 'split';
+			vimEnabled?: boolean;
+			docLanguage?: LanguageDescription | null;
+			languageRevision?: number | undefined;
+			boundDoc?: DocumentSession | undefined;
 		}
 	) {
 		let view: EditorView | undefined;
 		let currentOptions = options;
 		let disposed = false;
 		let untrackCursorFocus: (() => void) | undefined;
+		let untrackPaneFocus: (() => void) | undefined;
+		let detachVimMode: (() => void) | undefined;
 		const wrapCompartment = new Compartment();
 		const diffCompartment = new Compartment();
 		const hunkCompartment = new Compartment();
 		const readOnlyCompartment = new Compartment();
 		let inlineEditable = options.editable;
+		let inlineVimEnabled = options.vimEnabled ?? false;
+		let inlineLangKeyPrev = paneLanguageKey(options.docLanguage ?? null, options.languageRevision);
+		let inlineBoundDoc = options.boundDoc;
+		// Deleted files reuse this as their single read-only Original pane
+		// (#272) via `registerAs: 'split'`: it stays a bare view with editor
+		// behavior omitted, exactly like the MergeView a-pane. The inline
+		// Working-copy pane gets full tab parity (#271).
+		const isBareOriginal = () => currentOptions.registerAs === 'split';
+		const vimCompartment = new Compartment();
+		const languageCompartment = new Compartment();
+		const facetCompartment = new Compartment();
+
+		// (Re)attach the vim-mode-change bridge for the focused inline pane
+		// so app-level vim bindings track normal/insert/visual like a tab.
+		function syncInlineVimModeListener() {
+			detachVimMode?.();
+			detachVimMode = undefined;
+			if (!currentOptions.vimEnabled || !view || disposed || isBareOriginal()) return;
+			const cm = getCM(view) as any;
+			if (!cm) return;
+			const handler = (args: any) => {
+				if (view?.hasFocus) appState.keymaps.setContext('vim_mode', args.mode);
+			};
+			cm.on('vim-mode-change', handler);
+			detachVimMode = () => cm.off('vim-mode-change', handler);
+		}
+
+		function readInlineVimMode(v: EditorView): 'normal' | 'insert' | 'visual' {
+			const state: any = (getCM(v) as any)?.state?.vim;
+			if (state?.insertMode) return 'insert';
+			if (state?.visualMode) return 'visual';
+			return 'normal';
+		}
 
 		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
 			if (disposed) return;
+			const bareOriginal = currentOptions.registerAs === 'split';
 			const state = EditorState.create({
 				doc: currentOptions.content,
 				extensions: [
 					// Working-copy pane: editable when bound to the shared
 					// Document (#270). Removed lines stay non-editable as
-					// widgets regardless of this toggle.
+					// widgets regardless of this toggle. The bare Original
+					// pane (deleted files) is additionally non-focusable for
+					// editing (#268): it renders base content only.
 					readOnlyCompartment.of(EditorState.readOnly.of(!currentOptions.editable)),
+					...(bareOriginal ? [EditorView.editable.of(false)] : []),
 					diffCompartment.of(
 						unifiedMergeView({
 							original: currentOptions.originalContent,
@@ -645,6 +690,37 @@
 						createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 					),
 					...langExtensions,
+					// Editor parity for the inline Working-copy pane only
+					// (#271): independent undo history, vim bindings,
+					// completions with workspace context, detected language,
+					// and tab keybindings. The bare Original pane above stays
+					// a plain read-only view like the split a-pane.
+					...(!bareOriginal ? [
+						vimCompartment.of(currentOptions.vimEnabled ? vim() : []),
+						languageCompartment.of(langExtensions),
+						facetCompartment.of([
+							workspaceFacet.of(appState.workspace),
+							currentDocFacet.of(currentOptions.boundDoc ?? null)
+						]),
+						history(),
+						autocompletion(),
+						indentOnInput(),
+						bracketMatching(),
+						closeBrackets(),
+						highlightSpecialChars(),
+						drawSelection(),
+						highlightActiveLine(),
+						highlightSelectionMatches(),
+						EditorState.allowMultipleSelections.of(true),
+						keymap.of([
+							...closeBracketsKeymap,
+							...defaultKeymap,
+							...searchKeymap,
+							...historyKeymap,
+							{ key: "Tab", run: smartIndent("more") },
+							{ key: "Shift-Tab", run: smartIndent("less") }
+						])
+					] : []),
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
 					diffTheme,
@@ -672,6 +748,38 @@
 				parent: node
 			});
 			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
+			if (!bareOriginal) {
+				// Focused inline Working-copy pane publishes itself as the
+				// active editor so edit.* commands (undo/redo/cut/copy/...)
+				// target it, mirroring the split b-pane (#271). The
+				// read-only Original pane never publishes.
+				const paneDom = view.dom;
+				const onPaneFocusIn = () => {
+					if (disposed || !currentOptions.editable) return;
+					appState.activeEditorView = view;
+					if (currentOptions.vimEnabled) {
+						appState.keymaps.setContext('vim_mode', readInlineVimMode(view!));
+						if (appState.prefs.vimSyncClipboard) {
+							void syncVimRegistersFromClipboard();
+						}
+					}
+				};
+				const onPaneFocusOut = () => {
+					if (appState.activeEditorView === view) {
+						appState.activeEditorView = undefined;
+					}
+					if (currentOptions.vimEnabled) {
+						appState.keymaps.setContext('vim_mode', 'normal');
+					}
+				};
+				paneDom.addEventListener('focusin', onPaneFocusIn);
+				paneDom.addEventListener('focusout', onPaneFocusOut);
+				untrackPaneFocus = () => {
+					paneDom.removeEventListener('focusin', onPaneFocusIn);
+					paneDom.removeEventListener('focusout', onPaneFocusOut);
+				};
+				syncInlineVimModeListener();
+			}
 			if (currentOptions.registerAs === 'split') {
 				registerEditorView(currentOptions.filepath, { split: view });
 			} else {
@@ -705,6 +813,43 @@
 								EditorState.readOnly.of(!inlineEditable)
 							)
 						);
+						// A pane that just went read-only stops being an edit
+						// target for the shared edit.* commands.
+						if (!inlineEditable && appState.activeEditorView === view) {
+							appState.activeEditorView = undefined;
+						}
+					}
+					let inlineVimToggled = false;
+					if ((currentOptions.vimEnabled ?? false) !== inlineVimEnabled && !isBareOriginal()) {
+						inlineVimEnabled = currentOptions.vimEnabled ?? false;
+						effects.push(
+							vimCompartment.reconfigure(inlineVimEnabled ? vim() : [])
+						);
+						inlineVimToggled = true;
+					}
+					if (currentOptions.boundDoc !== inlineBoundDoc && !isBareOriginal()) {
+						inlineBoundDoc = currentOptions.boundDoc;
+						effects.push(
+							facetCompartment.reconfigure([
+								workspaceFacet.of(appState.workspace),
+								currentDocFacet.of(inlineBoundDoc ?? null)
+							])
+						);
+					}
+					const inlineLangKey = paneLanguageKey(currentOptions.docLanguage ?? null, currentOptions.languageRevision);
+					if (inlineLangKey !== inlineLangKeyPrev && !isBareOriginal()) {
+						inlineLangKeyPrev = inlineLangKey;
+						const nextDesc = currentOptions.docLanguage ?? null;
+						const requestedKey = inlineLangKey;
+						void getLanguageExtensions(nextDesc).then((langExtensions) => {
+							if (disposed || !view) return;
+							// Only apply when no newer language request has
+							// superseded this one while the load was in flight.
+							if (inlineLangKeyPrev !== requestedKey) return;
+							view.dispatch({
+								effects: languageCompartment.reconfigure(langExtensions)
+							});
+						});
 					}
 					if (currentOptions.originalContent !== oldOptions.originalContent) {
 						effects.push(
@@ -732,7 +877,10 @@
 						// kept out of the pane's undo history, with selection
 						// and scroll preserved. Snapshot refreshes never reach
 						// this branch: content is driven by Document content,
-						// not the git snapshot.
+						// not the git snapshot. The sync is a minimal hunk
+						// (not a full replacement) so tab keystrokes map
+						// through — rather than wipe — the pane's independent
+						// undo history (#271), exactly like the split b-pane.
 						const insert = currentOptions.content;
 						const sel = view.state.selection;
 						const clamped = EditorSelection.create(
@@ -743,14 +891,15 @@
 						);
 						const prevTop = view.scrollDOM.scrollTop;
 						const prevLeft = view.scrollDOM.scrollLeft;
+						const syncChange = hasDocChange
+							? (minimalTextChange(currentDoc, insert) ?? {
+									from: 0,
+									to: view.state.doc.length,
+									insert
+								})
+							: undefined;
 						view.dispatch({
-							changes: hasDocChange
-								? {
-										from: 0,
-										to: view.state.doc.length,
-										insert
-								  }
-								: undefined,
+							changes: syncChange,
 							selection: hasDocChange ? clamped : undefined,
 							effects: effects.length > 0 ? effects : undefined,
 							annotations: hasDocChange
@@ -761,6 +910,10 @@
 							view.scrollDOM.scrollTop = prevTop;
 							view.scrollDOM.scrollLeft = prevLeft;
 						}
+						// Re-bridge vim-mode changes after the new vim
+						// configuration above has applied (getCM reads the
+						// post-dispatch state).
+						if (inlineVimToggled) syncInlineVimModeListener();
 					}
 				}
 			},
@@ -768,6 +921,12 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				untrackCursorFocus?.();
+				untrackPaneFocus?.();
+				detachVimMode?.();
+				detachVimMode = undefined;
+				if (view && appState.activeEditorView === view) {
+					appState.activeEditorView = undefined;
+				}
 				const slot = currentOptions.registerAs === 'split' ? 'split' : 'inline';
 				const existing = editorViews.get(currentOptions.filepath);
 				if (existing) {
@@ -863,7 +1022,12 @@
 				a: {
 					doc: currentOptions.leftContent,
 					extensions: [
+						// Original pane: read-only and non-focusable for
+						// editing (#268). Base content can never be modified
+						// from the diff; hunk navigation targets the b-pane
+						// and panel highlight follows scroll/header focus.
 						EditorState.readOnly.of(true),
+						EditorView.editable.of(false),
 						...langExtensions,
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
@@ -1469,7 +1633,7 @@
 
 			const diff = resolveFileDiff(change);
 			if (!diff) return;
-			const bound = findSplitDoc(change.filepath);
+			const bound = findDiffDoc(change.filepath);
 			const effectiveModified = bound ? bound.content : diff.modifiedContent;
 			if (!diff.originalContent && !effectiveModified) return;
 
@@ -1767,7 +1931,7 @@
 		{:else}
 			{#each activeChanges as fileChange (fileChange.filepath + '-' + fileChange.staged)}
 				{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
-				{@const headerDoc = findSplitDoc(fileChange.filepath)}
+				{@const headerDoc = findDiffDoc(fileChange.filepath)}
 				<div
 					class="flex flex-col bg-background"
 					id="diff-file-{fileChange.filepath}"
@@ -1866,25 +2030,29 @@
 								}}
 								{#if viewMode === 'inline'}
 									<!-- Inline View: unified Working-copy editor over the shared Document -->
-									{@const inlineDoc = findSplitDoc(fileChange.filepath)}
+									{@const inlineDoc = findDiffDoc(fileChange.filepath)}
 									<div class="flex-1 overflow-hidden bg-background">
-										<div use:setupEditor={{
-											content: resolveSplitRightContent(inlineDoc, diff.modifiedContent),
-											originalContent: diff.originalContent,
-											editable: isSplitWorkingCopyEditable(fileChange.status, inlineDoc),
-											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text),
-											filepath: fileChange.filepath,
-											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap,
-											hunks: diff.hunks,
-											unstagedChunks: diff.unstagedChunks
-										}}></div>
+									<div use:setupEditor={{
+										content: resolveSplitRightContent(inlineDoc, diff.modifiedContent),
+										originalContent: diff.originalContent,
+										editable: isSplitWorkingCopyEditable(fileChange.status, inlineDoc),
+										onDocChange: (text) => handleDiffDocChange(fileChange.filepath, text),
+										filepath: fileChange.filepath,
+										fileChange: effectiveChange,
+										wrap: appState.prefs.wordWrap,
+										hunks: diff.hunks,
+										unstagedChunks: diff.unstagedChunks,
+										vimEnabled: appState.prefs.vimMode,
+										docLanguage: inlineDoc?.language ?? LanguageSupport.getLanguageForFile(fileChange.filepath),
+										languageRevision: appState.plugins?.languageRevision,
+										boundDoc: inlineDoc
+									}}></div>
 									</div>
 								{:else}
 									<!-- Split View: Side-by-side MergeView of the whole file.
 									     Deleted files render the Original pane only (#272):
 									     no working-copy surface, nothing to type into. -->
-									{@const splitDoc = findSplitDoc(fileChange.filepath)}
+									{@const splitDoc = findDiffDoc(fileChange.filepath)}
 									{#if isOriginalOnly(fileChange.status)}
 										<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
 											<div use:setupEditor={{
@@ -1914,7 +2082,7 @@
 											docLanguage: splitDoc?.language ?? LanguageSupport.getLanguageForFile(fileChange.filepath),
 											languageRevision: appState.plugins?.languageRevision,
 											boundDoc: splitDoc,
-											onDocChange: (text) => handleSplitDocChange(fileChange.filepath, text)
+											onDocChange: (text) => handleDiffDocChange(fileChange.filepath, text)
 										}}></div>
 									</div>
 									{/if}

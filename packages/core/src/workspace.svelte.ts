@@ -132,6 +132,16 @@ export class Workspace {
 	 */
 	private pendingDiffRestore = new Map<string, { filepath: string; staged?: boolean }>();
 
+	/**
+	 * Diff-filepath -> bound Document id for Working-copy pane bindings
+	 * (#269). Written by the mounted Diff Viewer alongside its own binding
+	 * effect and read by the Git Hunk Actions choke point through the same
+	 * shared lookup, so both sides stay bound to the same Document across a
+	 * Save As (which moves the Document's origin without changing the diff
+	 * filepath). Stale ids are pruned on lookup, never persisted.
+	 */
+	readonly diffBoundDocIds = new Map<string, string>();
+
 	private applyPendingDiffRestore() {
 		if (!this.isRepositoryActive) return;
 		const repo = this.project.repository;

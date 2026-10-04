@@ -1,7 +1,7 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect } from "bun:test";
-import { DocumentSession } from "../../../core/src/document.svelte";
-import type { FileOrigin } from "../../../core/src/storage";
+import { DocumentSession, type FileOrigin } from "@np/core";
+import { diffOriginForFilepath, findBoundDocument as coreFindBoundDocument } from "@np/core";
 import { createMockStorage } from "../../../../tests/mock-storage";
 import {
 	originForDiffFilepath,
@@ -41,6 +41,12 @@ function makeCombinedChange(filepath: string) {
 }
 
 describe("diff split Working-copy binding (#269)", () => {
+	describe("shared lookup identity (review de-dup)", () => {
+		it("resolves through the same core lookup as Hunk Actions", () => {
+			expect(findBoundDocument).toBe(coreFindBoundDocument);
+			expect(originForDiffFilepath).toBe(diffOriginForFilepath);
+		});
+	});
 	describe("originForDiffFilepath", () => {
 		it("builds the workspace origin the same way openFileInRegularTab does", () => {
 			expect(originForDiffFilepath(root, "src/a.ts")).toEqual({

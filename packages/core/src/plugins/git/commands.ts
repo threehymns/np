@@ -5,7 +5,12 @@ import type { DiffNavigatorLike, WorkspaceLike } from '../services';
 import { DEFAULT_DIFF_CONFIG, type GitChange, type VCSAdapter } from '../../project/vcs';
 import { runExclusively } from '../../project/repository.svelte';
 import { mapRange } from '../../commands.svelte';
-import { toURI, type FileOrigin } from '../../storage';
+import type { FileOrigin } from '../../storage';
+import {
+	diffOriginForFilepath,
+	findBoundDocument,
+	type BoundDocumentLike
+} from '../../diff-binding';
 import { manifest } from './manifest';
 
 /**
@@ -45,7 +50,7 @@ export interface GitCommandContext {
  * content, and dirty state through this shape so unit tests can use plain
  * fakes and the plugin never names the concrete Workspace type.
  */
-export interface DirtyDocumentLike {
+export interface DirtyDocumentLike extends BoundDocumentLike {
 	readonly origin: FileOrigin | null;
 	readonly content: string;
 	readonly isModified: boolean;
@@ -67,30 +72,25 @@ export interface HunkRange {
 	toB: number;
 }
 
-/** Workspace origin for a repo-relative filepath; mirrors `openFileInRegularTab` so URI lookup reuses the already-open Document. */
+/** Workspace origin for a repo-relative filepath; single implementation lives in `diff-binding` (review de-dup). */
 export function documentOriginForFilepath(root: FileOrigin, filepath: string): FileOrigin {
-	return {
-		scheme: root.scheme,
-		path: root.path + '/' + filepath,
-		name: filepath.split('/').pop() || filepath
-	};
+	return diffOriginForFilepath(root, filepath);
 }
 
 /**
- * Find the bound working-copy Document for a diff filepath by origin URI.
- * Pure helper: the UI binding owns filepath->id maps, this layer only needs
- * URI reuse of the already-open Document. Returns undefined when there is
- * no workspace root or no Document covers the filepath (deleted files stay
- * Original-only, headless contexts stay on the snapshot path).
+ * Find the bound working-copy Document for a diff filepath. Delegates to
+ * the shared `findBoundDocument` lookup so the Git choke point and the UI
+ * binding agree, including after Save As: the caller threads the same
+ * filepath->id map the Diff Viewer writes, so a Document whose origin moved
+ * is still found by id instead of falling back to snapshot text.
  */
 export function findDirtyDocument(
 	documents: readonly DirtyDocumentLike[] | undefined,
 	root: FileOrigin | null | undefined,
-	filepath: string
+	filepath: string,
+	boundDocIds?: Map<string, string>
 ): DirtyDocumentLike | undefined {
-	if (!documents || !root) return undefined;
-	const uri = toURI(documentOriginForFilepath(root, filepath));
-	return documents.find((d) => d.origin && toURI(d.origin) === uri);
+	return findBoundDocument(documents, boundDocIds, root, filepath);
 }
 
 /** Clamp a character offset into live text of `length`; shifted edits above a hunk move its range, never out of bounds. */
