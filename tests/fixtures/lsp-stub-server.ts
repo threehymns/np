@@ -1,4 +1,5 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, watch } from 'node:fs';
+import { basename, dirname } from 'node:path';
 /**
  * Scripted stub stdio language server, standing in for vtsls.
  *
@@ -19,6 +20,15 @@ import { appendFileSync } from 'node:fs';
  *   --mode fail-completion  answer the handshake, then refuse every
  *                   `textDocument/completion`, so a request-level failure is
  *                   reachable on a server that *is* running
+ *   --mode gated  answer everything as `answer` does, but withhold the
+ *                   `initialize` reply until `--gate-file` exists, so a document
+ *                   can be presented to a server that is provably still starting
+ *   --gate-file <path>  the file `--mode gated` waits for before it replies. The
+ *                   gate is a file the stub watches rather than a delay it sleeps
+ *                   through: these tests are about the order two documents are
+ *                   presented in, and a delay long enough to usually cover the
+ *                   handshake is a race that passes on a fast machine and fails on
+ *                   a slow one
  *   --stderr <text> write a line to stderr on startup (multi-byte by default)
  *   --echo-text     include a multi-byte string in the `initialize` reply
  *   --diagnostics   publish one error and one warning for every document that
@@ -40,14 +50,18 @@ import { appendFileSync } from 'node:fs';
  * than the fetch timeout is the #265 timeout path.
  */
 
+const MODES = ['silent', 'fail', 'no-shutdown', 'fail-completion', 'gated'] as const;
+type StubMode = (typeof MODES)[number];
+
 interface StubOptions {
-	mode: 'answer' | 'silent' | 'fail' | 'no-shutdown' | 'fail-completion';
+	mode: StubMode;
 	delayMs: number;
 	stderr: string | null;
 	echoText: boolean;
 	diagnostics: boolean;
 	diagnosticUri: string | null;
 	logFile: string | null;
+	gateFile: string | null;
 }
 
 function readOption(argv: string[], name: string): string | undefined {
@@ -59,16 +73,14 @@ function parseOptions(argv: string[]): StubOptions {
 	const mode = readOption(argv, 'mode');
 	const delay = readOption(argv, 'delay-ms');
 	return {
-		mode:
-			mode === 'silent' || mode === 'fail' || mode === 'no-shutdown' || mode === 'fail-completion'
-				? mode
-				: 'answer',
+		mode: MODES.find((known) => known === mode) ?? 'answer',
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text'),
 		diagnostics: argv.includes('--diagnostics'),
 		diagnosticUri: readOption(argv, 'diagnostic-uri') ?? null,
-		logFile: readOption(argv, 'log-file') ?? null
+		logFile: readOption(argv, 'log-file') ?? null,
+		gateFile: readOption(argv, 'gate-file') ?? null
 	};
 }
 
@@ -180,6 +192,52 @@ function delayed(fn: () => void): void {
 	setTimeout(fn, options.delayMs).unref?.();
 }
 
+/**
+ * Resolves once `path` exists, by watching the directory that holds it.
+ *
+ * The directory rather than the file, because the file is what the test is about to
+ * create and watching a path that does not exist yet is not portable.
+ *
+ * Existence is checked twice, before and after the watch is armed, because the
+ * create this waits for can land in the gap between the two: a file that appears
+ * there produces no event for a watch that had not started, so without the second
+ * check the handshake waits for a test that has already gone. That race is not
+ * hypothetical — it is what a test whose only evidence of the handshake is the wire
+ * log is guaranteed to hit, since the stub logs the message before it watches.
+ *
+ * Never rejects and never falls through to a delay. A gate that cannot be watched
+ * has to fail the test loudly, because letting the handshake through unblocked would
+ * make a test about ordering pass for the wrong reason.
+ */
+function waitForGate(path: string): Promise<void> {
+	return new Promise((resolve) => {
+		if (existsSync(path)) {
+			resolve();
+			return;
+		}
+		const dir = dirname(path);
+		const name = basename(path);
+		let watcher: ReturnType<typeof watch> | undefined;
+		const open = (): void => {
+			watcher?.close();
+			resolve();
+		};
+		try {
+			watcher = watch(dir, (_event, changed) => {
+				if (changed !== null && changed !== name) return;
+				// Re-checked rather than trusted from the event: events coalesce, and a
+				// create that was not this one is not a release.
+				if (!existsSync(path)) return;
+				open();
+			});
+		} catch (error) {
+			process.stderr.write(`stub server: cannot watch the gate (${String(error)})\n`);
+			return;
+		}
+		if (existsSync(path)) open();
+	});
+}
+
 const reader = new FrameReader();
 
 process.stdin.on('data', (chunk: Buffer) => {
@@ -207,7 +265,7 @@ function handle(message: JsonRpcMessage): void {
 		// one, and the timeout this mode stages would never be reached.
 		if (options.mode === 'silent') return;
 		const rootUri = (message.params as { rootUri?: string } | undefined)?.rootUri;
-		delayed(() => {
+		const reply = (): void => {
 			send(
 				{
 					id: message.id,
@@ -227,7 +285,15 @@ function handle(message: JsonRpcMessage): void {
 				},
 				true
 			);
-		});
+		};
+		// Gated rather than delayed: the client gets the `initialize` on the wire and
+		// then waits for the test, which is the only way to hold a server provably in
+		// `starting` while a test presents documents to it.
+		if (options.gateFile !== null) {
+			void waitForGate(options.gateFile).then(reply);
+			return;
+		}
+		delayed(reply);
 		return;
 	}
 	if (message.method === 'initialized') {

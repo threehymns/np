@@ -233,6 +233,36 @@ function trace(logs: LspLogStore): string[] {
 	return logs.read({ kind: 'protocol' }).map((e) => e.message);
 }
 
+/**
+ * The URIs the server was opened for, in the order it received them.
+ *
+ * Off the wire rather than off the trace, which summarizes document bodies away, and
+ * off the runtime, which reports what it believes it synced rather than what the
+ * process was actually told.
+ */
+function openedUris(harness: { readonly wireLog: string }): string[] {
+	return received(harness)
+		.filter((line) => line.includes('didOpen'))
+		.map((line) => JSON.parse(line).params.textDocument.uri as string);
+}
+
+/**
+ * A handshake the stub will not answer until the test says so.
+ *
+ * The stub watches for the file rather than sleeping, so a test can hold a server
+ * provably in `starting` while it presents documents to it. Nothing else reaches this
+ * window: a test that awaited its first document would present the second one after
+ * the handshake and pass against a runtime that drops it, which is how a missing
+ * queue survives a suite that appears to cover it.
+ */
+function makeGate(): { readonly script: readonly string[]; release(): void } {
+	const path = join(makeProject({}), 'release');
+	return {
+		script: ['--mode', 'gated', '--gate-file', path],
+		release: () => writeFileSync(path, 'go\n')
+	};
+}
+
 function basename(path: string): string {
 	return path.slice(path.lastIndexOf('/') + 1);
 }
@@ -414,10 +444,14 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'packages/app/src/b.ts'), '');
 		await waitForRunning(harness.runtime, 2);
 
-		expect(harness.platform.spawned.map((s) => s.cwd)).toEqual([
-			root,
-			join(root, 'packages/app')
-		]);
+		expect(harness.platform.spawned).toHaveLength(2);
+		// Order-insensitive, and not because the order does not matter: each document's
+		// root walk probes the filesystem, so which of the two settles first is the
+		// machine's answer rather than the runtime's. What this asserts is the point —
+		// one process per project root.
+		expect(harness.platform.spawned.map((s) => s.cwd).sort()).toEqual(
+			[root, join(root, 'packages/app')].sort()
+		);
 		expect(harness.runtime.getServers().map((s) => s.server)).toEqual([
 			lspServerKey('typescript', root),
 			lspServerKey('typescript', join(root, 'packages/app'))
@@ -694,6 +728,278 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 });
 
 /**
+ * A document presented while its server is still starting.
+ *
+ * The workspace opens every restored document in a loop right after session restore,
+ * so the second file of a folder always arrives while the first is still
+ * handshaking. A document arriving in that window used to be dropped outright: not
+ * queued, not retried, not remembered. Nothing sent it but the next
+ * `document:opened` or `document:changed` — in practice, the next keystroke — so it
+ * offered no server completions and showed no diagnostics until somebody typed in
+ * it.
+ *
+ * Every test here opens both documents before the handshake is allowed to land, and
+ * asserts on what the server was actually told to do rather than on the runtime's
+ * own account of it. A negative assertion cannot be separated from "the handshake
+ * never came back" on its own, so each of them leaves a later successful handshake
+ * in reach: a queue that had outlived its server would be flushed by it.
+ */
+describe('Documents presented while their server is still starting (#264)', () => {
+	it('syncs both of two documents presented before the handshake returns, in order', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/first.ts': 'export const first = 1;\n',
+			'src/second.ts': 'export const second = 2;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		// The restore loop's shape, with nothing awaited between the two opens — that
+		// is the whole of the race, and the assertion under them is what makes it
+		// provable: neither document had spawned a server yet, so the second one
+		// cannot have waited for a handshake that had not begun.
+		harness.open(join(root, 'src/first.ts'), 'export const first = 1;\n');
+		harness.open(join(root, 'src/second.ts'), 'export const second = 2;\n');
+		expect(harness.platform.spawned).toHaveLength(0);
+
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		// The stub has the request and has not answered it, which is what `starting`
+		// means from the client's side.
+		expect(harness.runtime.getServers().map((server) => server.state)).toEqual(['starting']);
+
+		gate.release();
+		// One is proof enough that the handshake landed *and* the flush has run: that
+		// didOpen is written by the server's own process, so it reaches the wire after
+		// the flush that follows it. Waiting for two instead would make a runtime that
+		// drops the second document look like a slow one.
+		await waitFor(() => openedUris(harness).length >= 1, {
+			label: 'the first document to reach the server'
+		});
+		await settle();
+
+		// Both, in the order they were presented. The document that started the server
+		// was presented before anything that found it starting, so it goes first and
+		// the queue drains behind it.
+		expect(openedUris(harness)).toEqual([
+			`file://${join(root, 'src/first.ts')}`,
+			`file://${join(root, 'src/second.ts')}`
+		]);
+	});
+
+	it('opens each queued document exactly once, and changes it in place afterwards', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 2;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		harness.open(join(root, 'src/b.ts'), 'export const b = 2;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		gate.release();
+		await waitFor(() => openedUris(harness).length >= 1, {
+			label: 'a didOpen to reach the server'
+		});
+		await settle();
+
+		// One per document, not zero and not two: a flush that ran against a server
+		// which had already re-presented its own documents would open each of them
+		// twice, and the server's version numbering would stop agreeing with the
+		// runtime's.
+		expect(new Set(openedUris(harness)).size).toBe(2);
+
+		harness.open(join(root, 'src/b.ts'), 'export const b = 3;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('didChange')), {
+			label: 'the didChange notification'
+		});
+		expect(openedUris(harness)).toHaveLength(2);
+		expect(received(harness).filter((line) => line.includes('didChange'))).toHaveLength(1);
+	});
+
+	it('sends nothing for a document queued behind a start that fails', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 2;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		const errors: string[] = [];
+		const restore = captureErrors(errors);
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		harness.open(join(root, 'src/b.ts'), 'export const b = 2;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+
+		// The process dies under the handshake: a failed start, at the moment the
+		// queued document's send would have been redeemed.
+		const [pid] = harness.platform.pids;
+		harness.platform.spawned[0].process.kill();
+		await waitFor(() => harness.runtime.getServers()[0]?.state === 'failed', {
+			label: 'the start to be recorded as failed'
+		});
+		gate.release();
+		await settle();
+		restore();
+		expect(openedUris(harness)).toEqual([]);
+		// Contained like every other entry point: a document event cannot throw back
+		// at the editor, and a failed server behind it cannot either.
+		expect(errors).toEqual([]);
+
+		// The failure does not leave the document queued for the next attempt to send.
+		// Its text was as stale as the handshake that never came back, and the next
+		// attempt is a handshake this document never asked to wait for.
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await waitFor(() => openedUris(harness).length === 1, {
+			label: 'the retried document to reach the new server'
+		});
+		expect(openedUris(harness)).toEqual([`file://${join(root, 'src/a.ts')}`]);
+		expect(harness.platform.spawned).toHaveLength(2);
+		await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
+	});
+
+	it('drops a queued document when its server is stopped before the handshake lands', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 2;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		harness.open(join(root, 'src/b.ts'), 'export const b = 2;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		const [pid] = harness.platform.pids;
+		const server = lspServerKey('typescript', root);
+
+		// Stopped while starting: the user changed their mind before the server had
+		// finished coming up.
+		expect(await harness.runtime.stopServer(server)).toBe(true);
+		await waitFor(() => !isProcessAlive(pid), { label: 'the stopped server to exit' });
+		gate.release();
+		await settle();
+		expect(openedUris(harness)).toEqual([]);
+
+		// A server stopped by the user gets no flush it never asked for. The next edit
+		// presents its document again and is declined exactly as the one before it was,
+		// so neither document reaches a process the user took away.
+		harness.open(join(root, 'src/b.ts'), 'export const b = 3;\n');
+		await settle();
+		expect(openedUris(harness)).toEqual([]);
+		expect(harness.platform.spawned).toHaveLength(1);
+
+		// And an explicit restart is no reprieve for the queued document. A restart
+		// re-presents the documents bound to the server, and this one was never bound
+		// to anything; the flush below is the only thing that could still send it, and
+		// that is why presenting a document again is what makes this assertion mean
+		// more than "the handshake never came back".
+		expect(await harness.runtime.restartServer(server)).toBe(true);
+		await waitForRunning(harness.runtime, 1);
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await waitFor(() => openedUris(harness).length === 1, {
+			label: 'the presented document to reach the restarted server'
+		});
+		expect(openedUris(harness)).toEqual([`file://${join(root, 'src/a.ts')}`]);
+	});
+
+	it('never syncs a queued document whose language is turned off before the handshake lands', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/app.ts': 'export const a = 1;\n',
+			'src/view.tsx': 'export const V = () => null;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		// One descriptor serves both languages and one process serves both, so both
+		// documents are presented to the same handshake — which is the point: a
+		// per-process switch could drop the tsx document without ever reaching this
+		// queue, and would be wrong.
+		harness.open(join(root, 'src/view.tsx'), 'export const V = () => null;\n');
+		harness.open(join(root, 'src/app.ts'), 'export const a = 1;\n');
+		expect(harness.platform.spawned).toHaveLength(0);
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		expect(harness.runtime.getServers().map((server) => server.state)).toEqual(['starting']);
+
+		// The switch alone, with no edit: the tsx document was presented before the user
+		// turned servers off for its language, and the flush reads the gate again
+		// exactly because this transition happened while it was waiting. Without that
+		// re-read both documents would reach the server, because both are sent by the
+		// flush — so this is also the control for the test above.
+		harness.setSetting('editor', 'languages', { TSX: { lsp: false } });
+		gate.release();
+		await waitFor(() => openedUris(harness).length === 1, {
+			label: 'the document that was still enabled to reach the server'
+		});
+		await settle();
+
+		expect(openedUris(harness)).toEqual([`file://${join(root, 'src/app.ts')}`]);
+		// And a later edit of the queued document declines rather than finding it
+		// still waiting.
+		expect(
+			await harness.runtime.openDocument({
+				path: join(root, 'src/view.tsx'),
+				fileName: 'view.tsx',
+				content: 'export const V = () => null;\n',
+				language: 'TSX'
+			})
+		).toBeNull();
+		expect(openedUris(harness)).toEqual([`file://${join(root, 'src/app.ts')}`]);
+	});
+
+	it('leaves nothing behind when the runtime is disposed with a document queued', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/b.ts': 'export const b = 2;\n'
+		});
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		harness.open(join(root, 'src/b.ts'), 'export const b = 2;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		const pids = [...harness.platform.pids];
+
+		await harness.host.deactivate(lspRegistration.manifest.id);
+		gate.release();
+		await settle();
+
+		// The queue does not outlive the runtime: the handshake the document was
+		// waiting on was cancelled with the process, and the gate landing afterwards
+		// changes nothing, because there is no process left to send it to.
+		expect(openedUris(harness)).toEqual([]);
+		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.settingsListeners()).toBe(0);
+		for (const pid of pids) {
+			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
+		}
+
+		// A document event after the disable starts nothing either, so there is no
+		// longer anywhere for a surviving document to be flushed to.
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await settle();
+		expect(openedUris(harness)).toEqual([]);
+		expect(harness.platform.spawned).toHaveLength(1);
+	});
+});
+
+/**
  * `editor.lsp` gates the server, not just the completions.
  *
  * The setting is per language and it decides whether a *document* is scoped to a
@@ -784,8 +1090,11 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		await waitForRunning(harness.runtime, 1);
 
 		expect(harness.platform.spawned).toHaveLength(1);
-		await waitFor(() => trace(harness.logs).some((line) => line.includes('didOpen')), {
-			label: 'the didOpen notification'
+		// Read off the wire, and waited for there: the protocol trace is written by
+		// the client as it sends, so waiting on it only proves the notification left
+		// this side, while these assertions are about what the server was told.
+		await waitFor(() => received(harness).some((line) => line.includes('didOpen')), {
+			label: 'the didOpen the stub received'
 		});
 		const opened = received(harness).filter((line) => line.includes('didOpen'));
 		expect(opened).toHaveLength(1);

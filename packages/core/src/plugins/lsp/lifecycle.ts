@@ -120,6 +120,17 @@ interface RunningServer {
 	stoppedByUser: boolean;
 }
 
+/** A document presented to the runtime, waiting to be synced to its server. */
+interface PendingDocument {
+	/**
+	 * The server it was resolved to, or null until {@link LspTargetResolver} answers.
+	 * Set on the way out of the wait rather than at registration, because the server
+	 * is what resolution decides and registration is what has to come first.
+	 */
+	server: string | null;
+	readonly input: LspDocumentInput & { path: string };
+}
+
 /**
  * The running-server table, and the only reader of it.
  *
@@ -133,6 +144,24 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	private readonly openDocuments = new Map<string, OpenDocument>();
 	/** Document URI to the server it is synced to, so a restart re-opens it. */
 	private readonly documentServers = new Map<string, string>();
+	/**
+	 * Documents presented to the runtime and not yet sent, keyed by URI.
+	 *
+	 * The workspace opens every restored document in a loop right after session
+	 * restore, so the second file of a folder is presented while the first is still
+	 * handshaking, and the document that resolves *first* is not the document that
+	 * was presented first. A document dropped for arriving too early had no server
+	 * completions and no diagnostics until somebody typed in it, which is the bug
+	 * this map is: waiting here is what makes restoring a folder serve every file in
+	 * it rather than one of them.
+	 *
+	 * Bounded by construction rather than by a cap. A document leaves as soon as it
+	 * is sent, and one that cannot be sent is dropped — by a gate, by the document
+	 * being detached, by the resolution naming no server, by its server failing or
+	 * stopping, by the runtime being disposed. So the map holds at most the documents
+	 * in hand at one moment, which for this runtime is the open ones.
+	 */
+	private readonly pendingDocuments = new Map<string, PendingDocument>();
 	private readonly targets: LspTargetResolver;
 	private readonly statusListeners = new Set<() => void>();
 	/** Held so a disable really releases it; see {@link LspRuntime.dispose}. */
@@ -198,6 +227,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		// runtime being torn down must not start new work.
 		if (this.disposed || !path) return null;
 		this.ensureSettingsSubscription();
+		const uri = toFileUri(path);
 		try {
 			const gate = this.gateFor(input);
 			if (!gate.enabled) {
@@ -207,18 +237,44 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 				// longer that server's business, and a server still holding the text
 				// keeps publishing for it. The server itself is left alone unless that
 				// was the last document it was serving — see {@link LspRuntime.stopWhenUnserved}.
-				this.detachDocument(toFileUri(path));
+				this.detachDocument(uri);
 				return null;
 			}
+			// Registered before the target is resolved, and resolved on the way out,
+			// because the order documents are *presented* in is not the order they
+			// arrive in: resolution walks the filesystem, so two documents from one
+			// folder come back in whichever order their probes settle. Registration is
+			// the only synchronous step here, and it is the one that has to record
+			// order.
+			this.pendingDocuments.set(uri, { server: null, input: { ...input, path } });
 			const target = await this.targets.resolve(input);
-			if (!target) return null;
+			if (!target) {
+				this.pendingDocuments.delete(uri);
+				return null;
+			}
 			const server = lspServerKey(target.descriptor.id, target.root);
+			const registered = this.pendingDocuments.get(uri);
+			if (registered) registered.server = server;
 			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
-			if (entry.state !== 'running' || !entry.client) return server;
+			if (entry.state !== 'running' || !entry.client) {
+				// Left queued while a handshake is in flight, because that is the only
+				// state in which a send is coming. A failed entry, a stopped one and one
+				// the user stopped have no handshake to wait for, and holding the text
+				// for them would sync stale content to a server that is not serving.
+				if (entry.state !== 'starting') this.pendingDocuments.delete(uri);
+				return server;
+			}
 
-			this.syncDocument(entry, { ...input, path });
+			// Sent by the flush rather than here, so one document has one sender: a
+			// queue flushed alongside a direct send would put the document that started
+			// the server behind whatever was waiting for it, which is the reverse of
+			// the order they were presented in.
+			this.flushPending(entry);
 			return server;
 		} catch (error) {
+			// The document that failed is not one any server should be sent: two
+			// descriptors claiming one file is a conflict to report, not text to sync.
+			this.pendingDocuments.delete(uri);
 			this.reportContained('document sync', error);
 			return null;
 		}
@@ -280,6 +336,10 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 				};
 			}
 			this.syncDocument(entry, { ...document, path });
+			// A query can be the path that started this server, so it can also be the
+			// one that watched the handshake land. Draining here is what stops the
+			// documents that were waiting on that start from waiting for a keystroke.
+			this.flushPending(entry);
 			const result = await entry.client.request(
 				'textDocument/completion',
 				{
@@ -350,12 +410,59 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	}
 
 	/**
+	 * Sends the documents that are waiting on one server, in the order they were
+	 * presented, and empties them.
+	 *
+	 * `openDocument` sends nothing itself: every document it is handed goes out from
+	 * here, so a queue flushed alongside a direct send cannot put the document that
+	 * started a server behind the ones that were waiting for it.
+	 *
+	 * The gate is read again per document. A queued document was never in
+	 * `openDocuments`, so {@link LspRuntime.onSettingsChanged} — which walks that map
+	 * — never saw it to detach, and a switch flipped while this document was waiting
+	 * has to outrank the presentation that queued it.
+	 *
+	 * A client that has gone ends the flush: a stop or a dispose clears it, and
+	 * nothing here can start a server, so there is nothing left to send to.
+	 */
+	private flushPending(entry: RunningServer): void {
+		if (!entry.client || this.pendingDocuments.size === 0) return;
+		for (const [uri, pending] of [...this.pendingDocuments]) {
+			if (pending.server !== entry.server) continue;
+			this.pendingDocuments.delete(uri);
+			if (!this.gateFor(pending.input).enabled) continue;
+			this.syncDocument(entry, pending.input);
+		}
+	}
+
+	/**
+	 * Forgets the documents waiting on one server. Called where the server is being
+	 * taken away on purpose — an explicit stop, a restart, a server nothing is served
+	 * from any more, a disable — and where a handshake failed and will not be answered.
+	 *
+	 * A failed start drops rather than keeps: the text is as stale as the handshake
+	 * that never answered, and the next document event presents the current one.
+	 *
+	 * Not part of {@link LspRuntime.stopEntry}, because one of its callers is the
+	 * revival path: a document that arrives while its server is down is what brings
+	 * it back, and dropping the queue there would throw away the very document that
+	 * caused the restart, along with every other one presented while it was down.
+	 */
+	private dropPending(server: string): void {
+		if (this.pendingDocuments.size === 0) return;
+		for (const [uri, pending] of this.pendingDocuments) {
+			if (pending.server === server) this.pendingDocuments.delete(uri);
+		}
+	}
+
+	/**
 	 * Restarts one server in place. Its documents are re-opened against the new
 	 * process, so a restart is not a silent loss of context.
 	 */
 	async restartServer(server: string): Promise<boolean> {
 		const existing = this.servers.get(server);
 		if (!existing) return false;
+		this.dropPending(server);
 		await this.stopEntry(existing);
 		// An explicit restart lifts the stop it is reversing; without this the
 		// start below would take the "stopped by the user" early return and hand
@@ -374,6 +481,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	async stopServer(server: string): Promise<boolean> {
 		const existing = this.servers.get(server);
 		if (!existing) return false;
+		this.dropPending(server);
 		await this.stopEntry(existing);
 		existing.stoppedByUser = true;
 		return true;
@@ -387,6 +495,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 
 	async stopAll(): Promise<void> {
 		for (const entry of [...this.servers.values()]) {
+			this.dropPending(entry.server);
 			await this.stopEntry(entry);
 			entry.stoppedByUser = true;
 		}
@@ -406,6 +515,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		await this.stopAll();
 		this.servers.clear();
 		this.openDocuments.clear();
+		this.pendingDocuments.clear();
 		this.documentServers.clear();
 		this.targets.clear();
 		this.statusChanged();
@@ -497,6 +607,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 			this.reopenDocumentsFor(server);
 		} catch (error) {
 			entry.state = 'failed';
+			this.dropPending(server);
 			entry.client?.dispose();
 			entry.client = undefined;
 			spawnedProcess?.kill();
@@ -528,6 +639,10 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
+		// The queue is deliberately untouched: one of this method's callers is the
+		// revival path, where the stop is about to be followed by a start that should
+		// serve whatever is still waiting. The callers that mean it drops the waiters
+		// with the server say so themselves — see {@link LspRuntime.dropPending}.
 		// Whatever this server reported describes a process that is no longer
 		// watching, and a restart that kept them would look like it did nothing.
 		this.options.diagnostics?.dropServer(entry.server);
@@ -665,6 +780,9 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		for (const bound of this.documentServers.values()) {
 			if (bound === server) return;
 		}
+		// Nothing is bound to it and nothing ever will be: the gate emptied it, so the
+		// documents waiting on it go with the server rather than to the next start.
+		this.dropPending(server);
 		await this.stopEntry(entry);
 		this.servers.delete(server);
 		this.statusChanged();
@@ -681,12 +799,17 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	 * the per-process gate `lsp-gate.ts` argues against. Whether the last document
 	 * just left is a separate question, asked by {@link LspRuntime.stopWhenUnserved}.
 	 *
-	 * A no-op for a document the runtime never synced, which is the common case:
+	 * A near no-op for a document the runtime never synced, which is the common case:
 	 * the gate is consulted on every keystroke and most of them arrive for a
 	 * document that was never scoped to a server in the first place.
 	 */
 	private detachDocument(uri: string): void {
 		this.options.diagnostics?.dropUri(uri);
+		// Ahead of the early return below: a document that has not been synced is bound
+		// to nothing yet, so this is the only thing that can take it off the queue.
+		// The same rule — "off" means this document is no longer that server's
+		// business — reached from the queue rather than from the open set.
+		this.pendingDocuments.delete(uri);
 		const server = this.documentServers.get(uri);
 		if (!server) return;
 		const document = this.openDocuments.get(uri);
