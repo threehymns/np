@@ -24,6 +24,12 @@ import { appendFileSync } from 'node:fs';
  *   --diagnostics   publish one error and one warning for every document that
  *                   is opened or changed, which is the notification the
  *                   diagnostics slice renders
+ *   --diagnostic-uri <uri>  publish the same error and warning for this file
+ *                   right after the handshake completes, without the client ever
+ *                   having opened it. Models the project-wide server that indexes
+ *                   a workspace and reports on files it was not asked about —
+ *                   which is how a report reaches a client whose `lsp` is off for
+ *                   that file's language
  *   --log-file <path>  append every message the stub received, so a test can
  *                   assert what actually arrived on the wire. The protocol trace
  *                   deliberately does not retain document bodies, so this is the
@@ -40,6 +46,7 @@ interface StubOptions {
 	stderr: string | null;
 	echoText: boolean;
 	diagnostics: boolean;
+	diagnosticUri: string | null;
 	logFile: string | null;
 }
 
@@ -60,6 +67,7 @@ function parseOptions(argv: string[]): StubOptions {
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text'),
 		diagnostics: argv.includes('--diagnostics'),
+		diagnosticUri: readOption(argv, 'diagnostic-uri') ?? null,
 		logFile: readOption(argv, 'log-file') ?? null
 	};
 }
@@ -222,7 +230,12 @@ function handle(message: JsonRpcMessage): void {
 		});
 		return;
 	}
-	if (message.method === 'initialized') return;
+	if (message.method === 'initialized') {
+		// After the handshake rather than before: a report for a file the client has
+		// not opened yet would race the client's own subscription to it.
+		if (options.diagnosticUri !== null) publishDiagnostics(options.diagnosticUri);
+		return;
+	}
 	if (message.method === 'shutdown') {
 		if (options.mode === 'no-shutdown') return;
 		delayed(() => send({ id: message.id, result: null }));

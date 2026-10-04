@@ -23,6 +23,9 @@
  *   completion query about a document — a language server today. The editor
  *   shell reads it to compose its sources, and knows only that *something* can
  *   answer; see {@link CompletionCoordinator}.
+ * - `settings:reader`: published by the app composer (AppState). Resolved
+ *   values for the settings schemas, which the schema registry deliberately
+ *   does not carry — see {@link SettingsReader}.
  */
 
 import type { FileOrigin } from '../storage';
@@ -168,6 +171,53 @@ export interface LspPlatform {
 }
 
 export const COMPLETION_COORDINATOR_SERVICE_KEY = 'completion:coordinator';
+
+export const SETTINGS_READER_SERVICE_KEY = 'settings:reader';
+
+/**
+ * Resolved settings values, for a plugin that has to act on one.
+ *
+ * The host's own `settings` surface is `SettingsRegistryLike`, and it is
+ * schemas and nothing else: the schemas a plugin contributes, the transforms
+ * that replay over them, and the materialized view. Resolved *values* live in
+ * `SettingsResolver`, behind `SettingsManager`, which the plugin host does not
+ * hold — and should not, because resolution is a consumer of the schemas rather
+ * than part of the registry (ADR 0012, ADR 0014).
+ *
+ * So this is the seam instead. A plugin that must decide something *at runtime*
+ * — whether to spawn a process, whether to sync a document — cannot have it
+ * handed down by the editor shell, because the decision belongs to whichever
+ * layer owns the document and the process, and passing it down would put the
+ * feature's setting names in the shell. Reaching for the resolved value through
+ * the host's own service registry keeps the shell naming no feature and lets the
+ * plugin degrade: an app that publishes no reader gets the documented defaults,
+ * which is the same answer "no platform published" already gives.
+ *
+ * The reader resolves one key at a time and does not know about languages.
+ * Per-language scoping is a separate pure fold over `editor.languages`
+ * (`scopeForLanguage`), applied by whoever owns the document — because the axis
+ * is per language and only the holder of the document knows which one it is.
+ */
+export interface SettingsReader {
+	/**
+	 * The resolved value of one key: layered default < user < workspace, with the
+	 * schema's default applied when nothing overrides it. `unknown` because the
+	 * schema is the only thing that knows a key's type, and this reads across
+	 * namespaces; narrowing is the caller's job, as it is wherever a setting is
+	 * read.
+	 */
+	read(namespace: string, key: string): unknown;
+}
+
+/**
+ * The read signature on its own, for a resolver written as a pure function of it.
+ *
+ * The editor's completion settings take this shape too, and deliberately so: two
+ * readers that resolve `editor.languages` per language must be given the same
+ * value for the same key, and a pure function is the easiest way to assert that
+ * without a settings store in the room.
+ */
+export type SettingsRead = SettingsReader['read'];
 
 /**
  * What a document is, as a completion query states it.

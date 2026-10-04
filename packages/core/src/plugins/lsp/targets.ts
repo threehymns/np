@@ -102,7 +102,7 @@ export class LspTargetResolver {
 	}
 
 	/** The language the app already resolved, or the registry's answer for the name. */
-	private languageNameFor(input: LspTargetInput): string | null {
+	languageNameFor(input: LspTargetInput): string | null {
 		return (
 			input.language ?? this.options.host.getLanguageForFile(input.fileName)?.name ?? null
 		);

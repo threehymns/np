@@ -46,6 +46,17 @@ always did.
 question each one answers is per language. `automatic_completions` remains global
 because it is the popup's own switch, not a statement about a language.
 
+`lsp` is also no longer only this section's business: it gates the server for
+documents of that language, which ADR 0019 records — no start, no sync, no
+diagnostics, and notes and words untouched. The other three still shape an item
+once a server has answered, so they remain what this section is about. What
+changes here is only who settles `inactive`: the editor's source has always
+settled it without asking, and the runtime now settles it the same way, so a
+caller that reaches the runtime directly gets the answer the chain would have
+given it. It is still `inactive` and never `unavailable` — nothing failed and
+nothing was tried, and a language the user turned servers off for is the ordinary
+path rather than a degradation.
+
 `lsp_fetch_timeout_ms` defaults to `0`, which means *no bound* — the popover waits
 for whichever server is answering. That travels to the client as `undefined`
 rather than as a zero timer: a zero timer would make the documented default an

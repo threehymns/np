@@ -217,6 +217,20 @@ export class LspDiagnosticsStore {
 		if (dropped) this.changed();
 	}
 
+	/**
+	 * Drops every server's findings for one URI.
+	 *
+	 * The counterpart to `dropServer`, for the case where the document rather than
+	 * the process has gone away: a language with `editor.lsp` off stops being
+	 * diagnosed, and findings painted before that was set are a description of a
+	 * server that is no longer meant to have an opinion. Both servers' slices go,
+	 * because neither is still serving the file.
+	 */
+	dropUri(uri: string): void {
+		if (!this.byUri.delete(uri)) return;
+		this.changed();
+	}
+
 	clear(): void {
 		if (this.byUri.size === 0) return;
 		this.byUri.clear();

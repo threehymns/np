@@ -250,6 +250,27 @@ export const EDITOR_COMPLETION_DEFAULTS: {
 };
 
 /**
+ * The `editor` keys the completion sources and the LSP runtime read, spelled once.
+ *
+ * These live beside {@link EDITOR_SCHEMA} and {@link EDITOR_COMPLETION_DEFAULTS}
+ * because they are schema keys: a reader that spells one of them differently from
+ * the schema it is validated against reads nothing and reports a default, which
+ * is a silent divergence rather than an error. The editor's completion chain and
+ * the LSP runtime both resolve `editor.languages` for themselves and must agree
+ * on every character — the whole of `editor.lsp` working depends on the two
+ * halves of the fold resolving the same key.
+ */
+export const EDITOR_SETTINGS_NAMESPACE = 'editor';
+export const WORDS_SETTING = 'words';
+export const MIN_WORD_LENGTH_SETTING = 'min_word_length';
+export const AUTOMATIC_COMPLETIONS_SETTING = 'automatic_completions';
+export const LSP_SETTING = 'lsp';
+export const LSP_FETCH_TIMEOUT_SETTING = 'lsp_fetch_timeout_ms';
+export const LSP_INSERT_MODE_SETTING = 'lsp_insert_mode';
+export const SHOW_COMPLETION_DOCUMENTATION_SETTING = 'show_completion_documentation';
+export const LANGUAGE_OVERRIDES_SETTING = 'languages';
+
+/**
  * Standard Zed-aligned Editor settings schema.
  */
 export const EDITOR_SCHEMA: SettingNamespaceSchema = {
@@ -338,7 +359,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			type: 'boolean',
 			default: EDITOR_COMPLETION_DEFAULTS.lsp,
 			title: 'Language Servers',
-			description: 'Suggest from a running language server. Off leaves words and notes alone'
+			description: 'Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed; notes and words are unaffected'
 		},
 		lsp_fetch_timeout_ms: {
 			type: 'number',

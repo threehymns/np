@@ -1,4 +1,17 @@
-import { scopeForLanguage, type CompletionWordsMode } from "@np/core";
+import {
+	scopeForLanguage,
+	EDITOR_SETTINGS_NAMESPACE,
+	LANGUAGE_OVERRIDES_SETTING,
+	LSP_SETTING,
+	LSP_FETCH_TIMEOUT_SETTING,
+	LSP_INSERT_MODE_SETTING,
+	MIN_WORD_LENGTH_SETTING,
+	SHOW_COMPLETION_DOCUMENTATION_SETTING,
+	WORDS_SETTING,
+	AUTOMATIC_COMPLETIONS_SETTING,
+	type CompletionWordsMode,
+	type SettingsRead
+} from "@np/core";
 import {
 	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
@@ -11,20 +24,16 @@ import {
 /**
  * The `editor` settings namespace owns the completion triggers, and
  * `editor.languages` overrides them per language.
+ *
+ * The key names come from `@np/core`, beside the schema that declares them, so
+ * this reader and the LSP runtime's own `editor.lsp` gate cannot spell the same
+ * key two ways. A key that does not match its schema does not error — it reads as
+ * absent, and reads as absent resolves to the documented default, so the two
+ * halves would silently disagree about whether the user turned something off.
  */
-export const COMPLETION_SETTINGS_NAMESPACE = "editor";
-
-export const WORDS_SETTING = "words";
-export const MIN_WORD_LENGTH_SETTING = "min_word_length";
-export const AUTOMATIC_COMPLETIONS_SETTING = "automatic_completions";
-export const LSP_SETTING = "lsp";
-export const LSP_FETCH_TIMEOUT_SETTING = "lsp_fetch_timeout_ms";
-export const LSP_INSERT_MODE_SETTING = "lsp_insert_mode";
-export const SHOW_COMPLETION_DOCUMENTATION_SETTING = "show_completion_documentation";
-export const LANGUAGE_OVERRIDES_SETTING = "languages";
 
 /** Resolves one key of one settings namespace. */
-export type SettingReader = (namespace: string, key: string) => unknown;
+export type SettingReader = SettingsRead;
 
 /**
  * The buffer-word settings for one language: the editor-level `words` and
@@ -52,13 +61,13 @@ export function readBufferWordSettings(
 	languageName: string | null,
 ): BufferWordSettings {
 	const editorLevel = {
-		words: read(COMPLETION_SETTINGS_NAMESPACE, WORDS_SETTING),
-		min_word_length: read(COMPLETION_SETTINGS_NAMESPACE, MIN_WORD_LENGTH_SETTING),
+		words: read(EDITOR_SETTINGS_NAMESPACE, WORDS_SETTING),
+		min_word_length: read(EDITOR_SETTINGS_NAMESPACE, MIN_WORD_LENGTH_SETTING),
 	};
 
 	const scoped = scopeForLanguage(
 		editorLevel,
-		read(COMPLETION_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
+		read(EDITOR_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
 		languageName,
 	);
 
@@ -82,7 +91,7 @@ export function readBufferWordSettings(
  * turning every completion off.
  */
 export function readAutomaticCompletions(read: SettingReader): boolean {
-	return read(COMPLETION_SETTINGS_NAMESPACE, AUTOMATIC_COMPLETIONS_SETTING) !== false;
+	return read(EDITOR_SETTINGS_NAMESPACE, AUTOMATIC_COMPLETIONS_SETTING) !== false;
 }
 
 /**
@@ -105,18 +114,18 @@ export function readServerCompletionSettings(
 	languageName: string | null,
 ): ServerCompletionSettings {
 	const editorLevel = {
-		lsp: read(COMPLETION_SETTINGS_NAMESPACE, LSP_SETTING),
-		lsp_fetch_timeout_ms: read(COMPLETION_SETTINGS_NAMESPACE, LSP_FETCH_TIMEOUT_SETTING),
-		lsp_insert_mode: read(COMPLETION_SETTINGS_NAMESPACE, LSP_INSERT_MODE_SETTING),
+		lsp: read(EDITOR_SETTINGS_NAMESPACE, LSP_SETTING),
+		lsp_fetch_timeout_ms: read(EDITOR_SETTINGS_NAMESPACE, LSP_FETCH_TIMEOUT_SETTING),
+		lsp_insert_mode: read(EDITOR_SETTINGS_NAMESPACE, LSP_INSERT_MODE_SETTING),
 		show_completion_documentation: read(
-			COMPLETION_SETTINGS_NAMESPACE,
+			EDITOR_SETTINGS_NAMESPACE,
 			SHOW_COMPLETION_DOCUMENTATION_SETTING,
 		),
 	};
 
 	const scoped = scopeForLanguage(
 		editorLevel,
-		read(COMPLETION_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
+		read(EDITOR_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
 		languageName,
 	);
 

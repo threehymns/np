@@ -1,9 +1,12 @@
 import {
+	SETTINGS_READER_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
 	type CompletionAnswer,
 	type CompletionCoordinator,
 	type CompletionQuery,
 	type LspPlatform,
+	type SettingsReader,
+	type SettingsRead,
 	type WorkspaceLike
 } from '../services';
 import type { PluginHostInterface } from '../types';
@@ -11,10 +14,11 @@ import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
 import { parseServerCompletions } from './completions';
 import { parsePublishDiagnostics, type LspDiagnosticsStore } from './diagnostics';
+import { lspDisabledReason, lspEnabledFor } from './lsp-gate';
 import type { LspLogStore } from './logs';
-import { toFileUri } from './root';
+import { basenameOfUri, fromFileUri, toFileUri } from './root';
 import { describeError } from './describe-error';
-import { lspServerKey, LspTargetResolver } from './targets';
+import { lspServerKey, LspTargetResolver, type LspTargetInput } from './targets';
 import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
 import { resolveLspPlatform } from './platform';
 
@@ -71,6 +75,15 @@ export interface LspRuntimeOptions {
 	 * use, so an app that publishes it late still gets it.
 	 */
 	readonly platform?: LspPlatform;
+	/**
+	 * Overrides the resolved settings the `editor.lsp` gate reads. This is the
+	 * injection seam tests use; without it the reader is resolved from
+	 * `SETTINGS_READER_SERVICE_KEY` per use, so an app that publishes it late still
+	 * gets it. Absent, the gate reads the documented default and every language is
+	 * served — which is the answer a runtime with no settings at all must give,
+	 * because silence is indistinguishable from a switch the user cannot find.
+	 */
+	readonly readSettings?: SettingsRead;
 	/** Bound on one server's `initialize` handshake. See `LspClientOptions`. */
 	readonly initializeTimeoutMs?: number;
 }
@@ -168,6 +181,16 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		// runtime being torn down must not start new work.
 		if (this.disposed || !path) return null;
 		try {
+			const gate = this.gateFor(input);
+			if (!gate.enabled) {
+				// Declined before resolution, so nothing is scoped, no root is walked
+				// and no platform is asked. A language already synced to a server is
+				// closed rather than left stale: "off" has to mean this document is no
+				// longer that server's business, and a server still holding the text
+				// keeps publishing for it.
+				this.detachDocument(path);
+				return null;
+			}
 			const target = await this.targets.resolve(input);
 			if (!target) return null;
 			const server = lspServerKey(target.descriptor.id, target.root);
@@ -217,6 +240,13 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		}
 		let server = 'lsp';
 		try {
+			const gate = this.gateFor(document);
+			// The same `inactive` the editor's source settles without asking, so a
+			// caller that reaches the runtime directly gets the answer the chain would
+			// have given it. Not `unavailable`: nothing failed, the user said no.
+			if (!gate.enabled) {
+				return { state: 'inactive', reason: gate.reason };
+			}
 			const target = await this.targets.resolve(document);
 			if (!target) {
 				return { state: 'inactive', reason: 'No language server claims this document.' };
@@ -489,12 +519,79 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	 * an unhandled one is good for. The parser is total over JSON — anything it
 	 * cannot use comes back as null — so nothing here can fail the document or
 	 * the server.
+	 *
+	 * A report about a language the user turned servers off for is dropped rather
+	 * than filed, and whatever was already painted for it goes with it. The gate
+	 * cannot be left to "the document was never synced": a project-wide server
+	 * indexes the workspace and reports on files it was never asked about, so the
+	 * report arrives from a server that is running for some *other* language, or was
+	 * running when the setting changed.
 	 */
 	private onNotification(server: string, method: string, params: unknown): void {
 		if (method !== 'textDocument/publishDiagnostics') return;
 		const report = parsePublishDiagnostics(server, params);
 		if (!report) return;
+		const fileName = basenameOfUri(report.uri);
+		if (!this.gateFor({ path: fromFileUri(report.uri), fileName }).enabled) {
+			this.options.diagnostics?.dropUri(report.uri);
+			return;
+		}
 		this.options.diagnostics?.publish(report);
+	}
+
+	/**
+	 * `editor.lsp` for a document's language, or the documented default when the app
+	 * published no settings reader.
+	 *
+	 * Read per use rather than cached, because a settings change is not an event the
+	 * runtime is told about, and a cached value would make the switch take effect
+	 * only on a restart. Resolved here rather than passed down, because the runtime
+	 * is what decides whether to spawn and the document is what carries the
+	 * language — see `lsp-gate.ts` for why that has to be this way.
+	 */
+	private gateFor(input: LspTargetInput): { enabled: boolean; reason: string } {
+		const read = this.options.readSettings ?? this.publishedSettingsReader();
+		if (!read) return { enabled: true, reason: '' };
+		const language = this.targets.languageNameFor(input);
+		if (lspEnabledFor(read, language)) return { enabled: true, reason: '' };
+		return { enabled: false, reason: lspDisabledReason(language) };
+	}
+
+	/**
+	 * The app's resolved settings, read through the seam rather than captured once,
+	 * for the same reason the platform is: an app that publishes it after the plugin
+	 * is active still gets it.
+	 */
+	private publishedSettingsReader(): SettingsRead | undefined {
+		const reader = this.options.host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY);
+		// Narrowed into the published object's own `read` rather than captured off
+		// `this`, so the call is the reader's and not the runtime's.
+		return reader ? (namespace, key) => reader.read(namespace, key) : undefined;
+	}
+
+	/**
+	 * Stops tracking one document: `didClose` to a server holding it, and its
+	 * findings off the gutter.
+	 *
+	 * Deliberately not a server stop. The process is shared by every language its
+	 * descriptor serves and may be mid-answer for another document, so closing one
+	 * file is the whole of what the setting asks for — killing the process would be
+	 * the per-process gate `lsp-gate.ts` argues against.
+	 *
+	 * A no-op for a document the runtime never synced, which is the common case:
+	 * the gate is consulted on every keystroke and most of them arrive for a
+	 * document that was never scoped to a server in the first place.
+	 */
+	private detachDocument(path: string): void {
+		const uri = toFileUri(path);
+		this.options.diagnostics?.dropUri(uri);
+		const server = this.documentServers.get(uri);
+		if (!server) return;
+		const document = this.openDocuments.get(uri);
+		this.documentServers.delete(uri);
+		if (!document) return;
+		this.openDocuments.delete(uri);
+		this.servers.get(server)?.client?.notify('textDocument/didClose', { textDocument: { uri } });
 	}
 
 	private log(entry: RunningServer, level: 'info' | 'warn' | 'error', message: string): void {

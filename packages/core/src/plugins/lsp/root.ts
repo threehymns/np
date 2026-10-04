@@ -155,3 +155,26 @@ export function toFileUri(path: string): string {
 		)
 		.join('/')}`;
 }
+
+/**
+ * The path a `file://` URI addresses, or null when it addresses something else.
+ *
+ * The inverse of {@link toFileUri}, needed wherever a URI arrives from the server
+ * and a local decision has to be made about it — which language a diagnostics
+ * report is about, for one. A server is entitled to address a document with a
+ * scheme this client cannot resolve, and such a URI is not a path, so it is
+ * rejected rather than mangled into `://…`.
+ */
+export function fromFileUri(uri: string): string | null {
+	if (!uri.startsWith('file://')) return null;
+	const path = uri.slice('file://'.length);
+	if (path.length === 0) return null;
+	return decodeURIComponent(path);
+}
+
+/** The last path segment of a URI, which is the name a language is matched on. */
+export function basenameOfUri(uri: string): string {
+	const path = fromFileUri(uri) ?? uri;
+	const lastSlash = path.lastIndexOf('/');
+	return lastSlash < 0 ? path : path.slice(lastSlash + 1);
+}

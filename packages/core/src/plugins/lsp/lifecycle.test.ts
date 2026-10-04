@@ -7,7 +7,11 @@ import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
-import { LSP_PLATFORM_SERVICE_KEY } from '../services';
+import { LspDiagnosticsStore } from './diagnostics';
+import {
+	LSP_PLATFORM_SERVICE_KEY,
+	SETTINGS_READER_SERVICE_KEY
+} from '../services';
 import type { PluginHostInterface } from '../types';
 import {
 	createRealProcessPlatform,
@@ -56,6 +60,8 @@ interface Harness {
 	/** Where the stub records what arrived on the wire, read by {@link received}. */
 	readonly wireLog: string;
 	open(path: string, content: string): void;
+	/** Replaces one stored settings value, the way the settings modal would. */
+	setSetting(namespace: string, key: string, value: unknown): void;
 }
 
 /**
@@ -73,7 +79,29 @@ function received(harness: { readonly wireLog: string }): string[] {
 	}
 }
 
-async function startPlugin(script: readonly string[] = []): Promise<Harness> {
+/**
+ * The `editor.lsp` gate's own view of the stored settings, as a mutable object.
+ *
+ * A plain object rather than a settings manager, because the seam the runtime uses
+ * is a resolved *read*, and that is what a test has to vary: swapping the manager
+ * would exercise the manager instead of the gate.
+ */
+function settingsReader(store: Record<string, Record<string, unknown>>): {
+	read: (namespace: string, key: string) => unknown;
+	set(namespace: string, key: string, value: unknown): void;
+} {
+	return {
+		read: (namespace, key) => store[namespace]?.[key],
+		set: (namespace, key, value) => {
+			store[namespace] = { ...store[namespace], [key]: value };
+		}
+	};
+}
+
+async function startPlugin(
+	script: readonly string[] = [],
+	settings: Record<string, Record<string, unknown>> = {}
+): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
 	const wireLog = join(makeProject({}), 'wire.log');
 	// Always on: the stub is the only witness to what the client sent, and a
@@ -81,6 +109,8 @@ async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 	// difference is invisible.
 	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
 	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
+	const settingsAccess = settingsReader(settings);
+	host.provideService(SETTINGS_READER_SERVICE_KEY, { read: settingsAccess.read });
 	host.register(lspRegistration);
 	await host.activate(lspRegistration.manifest.id);
 	// Every teardown goes through the plugin's own disablement: the path that has
@@ -98,6 +128,7 @@ async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 		logs,
 		runtime,
 		wireLog,
+		setSetting: (namespace, key, value) => settingsAccess.set(namespace, key, value),
 		open: (path, content) => {
 			host.emit('document:opened', {
 				document: {
@@ -111,10 +142,21 @@ async function startPlugin(script: readonly string[] = []): Promise<Harness> {
 	};
 }
 
-/** A runtime driven directly, with its platform and log capacity injected. */
+/** A runtime driven directly, with its platform, settings and logs injected. */
 async function startRuntime(
-	options: { script?: readonly string[]; capacity?: number; initializeTimeoutMs?: number }
-): Promise<{ runtime: LspRuntime; platform: RealProcessPlatform; logs: LspLogStore }> {
+	options: {
+		script?: readonly string[];
+		capacity?: number;
+		initializeTimeoutMs?: number;
+		settings?: Record<string, Record<string, unknown>>;
+	}
+): Promise<{
+	runtime: LspRuntime;
+	platform: RealProcessPlatform;
+	logs: LspLogStore;
+	diagnostics: LspDiagnosticsStore;
+	setSetting: (namespace: string, key: string, value: unknown) => void;
+}> {
 	const host = new PluginHost({ platform: 'desktop' });
 	host.register({
 		manifest: { id: 'ts', name: 'TS', version: 0 },
@@ -133,15 +175,25 @@ async function startRuntime(
 		options.script ? { script: options.script } : {}
 	);
 	const logs = new LspLogStore(options.capacity);
+	const diagnostics = new LspDiagnosticsStore();
+	const settingsAccess = settingsReader(options.settings ?? {});
 	const runtime = new LspRuntime({
 		host,
 		pluginId: 'ts',
 		logs,
 		platform,
+		diagnostics,
+		readSettings: settingsAccess.read,
 		initializeTimeoutMs: options.initializeTimeoutMs
 	});
 	cleanups.push(() => runtime.dispose());
-	return { runtime, platform, logs };
+	return {
+		runtime,
+		platform,
+		logs,
+		diagnostics,
+		setSetting: (namespace, key, value) => settingsAccess.set(namespace, key, value)
+	};
 }
 
 /**
@@ -616,5 +668,262 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		for (const pid of platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
+	});
+});
+
+/**
+ * `editor.lsp` gates the server, not just the completions.
+ *
+ * The setting is per language and it decides whether a *document* is scoped to a
+ * server at all. Three legs follow from that, and each is asserted here against a
+ * real process: no start, no sync, no diagnostics. The trade this deliberately does
+ * not make — turning the setting off does not stop a server other languages are
+ * still using — is asserted too, because that trade is the design and would
+ * otherwise be invisible.
+ */
+describe('editor.lsp gates the server for documents of that language (#263)', () => {
+	it('starts no server at all, and syncs nothing, for a language turned off', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const harness = await startPlugin([], {
+			editor: { lsp: false, languages: { TypeScript: { lsp: false } } }
+		});
+
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await settle();
+
+		// No process, which is the whole of it: a switch a user reads as "off"
+		// while a server is spawned for the file is the bug this replaces.
+		expect(harness.platform.spawned).toHaveLength(0);
+		expect(harness.runtime.getServers()).toEqual([]);
+		expect(trace(harness.logs).join('\n')).not.toContain('didOpen');
+		expect(received(harness)).toEqual([]);
+	});
+
+	it('answers a completion query as inactive, which is what the source settles for it', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const { runtime, platform } = await startRuntime({
+			settings: { editor: { lsp: false, languages: { typescript: { lsp: false } } } }
+		});
+
+		const answer = await runtime.fetch({
+			document: {
+				path: join(root, 'src/a.ts'),
+				fileName: 'a.ts',
+				content: 'export const a = 1;\n',
+				language: 'typescript'
+			},
+			line: 0,
+			character: 0
+		});
+
+		// `inactive` and not `unavailable`: nothing failed and nothing was tried, and
+		// the difference is what tells the words source this is the ordinary path.
+		expect(answer.state).toBe('inactive');
+		expect(platform.spawned).toHaveLength(0);
+	});
+
+	it('leaves a language with no descriptor alone, and throws nothing', async () => {
+		// Prose has no server either way, so the gate has nothing to withhold. The
+		// risk being covered is the opposite of the first test: a gate that fails on
+		// the way to deciding there is no server would break every Markdown note.
+		const root = makeProject({ 'tsconfig.json': '{}', 'notes.md': '# Notes\n' });
+		const harness = await startPlugin([], {
+			editor: { lsp: false, languages: { Markdown: { lsp: false } } }
+		});
+
+		expect(() => harness.open(join(root, 'notes.md'), '# Notes\n')).not.toThrow();
+		await settle();
+		expect(harness.platform.spawned).toHaveLength(0);
+		expect(harness.runtime.getServers()).toEqual([]);
+	});
+
+	it('serves a sibling language from the shared process, without syncing the turned-off one', async () => {
+		// One descriptor serves TypeScript and TSX; one process serves both. The gate
+		// is per document, so turning it off for TSX must not silence TypeScript —
+		// which is what a per-process gate would do, and would be wrong.
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/app.ts': 'export const a = 1;\n',
+			'src/view.tsx': 'export const V = () => null;\n'
+		});
+		const harness = await startPlugin([], {
+			editor: { languages: { TSX: { lsp: false } } }
+		});
+
+		harness.open(join(root, 'src/view.tsx'), 'export const V = () => null;\n');
+		await settle();
+		expect(harness.platform.spawned).toHaveLength(0);
+
+		harness.open(join(root, 'src/app.ts'), 'export const a = 1;\n');
+		await waitForRunning(harness.runtime, 1);
+
+		expect(harness.platform.spawned).toHaveLength(1);
+		await waitFor(() => trace(harness.logs).some((line) => line.includes('didOpen')), {
+			label: 'the didOpen notification'
+		});
+		const opened = received(harness).filter((line) => line.includes('didOpen'));
+		expect(opened).toHaveLength(1);
+		expect(opened[0]).toContain('src/app.ts');
+		expect(opened.join('\n')).not.toContain('view.tsx');
+	});
+
+	it('keeps a running server up when its language is turned off mid-session', async () => {
+		// The trade: a settings toggle must not kill processes other documents depend
+		// on. The server is still running, still holding no document, and can be
+		// stopped explicitly from the status menu exactly as before.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const harness = await startPlugin();
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await waitForRunning(harness.runtime, 1);
+		const [pid] = harness.platform.pids;
+
+		harness.setSetting('editor', 'languages', { TypeScript: { lsp: false } });
+		harness.host.emit('document:changed', {
+			document: {
+				origin: { scheme: 'file', path: join(root, 'src/a.ts'), name: 'a.ts' },
+				fileName: 'a.ts',
+				content: 'export const a = 2;\n',
+				language: null
+			}
+		});
+		await settle();
+
+		expect(harness.platform.pids).toEqual([pid]);
+		expect(harness.runtime.getServers()[0].state).toBe('running');
+		expect(isProcessAlive(pid)).toBe(true);
+		// The document stops being the server's business, and says so in the protocol
+		// rather than going stale in the server's copy of it.
+		await waitFor(() => received(harness).some((line) => line.includes('didClose')), {
+			label: 'the didClose notification'
+		});
+		expect(received(harness).some((line) => line.includes('didChange'))).toBe(false);
+	});
+
+	it('drops a report about a document whose language is turned off', async () => {
+		// The server is running because a *sibling* language is served, and it has an
+		// opinion about a file it was never asked about — which is what a
+		// project-wide indexer does, and which is why dropping the report cannot be
+		// left to "the document was never synced". The setting says this document is
+		// not diagnosed, so nothing reaches the store.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const tsxUri = `file://${join(root, 'src/view.tsx')}`;
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostic-uri', tsxUri],
+			settings: { editor: { languages: { TSX: { lsp: false } } } }
+		});
+
+		// Declined before anything is scoped to it, so the stub never learns of it.
+		expect(
+			await runtime.openDocument({
+				path: join(root, 'src/view.tsx'),
+				fileName: 'view.tsx',
+				content: 'export const V = () => null;\n',
+				language: 'TSX'
+			})
+		).toBeNull();
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+		await settle();
+
+		expect(diagnostics.uris()).toEqual([]);
+		expect(diagnostics.read(tsxUri)).toEqual([]);
+	});
+
+	it('files that same unsolicited report when the language is on, so the drop is the gate', async () => {
+		// The control for the test above. Without it, a stub that published nothing
+		// would make that test pass for the wrong reason, and "no diagnostics" would
+		// be indistinguishable from "no server".
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const tsxUri = `file://${join(root, 'src/view.tsx')}`;
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostic-uri', tsxUri]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.uris().includes(tsxUri), {
+			label: 'the unsolicited report to be filed'
+		});
+
+		expect(diagnostics.read(tsxUri)).toHaveLength(2);
+		expect(diagnostics.read(tsxUri).map((d) => d.severity).sort()).toEqual(['error', 'warning']);
+	});
+
+	it('clears a painted diagnostic when the language is turned off afterwards', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const settings: Record<string, Record<string, unknown>> = {};
+		const { runtime, platform, diagnostics, setSetting } = await startRuntime({
+			script: ['--diagnostics'],
+			settings
+		});
+		const uri = `file://${join(root, 'src/a.ts')}`;
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the painted diagnostic' });
+		expect(diagnostics.read(uri)).toHaveLength(2);
+
+		setSetting('editor', 'languages', { typescript: { lsp: false } });
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 2;\n'
+		});
+
+		expect(diagnostics.read(uri)).toEqual([]);
+		expect(diagnostics.uris()).toEqual([]);
+		// And the process is still there, which is the trade the previous test pins.
+		expect(platform.pids.every((pid) => isProcessAlive(pid))).toBe(true);
+	});
+
+	it('keeps the runtime serving every language when no settings reader is published', async () => {
+		// The absence has to be the documented default. A runtime that read `lsp` as
+		// off because nothing published settings would silently serve nothing, and
+		// nothing about that would look like a setting.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const host = new PluginHost({ platform: 'desktop' });
+		host.register(lspRegistration);
+		await host.activate(lspRegistration.manifest.id);
+		cleanups.push(async () => {
+			if (host.isPluginActive(lspRegistration.manifest.id)) {
+				await host.deactivate(lspRegistration.manifest.id);
+			}
+		});
+		const platform = createRealProcessPlatform();
+		const runtime = new LspRuntime({
+			host,
+			pluginId: lspRegistration.manifest.id,
+			logs: new LspLogStore(),
+			platform
+		});
+		// A second runtime over a host whose plugin is already active, so this one has
+		// to be torn down by hand: the deactivate cleanup below disposes the plugin's
+		// runtime, not this one.
+		cleanups.push(() => runtime.dispose());
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n'
+		});
+		await waitFor(() => runtime.getServers().some((s) => s.state === 'running'), {
+			label: 'the server to start with no reader published'
+		});
+		expect(runtime.getServers()[0].state).toBe('running');
 	});
 });
