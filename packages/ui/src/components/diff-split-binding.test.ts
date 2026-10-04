@@ -230,6 +230,28 @@ describe("diff split Working-copy binding (#269)", () => {
 			expect(rebound!.content).toBe("unsaved pane edits\n");
 			expect(resolveSplitRightContent(rebound, "base working tree\n")).toBe("unsaved pane edits\n");
 		});
+
+		it("reloads a clean bound Document when repository content changes", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n")!;
+			expect(doc.isModified).toBe(false);
+			const rebound = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "new working tree\n");
+			expect(rebound).toBe(doc);
+			expect(rebound!.content).toBe("new working tree\n");
+			expect(rebound!.isModified).toBe(false);
+		});
+
+		it("preserves dirty edits when repository content changes", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n")!;
+			doc.content = "unsaved pane edits\n";
+			expect(doc.isModified).toBe(true);
+			const rebound = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "new working tree\n");
+			expect(rebound).toBe(doc);
+			expect(rebound!.content).toBe("unsaved pane edits\n");
+		});
 	});
 
 	describe("isOriginalOnly (deleted files, #272)", () => {

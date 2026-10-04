@@ -109,8 +109,10 @@ export interface SplitDocumentScope {
  * Ensure a shared Document exists for the diff filepath, reusing the open
  * one when present. New Documents start from the git snapshot's
  * working-tree content (content == baseline, so clean), without opening a
- * tab or stealing focus. Returns undefined when the diff is not loaded yet,
- * the file is deleted, or there is no workspace root.
+ * tab or stealing focus. A clean bound Document reloads to new repository
+ * content; dirty Documents keep their edits. Returns undefined when the
+ * diff is not loaded yet, the file is deleted, or there is no workspace
+ * root.
  */
 export function ensureSplitDocument(
 	scope: SplitDocumentScope,
@@ -121,7 +123,10 @@ export function ensureSplitDocument(
 	if (change.status === "D") return undefined;
 	if (snapshotModifiedContent === undefined) return undefined;
 	const existing = findBoundDocument(scope.documents, boundDocIds, scope.rootOrigin, change.filepath);
-	if (existing) return existing;
+	if (existing) {
+		existing.syncCleanSnapshot(snapshotModifiedContent);
+		return existing;
+	}
 	if (!scope.rootOrigin) return undefined;
 	const origin = originForDiffFilepath(scope.rootOrigin, change.filepath);
 	const doc = new DocumentSession(scope.storage, snapshotModifiedContent, origin);
