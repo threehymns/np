@@ -110,7 +110,8 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 				filepath,
 				bearerOf()?.diffBoundDocIds
 			);
-			return doc ? { content: doc.content } : undefined;
+			if (!doc || doc.isLoaded !== true) return undefined;
+			return { content: doc.content };
 		},
 		applyWorkingTreeEdit: (filepath, content) => {
 			const workspace = getWorkspace();

@@ -54,6 +54,7 @@ export interface DirtyDocumentLike extends BoundDocumentLike {
 	readonly origin: FileOrigin | null;
 	readonly content: string;
 	readonly isModified: boolean;
+	readonly isLoaded?: boolean;
 }
 
 /**
