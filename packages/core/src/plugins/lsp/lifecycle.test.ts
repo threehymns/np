@@ -62,6 +62,8 @@ interface Harness {
 	open(path: string, content: string): void;
 	/** Replaces one stored settings value, the way the settings modal would. */
 	setSetting(namespace: string, key: string, value: unknown): void;
+	/** Live settings subscriptions the runtime holds. */
+	settingsListeners(): number;
 }
 
 /**
@@ -83,18 +85,32 @@ function received(harness: { readonly wireLog: string }): string[] {
  * The `editor.lsp` gate's own view of the stored settings, as a mutable object.
  *
  * A plain object rather than a settings manager, because the seam the runtime uses
- * is a resolved *read*, and that is what a test has to vary: swapping the manager
- * would exercise the manager instead of the gate.
+ * is a resolved *read* plus a change subscription, and that is what a test has to
+ * vary: swapping the manager would exercise the manager instead of the gate.
  */
 function settingsReader(store: Record<string, Record<string, unknown>>): {
 	read: (namespace: string, key: string) => unknown;
+	subscribe: (listener: () => void) => () => void;
 	set(namespace: string, key: string, value: unknown): void;
+	/** Live subscriptions, so releasing one is observable. */
+	listeners: () => number;
 } {
+	const listeners = new Set<() => void>();
 	return {
 		read: (namespace, key) => store[namespace]?.[key],
+		subscribe: (listener) => {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
 		set: (namespace, key, value) => {
 			store[namespace] = { ...store[namespace], [key]: value };
-		}
+			// What the app's publication does: one notification per change, for a
+			// change of *any* setting, with no say in what it was.
+			for (const listener of [...listeners]) listener();
+		},
+		listeners: () => listeners.size
 	};
 }
 
@@ -110,7 +126,10 @@ async function startPlugin(
 	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
 	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	const settingsAccess = settingsReader(settings);
-	host.provideService(SETTINGS_READER_SERVICE_KEY, { read: settingsAccess.read });
+	host.provideService(SETTINGS_READER_SERVICE_KEY, {
+		read: settingsAccess.read,
+		subscribe: settingsAccess.subscribe
+	});
 	host.register(lspRegistration);
 	await host.activate(lspRegistration.manifest.id);
 	// Every teardown goes through the plugin's own disablement: the path that has
@@ -129,6 +148,7 @@ async function startPlugin(
 		runtime,
 		wireLog,
 		setSetting: (namespace, key, value) => settingsAccess.set(namespace, key, value),
+		settingsListeners: settingsAccess.listeners,
 		open: (path, content) => {
 			host.emit('document:opened', {
 				document: {
@@ -149,6 +169,8 @@ async function startRuntime(
 		capacity?: number;
 		initializeTimeoutMs?: number;
 		settings?: Record<string, Record<string, unknown>>;
+		/** Replaces the platform, for a test that has to count what it asks. */
+		platform?: RealProcessPlatform;
 	}
 ): Promise<{
 	runtime: LspRuntime;
@@ -171,9 +193,8 @@ async function startRuntime(
 		}
 	});
 	await host.activate('ts');
-	const platform = createRealProcessPlatform(
-		options.script ? { script: options.script } : {}
-	);
+	const platform =
+		options.platform ?? createRealProcessPlatform(options.script ? { script: options.script } : {});
 	const logs = new LspLogStore(options.capacity);
 	const diagnostics = new LspDiagnosticsStore();
 	const settingsAccess = settingsReader(options.settings ?? {});
@@ -184,6 +205,7 @@ async function startRuntime(
 		platform,
 		diagnostics,
 		readSettings: settingsAccess.read,
+		subscribeSettings: settingsAccess.subscribe,
 		initializeTimeoutMs: options.initializeTimeoutMs
 	});
 	cleanups.push(() => runtime.dispose());
@@ -676,10 +698,14 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
  *
  * The setting is per language and it decides whether a *document* is scoped to a
  * server at all. Three legs follow from that, and each is asserted here against a
- * real process: no start, no sync, no diagnostics. The trade this deliberately does
- * not make — turning the setting off does not stop a server other languages are
- * still using — is asserted too, because that trade is the design and would
- * otherwise be invisible.
+ * real process: no start, no sync, no diagnostics.
+ *
+ * Two edges of the same rule are asserted with it, because both are decisions that
+ * would otherwise be invisible. A server other languages are still using survives
+ * the switch — that is the trade, and it is not free. A server whose last served
+ * document went does not: a process with nothing to serve is not a server the user
+ * has, and a row in the status menu with no document attached is what "this switch
+ * does nothing" looks like from the outside.
  */
 describe('editor.lsp gates the server for documents of that language (#263)', () => {
 	it('starts no server at all, and syncs nothing, for a language turned off', async () => {
@@ -767,36 +793,150 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(opened.join('\n')).not.toContain('view.tsx');
 	});
 
-	it('keeps a running server up when its language is turned off mid-session', async () => {
-		// The trade: a settings toggle must not kill processes other documents depend
-		// on. The server is still running, still holding no document, and can be
-		// stopped explicitly from the status menu exactly as before.
+	it('stops a server whose last served document is turned off, and leaves no orphan', async () => {
+		// The switch, and nothing else. No edit, no document event, no keystroke —
+		// because a user who flips a switch while the editor sits idle and has to
+		// type next to see it happen concludes the switch is broken.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const harness = await startPlugin();
 		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
 		await waitForRunning(harness.runtime, 1);
 		const [pid] = harness.platform.pids;
+		expect(isProcessAlive(pid)).toBe(true);
 
 		harness.setSetting('editor', 'languages', { TypeScript: { lsp: false } });
-		harness.host.emit('document:changed', {
-			document: {
-				origin: { scheme: 'file', path: join(root, 'src/a.ts'), name: 'a.ts' },
-				fileName: 'a.ts',
-				content: 'export const a = 2;\n',
-				language: null
-			}
-		});
-		await settle();
 
+		// A server nothing is served from any more is not a server the user has, so
+		// it leaves the status list rather than sitting there with no document
+		// attached. The pid is the assertion; the row is the consequence.
+		await waitFor(() => harness.runtime.getServers().length === 0, {
+			label: 'the emptied server to leave the status list'
+		});
+		await waitFor(() => !isProcessAlive(pid), { label: 'the stopped server to exit' });
+		// One process for the whole thing: nothing was started or restarted on the
+		// way out.
 		expect(harness.platform.pids).toEqual([pid]);
-		expect(harness.runtime.getServers()[0].state).toBe('running');
-		expect(isProcessAlive(pid)).toBe(true);
-		// The document stops being the server's business, and says so in the protocol
-		// rather than going stale in the server's copy of it.
+		// And the document said so on the wire rather than going stale in the
+		// server's copy of it.
 		await waitFor(() => received(harness).some((line) => line.includes('didClose')), {
 			label: 'the didClose notification'
 		});
-		expect(received(harness).some((line) => line.includes('didChange'))).toBe(false);
+	});
+
+	it('keeps a server running while another language of the same process is enabled', async () => {
+		// The trade the gate still makes: a settings toggle must not kill a process
+		// other open files depend on. One descriptor serves both languages and one
+		// process serves both, so turning `lsp` off for TSX closes the tsx document
+		// and leaves the process alone.
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/app.ts': 'export const a = 1;\n',
+			'src/view.tsx': 'export const V = () => null;\n'
+		});
+		const harness = await startPlugin();
+		harness.open(join(root, 'src/app.ts'), 'export const a = 1;\n');
+		await waitFor(() => received(harness).some((line) => line.includes('didOpen')), {
+			label: 'the ts didOpen'
+		});
+		harness.open(join(root, 'src/view.tsx'), 'export const V = () => null;\n');
+		await waitFor(() => received(harness).filter((line) => line.includes('didOpen')).length === 2, {
+			label: 'the tsx didOpen'
+		});
+		const [pid] = harness.platform.pids;
+
+		harness.setSetting('editor', 'languages', { TSX: { lsp: false } });
+
+		await waitFor(
+			() => received(harness).some((line) => line.includes('view.tsx') && line.includes('didClose')),
+			{ label: 'the tsx didClose' }
+		);
+		await settle();
+		expect(isProcessAlive(pid)).toBe(true);
+		expect(harness.platform.pids).toEqual([pid]);
+		expect(harness.runtime.getServers()[0].state).toBe('running');
+		// And the ts document was not closed with it: the process still holds it.
+		expect(received(harness).some((line) => line.includes('didClose') && line.includes('app.ts'))).toBe(
+			false
+		);
+	});
+
+	it('does no work for a settings change that flips no gate', async () => {
+		// The notification is not "your setting changed": it is "something changed",
+		// and by a wide margin the something is unrelated — another key in this
+		// namespace, or another plugin's namespace entirely. Re-evaluating has to
+		// cost two settings reads per synced document and nothing more.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const base = createRealProcessPlatform();
+		let probes = 0;
+		// The same platform with its filesystem question counted. The spawned and pid
+		// lists are the base's own arrays, so one process is one process from either
+		// end.
+		const counted: RealProcessPlatform = {
+			spawned: base.spawned,
+			pids: base.pids,
+			fileExists: async (path) => {
+				probes++;
+				return base.fileExists(path);
+			},
+			spawn: (options) => base.spawn(options)
+		};
+		const { runtime, setSetting } = await startRuntime({
+			settings: { editor: { lsp_fetch_timeout_ms: 0 } },
+			platform: counted
+		});
+
+		await runtime.openDocument({ path: join(root, 'src/a.ts'), fileName: 'a.ts', content: '' });
+		await waitForRunning(runtime, 1);
+		await runtime.openDocument({ path: join(root, 'src/b.ts'), fileName: 'b.ts', content: '' });
+		await settle();
+		// The control: resolving a document walks the filesystem, so the counter does
+		// move. Without this a zero below would only prove the counter cannot count.
+		expect(probes).toBeGreaterThan(0);
+		const walked = probes;
+		const spawned = base.spawned.length;
+
+		setSetting('editor', 'lsp_fetch_timeout_ms', 900);
+		await settle();
+
+		expect(probes).toBe(walked);
+		expect(base.spawned).toHaveLength(spawned);
+		expect(runtime.getServers()[0].state).toBe('running');
+		expect(isProcessAlive(base.pids[0])).toBe(true);
+
+		// The same subscription, on a change that does flip a gate: a negative
+		// assertion about work not done cannot tell "cheap" from "never ran", so the
+		// next line is what makes the one above mean what it says.
+		setSetting('editor', 'languages', { TypeScript: { lsp: false } });
+		await waitFor(() => runtime.getServers().length === 0, {
+			label: 'the emptied server to leave the status list'
+		});
+		await waitFor(() => !isProcessAlive(base.pids[0]), { label: 'the stopped server to exit' });
+	});
+
+	it('ignores a settings change once the plugin is disabled', async () => {
+		// The subscription is the runtime's, so the disable has to take it with it:
+		// a runtime that outlived its own subscription would keep answering settings
+		// changes for the rest of the session, and the next activation would find a
+		// second one.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin();
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		const [pid] = harness.platform.pids;
+		expect(harness.settingsListeners()).toBe(1);
+
+		await harness.host.deactivate(lspRegistration.manifest.id);
+		await waitFor(() => !isProcessAlive(pid), { label: 'the disabled plugin to leave no orphan' });
+		expect(harness.runtime.getServers()).toEqual([]);
+		// The subscription went with it. A disposed runtime ignores what it hears, so
+		// the leak has no other symptom — which is exactly why it has to be pinned
+		// here rather than left to the guard that hides it.
+		expect(harness.settingsListeners()).toBe(0);
+
+		expect(() => harness.setSetting('editor', 'languages', { TypeScript: { lsp: false } })).not.toThrow();
+		await settle();
+		expect(harness.platform.spawned).toHaveLength(1);
+		expect(harness.runtime.getServers()).toEqual([]);
 	});
 
 	it('drops a report about a document whose language is turned off', async () => {
@@ -879,16 +1019,31 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(diagnostics.read(uri)).toHaveLength(2);
 
 		setSetting('editor', 'languages', { typescript: { lsp: false } });
-		await runtime.openDocument({
-			path: join(root, 'src/a.ts'),
-			fileName: 'a.ts',
-			content: 'export const a = 2;\n'
+		// The setting alone, with no edit: the gate says this document is not
+		// diagnosed, so what was already painted has to go without waiting to be
+		// told twice.
+		await waitFor(() => diagnostics.read(uri).length === 0, {
+			label: 'the painted diagnostic to clear'
 		});
-
-		expect(diagnostics.read(uri)).toEqual([]);
 		expect(diagnostics.uris()).toEqual([]);
-		// And the process is still there, which is the trade the previous test pins.
-		expect(platform.pids.every((pid) => isProcessAlive(pid))).toBe(true);
+		// And the process goes with it, because this was the last document the
+		// server was serving.
+		for (const pid of platform.pids) {
+			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
+		}
+		expect(runtime.getServers()).toEqual([]);
+
+		// A later edit still declines, rather than finding a stopped entry and
+		// starting it again.
+		expect(
+			await runtime.openDocument({
+				path: join(root, 'src/a.ts'),
+				fileName: 'a.ts',
+				content: 'export const a = 2;\n'
+			})
+		).toBeNull();
+		expect(platform.pids).toHaveLength(1);
+		expect(diagnostics.read(uri)).toEqual([]);
 	});
 
 	it('keeps the runtime serving every language when no settings reader is published', async () => {

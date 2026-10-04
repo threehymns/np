@@ -86,6 +86,7 @@ export class Preferences {
 	private storageKey = 'np-prefs-v2';
 	private isInitialized = false;
 	private isRestoring = false;
+	private settingsChangeListeners = new Set<() => void>();
 
 	/** Underlying settings manager providing namespaces, schema validation, and diagnostics */
 	readonly settings: SettingsManager;
@@ -97,11 +98,32 @@ export class Preferences {
 			storageKey: this.storageKey,
 			onChange: () => {
 				this.settingsVersion++;
+				// One change, one notification, beside the bump rather than beside a
+				// second signal. `settingsVersion` is the reactive handle; this is
+				// that same signal in the plain callback form a consumer with no
+				// compiler can use. A plugin cannot read a rune, and leaving it to
+				// wait for the next document event is how a settings switch ends up
+				// looking broken.
+				for (const listener of [...this.settingsChangeListeners]) listener();
 			}
 		});
 
 		this.reload();
 		this.isInitialized = true;
+	}
+
+	/**
+	 * Subscribes to resolved settings values changing; returns the unsubscribe.
+	 *
+	 * Says *that* something changed, never what: the change is one of any setting,
+	 * so a subscriber re-reads the keys it cares about and compares rather than
+	 * assume the notification was about its own.
+	 */
+	subscribeSettings(listener: () => void): () => void {
+		this.settingsChangeListeners.add(listener);
+		return () => {
+			this.settingsChangeListeners.delete(listener);
+		};
 	}
 
 	get wordWrap(): boolean { return this._data.wordWrap; }

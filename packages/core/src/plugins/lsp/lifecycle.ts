@@ -7,6 +7,7 @@ import {
 	type LspPlatform,
 	type SettingsReader,
 	type SettingsRead,
+	type SettingsSubscribe,
 	type WorkspaceLike
 } from '../services';
 import type { PluginHostInterface } from '../types';
@@ -32,10 +33,10 @@ export type { LspServerState, LspServerStatus };
  * runs one process per project root, so a monorepo with three TypeScript
  * projects gets three servers and each one is restarted and stopped on its own.
  *
- * Every entry point here is safe to call from an observer. Document opening
- * arrives as an event (ADR 0013) and therefore cannot throw back at the editor,
- * so a conflict, a missing platform, a server that will not start, and a
- * protocol failure are all recorded and returned, never raised.
+ * Every entry point here is safe to call from an observer. A document arrives as
+ * an event (ADR 0013) and a settings change arrives as a subscription, so neither
+ * can throw back at the editor: a conflict, a missing platform, a server that will
+ * not start, and a protocol failure are all recorded and returned, never raised.
  */
 
 /**
@@ -84,12 +85,25 @@ export interface LspRuntimeOptions {
 	 * because silence is indistinguishable from a switch the user cannot find.
 	 */
 	readonly readSettings?: SettingsRead;
+	/**
+	 * Overrides the settings-change subscription that re-evaluates the gate while
+	 * the editor sits idle, the seam's other half and the same injection argument as
+	 * `readSettings`. Absent, it is resolved from the published reader.
+	 */
+	readonly subscribeSettings?: SettingsSubscribe;
 	/** Bound on one server's `initialize` handshake. See `LspClientOptions`. */
 	readonly initializeTimeoutMs?: number;
 }
 
 interface OpenDocument {
 	readonly uri: string;
+	/**
+	 * The registry's language name, kept so the gate can be re-read for this
+	 * document without resolving it again: the name is what `editor.languages` is
+	 * keyed by, and re-resolving would mean a language lookup per document per
+	 * settings change.
+	 */
+	readonly language: string | null;
 	readonly languageId: string;
 	content: string;
 	version: number;
@@ -121,6 +135,8 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	private readonly documentServers = new Map<string, string>();
 	private readonly targets: LspTargetResolver;
 	private readonly statusListeners = new Set<() => void>();
+	/** Held so a disable really releases it; see {@link LspRuntime.dispose}. */
+	private unsubscribeSettings?: () => void;
 	private statusRevision = 0;
 	private disposed = false;
 
@@ -130,6 +146,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 			logs: options.logs,
 			platform: () => this.resolvePlatform()
 		});
+		this.ensureSettingsSubscription();
 	}
 
 	/**
@@ -180,6 +197,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		// An untitled document has no file for a server to be scoped to, and a
 		// runtime being torn down must not start new work.
 		if (this.disposed || !path) return null;
+		this.ensureSettingsSubscription();
 		try {
 			const gate = this.gateFor(input);
 			if (!gate.enabled) {
@@ -187,8 +205,9 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 				// and no platform is asked. A language already synced to a server is
 				// closed rather than left stale: "off" has to mean this document is no
 				// longer that server's business, and a server still holding the text
-				// keeps publishing for it.
-				this.detachDocument(path);
+				// keeps publishing for it. The server itself is left alone unless that
+				// was the last document it was serving — see {@link LspRuntime.stopWhenUnserved}.
+				this.detachDocument(toFileUri(path));
 				return null;
 			}
 			const target = await this.targets.resolve(input);
@@ -313,6 +332,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		}
 		const document: OpenDocument = {
 			uri,
+			language: this.targets.languageNameFor(input),
 			languageId: this.targets.languageIdFor(entry.descriptor, input),
 			content: input.content,
 			version: 1
@@ -377,6 +397,12 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		// Set first: a document event that lands mid-teardown must not start a
 		// server the disable is in the middle of stopping.
 		this.disposed = true;
+		// Released before the slow part, and released at all: a settings change that
+		// arrives after a disable has nothing left to act on, and holding the
+		// subscription would keep a disposed runtime reachable for the rest of the
+		// session.
+		this.unsubscribeSettings?.();
+		this.unsubscribeSettings = undefined;
 		await this.stopAll();
 		this.servers.clear();
 		this.openDocuments.clear();
@@ -543,10 +569,11 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	 * `editor.lsp` for a document's language, or the documented default when the app
 	 * published no settings reader.
 	 *
-	 * Read per use rather than cached, because a settings change is not an event the
-	 * runtime is told about, and a cached value would make the switch take effect
-	 * only on a restart. Resolved here rather than passed down, because the runtime
-	 * is what decides whether to spawn and the document is what carries the
+	 * Read per use rather than cached, so the switch cannot outlive the value it was
+	 * read from; the change itself is observed too ({@link
+	 * LspRuntime.onSettingsChanged}), because per-use reads only take effect when the
+	 * next use happens to arrive. Resolved here rather than passed down, because the
+	 * runtime is what decides whether to spawn and the document is what carries the
 	 * language — see `lsp-gate.ts` for why that has to be this way.
 	 */
 	private gateFor(input: LspTargetInput): { enabled: boolean; reason: string } {
@@ -570,20 +597,95 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	}
 
 	/**
-	 * Stops tracking one document: `didClose` to a server holding it, and its
-	 * findings off the gutter.
+	 * Subscribes to the app's settings-value changes, once, and leaves the field
+	 * empty while there is nothing to subscribe to — so an app that publishes the
+	 * reader later still gets the subscription on the next document event.
+	 */
+	private ensureSettingsSubscription(): void {
+		if (this.unsubscribeSettings) return;
+		const subscribe = this.options.subscribeSettings ?? this.publishedSettingsSubscribe();
+		if (subscribe) {
+			this.unsubscribeSettings = subscribe(() => void this.onSettingsChanged());
+		}
+	}
+
+	private publishedSettingsSubscribe(): SettingsSubscribe | undefined {
+		const reader = this.options.host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY);
+		return reader?.subscribe?.bind(reader);
+	}
+
+	/**
+	 * Re-evaluates the gate for every document this runtime is syncing, because a
+	 * settings change is not a keystroke and waiting for the next one makes the
+	 * switch look broken.
 	 *
-	 * Deliberately not a server stop. The process is shared by every language its
+	 * Only a document whose gate actually flipped is touched. The notification says
+	 * that *something* changed and the common case by a wide margin is that nothing
+	 * this runtime cares about did — every unrelated setting, and every other
+	 * plugin's namespace — so the work here is two settings reads per synced
+	 * document and nothing else: no root walk, no spawn, no protocol traffic. A
+	 * language that is turned *on* again is not acted on either; the next document
+	 * event starts its server, which is the same order events have always arrived in.
+	 */
+	private async onSettingsChanged(): Promise<void> {
+		if (this.disposed) return;
+		const read = this.options.readSettings ?? this.publishedSettingsReader();
+		if (!read) return;
+		// Collected before the detach: detaching is what forgets which server a
+		// document belonged to.
+		const affected = new Set<string>();
+		for (const [uri, document] of [...this.openDocuments]) {
+			if (lspEnabledFor(read, document.language)) continue;
+			const server = this.documentServers.get(uri);
+			if (server) affected.add(server);
+			this.detachDocument(uri);
+		}
+		for (const server of affected) await this.stopWhenUnserved(server);
+	}
+
+	/**
+	 * Stops a server nothing is served from any more, and forgets it.
+	 *
+	 * An explicit lifecycle decision rather than teardown at the call site, so the
+	 * pid accounting, the diagnostics drop and the no-orphan guarantee are the same
+	 * ones an explicit stop from the status menu gets. Called for a server a gate
+	 * transition may have emptied, which is the only case it acts on: a server still
+	 * serving an enabled document is left running, because a settings toggle must
+	 * not kill a process other open files depend on.
+	 *
+	 * Not `stoppedByUser`: the user did not stop it, and turning the setting back on
+	 * has to bring it back on the next document event. Forgetting the entry rather
+	 * than leaving it `stopped` is the point — the status menu shows what exists, and
+	 * a row with no process and no document is the thing this whole slice exists to
+	 * stop looking like.
+	 */
+	private async stopWhenUnserved(server: string): Promise<void> {
+		const entry = this.servers.get(server);
+		if (!entry) return;
+		for (const bound of this.documentServers.values()) {
+			if (bound === server) return;
+		}
+		await this.stopEntry(entry);
+		this.servers.delete(server);
+		this.statusChanged();
+	}
+
+	/**
+	 * Stops tracking one document, addressed by its URI because every map here is
+	 * keyed by URI: `didClose` to a server holding it, and its findings off the
+	 * gutter.
+	 *
+	 * Not a server stop, on its own. The process is shared by every language its
 	 * descriptor serves and may be mid-answer for another document, so closing one
 	 * file is the whole of what the setting asks for — killing the process would be
-	 * the per-process gate `lsp-gate.ts` argues against.
+	 * the per-process gate `lsp-gate.ts` argues against. Whether the last document
+	 * just left is a separate question, asked by {@link LspRuntime.stopWhenUnserved}.
 	 *
 	 * A no-op for a document the runtime never synced, which is the common case:
 	 * the gate is consulted on every keystroke and most of them arrive for a
 	 * document that was never scoped to a server in the first place.
 	 */
-	private detachDocument(path: string): void {
-		const uri = toFileUri(path);
+	private detachDocument(uri: string): void {
 		this.options.diagnostics?.dropUri(uri);
 		const server = this.documentServers.get(uri);
 		if (!server) return;

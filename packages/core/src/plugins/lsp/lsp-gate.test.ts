@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { lspEnabledFor, lspDisabledReason } from './lsp-gate';
-import { EDITOR_COMPLETION_DEFAULTS } from '../settings';
+import { EDITOR_COMPLETION_DEFAULTS, LSP_SETTING } from '../settings';
 import { SETTINGS_READER_SERVICE_KEY } from '../services';
 import type { SettingsRead } from '../services';
 
@@ -139,5 +139,54 @@ describe('The app publishes a resolved settings reader for plugins that must dec
 
 		app.prefs.set('editor', LSP_SETTING, false);
 		expect(reader!.read('editor', LSP_SETTING)).toBe(false);
+	});
+
+	it('notifies a subscriber when a value changes, because reading is not enough', async () => {
+		// The other half of the seam. A consumer that reads on use still waits for
+		// its next use, and a plugin's next use is a keystroke — so the switch would
+		// take effect whenever the user happened to type next. Which is a switch a
+		// user has learned to distrust.
+		const { AppState } = await import('../../state.svelte');
+		const { PluginHost } = await import('../host.svelte');
+		const no: never = () => {
+			throw new Error('unused in this test');
+		};
+		const app = new AppState({
+			storage: {
+				pickFile: no,
+				pickDirectory: no,
+				saveFile: no,
+				readFile: async () => '',
+				readDirectory: async () => [],
+				verifyPermission: async () => true,
+				queryPermission: async () => 'granted',
+				createFile: no,
+				createDirectory: no,
+				deleteEntry: no,
+				renameEntry: no
+			},
+			vcsFactory: no,
+			prefsStorage: { getItem: () => null, setItem: () => {} },
+			pluginHost: new PluginHost()
+		});
+		await app.init();
+
+		const reader = app.plugins.getService<{
+			read(ns: string, key: string): unknown;
+			subscribe(listener: () => void): () => void;
+		}>(SETTINGS_READER_SERVICE_KEY);
+		expect(reader).toBeDefined();
+		const changes: number[] = [];
+		const stop = reader!.subscribe(() => changes.push(app.prefs.settingsVersion));
+
+		app.prefs.set('editor', LSP_SETTING, false);
+		expect(changes).toHaveLength(1);
+		// The value is already resolved when the notification lands, so a subscriber
+		// never has to wonder whether it is reading before or after the write.
+		expect(lspEnabledFor((ns, key) => reader!.read(ns, key), 'TypeScript')).toBe(false);
+
+		stop();
+		app.prefs.set('editor', LSP_SETTING, true);
+		expect(changes).toHaveLength(1);
 	});
 });

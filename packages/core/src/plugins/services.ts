@@ -25,7 +25,9 @@
  *   answer; see {@link CompletionCoordinator}.
  * - `settings:reader`: published by the app composer (AppState). Resolved
  *   values for the settings schemas, which the schema registry deliberately
- *   does not carry — see {@link SettingsReader}.
+ *   does not carry — and, optionally, a subscription to those values changing,
+ *   which is what lets a consumer act on a setting instead of waiting for an
+ *   unrelated event. See {@link SettingsReader}.
  */
 
 import type { FileOrigin } from '../storage';
@@ -195,8 +197,9 @@ export const SETTINGS_READER_SERVICE_KEY = 'settings:reader';
  *
  * The reader resolves one key at a time and does not know about languages.
  * Per-language scoping is a separate pure fold over `editor.languages`
- * (`scopeForLanguage`), applied by whoever owns the document — because the axis
- * is per language and only the holder of the document knows which one it is.
+ * (`editorSettingsForLanguage`), applied by whoever owns the document — because
+ * the axis is per language and only the holder of the document knows which one it
+ * is.
  */
 export interface SettingsReader {
 	/**
@@ -207,7 +210,28 @@ export interface SettingsReader {
 	 * read.
 	 */
 	read(namespace: string, key: string): unknown;
+	/**
+	 * Subscribes to *value* changes and returns the unsubscribe function.
+	 *
+	 * Optional, because an app that publishes a reader has no obligation to have a
+	 * signal to give — and because a consumer whose only job is to read a value on
+	 * use has nothing to observe. A consumer that has to *act* on a setting cannot
+	 * get a change any other way: it is not the host's `settings` surface, which
+	 * notifies schema registration and not the values behind the schemas, and it
+	 * cannot wait for the next document event, because a switch that takes effect on
+	 * the next keystroke is a switch the user has learned to distrust. Absent, such a
+	 * consumer goes on re-reading on the events it already had.
+	 *
+	 * Notified on the manager's own change signal, which fires for a mutation of
+	 * *any* setting — so a listener must be cheap, must not assume the change was
+	 * its own, and must re-read what it cares about rather than trust the
+	 * notification to mean anything about its keys.
+	 */
+	subscribe?: SettingsSubscribe;
 }
+
+/** Subscribes to resolved-value changes; returns the unsubscribe function. */
+export type SettingsSubscribe = (listener: () => void) => () => void;
 
 /**
  * The read signature on its own, for a resolver written as a pure function of it.

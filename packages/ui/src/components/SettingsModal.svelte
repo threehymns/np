@@ -683,7 +683,7 @@
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Language Servers</Label>
-											<p class="text-[10px] text-muted-foreground">Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed; notes and words are unaffected</p>
+											<p class="text-[10px] text-muted-foreground">Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed, and stops the server once it has no other document to serve; notes and words are unaffected</p>
 											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
 												<Switch
 													checked={appState.prefs.serverLsp}

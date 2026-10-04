@@ -26,6 +26,13 @@
  * workspace-scope one rather than merged into it.
  */
 
+import {
+	EDITOR_COMPLETION_DEFAULTS,
+	EDITOR_SETTINGS_NAMESPACE,
+	LANGUAGE_OVERRIDES_SETTING
+} from './settings';
+import type { SettingsRead } from './services';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -87,4 +94,57 @@ export function scopeForLanguage<T>(
 	}
 
 	return untouched;
+}
+
+/**
+ * The `editor` namespace's values for `keys`, with one language's
+ * `editor.languages` overrides folded over them.
+ *
+ * One function for every reader rather than one per reader. The fold is a rule,
+ * and a rule written once on each side of the package boundary is two answers to
+ * one question right up until they drift — and the drift is invisible, because
+ * both sides still agree on every input either of them happens to be shown.
+ * The keys are a parameter because the readers genuinely differ in shape: the
+ * editor's completion source resolves four at once and the LSP runtime's
+ * `editor.lsp` gate resolves one.
+ *
+ * Values come back as the reader handed them over, `unknown` per key, because
+ * narrowing is the owning setting's job: the gate wants a yes or a no and the
+ * source wants a typed struct, and neither is the other's business. Which keys
+ * an override actually supplied is still reported, so a caller can keep telling
+ * "this language said nothing" from "this language agreed with the default".
+ */
+export function editorSettingsForLanguage(
+	read: SettingsRead,
+	language: string | null | undefined,
+	keys: readonly string[]
+): LanguageScoped<Readonly<Record<string, unknown>>> {
+	const editorLevel: Record<string, unknown> = {};
+	for (const key of keys) {
+		editorLevel[key] = read(EDITOR_SETTINGS_NAMESPACE, key);
+	}
+	return scopeForLanguage(
+		editorLevel,
+		read(EDITOR_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
+		language
+	);
+}
+
+/**
+ * `editor.lsp`, narrowed to a yes or a no, for a value {@link
+ * editorSettingsForLanguage} has already scoped.
+ *
+ * Only an explicit `false` turns a language off, so a missing value, a malformed
+ * override and a hand-edited nonsense value all keep the documented default —
+ * which is `true`, and is also what an app that publishes no reader at all gets.
+ * Silence has to read as "the documented default" and never as "off": a switch
+ * that silently withholds servers is the failure this whole slice is about.
+ *
+ * Shared for the same reason as the fold. The runtime that declines to start a
+ * server and the source that settles `inactive` answer one question from two
+ * packages, and a divergence shows as a language that stops offering completions
+ * without stopping its server, or the reverse.
+ */
+export function editorLspEnabled(value: unknown): boolean {
+	return (value ?? EDITOR_COMPLETION_DEFAULTS.lsp) !== false;
 }

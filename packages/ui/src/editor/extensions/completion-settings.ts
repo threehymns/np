@@ -1,7 +1,7 @@
 import {
-	scopeForLanguage,
+	editorLspEnabled,
+	editorSettingsForLanguage,
 	EDITOR_SETTINGS_NAMESPACE,
-	LANGUAGE_OVERRIDES_SETTING,
 	LSP_SETTING,
 	LSP_FETCH_TIMEOUT_SETTING,
 	LSP_INSERT_MODE_SETTING,
@@ -25,11 +25,11 @@ import {
  * The `editor` settings namespace owns the completion triggers, and
  * `editor.languages` overrides them per language.
  *
- * The key names come from `@np/core`, beside the schema that declares them, so
- * this reader and the LSP runtime's own `editor.lsp` gate cannot spell the same
- * key two ways. A key that does not match its schema does not error — it reads as
- * absent, and reads as absent resolves to the documented default, so the two
- * halves would silently disagree about whether the user turned something off.
+ * The fold over those overrides, and the narrowing of `editor.lsp`, are not
+ * written here: both are in `@np/core` beside the schema that declares the keys,
+ * which is where the LSP runtime's own gate reads them from. Two readers of one
+ * rule in two packages drift, and the drift is invisible until a language stops
+ * offering completions without stopping its server.
  */
 
 /** Resolves one key of one settings namespace. */
@@ -60,26 +60,20 @@ export function readBufferWordSettings(
 	read: SettingReader,
 	languageName: string | null,
 ): BufferWordSettings {
-	const editorLevel = {
-		words: read(EDITOR_SETTINGS_NAMESPACE, WORDS_SETTING),
-		min_word_length: read(EDITOR_SETTINGS_NAMESPACE, MIN_WORD_LENGTH_SETTING),
-	};
-
-	const scoped = scopeForLanguage(
-		editorLevel,
-		read(EDITOR_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
-		languageName,
-	);
+	const scoped = editorSettingsForLanguage(read, languageName, [
+		WORDS_SETTING,
+		MIN_WORD_LENGTH_SETTING,
+	]);
 
 	return {
-		words: readWordsMode(scoped.value.words),
+		words: readWordsMode(scoped.value[WORDS_SETTING]),
 		// A value the schema already rejected, or one hand-edited past it, is
 		// narrowed back to the documented default. The threshold itself is
 		// normalized once more by the policy, which is the only place that reads
 		// it as a length.
 		minWordLength:
-			typeof scoped.value.min_word_length === "number"
-				? scoped.value.min_word_length
+			typeof scoped.value[MIN_WORD_LENGTH_SETTING] === "number"
+				? scoped.value[MIN_WORD_LENGTH_SETTING]
 				: DEFAULT_BUFFER_WORD_SETTINGS.minWordLength,
 		wordsOverridden: scoped.keys.includes(WORDS_SETTING),
 	};
@@ -113,31 +107,23 @@ export function readServerCompletionSettings(
 	read: SettingReader,
 	languageName: string | null,
 ): ServerCompletionSettings {
-	const editorLevel = {
-		lsp: read(EDITOR_SETTINGS_NAMESPACE, LSP_SETTING),
-		lsp_fetch_timeout_ms: read(EDITOR_SETTINGS_NAMESPACE, LSP_FETCH_TIMEOUT_SETTING),
-		lsp_insert_mode: read(EDITOR_SETTINGS_NAMESPACE, LSP_INSERT_MODE_SETTING),
-		show_completion_documentation: read(
-			EDITOR_SETTINGS_NAMESPACE,
-			SHOW_COMPLETION_DOCUMENTATION_SETTING,
-		),
-	};
-
-	const scoped = scopeForLanguage(
-		editorLevel,
-		read(EDITOR_SETTINGS_NAMESPACE, LANGUAGE_OVERRIDES_SETTING),
-		languageName,
-	);
+	const scoped = editorSettingsForLanguage(read, languageName, [
+		LSP_SETTING,
+		LSP_FETCH_TIMEOUT_SETTING,
+		LSP_INSERT_MODE_SETTING,
+		SHOW_COMPLETION_DOCUMENTATION_SETTING,
+	]);
 
 	return {
-		lsp: scoped.value.lsp !== false,
+		lsp: editorLspEnabled(scoped.value[LSP_SETTING]),
 		fetchTimeoutMs:
-			typeof scoped.value.lsp_fetch_timeout_ms === "number" &&
-			Number.isFinite(scoped.value.lsp_fetch_timeout_ms)
-				? Math.max(0, Math.trunc(scoped.value.lsp_fetch_timeout_ms))
+			typeof scoped.value[LSP_FETCH_TIMEOUT_SETTING] === "number" &&
+			Number.isFinite(scoped.value[LSP_FETCH_TIMEOUT_SETTING])
+				? Math.max(0, Math.trunc(scoped.value[LSP_FETCH_TIMEOUT_SETTING]))
 				: DEFAULT_SERVER_COMPLETION_SETTINGS.fetchTimeoutMs,
-		insertMode: readInsertMode(scoped.value.lsp_insert_mode),
-		showDocumentation: scoped.value.show_completion_documentation !== false,
+		insertMode: readInsertMode(scoped.value[LSP_INSERT_MODE_SETTING]),
+		showDocumentation:
+			scoped.value[SHOW_COMPLETION_DOCUMENTATION_SETTING] !== false,
 	};
 }
 

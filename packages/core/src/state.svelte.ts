@@ -206,8 +206,15 @@ export class AppState {
 		// act on a setting — whether to start a process for a document, say — reads
 		// the user's own answer without the editor shell passing it down, which
 		// would put the setting's name in the shell.
+		//
+		// The subscription is the other half of that promise. A consumer that reads
+		// on use still waits for its next use, and a plugin's next use is a
+		// keystroke — so "off" would land whenever the user happened to type next,
+		// which is how a switch comes to look broken. Same generic key, no feature
+		// named in either half.
 		this.plugins.provideService(SETTINGS_READER_SERVICE_KEY, {
-			read: (namespace: string, key: string) => this.prefs.get(namespace, key)
+			read: (namespace: string, key: string) => this.prefs.get(namespace, key),
+			subscribe: (listener: () => void) => this.prefs.subscribeSettings(listener)
 		});
 		this.workspace.onRootOriginChange = async (origin) => {
 			if (origin && this.workspace.project.hasRootPermission) {

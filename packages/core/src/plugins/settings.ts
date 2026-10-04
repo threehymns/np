@@ -359,7 +359,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			type: 'boolean',
 			default: EDITOR_COMPLETION_DEFAULTS.lsp,
 			title: 'Language Servers',
-			description: 'Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed; notes and words are unaffected'
+			description: 'Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed, and stops the server once it has no other document to serve; notes and words are unaffected'
 		},
 		lsp_fetch_timeout_ms: {
 			type: 'number',
