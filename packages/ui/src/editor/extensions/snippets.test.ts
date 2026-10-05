@@ -2,7 +2,12 @@ import "../../../../../tests/contract/rune-setup";
 import { describe, it, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { CompletionContext, type Completion, type CompletionResult } from "@codemirror/autocomplete";
-import { PluginHost, svelteLanguageRegistration, type RegisteredSnippet } from "@np/core";
+import {
+	getSnippetsForLanguage,
+	PluginHost,
+	svelteLanguageRegistration,
+	type RegisteredSnippet,
+} from "@np/core";
 import {
 	snippetCompletions,
 	SNIPPETS_RANK_BELOW_NOTE_SOURCES,
@@ -130,7 +135,7 @@ describe("the Svelte snippet pack", () => {
 		const host = new PluginHost();
 		host.register(svelteLanguageRegistration);
 		await host.activate(svelteLanguageRegistration.manifest.id);
-		const snippets = host.getSnippetsForLanguage("svelte");
+		const snippets = getSnippetsForLanguage(host.getSnippets(), "svelte");
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 		return snippets;
 	}
@@ -179,7 +184,7 @@ describe("the Svelte snippet pack", () => {
 		host.register(svelteLanguageRegistration);
 		const offerFor = () =>
 			labels(
-				query(host.getSnippetsForLanguage("svelte"), {
+				query(getSnippetsForLanguage(host.getSnippets(), "svelte"), {
 					languageName: "svelte",
 					doc: "reactive",
 				})

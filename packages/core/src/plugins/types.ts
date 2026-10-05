@@ -313,7 +313,6 @@ export interface PluginHostInterface {
 	rebuildSnippets(): void;
 	refreshSnippets(): void;
 	getSnippets(): RegisteredSnippet[];
-	getSnippetsForLanguage(language: string): RegisteredSnippet[];
 	readonly snippetRevision: number;
 
 	// Document text changes go through a host document-edit operation
