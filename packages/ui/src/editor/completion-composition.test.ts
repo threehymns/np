@@ -344,6 +344,24 @@ function offeredWordLabels(
 		.map((o) => o.label);
 }
 
+/**
+ * What the buffer-word source adds at `pos`, read as the difference between a
+ * chain that has the word source and the same chain without it. The word source
+ * is the only difference between the two states, so its offers are exactly the
+ * difference — no offer has to be recognized by a field the source chose for
+ * itself, and a code language's own keywords and the note sources are free to
+ * answer too.
+ */
+function addedByWordSource(
+	withWords: EditorState,
+	withoutWords: EditorState,
+	pos: number,
+	explicit = false,
+): string[] {
+	const rest = new Set(offeredLabels(withoutWords, pos, explicit));
+	return offeredLabels(withWords, pos, explicit).filter((label) => !rest.has(label));
+}
+
 /** Which rank tier an offered option belongs to, by the type its source set. */
 function tierOf(option: Completion): "note" | "snippet" | "word" {
 	if (option.type === "keyword") return "snippet";
@@ -534,6 +552,23 @@ describe("completion composition — Markdown", () => {
 		const state = await markdownState(doc);
 
 		expect(offeredOptions(state, doc.length, false)).toEqual([]);
+	});
+
+	it("adds automatic words inside a fenced code block in a note, and none in its prose", async () => {
+		// One document, two cursors: silence is per prose, so the note is quiet
+		// where the sentence is being written and speaks where the code is.
+		const doc = "Notes about widgets\n\n```js\nlet notebook = 1;\nnot\n```\n\nwid";
+		const state = await markdownState(doc);
+		const baseline = await markdownState(doc, { words: false });
+		const inTheFence = doc.indexOf("\nnot\n```") + 1 + "not".length;
+
+		// "not" reaches "Notes" and "notebook" in the buffer; below the fence the
+		// same three-character prefix "wid" reaches "widgets" and gets nothing.
+		expect(addedByWordSource(state, baseline, inTheFence, false)).toEqual([
+			"Notes",
+			"notebook",
+		]);
+		expect(addedByWordSource(state, baseline, doc.length, false)).toEqual([]);
 	});
 
 	it("answers the explicit trigger in Markdown prose with document words only", async () => {

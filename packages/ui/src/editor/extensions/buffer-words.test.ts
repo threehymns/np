@@ -309,13 +309,13 @@ describe("bufferWordCompletions — automatic trigger", () => {
 	});
 
 	it("keeps the prose around a fenced block quiet in the same note", () => {
-		// One document, two cursors: quiet above the fence and quiet below it,
-		// which is what "silent in Markdown prose" means per prose rather than
-		// per document.
+		// One document, two cursors, both with a typed prefix long enough to fire:
+		// quiet above the fence and quiet below it, which is what "silent in
+		// Markdown prose" means per prose rather than per document.
 		const source = bufferWordCompletions({ languageName: "Markdown" });
-		const doc = "Kettles whistle loudly\n\n```js\nconst kettlepot = 1;\nkett\n```\n\nkettl";
+		const doc = "Kettles whistle loudly every morning\nkettl\n\n```js\nconst kettlepot = 1;\nkett\n```\n\nkettl";
 
-		for (const pos of [doc.indexOf("\n\n") + 1, doc.lastIndexOf("kettl") + 4]) {
+		for (const pos of [doc.indexOf("\nkettl") + "kettl".length, doc.length]) {
 			expect(
 				query(source, {
 					doc,
