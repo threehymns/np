@@ -178,11 +178,20 @@
 	// meantime instead of leaving it settable only by hand-editing storage.
 	let languageOverridesDraft = $state('');
 	let languageOverridesError = $state<string | null>(null);
+	let lastSyncedOverrides = $state('');
+	let overridesTextarea: HTMLTextAreaElement | null = $state(null);
 
 	$effect(() => {
 		// `settingsVersion` is the reactive handle for a resolved value.
 		appState.prefs.settingsVersion;
-		languageOverridesDraft = JSON.stringify(appState.prefs.get('editor', 'languages'), null, 2);
+		const next = JSON.stringify(appState.prefs.get('editor', 'languages'), null, 2);
+		// Never clobber an edit in progress: the textarea saves only on blur,
+		// so skip the refresh while it is focused or while the draft holds
+		// unsaved changes. Otherwise keep it in sync with stored settings.
+		if (typeof document !== 'undefined' && document.activeElement === overridesTextarea) return;
+		if (languageOverridesDraft !== lastSyncedOverrides) return;
+		languageOverridesDraft = next;
+		lastSyncedOverrides = next;
 	});
 
 	function saveLanguageOverrides() {
@@ -193,6 +202,7 @@
 				JSON.parse(languageOverridesDraft),
 				appState.prefs.activeScope,
 			);
+			lastSyncedOverrides = languageOverridesDraft;
 			languageOverridesError = null;
 		} catch (e) {
 			languageOverridesError = e instanceof Error ? e.message : String(e);
@@ -639,6 +649,7 @@
 												Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here
 											</p>
 											<textarea
+												bind:this={overridesTextarea}
 												bind:value={languageOverridesDraft}
 												onblur={saveLanguageOverrides}
 												rows="4"
