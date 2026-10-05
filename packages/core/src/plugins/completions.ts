@@ -117,10 +117,7 @@ export function rebuildSnippets(transforms: readonly SnippetTransformEntry[]): R
 				next.set(id, snippet);
 				continue;
 			}
-			const owned: RegisteredSnippet =
-				snippet.owner === ''
-					? { ...snippet, owner: entry.pluginId }
-					: { ...snippet, owner: snippet.owner || entry.pluginId };
+			const owned: RegisteredSnippet = { ...snippet, owner: snippet.owner || entry.pluginId };
 
 			const previousOwner = owners.get(id);
 			if (previousOwner !== undefined && previousOwner !== owned.owner) {
