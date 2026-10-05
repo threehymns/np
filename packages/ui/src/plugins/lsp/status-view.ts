@@ -96,10 +96,13 @@ export interface LspStatusItemActions {
 export interface LspStatusItemView {
 	readonly running: number;
 	readonly total: number;
+	/**
+	 * The dot's colour, and the only thing the button itself says: the trigger is
+	 * an icon with a dot on it, so the counts live in `title` — the tooltip, and
+	 * the accessible name the trigger reads it from.
+	 */
 	readonly indicator: string;
 	readonly title: string;
-	/** `running/total`, or null when there is no server to count. */
-	readonly count: string | null;
 	/** The menu shows its placeholder rather than rows. */
 	readonly empty: boolean;
 	readonly rows: readonly LspStatusRowView[];
@@ -125,7 +128,6 @@ export function lspStatusItemView(rows: readonly LspServerStatus[]): LspStatusIt
 			total === 0
 				? 'Language servers: none running'
 				: `Language servers: ${running} of ${total} running${failed > 0 ? `, ${failed} failed` : ''}`,
-		count: total === 0 ? null : `${running}/${total}`,
 		empty: total === 0,
 		rows: rows.map(rowView),
 		bulkVisible,

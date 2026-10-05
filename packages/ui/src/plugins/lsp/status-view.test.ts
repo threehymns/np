@@ -45,7 +45,6 @@ describe('LSP status item summary', () => {
 		expect(view.running).toBe(0);
 		expect(view.total).toBe(0);
 		expect(view.indicator).toBe('bg-muted-foreground/40');
-		expect(view.count).toBeNull();
 		expect(view.rows).toEqual([]);
 		expect(view.empty).toBe(true);
 	});
@@ -55,7 +54,6 @@ describe('LSP status item summary', () => {
 		expect(view.running).toBe(0);
 		expect(view.total).toBe(2);
 		expect(view.indicator).toBe('bg-amber-500');
-		expect(view.count).toBe('0/2');
 		expect(view.empty).toBe(false);
 	});
 
@@ -75,19 +73,21 @@ describe('LSP status item summary', () => {
 	it('turns green as soon as one of several servers runs', () => {
 		const view = lspStatusItemView([row('running'), row('starting')]);
 		expect(view.running).toBe(1);
+		expect(view.total).toBe(2);
 		expect(view.indicator).toBe('bg-emerald-500');
-		expect(view.count).toBe('1/2');
 	});
 
 	it('counts every server when they are all running', () => {
 		const view = lspStatusItemView([row('running'), row('running')]);
 		expect(view.running).toBe(2);
-		expect(view.count).toBe('2/2');
+		expect(view.total).toBe(2);
+		expect(view.indicator).toBe('bg-emerald-500');
 	});
 
 	it('reads as "none running" only when there is no server to count', () => {
-		// A stopped server is not the same claim as no server at all, so the
-		// wording has to differ as well as the number.
+		// The button is an icon with a dot, so this tooltip is the only place the
+		// numbers are said at all — which is why a stopped server and no server at
+		// all have to read differently here.
 		expect(lspStatusItemView([]).title).toBe('Language servers: none running');
 		expect(lspStatusItemView([row('stopped')]).title).toBe(
 			'Language servers: 0 of 1 running'

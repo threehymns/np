@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { lspManifest, type LspServerStatusApi } from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
-	import { ArrowClockwiseIcon, ScrollIcon, StopIcon } from 'phosphor-svelte';
+import { ArrowClockwiseIcon, LightningIcon, ScrollIcon, StopIcon } from 'phosphor-svelte';
 	import { onMount } from 'svelte';
+	import { buttonVariants } from '../../components/ui/button';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
 	import * as Tooltip from '../../components/ui/tooltip/index';
 	import { lspStatusItemView, type LspStatusAction } from './status-view';
@@ -50,16 +51,26 @@
 		<Tooltip.Root>
 			<Tooltip.Trigger>
 				{#snippet child({ props })}
+					<!-- An icon with a dot on it, the way every other status bar button
+					     is: the trigger is `size-5` because the bar's other buttons are,
+					     and `relative` because the dot hangs off its corner. The bar's own
+					     background is the dot's border, so the dot sits on the bar rather
+					     than inside the button. The button names itself with the summary,
+					     which is where the numbers now live. -->
 					<DropdownMenu.Trigger
 						{...props}
-						class="flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
-						aria-label="Language servers"
+						class={buttonVariants({
+							variant: 'ghost',
+							size: 'icon-xs',
+							class: 'relative text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+						})}
+						aria-label={view.title}
 					>
-						<span class="size-1.5 rounded-full {view.indicator}"></span>
-						<span class="text-xs">LSP</span>
-						{#if view.count}
-							<span class="text-[10px] text-muted-foreground">{view.count}</span>
-						{/if}
+						<LightningIcon weight="duotone" />
+						<span
+							aria-hidden="true"
+							class="absolute right-0.5 bottom-0.5 size-1.5 rounded-full border border-background {view.indicator}"
+						></span>
 					</DropdownMenu.Trigger>
 				{/snippet}
 			</Tooltip.Trigger>
