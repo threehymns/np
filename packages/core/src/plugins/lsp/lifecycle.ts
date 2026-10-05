@@ -350,12 +350,11 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 			// indistinguishable from words working, from the outside, so the reason
 			// has to be somewhere the Logs tab (#266) can show it.
 			const reason = describeError(error);
-			this.options.logs.append({
+			this.options.logs.appendServerNote(
 				server,
-				kind: 'server',
-				level: 'warn',
-				message: `Completion request failed, so words answer instead: ${reason}`
-			});
+				'warn',
+				`Completion request failed, so words answer instead: ${reason}`
+			);
 			return { state: 'unavailable', provider: server, reason };
 		}
 	}
@@ -815,12 +814,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	}
 
 	private log(entry: RunningServer, level: 'info' | 'warn' | 'error', message: string): void {
-		this.options.logs.append({
-			server: entry.server,
-			kind: 'server',
-			level,
-			message
-		});
+		this.options.logs.appendServerNote(entry.server, level, message);
 	}
 
 	private statusChanged(): void {

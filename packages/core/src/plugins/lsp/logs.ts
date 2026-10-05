@@ -212,6 +212,21 @@ export class LspLogStore {
 	}
 
 	/**
+	 * Appends one line of the plugin's own narration about a server, at a level
+	 * the caller states.
+	 *
+	 * The three appends differ only in `kind`, so the shape is written once here
+	 * rather than at every site that narrates: the client, the target resolver and
+	 * the runtime all report into the same `server` feed that stderr lands in, and
+	 * a hand-built entry at each of them is a chance to file a note under
+	 * `protocol` where the Logs tab's filter will not show it beside the server's
+	 * own output.
+	 */
+	appendServerNote(server: string, level: LspLogLevel, message: string): LspLogEntry {
+		return this.append({ server, kind: 'server', level, message });
+	}
+
+	/**
 	 * Appends one JSON-RPC message, outbound or inbound, as a trace line.
 	 *
 	 * Summarized rather than stored whole: the conversation is what a reader of

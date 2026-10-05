@@ -132,13 +132,11 @@ export class LspTargetResolver {
 			// Recorded against the server this file would have used. Only a served
 			// file reaches here, so a web session never logs it — a note must not
 			// report a missing platform just because it has no server.
-			this.options.logs.append({
-				server: lspServerKey(descriptor.id, dirnameOf(input.path)),
-				kind: 'server',
-				level: 'info',
-				message:
-					'No LSP platform is published, so this server cannot start. On web no platform exists by design (spec #263); elsewhere the desktop app failed to publish one.'
-			});
+			this.options.logs.appendServerNote(
+				lspServerKey(descriptor.id, dirnameOf(input.path)),
+				'info',
+				'No LSP platform is published, so this server cannot start. On web no platform exists by design (spec #263); elsewhere the desktop app failed to publish one.'
+			);
 			return null;
 		}
 		const resolution = await findProjectRoot({

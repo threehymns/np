@@ -301,20 +301,18 @@ export class LspClient {
 			await this.request('shutdown', null, bound);
 			this.notify('exit');
 		} catch (error) {
-			this.options.logs.append({
-				server: this.options.server,
-				kind: 'server',
-				level: 'warn',
-				message: `Shutdown handshake failed, killing the process instead: ${describeError(error)}`
-			});
+			this.options.logs.appendServerNote(
+				this.options.server,
+				'warn',
+				`Shutdown handshake failed, killing the process instead: ${describeError(error)}`
+			);
 		}
 		if (!(await this.waitForExit(DEFAULT_EXIT_TIMEOUT_MS))) {
-			this.options.logs.append({
-				server: this.options.server,
-				kind: 'server',
-				level: 'warn',
-				message: `Server did not exit after shutdown and exit, killing it.`
-			});
+			this.options.logs.appendServerNote(
+				this.options.server,
+				'warn',
+				`Server did not exit after shutdown and exit, killing it.`
+			);
 		}
 		this.options.process.kill();
 		this.dispose();
@@ -366,12 +364,11 @@ export class LspClient {
 			try {
 				message = JSON.parse(body) as JsonRpcMessage;
 			} catch {
-				this.options.logs.append({
-					server: this.options.server,
-					kind: 'server',
-					level: 'error',
-					message: `Discarded an unparseable message: ${body.slice(0, 200)}`
-				});
+				this.options.logs.appendServerNote(
+					this.options.server,
+					'error',
+					`Discarded an unparseable message: ${body.slice(0, 200)}`
+				);
 				continue;
 			}
 			if (
