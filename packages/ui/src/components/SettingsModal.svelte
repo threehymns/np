@@ -695,7 +695,7 @@
 
 										<div class="space-y-2">
 											<Label class="text-sm font-medium">Server Fetch Timeout</Label>
-											<p class="text-[10px] text-muted-foreground">Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes</p>
+											<p class="text-[10px] text-muted-foreground">Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes, up to a safety bound so a hung server cannot leave the popover empty forever</p>
 											<input
 												type="number"
 												min="0"

@@ -228,8 +228,16 @@ export type CompletionLspInsertMode = 'replace_suffix' | 'replace_range';
  * vocabulary always, selects.
  *
  * `lspFetchTimeoutMs` defaults to `0`, which is Zed's default and means *no
- * bound*, not "instant": the popover waits for whichever server is answering.
- * A user who wants a bound sets one.
+ * bound chosen*, not "instant": the popover waits for whichever server is
+ * answering, and a user who wants a shorter bound sets one.
+ *
+ * "No bound chosen" is not the same as no bound at all. Spec #263 asks for words
+ * behind a server that errors *or times out*, and a request with no bound can
+ * never time out — so the runtime substitutes a bound of its own when this one
+ * supplies none. See `DEFAULT_FETCH_TIMEOUT_MS` in the LSP runtime and ADR 0021.
+ * The setting is unchanged either way: `0` still crosses the editor seam as
+ * "nothing chosen", which is what every reader that is not the wire wants to
+ * know.
  */
 export const EDITOR_COMPLETION_DEFAULTS: {
 	readonly words: CompletionWordsMode;
@@ -366,7 +374,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			default: EDITOR_COMPLETION_DEFAULTS.lspFetchTimeoutMs,
 			minimum: 0,
 			title: 'Server Fetch Timeout',
-			description: 'Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes'
+			description: 'Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes, up to a safety bound so a hung server cannot leave the popover empty forever'
 		},
 		lsp_insert_mode: {
 			type: 'string',
