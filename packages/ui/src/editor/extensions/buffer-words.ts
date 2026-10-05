@@ -4,7 +4,8 @@ import type {
 	CompletionResult,
 	CompletionSource,
 } from "@codemirror/autocomplete";
-import type { Text } from "@codemirror/state";
+import { EditorState, type Extension, type Text } from "@codemirror/state";
+import type { Language } from "@codemirror/language";
 import { EDITOR_COMPLETION_DEFAULTS, type CompletionWordsMode } from "@np/core";
 
 /**
@@ -240,6 +241,43 @@ export function bufferWordCompletions(
 			),
 		};
 	};
+}
+
+export interface FenceWordFallbackOptions extends BufferWordSourceOptions {
+	/** Active language the chain registered its sources on. */
+	readonly language: Language | null;
+}
+
+/**
+ * The word source for fenced code blocks whose nested language has loaded.
+ *
+ * Once a fence's language loads, the fence parses as nested language content
+ * and `languageDataAt` at the cursor resolves to that language alone, so the
+ * word source the chain registered on the note's language is no longer
+ * consulted there. Whether the nested language has loaded is process-wide
+ * memoization (`LanguageDescription.load`), which is why the same note offers
+ * words in a fresh process and goes quiet later: completion sources must be
+ * reachable wherever the cursor can be, not just where the top language is.
+ *
+ * This provider fills exactly that shadow and nothing else. It stays silent
+ * wherever the top language is still active at the cursor (so it never
+ * double-serves a position the chain already covers) and everywhere outside a
+ * fence (so prose silence, the explicit trigger, and every non-Markdown
+ * language behave exactly as the chain alone defines them). The served source
+ * is the same buffer-word source, so its policy — threshold, disabled words,
+ * prose quiet — still decides every query.
+ */
+export function fenceWordFallback(options: FenceWordFallbackOptions): Extension[] {
+	const { language, languageName } = options;
+	if (!language || !isMarkdownProse(languageName)) return [];
+	const source = bufferWordCompletions(options);
+	return [
+		EditorState.languageData.of((state, pos, side) => {
+			if (language.isActiveAt(state, pos, side)) return [];
+			if (!insideCodeFence(state.doc, pos)) return [];
+			return [{ autocomplete: source }];
+		}),
+	];
 }
 
 /**

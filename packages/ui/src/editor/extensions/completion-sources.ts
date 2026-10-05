@@ -6,6 +6,7 @@ import type { RegisteredSnippet } from "@np/core";
 import {
 	bufferWordCompletions,
 	WORDS_RANK_BELOW_EVERY_SOURCE,
+	fenceWordFallback,
 	type BufferWordSettings,
 } from "./buffer-words";
 import { snippetCompletions, SNIPPETS_RANK_BELOW_NOTE_SOURCES } from "./snippets";
@@ -62,15 +63,25 @@ function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 	const { language } = options;
 	if (!language) return [];
 	return [
-		snippetCompletions({
-			snippets: options.snippets,
-			languageName: options.languageName,
-		}),
-		bufferWordCompletions({
+		...[
+			snippetCompletions({
+				snippets: options.snippets,
+				languageName: options.languageName,
+			}),
+			bufferWordCompletions({
+				languageName: options.languageName,
+				readSettings: options.readSettings,
+			}),
+		].map((source) => language.data.of({ autocomplete: source })),
+		// The word source above is invisible inside a fenced block whose
+		// nested language has loaded (the cursor resolves to that language),
+		// so the fallback re-serves it exactly there and nowhere else.
+		...fenceWordFallback({
+			language,
 			languageName: options.languageName,
 			readSettings: options.readSettings,
 		}),
-	].map((source) => language.data.of({ autocomplete: source }));
+	];
 }
 
 export interface CompletionCompartmentOptions extends CompletionChainOptions {

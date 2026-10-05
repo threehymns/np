@@ -565,6 +565,11 @@ describe("completion composition — Markdown", () => {
 	});
 
 	it("adds automatic words inside a fenced code block in a note, and none in its prose", async () => {
+		// The fence parses as nested JavaScript only once that language has
+		// loaded, and loading is memoized process-wide — without this await the
+		// test asserts the unloaded-fence path or the nested path depending on
+		// which suites ran first, green here and red in CI for the same tree.
+		await description("JavaScript").load();
 		// One document, two cursors: silence is per prose, so the note is quiet
 		// where the sentence is being written and speaks where the code is.
 		const doc = "Notes about widgets\n\n```js\nlet notebook = 1;\nnot\n```\n\nwid";
