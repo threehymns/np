@@ -298,6 +298,79 @@ function defaultReadText(candidate: string): string | null {
  * `exists` is injected so the resolution can be asserted against a directory
  * laid out on disk rather than against whatever happens to be installed.
  */
+/**
+ * Whether a declared server command name is safe to resolve.
+ *
+ * Bare names only (`vtsls`, `solargraph`): no path separators, no absolute
+ * paths, no shell metacharacters. A renderer that could ask for `/bin/sh` or
+ * `vtsls; rm` would turn resolution into execution, so anything but a plain
+ * executable name is rejected before it is looked up.
+ */
+export function isValidLspCommandName(command: unknown): boolean {
+	if (typeof command !== 'string') return false;
+	if (command.length === 0 || command.length > 256) return false;
+	if (command.includes('\0')) return false;
+	return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(command);
+}
+
+/**
+ * Whether a descriptor's bundled declaration is safe to resolve.
+ *
+ * The package must be an npm name (`some-server`, `@scope/name`) and the binary
+ * a relative POSIX path inside it (`bin/server.js`): no traversal (`..`), no
+ * absolute paths, no backslashes, no empty segments. Without this a renderer
+ * could ask for `../../etc` as a package and have the main process join it into
+ * a path outside `node_modules`.
+ */
+export function isValidBundledCommand(bundled: unknown): boolean {
+	if (bundled === undefined) return true;
+	if (!bundled || typeof bundled !== 'object') return false;
+	const { package: pkg, binary } = bundled as { package?: unknown; binary?: unknown };
+	if (typeof pkg !== 'string' || typeof binary !== 'string') return false;
+	if (pkg.length === 0 || pkg.length > 214 || binary.length === 0 || binary.length > 256) return false;
+	if (pkg.includes('\0') || binary.includes('\0')) return false;
+	if (!/^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i.test(pkg)) return false;
+	if (binary.startsWith('/') || binary.includes('\\')) return false;
+	const segments = binary.split('/');
+	for (const segment of segments) {
+		if (segment.length === 0 || segment === '.' || segment === '..') return false;
+		if (!/^[A-Za-z0-9._-]+$/.test(segment)) return false;
+	}
+	return true;
+}
+
+/**
+ * Whether spawn arguments from the renderer are safe to append to a stored plan.
+ *
+ * Loose on purpose: descriptor args (`--stdio`) and test args (`--log-file`,
+ * absolute log paths) must pass, so this checks shape rather than content —
+ * an array of bounded strings with no null bytes. The command itself comes from
+ * the stored plan, never from the renderer, so args cannot become execution.
+ */
+export function isValidSpawnArgs(args: unknown): args is string[] {
+	if (!Array.isArray(args)) return false;
+	if (args.length > 100) return false;
+	for (const arg of args) {
+		if (typeof arg !== 'string') return false;
+		if (arg.length > 4096 || arg.includes('\0')) return false;
+	}
+	return true;
+}
+
+/**
+ * Whether a working directory from the renderer is safe to spawn in.
+ *
+ * Must be an absolute path with no null bytes. The server is scoped to a
+ * project root the main process never verifies further — resolution already
+ * walked markers to find it — so the check is that it is a path, not that it
+ * exists here; a missing directory fails as a spawn error rather than silently.
+ */
+export function isValidSpawnCwd(cwd: unknown): boolean {
+	if (typeof cwd !== 'string') return false;
+	if (cwd.length === 0 || cwd.length > 4096 || cwd.includes('\0')) return false;
+	return path.isAbsolute(cwd);
+}
+
 export function resolveLanguageServerCommand(
 	command: string,
 	appPath: string,

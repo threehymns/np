@@ -9,7 +9,14 @@ import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
-import { resolveLanguageServerCommand } from './LspCommandResolver.js';
+import {
+	isValidBundledCommand,
+	isValidLspCommandName,
+	isValidSpawnArgs,
+	isValidSpawnCwd,
+	resolveLanguageServerCommand,
+	type ResolvedServerCommand
+} from './LspCommandResolver.js';
 
 app.setName('np');
 // Enable Chromium's native overlay scrollbars feature
@@ -35,6 +42,16 @@ let configWatcher: ConfigWatcher | null = null;
  * `@np/core`; main forwards bytes without interpreting them.
  */
 const lspProcesses = new Map<string, ChildProcessWithoutNullStreams>();
+
+/**
+ * Spawn plans minted by `lsp:resolveCommand`, held behind unguessable tokens.
+ *
+ * The renderer never assembles a command: it asks for a descriptor command to
+ * be resolved, gets a token back, and hands the token to `lsp:spawn`. A token
+ * names one resolved plan, so a compromised renderer cannot turn `spawn` into
+ * arbitrary execution by passing its own `command`.
+ */
+const lspPlans = new Map<string, ResolvedServerCommand>();
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
 	if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -360,15 +377,28 @@ function registerIpcHandlers() {
 	});
 
 	ipcMain.handle('lsp:resolveCommand', async (_event, command: string, bundled?: { package: string; binary: string }) => {
-		return resolveLanguageServerCommand(command, app.getAppPath(), bundled);
+		// Validated before it is resolved: the renderer names a descriptor command
+		// and its bundled declaration, never a path, so traversal or an absolute
+		// binary never becomes a plan. The plan is held behind a token rather than
+		// returned, so `lsp:spawn` cannot be given a command of its own.
+		if (!isValidLspCommandName(command)) throw new Error(`Invalid language server command: ${String(command)}`);
+		if (!isValidBundledCommand(bundled)) throw new Error('Invalid bundled server declaration.');
+		const plan = resolveLanguageServerCommand(command, app.getAppPath(), bundled);
+		const token = randomUUID();
+		lspPlans.set(token, plan);
+		return token;
 	});
 
 	ipcMain.handle('lsp:spawn', async (
 		_event,
-		plan: { command: string; args: string[]; env?: Record<string, string> },
+		token: string,
 		args: string[],
 		cwd: string
 	) => {
+		const plan = typeof token === 'string' ? lspPlans.get(token) : undefined;
+		if (!plan) throw new Error('Unknown language server plan. Resolve the command first.');
+		if (!isValidSpawnArgs(args)) throw new Error('Invalid language server arguments.');
+		if (!isValidSpawnCwd(cwd)) throw new Error(`Invalid language server working directory: ${String(cwd)}`);
 		try {
 			// The plan was minted by `lsp:resolveCommand` rather than assembled by
 			// the renderer, so a descriptor naming `vtsls` becomes a path in exactly

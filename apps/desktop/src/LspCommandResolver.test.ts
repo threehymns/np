@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import {
 	bundledSearchRoots,
 	findCommandOnPath,
+	isValidBundledCommand,
+	isValidLspCommandName,
+	isValidSpawnArgs,
+	isValidSpawnCwd,
 	resolveLanguageServerCommand,
 	resolvePathCommand,
 	shimScriptTarget,
@@ -342,5 +346,31 @@ describe("shimScriptTarget", () => {
 
 	it("returns null for a file it cannot read", () => {
 		expect(shimScriptTarget("C:\\npm\\vtsls.cmd", () => null, () => true)).toBeNull();
+	});
+});
+
+describe("spawn plan validation", () => {
+	it("accepts bare command names and rejects paths", () => {
+		expect(isValidLspCommandName("vtsls")).toBe(true);
+		expect(isValidLspCommandName("/bin/sh")).toBe(false);
+		expect(isValidLspCommandName("vtsls; rm")).toBe(false);
+		expect(isValidLspCommandName("")).toBe(false);
+	});
+
+	it("accepts the bundled declaration and rejects traversal", () => {
+		expect(
+			isValidBundledCommand({ package: "@vtsls/language-server", binary: "bin/vtsls.js" })
+		).toBe(true);
+		expect(isValidBundledCommand(undefined)).toBe(true);
+		expect(isValidBundledCommand({ package: "../../etc", binary: "bin/vtsls.js" })).toBe(false);
+		expect(isValidBundledCommand({ package: "x", binary: "/absolute" })).toBe(false);
+		expect(isValidBundledCommand({ package: "x", binary: "../evil" })).toBe(false);
+	});
+
+	it("accepts descriptor args and an absolute cwd, rejects shapes", () => {
+		expect(isValidSpawnArgs(["--stdio"])).toBe(true);
+		expect(isValidSpawnArgs("nope")).toBe(false);
+		expect(isValidSpawnCwd("/repo")).toBe(true);
+		expect(isValidSpawnCwd("relative")).toBe(false);
 	});
 });

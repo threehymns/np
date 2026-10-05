@@ -1,7 +1,7 @@
 /**
- * A spawn plan the main process minted. It is passed back verbatim rather than
- * rebuilt by the renderer, so the only thing the renderer chooses is which
- * descriptor command to ask about.
+ * A token naming a spawn plan the main process minted and holds. It is passed
+ * back verbatim rather than rebuilt by the renderer, so the only thing the
+ * renderer chooses is which descriptor command to ask about.
  */
 /** The descriptor's declaration of which packaged package its server ships in. */
 export interface BundledLspCommand {
@@ -9,13 +9,7 @@ export interface BundledLspCommand {
 	binary: string;
 }
 
-export interface ResolvedLspCommand {
-	command: string;
-	args: string[];
-	env: Record<string, string>;
-	source: 'bundled' | 'path';
-	script?: string;
-}
+export type ResolvedLspCommandToken = string;
 
 export interface ElectronAPI {
 	openFile(): Promise<{ path: string; name: string } | null>;
@@ -33,15 +27,14 @@ export interface ElectronAPI {
 	fileExists(path: string): Promise<boolean>;
 	/**
 	 * Resolves a declared server command against the packaged dependency and
-	 * then against PATH, in the main process (spec #263). Returns a spawn plan
-	 * rather than a bare path because the bundled candidate is a Node script and
-	 * needs both an interpreter and an environment to run. `bundled` is the
-	 * descriptor's own declaration, which is why the resolver keeps no table of
-	 * server names.
+	 * then against PATH, in the main process (spec #263). Returns a token naming
+	 * the stored spawn plan rather than the plan itself, so `spawnLspServer`
+	 * cannot be given a command of its own. `bundled` is the descriptor's own
+	 * declaration, which is why the resolver keeps no table of server names.
 	 */
-	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<ResolvedLspCommand>;
+	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<ResolvedLspCommandToken>;
 	spawnLspServer(
-		plan: ResolvedLspCommand,
+		token: ResolvedLspCommandToken,
 		args: string[],
 		cwd: string
 	): Promise<{ processId: string; pid: number | null; parentPid: number | null }>;

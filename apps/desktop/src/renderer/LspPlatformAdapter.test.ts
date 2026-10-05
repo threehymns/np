@@ -28,14 +28,8 @@ describe('createElectronLspPlatform', () => {
 
 	beforeEach(() => {
 		mockSpawn = mock(async () => ({ processId: 'p1', pid: 4242, parentPid: 4243 }));
-		// Echoes the declared name, which is what a machine with nothing bundled
-		// resolves to. The bundled plan is exercised separately below.
-		mockResolve = mock(async (command: string) => ({
-			command,
-			args: [] as string[],
-			env: {} as Record<string, string>,
-			source: 'path' as const
-		}));
+		// Returns a token naming main's stored plan, never the plan itself.
+		mockResolve = mock(async (_command: string) => 'tok-1');
 		mockWrite = mock(() => {});
 		mockEnd = mock(() => {});
 		mockKill = mock(async () => {});
@@ -70,12 +64,12 @@ describe('createElectronLspPlatform', () => {
 		const platform = createElectronLspPlatform(bridgeHost());
 		const spawned = platform.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
 
-		// The declared name is resolved first, then the plan main minted is what
+		// The declared name is resolved first to a token, then the token is what
 		// gets spawned — never a command this side assembled.
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 		expect(mockResolve).toHaveBeenCalledWith('vtsls', undefined);
 		expect(mockSpawn.mock.calls[0]).toEqual([
-			{ command: 'vtsls', args: [], env: {}, source: 'path' },
+			'tok-1',
 			['--stdio'],
 			'/repo',
 		]);
@@ -101,22 +95,17 @@ describe('createElectronLspPlatform', () => {
 		});
 	});
 
-	it('passes a bundled plan through untouched, interpreter and script included', async () => {
-		// The bundled candidate is a Node script, so the plan carries both an
-		// executable and an environment. Rebuilding it here would drop
-		// ELECTRON_RUN_AS_NODE and start an Electron instance instead of a server.
-		const plan = {
-			command: '/opt/np/np',
-			args: ['/opt/np/resources/app.asar.unpacked/node_modules/@vtsls/language-server/bin/vtsls.js'],
-			env: { ELECTRON_RUN_AS_NODE: '1' },
-			source: 'bundled' as const,
-		};
-		mockResolve.mockImplementation(async () => plan);
+	it('passes the resolve token through untouched', async () => {
+		// The token names main's stored plan (interpreter, script and env
+		// included). Rebuilding it here would drop ELECTRON_RUN_AS_NODE and start
+		// an Electron instance instead of a server; passing the token through is
+		// what keeps the plan in exactly one place.
+		mockResolve.mockImplementation(async () => 'tok-bundled');
 		const platform = createElectronLspPlatform(bridgeHost());
 		platform.spawn({ command: 'vtsls', args: ['--stdio'], cwd: '/repo' });
 
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
-		expect(mockSpawn.mock.calls[0]).toEqual([plan, ['--stdio'], '/repo']);
+		expect(mockSpawn.mock.calls[0]).toEqual(['tok-bundled', ['--stdio'], '/repo']);
 	});
 
 	it('reports a resolution failure as an exit rather than spawning nothing', async () => {

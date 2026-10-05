@@ -26,9 +26,9 @@ import {
  */
 interface ElectronLspBridge {
 	fileExists(path: string): Promise<boolean>;
-	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<ResolvedLspCommand>;
+	resolveLspCommand(command: string, bundled?: BundledLspCommand): Promise<string>;
 	spawnLspServer(
-		plan: ResolvedLspCommand,
+		token: string,
 		args: string[],
 		cwd: string
 	): Promise<{ processId: string; pid: number | null; parentPid: number | null }>;
@@ -49,17 +49,11 @@ interface BundledLspCommand {
 }
 
 /**
- * A spawn plan the main process minted. The renderer hands it straight back
- * rather than assembling a command of its own, so `vtsls` becomes a path in
- * exactly one place (spec #263).
+ * A token naming a spawn plan the main process minted and holds. The renderer
+ * hands it straight back rather than assembling a command of its own, so
+ * `vtsls` becomes a path in exactly one place (spec #263).
  */
-interface ResolvedLspCommand {
-	readonly command: string;
-	readonly args: readonly string[];
-	readonly env: Record<string, string>;
-	readonly source: 'bundled' | 'path';
-	readonly script?: string;
-}
+type ResolvedLspCommandToken = string;
 
 export interface LspBridgeHost {
 	readonly electronAPI?: ElectronLspBridge;
@@ -263,7 +257,7 @@ export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHos
 			// silent one.
 			void bridge
 				.resolveLspCommand(options.command, options.bundled)
-				.then((plan) => bridge.spawnLspServer(plan, [...options.args], options.cwd))
+				.then((token) => bridge.spawnLspServer(token, [...options.args], options.cwd))
 				.then((spawned) => process.attach(spawned.processId, spawned.pid, spawned.parentPid))
 				// A spawn that never produced a process is reported as an exit, so
 				// the client's wait on `exit` resolves instead of hanging on a pid

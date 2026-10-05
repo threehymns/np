@@ -17,11 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	fileExists: (path: string) => ipcRenderer.invoke('fs:exists', path),
 	resolveLspCommand: (command: string, bundled?: { package: string; binary: string }) =>
 		ipcRenderer.invoke('lsp:resolveCommand', command, bundled),
-	spawnLspServer: (
-		plan: { command: string; args: string[]; env: Record<string, string> },
-		args: string[],
-		cwd: string
-	) => ipcRenderer.invoke('lsp:spawn', plan, args, cwd),
+	spawnLspServer: (token: string, args: string[], cwd: string) =>
+		ipcRenderer.invoke('lsp:spawn', token, args, cwd),
 	writeLspServer: (processId: string, chunk: Uint8Array) =>
 		ipcRenderer.send('lsp:write', processId, chunk),
 	endLspServer: (processId: string) => ipcRenderer.send('lsp:end', processId),
