@@ -29,25 +29,37 @@ const resolvePattern = /\bresolve\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 /**
  * The installed package a file belongs to, or null for anything outside one.
  *
- * Walked up to the directory that sits directly inside a `node_modules`; when
- * that directory is a scope (`@vtsls`) rather than a package, the package is its
- * first child, which is the step that distinguishes `@vtsls/language-service`
- * from the scope directory above it.
+ * Walked up to the directory that sits directly inside a `node_modules`. That
+ * directory is normally the package itself, but it may be a scope (`@vtsls`),
+ * and then the package is the child *the file is actually under*.
+ *
+ * The child has to come from the file's own path. Taking the first name the
+ * directory happens to list attributes every file in a scope to whichever sibling
+ * the filesystem enumerated first, and a scope is not guaranteed to hold one
+ * package: bun's store puts `@vtsls/language-service` and
+ * `@vtsls/language-server` in the same `@vtsls` directory. That mistake does not
+ * merely lose a package, it renames one — the walk reads the sibling's manifest,
+ * so it walks the sibling's dependencies and reports the sibling's name, and both
+ * answers depend on `readdir` order. ext4 enumerates in hash order, so the same
+ * commit produced a passing closure on one machine and a truncated one on another.
  */
 function packageRootOf(file: string): string | null {
 	let directory = path.dirname(file);
 	for (;;) {
 		const parent = path.dirname(directory);
-		if (path.basename(parent) === 'node_modules') {
-			if (!path.basename(directory).startsWith('@')) {
-				return existsSync(path.join(directory, 'package.json')) ? directory : null;
-			}
-			const child = readdirSync(directory)[0];
-			const scoped = child ? path.join(directory, child) : null;
-			return scoped && existsSync(path.join(scoped, 'package.json')) ? scoped : null;
+		if (path.basename(parent) !== 'node_modules') {
+			if (parent === directory) return null;
+			directory = parent;
+			continue;
 		}
-		if (parent === directory) return null;
-		directory = parent;
+		if (!path.basename(directory).startsWith('@')) {
+			return existsSync(path.join(directory, 'package.json')) ? directory : null;
+		}
+		const child = readdirSync(directory).find((name) =>
+			file.startsWith(path.join(directory, name) + path.sep)
+		);
+		const scoped = child ? path.join(directory, child) : null;
+		return scoped && existsSync(path.join(scoped, 'package.json')) ? scoped : null;
 	}
 }
 
@@ -75,24 +87,72 @@ function manifestOf(file: string): Record<string, unknown> | null {
 	}
 }
 
-/**
- * The real path of a resolved target, or null when it is not a readable file.
- *
- * Resolution can land on a directory — a package with an extensionless entry
- * point, which Node loads through its manifest — and this walk reads source, so
- * a directory it cannot read is simply not followed.
- */
-function readableFile(target: string): string | null {
+/** The extensions and index files Node itself will settle a bare specifier on. */
+const SOURCE_SUFFIXES = ['.js', '.cjs', '.mjs'];
+const SOURCE_INDEXES = ['index.js', 'index.cjs', 'index.mjs'];
+
+function fileAt(candidate: string): string | null {
 	try {
-		const real = realpathSync(target);
+		const real = realpathSync(candidate);
 		return statSync(real).isFile() ? real : null;
 	} catch {
 		return null;
 	}
 }
 
+/** What Node loads when a require names a directory rather than a file. */
+function manifestEntryOf(directory: string): string | null {
+	try {
+		const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf-8')) as {
+			main?: unknown;
+		};
+		return typeof manifest.main === 'string' ? path.resolve(directory, manifest.main) : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The source file a resolved target names, or null when it names none.
+ *
+ * A resolved target is not always that file: a relative specifier compiled to
+ * `./connection` is `connection.js` on disk, and a directory is its index or its
+ * manifest's `main`. Node settles those shapes itself, so a walk that reads source
+ * has to accept them too — a target dropped here is not one missing file but
+ * everything that file would have required, which on this tree was 72 targets
+ * spread over six packages.
+ */
+function readableFile(target: string): string | null {
+	const direct = fileAt(target);
+	if (direct) return direct;
+	for (const suffix of SOURCE_SUFFIXES) {
+		const file = fileAt(target + suffix);
+		if (file) return file;
+	}
+	for (const index of SOURCE_INDEXES) {
+		const file = fileAt(path.join(target, index));
+		if (file) return file;
+	}
+	const entry = manifestEntryOf(target);
+	return entry ? fileAt(entry) : null;
+}
+
 /** Node's own modules, which no packaging decision can affect. */
 const BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
+
+/** What a walk over the entry script reached, and what it could not. */
+interface Closure {
+	/** Every package name the walk reached. */
+	packages: Set<string>;
+	/** Every file the walk read, in the order it read them. */
+	files: string[];
+	/**
+	 * Every target the walk resolved but could not read. Non-empty means the walk
+	 * stopped short, and a stopped walk reports an absent package rather than the
+	 * path it gave up on.
+	 */
+	unreadable: string[];
+}
 
 /**
  * Every package reachable from the entry script.
@@ -103,8 +163,10 @@ const BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]
  * Resolution is from the requiring file's own directory, which is what Node does
  * and why the answer is about a package tree rather than about a single folder.
  */
-function runtimeClosure(entry: string): Set<string> {
+function runtimeClosure(entry: string): Closure {
 	const found = new Set<string>();
+	const files: string[] = [];
+	const unreadable: string[] = [];
 	const queue = [path.resolve(entry)];
 	const seen = new Set<string>();
 	const resolveFrom = (specifier: string, from: string): string | null => {
@@ -120,9 +182,17 @@ function runtimeClosure(entry: string): Set<string> {
 		// the package behind a symlink into a store where its own dependencies
 		// live, and resolving from the link would report packages that a packaged
 		// build — real directories — has.
-		const file = readableFile(queue.pop()!);
-		if (!file || seen.has(file)) continue;
+		const target = queue.pop()!;
+		const file = readableFile(target);
+		if (!file) {
+			// The same target can be queued from two packages' dependency lists, so
+			// report each loss once.
+			if (!unreadable.includes(target)) unreadable.push(target);
+			continue;
+		}
+		if (seen.has(file)) continue;
 		seen.add(file);
+		files.push(file);
 		const name = packageNameOf(file);
 		if (name) found.add(name);
 		const manifest = manifestOf(file);
@@ -148,7 +218,7 @@ function runtimeClosure(entry: string): Set<string> {
 			}
 		}
 	}
-	return found;
+	return { packages: found, files, unreadable };
 }
 
 /**
@@ -207,7 +277,7 @@ describe('the packaged server closure (#263, #265)', () => {
 	it('reaches every runtime package the entry script needs', () => {
 		// Guards the guard: if the walk stopped finding the packages below, a list
 		// that matched it would prove nothing.
-		const closure = runtimeClosure(entry);
+		const { packages } = runtimeClosure(entry);
 		// One assertion naming what is absent, rather than eight identical ones.
 		// Every way this walk can come up short — `Bun.resolveSync`,
 		// `realpathSync` and `readFileSync` are each wrapped in a bare catch that
@@ -224,18 +294,43 @@ describe('the packaged server closure (#263, #265)', () => {
 			'jsonc-parser',
 			'semver',
 			'typescript'
-		].filter((name) => !closure.has(name));
+		].filter((name) => !packages.has(name));
 		expect(missing).toEqual([]);
 	});
 
 	it('unpacks every package the entry script needs', () => {
 		const patterns = asarPatterns();
-		const missing = [...runtimeClosure(entry)]
+		const missing = [...runtimeClosure(entry).packages]
 			.filter((name) => !asarCovers(name, patterns))
 			.sort();
 
 		// A package left inside the asar cannot be read by the process running the
 		// unpacked script, so the server dies at startup with nothing installed.
 		expect(missing).toEqual([]);
+	});
+
+	it('reads every target it resolves', () => {
+		// A walk that drops a target drops everything that target required, and
+		// reports the loss as an absent package name — which reads as a package
+		// that is not installed rather than a path this walk could not open. The
+		// paths are the diagnosis; assert on them instead of on the symptom.
+		const { unreadable } = runtimeClosure(entry);
+		expect(unreadable).toEqual([]);
+	});
+
+	it('attributes every file it reads to the package containing it', () => {
+		// The scope step used to take a scope directory's first child, so a file in
+		// one package was reported as a sibling. Nothing else in the suite can see
+		// that: the walk still returned a plausible name, and a closure that happens
+		// to contain the right set of names passes either way — it passed on ext4
+		// here and failed on the runner. A root that does not contain the file is
+		// the defect stated directly, and it is independent of `readdir` order.
+		const misattributed = runtimeClosure(entry).files
+			.filter((file) => {
+				const root = packageRootOf(file);
+				return root !== null && !file.startsWith(root + path.sep);
+			})
+			.sort();
+		expect(misattributed).toEqual([]);
 	});
 });

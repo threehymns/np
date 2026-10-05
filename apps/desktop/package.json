@@ -32,7 +32,9 @@
 			"node_modules/source-map-support/**/*",
 			"node_modules/source-map/**/*",
 			"node_modules/buffer-from/**/*",
-			"node_modules/typescript/**/*"
+			"node_modules/typescript/**/*",
+			"node_modules/lru-cache/**/*",
+			"node_modules/yallist/**/*"
 		],
 		"mac": {
 			"target": [
