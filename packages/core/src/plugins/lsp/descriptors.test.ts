@@ -13,7 +13,7 @@ import { getLspDescriptorsForLanguage } from '../lsp-descriptors';
  * executable is a name the desktop app resolves against its own dependency
  * first, and the marker list is the TypeScript server's own configuration files.
  * Two descriptors would mean two processes indexing the same file, which ADR
- * 0019 reports as a conflict rather than resolves.
+ * 0020 reports as a conflict rather than resolves.
  */
 describe('the bundled TypeScript descriptor', () => {
 	it('declares one entry naming a command, not a path', () => {

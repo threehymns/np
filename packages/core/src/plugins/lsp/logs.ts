@@ -1,5 +1,5 @@
 /**
- * Per-server log buffers backing the Logs tab (spec #263, ADR 0019).
+ * Per-server log buffers backing the Logs tab (spec #263, ADR 0020).
  *
  * Two feeds land here: the server's own stderr, and a trace of the JSON-RPC
  * traffic. Both are per running server, so the tab can filter by server as well

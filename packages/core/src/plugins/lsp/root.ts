@@ -1,5 +1,5 @@
 /**
- * Project-root scoping (spec #263, ADR 0019).
+ * Project-root scoping (spec #263, ADR 0020).
  *
  * The ordered marker list belongs to the descriptor; the walk belongs here. The
  * descriptor says *what identifies a project* (a `tsconfig.json` says more about

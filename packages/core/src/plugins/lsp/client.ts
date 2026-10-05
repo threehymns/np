@@ -3,7 +3,7 @@ import { describeError } from './describe-error';
 import { LspLogStore, splitLogLines } from './logs';
 
 /**
- * JSON-RPC over stdio, as the LSP plugin's own code (spec #263, ADR 0019).
+ * JSON-RPC over stdio, as the LSP plugin's own code (spec #263, ADR 0020).
  *
  * Framing is `Content-Length` headers, a `\r\n\r\n` separator, then exactly that
  * many bytes of UTF-8 body. The parser is byte-oriented on purpose: a pipe
@@ -219,7 +219,7 @@ export class LspClient {
 	 * before it will answer anything else.
 	 *
 	 * Sync is declared as full-document (`1`): every change sends the whole text.
-	 * Incremental sync is the recorded later optimisation (ADR 0019), held back
+	 * Incremental sync is the recorded later optimisation (ADR 0020), held back
 	 * until large-file behaviour is actually measured rather than assumed.
 	 */
 	async initialize(params: Record<string, unknown>): Promise<unknown> {
@@ -246,7 +246,7 @@ export class LspClient {
 						// toggle), and a server that trimmed its answer to "the next
 						// character is one of these" would be trimming for a request this
 						// client never sends. Declaring them would also make the field
-						// descriptor data, and ADR 0019's boundary is exactly that the
+						// descriptor data, and ADR 0020's boundary is exactly that the
 						// client's capability table is the client's: a descriptor that
 						// could claim a trigger character is a descriptor claiming a client
 						// behaviour it does not implement.

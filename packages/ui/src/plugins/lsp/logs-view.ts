@@ -8,7 +8,7 @@ import type {
 } from '@np/core';
 
 /**
- * What the Logs tab decides, as data (spec #263, ticket #266, ADR 0019).
+ * What the Logs tab decides, as data (spec #263, ticket #266, ADR 0020).
  *
  * The tab's only decisions are which lines a set of picker selections selects,
  * what the picker calls each server, and what the counter says. All three are

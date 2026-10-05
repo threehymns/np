@@ -1,6 +1,6 @@
 /**
  * Server diagnostics, from `textDocument/publishDiagnostics` to plain data
- * (spec #263, ticket #266, ADR 0019).
+ * (spec #263, ticket #266, ADR 0020).
  *
  * The protocol half lives here and stays free of CodeMirror: a server reports
  * per URI, its positions are line/character pairs against the text the server

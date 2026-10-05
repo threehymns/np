@@ -15,7 +15,7 @@ import { DuplicateLspDescriptorIdError } from './errors';
  * not an `EditorContributionType`: `EditorContribution.extension` is a bare
  * CodeMirror `Extension`, and "start this process against this root" is not
  * one. The client, the process, the protocol, and the log buffers all live in
- * the LSP Core Plugin (ADR 0019), so the host stays free of feature-specific
+ * the LSP Core Plugin (ADR 0020), so the host stays free of feature-specific
  * machinery and adding the second server is configuration alone.
  */
 export interface LspDescriptorContribution {
@@ -194,7 +194,7 @@ export function rebuildLspDescriptors(
  *
  * More than one result is a conflict, not a preference: two descriptors both
  * claiming a file means two servers would index it, so the caller reports it
- * (ADR 0019) instead of picking one.
+ * (ADR 0020) instead of picking one.
  */
 export function getLspDescriptorsForLanguage(
 	descriptors: readonly RegisteredLspDescriptor[],

@@ -325,7 +325,7 @@ export interface PluginHostInterface {
 	// declares the command, arguments, ordered root markers, and served
 	// languages of a language server, and the host rebuilds the records from
 	// plugin transforms so any number of plugins can serve any registered
-	// language. All client machinery belongs to the plugin (ADR 0019).
+	// language. All client machinery belongs to the plugin (ADR 0020).
 	registerLspDescriptor(pluginId: string, contribution: LspDescriptorContribution): void;
 	registerLspDescriptors(pluginId: string, contributions: readonly LspDescriptorContribution[]): void;
 	registerLspDescriptorTransform(pluginId: string, transform: LspTransform): void;

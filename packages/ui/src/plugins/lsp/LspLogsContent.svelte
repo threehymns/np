@@ -8,7 +8,7 @@
 	import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer } from './logs-view';
 
 	/**
-	 * The Logs tab: the buffers the plugin already keeps (ADR 0019), filtered
+	 * The Logs tab: the buffers the plugin already keeps (ADR 0020), filtered
 	 * rather than scrolled. Reading the store through its service key keeps the
 	 * tab from importing plugin state, and every line shown here came out of a
 	 * real pipe. What the three selections select is `logs-view`'s decision.

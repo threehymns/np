@@ -23,7 +23,7 @@ import { currentDocFacet } from "./wikilinks";
 
 /**
  * Server completion items as one more source on the existing chain (spec #263,
- * ADR 0018).
+ * ADR 0019).
  *
  * Three properties of this module are load-bearing and each one exists because
  * of something measured rather than chosen:

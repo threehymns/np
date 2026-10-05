@@ -206,7 +206,7 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 	});
 
 	it('declares no completionItem/resolve, which nothing in the client implements', async () => {
-		// ADR 0020 records why: CodeMirror has no "this option is now selected" hook,
+		// ADR 0021 records why: CodeMirror has no "this option is now selected" hook,
 		// so the round trip has nowhere to hang. Advertising it would be a claim the
 		// client cannot keep, and it would cost a request per keystroke.
 		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;

@@ -27,7 +27,7 @@ export { lspServerKey };
 export type { LspServerState, LspServerStatus };
 
 /**
- * Server lifecycle (spec #263, ADR 0019).
+ * Server lifecycle (spec #263, ADR 0020).
  *
  * A server is identified by `<descriptor id>@<project root>`: one descriptor
  * runs one process per project root, so a monorepo with three TypeScript
@@ -367,7 +367,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 
 	/**
 	 * Sends the document's current text to one running server: `didOpen` the
-	 * first time, full-content `didChange` after that (ADR 0019).
+	 * first time, full-content `didChange` after that (ADR 0020).
 	 *
 	 * Identical text is not resent. Two paths reach this — the document lifecycle
 	 * event and a completion query — and a keystroke produces both, so without this

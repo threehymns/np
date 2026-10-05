@@ -4,7 +4,7 @@ import type { CompletionSuggestion, CompletionSuggestionRange } from '../service
  * Server completion items, as this plugin hands them to the editor.
  *
  * Everything protocol-shaped is decoded here, in the plugin that owns the
- * protocol (ADR 0019), so the completion source on the other side of the
+ * protocol (ADR 0020), so the completion source on the other side of the
  * package boundary reads a plain data structure and never parses
  * `CompletionItem` itself. `lsp_insert_mode` needs the server's own
  * `textEdit.range` to mean anything, and that range has to survive the crossing
@@ -15,7 +15,7 @@ import type { CompletionSuggestion, CompletionSuggestionRange } from '../service
  * and `{ language, value }` entries — and a server is free to use whichever
  * fits. They all flatten to one string here, because a CodeMirror `info` is one
  * string and re-parsing the union at the presentation edge would put protocol
- * knowledge back where ADR 0019 put it.
+ * knowledge back where ADR 0020 put it.
  */
 
 /** LSP `CompletionItemKind`, kept as the wire number the server sent. */

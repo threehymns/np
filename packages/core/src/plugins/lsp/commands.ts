@@ -13,7 +13,7 @@ import { LSP_LOGS_TAB_ID } from './ui';
  * matter and a plugin that is off simply has no commands to run.
  *
  * The collaborators are plugin-local, not host surface: the host knows nothing
- * about servers (ADR 0019).
+ * about servers (ADR 0020).
  */
 export interface LspCommandContext {
 	/** The runtime, or undefined while the plugin is not the active owner. */

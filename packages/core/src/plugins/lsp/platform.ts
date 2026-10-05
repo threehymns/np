@@ -2,7 +2,7 @@ import { LSP_PLATFORM_SERVICE_KEY, type LspPlatform } from '../services';
 import type { PluginHostInterface } from '../types';
 
 /**
- * Resolves the platform seam (ADR 0019).
+ * Resolves the platform seam (ADR 0020).
  *
  * The service is optional by design, and the absence is the web story: spec
  * #263 puts stdio on desktop and leaves web to a later headless-server spec, so

@@ -12,7 +12,7 @@ import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer, type LspLogsVie
 
 /**
  * The Logs tab's decisions, over the plugin's real buffers (spec #263, ticket
- * #266, ADR 0019).
+ * #266, ADR 0020).
  *
  * The store comes from an activated plugin rather than a stub, so the capping and
  * the filtering are the shipped ones: what this file pins is which lines a set

@@ -6,7 +6,7 @@ import type { LspLogStore } from './logs';
 import { dirnameOf, findProjectRoot } from './root';
 
 /**
- * Which server a document belongs to (spec #263, ADR 0019).
+ * Which server a document belongs to (spec #263, ADR 0020).
  *
  * A server is identified by `<descriptor id>@<project root>`: one descriptor
  * runs one process per project root, so a monorepo with three TypeScript

@@ -85,7 +85,7 @@ export const PLUGIN_UI_LOADER_SERVICE_KEY = 'plugin-ui-loader';
 export const LSP_PLATFORM_SERVICE_KEY = 'lsp:platform';
 
 /**
- * The platform seam (spec #263, ADR 0019).
+ * The platform seam (spec #263, ADR 0020).
  *
  * Everything the LSP plugin needs that `@np/core` cannot have for itself is
  * named here and nothing else: spawning a process, and asking the filesystem
@@ -314,7 +314,7 @@ export type CompletionAnswer =
 
 /**
  * Completion coordination, published by whoever can answer a query about a
- * document (ADR 0008, ADR 0019).
+ * document (ADR 0008, ADR 0020).
  *
  * Generic on purpose and generic in the only sense that matters: the editor shell
  * asks a question about a position and receives suggestions, without naming what

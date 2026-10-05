@@ -26,7 +26,7 @@ import { toFileUri } from './root';
  *
  * Owns everything about language servers except their configuration: the
  * descriptors are registered with the host (data), and the client, the process,
- * the protocol, the diagnostics and the log buffers live here (ADR 0019).
+ * the protocol, the diagnostics and the log buffers live here (ADR 0020).
  * `@np/core` learns the words "command, arguments, root markers, served
  * languages" and nothing else, so disabling this plugin leaves the host with no
  * LSP surface at all rather than a client with no servers.

@@ -47,7 +47,7 @@ question each one answers is per language. `automatic_completions` remains globa
 because it is the popup's own switch, not a statement about a language.
 
 `lsp` is also no longer only this section's business: it gates the server for
-documents of that language, which ADR 0019 records — no start, no sync, no
+documents of that language, which ADR 0020 records — no start, no sync, no
 diagnostics, and notes and words untouched. The other three still shape an item
 once a server has answered, so they remain what this section is about. What
 changes here is only who settles `inactive`: the editor's source has always
@@ -107,7 +107,7 @@ does exactly that. `triggerCharacters` is declared absent for the same reason:
 the characters are the client's to honour, and this client has no per-character
 trigger, because CodeMirror decides when to ask and the trigger policy filters
 it. The client's capability table is the client's and not the descriptor's for
-the reason ADR 0019 gives, so neither of these is a field a second server could
+the reason ADR 0020 gives, so neither of these is a field a second server could
 fill in.
 
 ## What is asserted, and where
@@ -116,6 +116,6 @@ The fallback is asserted against the scripted stub over a real process: words
 answer when the stub fails the request, when it fails to start, and when its reply
 arrives later than the bound — with the bound's effect measured against the stub's
 own delay rather than observed as an eventual answer. Rank is asserted on the real
-popover through `currentCompletions` off a mounted view, as in ADR 0018. The
+popover through `currentCompletions` off a mounted view, as in ADR 0019. The
 insert modes are asserted on the resulting document, because the only difference
 between them is what a transaction replaces.
