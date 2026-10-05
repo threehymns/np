@@ -556,6 +556,11 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 			// not resurrect a server the user stopped.
 			if (existing.stoppedByUser) return existing;
 			await this.stopEntry(existing);
+			// Another caller may have started a replacement while the stop was
+			// in flight; returning it keeps one entry per server key.
+			if (this.disposed) return existing;
+			const replacement = this.servers.get(server);
+			if (replacement && replacement !== existing) return replacement;
 		}
 
 		const entry: RunningServer = {
