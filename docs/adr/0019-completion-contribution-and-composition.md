@@ -28,13 +28,21 @@ No conflict is observed today, and the reason is not a guarantee: `@replit/codem
 
 Acceptance was the binding that was genuinely missing: before this, a vim user had a way to summon completions and no key to accept one.
 
+This deviates from ADR 0003, which names two drivers this key does not satisfy. *Uniformity* says all shortcuts, including vim ones, flow through a single pipeline; `Ctrl-y` is bound in a CodeMirror `Keymap`, so it never reaches the KeymapRegistry or the CommandRegistry. *Discoverability* says continuations are visible via WhichKey, which reads the KeymapRegistry and so cannot show this binding, and `Ctrl-y` is absent from `keymap.json`. The rest of the completion keymap — Enter, the selection keys, the explicit trigger — deviates the same way, and has since before this work; the deviation is named here rather than fixed because CodeMirror's keymap is the only pipeline that can be scoped to the completion popup's own state. A completion accepts only while the dialog is open, which is a view-level fact the Context Registry's context expressions cannot express, and the binding has to be able to run *instead of* the vim extension's claim on insert-mode keys, which a global capture listener cannot do. Closing this would mean teaching the Context Registry about view-local state, which is a larger change than the problem warrants and is not taken here.
+
 ## Snippets are a sibling registry, not an editor contribution
 
-Spec #194 anticipated a completion contribution type extending the editor contribution pattern. The snippet pack is a sibling *data* registry mirroring `languages.ts`, not a new `EditorContributionType`, and the deviation is deliberate.
+Spec #194 anticipated completions arriving through the editor contribution pattern. The snippet pack is a sibling *data* registry mirroring `languages.ts`, not a new `EditorContributionType`, and the deviation is deliberate.
 
 `EditorContribution.extension` is a bare CodeMirror `Extension`. A completion source is not an `Extension` until it has a language to attach to, and a pack that names a language another contribution registered cannot supply one itself — there is no editor contribution it could be that would survive without a `Language` in hand. A pack is data: typed triggers with plain bodies joined on a language identity, with no placeholders and no snippet variables, because expanding tab stops is out of scope. That is the shape a registry already holds and replays, so the snippet pack is declared as one: the host materializes records from plugin transforms with an owning plugin, and the editor turns the current language's records into a completion source.
 
 Ownership follows the record, not the transform that ran last: a record that arrives with an empty owner is claimed by the transform that emitted it, and a record that already carries an owner keeps it. That is what makes a refresh transform safe — one that re-emits records it did not change, with a fresh object identity, leaves them alone instead of re-attributing them to whoever ran last.
+
+## What a pack is, so the next language copies one
+
+A pack is a list of `SnippetRecord`s, and each record carries five fields: an `id`, unique across every registered plugin because it is the registry key; a `language`, the identity the language registry publishes, which is the join key and is matched case-insensitively so a pack may spell it `'Svelte'`; a `trigger`, the typed prefix that summons the offer; a `body`, plain text inserted verbatim on accept; and a `description`, shown beside the option in the popover. A plugin declares that list in its `setup`, in the same call that registers the language the records join on, so a pack cannot outlive the language that gives its offers somewhere to attach.
+
+`packages/core/src/plugins/svelte-language/snippets.ts` is the worked example, and it is the file the next language copies. Its triggers are word-shaped identifiers so the editor matches them with the same word-character pattern it matches buffer words with, and every body is the text that lands in the document. The host materializes those records into `RegisteredSnippet` — the same five fields plus the `owner` it binds during replay — and the editor joins the current language's records into a completion source. A new language therefore adds a pack of records and a language registration, and nothing else: no new contribution type, no editor extension, and no new host API.
 
 ## What is asserted, and where
 

@@ -17,13 +17,6 @@ export type Theme =
 
 export type AppearanceMode = 'light' | 'dark' | 'system';
 
-/**
- * Whether automatic word offers are permitted. Declared with the schema that
- * validates it and re-exported here, so the public name keeps working while
- * there is exactly one union for the concept.
- */
-export type { CompletionWordsMode } from './plugins/settings';
-
 export interface PreferenceStorage {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;

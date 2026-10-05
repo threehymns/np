@@ -6,6 +6,7 @@ import type { RegisteredSnippet } from "@np/core";
 import {
 	bufferWordCompletions,
 	WORDS_RANK_BELOW_EVERY_SOURCE,
+	fenceWordFallback,
 	type BufferWordSettings,
 } from "./buffer-words";
 import { snippetCompletions, SNIPPETS_RANK_BELOW_NOTE_SOURCES } from "./snippets";
@@ -92,17 +93,30 @@ function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 					readTriggerSettings: options.readSettings
 				});
 	return [
-		...(server === null ? [] : [server.source]),
-		snippetCompletions({
-			snippets: options.snippets,
-			languageName: options.languageName,
-		}),
-		bufferWordCompletions({
+		...[
+			...(server === null ? [] : [server.source]),
+			snippetCompletions({
+				snippets: options.snippets,
+				languageName: options.languageName,
+			}),
+			bufferWordCompletions({
+				languageName: options.languageName,
+				readSettings: options.readSettings,
+				server: server?.coordinator ?? null,
+			}),
+		].map((source) => language.data.of({ autocomplete: source })),
+		// The word source above is invisible inside a fenced block whose
+		// nested language has loaded (the cursor resolves to that language),
+		// so the fallback re-serves it exactly there and nowhere else. It reads
+		// the same server coordinator, so fallback words inside a fence still
+		// stand down while a server is answering.
+		...fenceWordFallback({
+			language,
 			languageName: options.languageName,
 			readSettings: options.readSettings,
 			server: server?.coordinator ?? null,
 		}),
-	].map((source) => language.data.of({ autocomplete: source }));
+	];
 }
 
 /**

@@ -201,16 +201,22 @@ function declinedByTriggerRules(
 	context: CompletionContext,
 	languageName: string | null,
 	settings: BufferWordSettings,
-	typed: { readonly text: string }
+	typed: { readonly text: string },
 ): TriggerDecline | null {
 	// The explicit trigger is the user asking, so it is never gated.
 	if (context.explicit) return null;
-	const policy = resolveBufferWordPolicy(languageName, settings);
+	const policy = resolveBufferWordPolicy(
+		languageName,
+		settings,
+		context.state.doc,
+		context.pos,
+	);
 	if (!policy.automatic) {
 		return {
-			reason: isMarkdownProse(languageName) && !settings.wordsOverridden
-				? "Prose is quiet on a typing trigger; ask explicitly to reach a server."
-				: "Automatic suggestions are off for this language; ask explicitly to reach a server."
+			reason:
+				isMarkdownProse(languageName) && !settings.wordsOverridden
+					? "Prose is quiet on a typing trigger; ask explicitly to reach a server."
+					: "Automatic suggestions are off for this language; ask explicitly to reach a server.",
 		};
 	}
 	if (typed.text.length < policy.minWordLength) {

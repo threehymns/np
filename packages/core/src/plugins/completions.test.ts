@@ -5,16 +5,16 @@ import { svelteLanguageRegistration } from './svelte-language/registration';
 import { SVELTE_SNIPPETS } from './svelte-language/snippets';
 import { DuplicateSnippetIdError, PluginActivationError } from './errors';
 import type { PluginHostInterface } from './types';
-import type { SnippetContribution } from './completions';
+import { getSnippetsForLanguage, type SnippetRecord } from './completions';
 
-function svelteSnippets(): SnippetContribution[] {
+function svelteSnippets(): SnippetRecord[] {
 	return [
 		{ id: 'each', language: 'svelte', trigger: 'each', body: '{#each}', description: 'Each block' }
 	];
 }
 
-function tsSnippets(): SnippetContribution[] {
-	// Plain body, per `SnippetContribution.body`: no `$1`, no tab stops.
+function tsSnippets(): SnippetRecord[] {
+	// Plain body, per `SnippetRecord.body`: no `$1`, no tab stops.
 	return [
 		{ id: 'log', language: 'typescript', trigger: 'log', body: 'console.log(value);', description: 'Log' }
 	];
@@ -25,7 +25,17 @@ function shape(host: PluginHost): string[] {
 	return host.getSnippets().map((s) => `${s.id}|${s.language}|${s.trigger}`);
 }
 
-describe('Snippet contribution interface (#262)', () => {
+/**
+ * The registry joined on one language, through the one join the editor uses.
+ * The host hands out the whole registry and the join happens where the
+ * language is known (the editor's completion source), so this is how a caller
+ * reads one language's records rather than asking the host to filter.
+ */
+function sveltePack(host: PluginHost): ReturnType<typeof getSnippetsForLanguage> {
+	return getSnippetsForLanguage(host.getSnippets(), 'svelte');
+}
+
+describe('Snippet Pack registry interface (#262)', () => {
 	it('ships no snippets until a plugin registers a pack', () => {
 		const host = new PluginHost();
 		expect(host.getSnippets()).toEqual([]);
@@ -38,7 +48,7 @@ describe('Snippet contribution interface (#262)', () => {
 
 		await host.activate(svelteLanguageRegistration.manifest.id);
 
-		const snippets = host.getSnippetsForLanguage('svelte');
+		const snippets = sveltePack(host);
 		expect(snippets.length).toBe(SVELTE_SNIPPETS.length);
 		// Joins on the identity the language registry publishes, and every
 		// record carries a body and a description with an owning plugin.
@@ -51,7 +61,7 @@ describe('Snippet contribution interface (#262)', () => {
 		}
 		expect(snippets.map((s) => s.id).sort()).toEqual(SVELTE_SNIPPETS.map((s) => s.id).sort());
 		// No other language gets offers out of the pack.
-		expect(host.getSnippetsForLanguage('typescript')).toEqual([]);
+		expect(getSnippetsForLanguage(host.getSnippets(), 'typescript')).toEqual([]);
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
@@ -60,7 +70,7 @@ describe('Snippet contribution interface (#262)', () => {
 		host.register(svelteLanguageRegistration);
 		await host.activate(svelteLanguageRegistration.manifest.id);
 
-		expect(host.getSnippetsForLanguage('SVELTE').length).toBe(SVELTE_SNIPPETS.length);
+		expect(getSnippetsForLanguage(host.getSnippets(), 'SVELTE').length).toBe(SVELTE_SNIPPETS.length);
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
@@ -80,7 +90,6 @@ it('reaches plugin code through the host proxy, not just through the host', asyn
 
 		const pluginHost = viaProxy!;
 		expect(pluginHost.getSnippets()).toHaveLength(1);
-		expect(pluginHost.getSnippetsForLanguage('SVELTE')).toHaveLength(1);
 		expect(pluginHost.snippetRevision).toBeGreaterThan(0);
 		// A reload must be lossless: same records, same owners, no duplicates,
 		// and the revision bumped so the editor rebuilds its chain.
@@ -223,7 +232,7 @@ it('reaches plugin code through the host proxy, not just through the host', asyn
 
 describe('Snippet registry replay', () => {
 	it('carries the body through the registry verbatim, expanding nothing', () => {
-		// `SnippetContribution.body` is plain text: no placeholders, no snippet
+		// `SnippetRecord.body` is plain text: no placeholders, no snippet
 		// variables. Nothing expands it today, and this is the assertion that
 		// keeps that true — a `$1` reaching the document would be a placeholder
 		// the contract never promised to handle.

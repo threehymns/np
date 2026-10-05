@@ -15,7 +15,7 @@ import type {
 	RegisteredLanguage
 } from './languages';
 import type {
-	SnippetContribution,
+	SnippetRecord,
 	SnippetTransform,
 	RegisteredSnippet
 } from './completions';
@@ -311,14 +311,13 @@ export interface PluginHostInterface {
 	// typed triggers with plain-text bodies joined on a registered language,
 	// and the host rebuilds them from plugin transforms so the editor can turn
 	// the current language's records into a completion source.
-	registerSnippet(pluginId: string, contribution: SnippetContribution): void;
-	registerSnippets(pluginId: string, contributions: readonly SnippetContribution[]): void;
+	registerSnippet(pluginId: string, record: SnippetRecord): void;
+	registerSnippets(pluginId: string, records: readonly SnippetRecord[]): void;
 	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void;
 	removePluginSnippets(pluginId: string): void;
 	rebuildSnippets(): void;
 	refreshSnippets(): void;
 	getSnippets(): RegisteredSnippet[];
-	getSnippetsForLanguage(language: string): RegisteredSnippet[];
 	readonly snippetRevision: number;
 
 	// LSP descriptor registry (spec #263). A sibling data registry: a plugin

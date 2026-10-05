@@ -891,12 +891,15 @@ describe("the words fallback decision", () => {
 		items: [],
 		incomplete: false
 	};
+	// TypeScript is not prose, so the fence rule never fires here: any code
+	// document isolates the fallback brake under test.
+	const codeDoc = EditorState.create({ doc: "const total = 1;\ntotal" }).doc;
 
 	it("stands words down only while a server is answering", () => {
 		const settings = readBufferWordSettings(reader(undefined), "TypeScript");
 		expect(settings.words).toBe("fallback");
 
-		expect(resolveBufferWordPolicy("TypeScript", settings, serving)).toEqual({
+		expect(resolveBufferWordPolicy("TypeScript", settings, codeDoc, 0, serving)).toEqual({
 			automatic: false,
 			minWordLength: 3,
 			offered: false
@@ -904,16 +907,25 @@ describe("the words fallback decision", () => {
 		// A failing server and no server are both reasons words answer; they differ
 		// only in whether anyone was supposed to.
 		expect(
-			resolveBufferWordPolicy("TypeScript", settings, {
-				state: "unavailable",
-				provider: "typescript@/project",
-				reason: "timed out"
-			}).offered
+			resolveBufferWordPolicy(
+				"TypeScript",
+				settings,
+				codeDoc,
+				0,
+				{
+					state: "unavailable",
+					provider: "typescript@/project",
+					reason: "timed out"
+				}
+			).offered
 		).toBe(true);
 		expect(
-			resolveBufferWordPolicy("TypeScript", settings, { state: "inactive", reason: "none" }).offered
+			resolveBufferWordPolicy("TypeScript", settings, codeDoc, 0, {
+				state: "inactive",
+				reason: "none"
+			}).offered
 		).toBe(true);
-		expect(resolveBufferWordPolicy("TypeScript", settings, null).offered).toBe(true);
+		expect(resolveBufferWordPolicy("TypeScript", settings, codeDoc, 0, null).offered).toBe(true);
 	});
 
 	it("leaves enabled and disabled meaning what they meant before a server existed", () => {
@@ -921,12 +933,12 @@ describe("the words fallback decision", () => {
 		const disabled = readBufferWordSettings(reader(undefined, { words: "disabled" }), "TypeScript");
 
 		// `enabled` is not the fallback: a serving server does not silence it.
-		expect(resolveBufferWordPolicy("TypeScript", enabled, serving).offered).toBe(true);
-		expect(resolveBufferWordPolicy("TypeScript", enabled, serving).automatic).toBe(true);
+		expect(resolveBufferWordPolicy("TypeScript", enabled, codeDoc, 0, serving).offered).toBe(true);
+		expect(resolveBufferWordPolicy("TypeScript", enabled, codeDoc, 0, serving).automatic).toBe(true);
 		// `disabled` stays quiet on a keystroke and still answers explicitly, which is
 		// what it always meant.
-		expect(resolveBufferWordPolicy("TypeScript", disabled, null).automatic).toBe(false);
-		expect(resolveBufferWordPolicy("TypeScript", disabled, null).offered).toBe(true);
+		expect(resolveBufferWordPolicy("TypeScript", disabled, codeDoc, 0, null).automatic).toBe(false);
+		expect(resolveBufferWordPolicy("TypeScript", disabled, codeDoc, 0, null).offered).toBe(true);
 	});
 
 	it(

@@ -1,4 +1,4 @@
-import type { RegisteredSnippet } from "@np/core";
+import { getSnippetsForLanguage, type RegisteredSnippet } from "@np/core";
 import {
 	insertCompletionText,
 	pickedCompletion,
@@ -19,8 +19,9 @@ import {
  * would outrank a note option whenever the note's fuzzy match happened to be
  * the worse of the two, making the order depend on the note's text rather
  * than on the source. It sits between that floor and
- * {@link WORDS_RANK_BELOW_EVERY_SOURCE}, so it needs no knowledge of either
- * neighbouring source's internals to stay between them.
+ * `WORDS_RANK_BELOW_EVERY_SOURCE` (the buffer-word source's offset, in
+ * `buffer-words.ts`), so it needs no knowledge of either neighbouring source's
+ * internals to stay between them.
  */
 export const SNIPPETS_RANK_BELOW_NOTE_SOURCES = -10_000;
 
@@ -66,16 +67,17 @@ export function snippetCompletions(options: SnippetSourceOptions): CompletionSou
 	return (context: CompletionContext): CompletionResult | null => {
 		if (!languageName) return null;
 
-		const lowered = languageName.toLowerCase();
 		const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
 		// An empty prefix would dump the whole pack into the popover.
 		if (!typed || typed.from === context.pos) return null;
 
+		// The language join is the registry's, not a second copy of it here:
+		// the case-insensitive identity is one rule, and a pack that declares
+		// `'Svelte'` finds `'svelte'` whether the pack was read through the
+		// host or handed to the source whole.
 		const prefix = typed.text.toLowerCase();
-		const options = snippets.filter(
-			(snippet) =>
-				snippet.language.toLowerCase() === lowered &&
-				snippet.trigger.toLowerCase().startsWith(prefix)
+		const options = getSnippetsForLanguage(snippets, languageName).filter((snippet) =>
+			snippet.trigger.toLowerCase().startsWith(prefix),
 		);
 		if (options.length === 0) return null;
 

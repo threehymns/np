@@ -34,7 +34,9 @@ async function codeSupport(name: string): Promise<LanguageSupport> {
  * the seam the wikilink suite already uses.
  */
 function query(
-	source: (context: CompletionContext) => CompletionResult | null,
+	source: (
+		context: CompletionContext,
+	) => CompletionResult | null | Promise<CompletionResult | null>,
 	options: {
 		doc: string;
 		pos: number;
@@ -47,7 +49,13 @@ function query(
 		selection: { anchor: options.pos },
 		extensions: (options.extensions ?? []) as any,
 	});
-	return source(new CompletionContext(state, options.pos, options.explicit ?? false));
+	const result = source(new CompletionContext(state, options.pos, options.explicit ?? false));
+	// These suites never wire a server, so the words source answers
+	// synchronously; a promise here would mean the fallback path leaked in.
+	if (result instanceof Promise) {
+		throw new Error("expected a synchronous answer without a server");
+	}
+	return result;
 }
 
 function labels(result: CompletionResult | null): string[] {
@@ -268,6 +276,63 @@ describe("bufferWordCompletions — automatic trigger", () => {
 				extensions: [markdownExtension],
 			}),
 		).toBeNull();
+	});
+
+	it("offers words on a typing trigger inside a fenced code block in a note", () => {
+		// The note is Markdown, so the prose above is quiet — but a fenced block
+		// is code the user is writing, and it gets the automatic offers a code
+		// file gets.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "The kettle whistles.\n\n```js\nconst totalCount = 1;\ntotal\n```\n";
+		const afterTrigger = doc.indexOf("total\n```") + "total".length;
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: afterTrigger,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("treats an unfinished fenced block as code too", () => {
+		// The fence has not been closed yet because the block is still being
+		// written; the cursor is on the code line either way.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "The kettle whistles.\n\n```js\nconst totalCount = 1;\ntotal";
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("keeps the prose around a fenced block quiet in the same note", () => {
+		// One document, two cursors, both with a typed prefix long enough to fire:
+		// quiet above the fence and quiet below it, which is what "silent in
+		// Markdown prose" means per prose rather than per document.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "Kettles whistle loudly every morning\nkettl\n\n```js\nconst kettlepot = 1;\nkett\n```\n\nkettl";
+
+		for (const pos of [doc.indexOf("\nkettl") + "kettl".length, doc.length]) {
+			expect(
+				query(source, {
+					doc,
+					pos,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			).toBeNull();
+		}
 	});
 
 	it("treats a document with no language as not prose", () => {

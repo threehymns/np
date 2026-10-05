@@ -4,10 +4,12 @@ import type {
 	CompletionResult,
 	CompletionSource,
 } from "@codemirror/autocomplete";
+import { EditorState, type Extension, type Text } from "@codemirror/state";
+import type { Language } from "@codemirror/language";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
 	type CompletionAnswer,
-	type CompletionWordsMode
+	type CompletionWordsMode,
 } from "@np/core";
 import type { ServerOutcomeReader } from "./server-completions";
 
@@ -94,8 +96,52 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
 }
 
 /**
+ * A Markdown code fence: three or more backticks or tildes, indented by up to
+ * three spaces. An *opening* fence may carry an info string (the language name);
+ * a *closing* fence carries nothing after it.
+ */
+const CODE_FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Whether `pos` sits inside a fenced code block.
+ *
+ * Silence is per prose, not per document: a note holding a code block is a note
+ * *and* a code file, and #259 asks for quiet in the prose and automatic words in
+ * the code file. The rule is the fence itself rather than the syntax tree,
+ * because a text scan is a predicate a reader can predict without a parsed tree,
+ * it needs no parser installed for the question to be answerable, and it degrades
+ * the way Markdown does — a fence nobody closed yet still opens a block, because
+ * the block is still being written.
+ *
+ * Deliberately not "any code": an indented (four-space) block and an inline code
+ * span stay prose. Both are hard to tell from ordinary prose, and quiet-by-
+ * default is the safer error for a rule that has to guess.
+ */
+function insideCodeFence(doc: Text, pos: number): boolean {
+	let open: string | null = null;
+
+	for (let line = 1; line <= doc.lineAt(pos).number; line++) {
+		const match = CODE_FENCE_PATTERN.exec(doc.line(line).text);
+		if (!match) continue;
+		const [, fence, info] = match;
+		if (open === null) {
+			open = fence;
+		} else if (
+			fence[0] === open[0] &&
+			fence.length >= open.length &&
+			info.trim() === ""
+		) {
+			open = null;
+		}
+	}
+
+	return open !== null;
+}
+
+/**
  * The single place deciding what a query may offer, so the trigger split, the
- * settings and the server fallback all land here instead of in the source body.
+ * settings, the fence rule and the server fallback all land here instead of in
+ * the source bodies.
  *
  * Three independent brakes on the automatic path, and none of them touches the
  * explicit one:
@@ -106,7 +152,9 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
  *   so prose is never worse off than before. It is a *default*, not a hard
  *   rule: a `{ "Markdown": { "words": "enabled" } }` entry in `editor.languages`
  *   reverses it, because the settings UI offers exactly that edit and an edit
- *   that does nothing is worse than no edit at all.
+ *   that does nothing is worse than no edit at all. It is per prose and not per
+ *   document: a fenced code block inside the note is code the user is writing,
+ *   so it gets the automatic offers a code file gets.
  * - `words: 'disabled'` silences the automatic path in every language. Off
  *   means quiet, not unavailable.
  *
@@ -120,15 +168,19 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
 export function resolveBufferWordPolicy(
 	languageName: string | null,
 	settings: BufferWordSettings,
-	server: CompletionAnswer | null = null
+	doc: Text,
+	pos: number,
+	server: CompletionAnswer | null = null,
 ): BufferWordPolicy {
-	const proseQuiet = isMarkdownProse(languageName) && !settings.wordsOverridden;
+	const proseQuiet =
+		isMarkdownProse(languageName) &&
+		!settings.wordsOverridden &&
+		!insideCodeFence(doc, pos);
 	const fallbackQuiet = settings.words === "fallback" && server?.state === "serving";
 	return {
-		automatic:
-			settings.words !== "disabled" && !proseQuiet && !fallbackQuiet,
+		automatic: settings.words !== "disabled" && !proseQuiet && !fallbackQuiet,
 		minWordLength: normalizeMinWordLength(settings.minWordLength),
-		offered: !fallbackQuiet
+		offered: !fallbackQuiet,
 	};
 }
 
@@ -183,20 +235,22 @@ const NO_SERVER_QUERIES: ServerOutcomeReader = { queryFor: () => null };
  * remove. When nothing is in flight — every note, and every editor state built
  * without an LSP runtime — the answer is immediate and nothing changes.
  */
-export function bufferWordCompletions(
-	options: BufferWordSourceOptions,
-): CompletionSource {
-	const {
-		languageName,
-		readSettings = staticDefaultSettings,
-		server = null
-	} = options;
+export function bufferWordCompletions(options: BufferWordSourceOptions): CompletionSource {
+	const { languageName, readSettings = staticDefaultSettings, server = null } = options;
 
-	return (context: CompletionContext): CompletionResult | null | Promise<CompletionResult | null> => {
+	return (
+		context: CompletionContext,
+	): CompletionResult | null | Promise<CompletionResult | null> => {
 		const query = (server ?? NO_SERVER_QUERIES).queryFor(context.pos);
 		const decide = (outcome: CompletionAnswer | null): CompletionResult | null => {
 			const settings = readSettings();
-			const policy = resolveBufferWordPolicy(languageName, settings, outcome);
+			const policy = resolveBufferWordPolicy(
+				languageName,
+				settings,
+				context.state.doc,
+				context.pos,
+				outcome,
+			);
 			if (!policy.offered) return null;
 
 			const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
@@ -211,8 +265,8 @@ export function bufferWordCompletions(
 			}
 
 			const prefix = typed.text.toLowerCase();
-			const labels = bufferVocabulary(context.state.doc.toString(), typed.from).filter(
-				(label) => label.toLowerCase().startsWith(prefix)
+			const labels = bufferVocabulary(context.state.doc.toString(), typed.from).filter((label) =>
+				label.toLowerCase().startsWith(prefix),
 			);
 
 			if (labels.length === 0) return null;
@@ -227,7 +281,7 @@ export function bufferWordCompletions(
 						label,
 						type: "text",
 						boost: WORDS_RANK_BELOW_EVERY_SOURCE,
-					})
+					}),
 				),
 			};
 		};
@@ -235,6 +289,43 @@ export function bufferWordCompletions(
 		if (query && query.settled === null) return query.outcome.then(decide);
 		return decide(query?.settled ?? null);
 	};
+}
+
+export interface FenceWordFallbackOptions extends BufferWordSourceOptions {
+	/** Active language the chain registered its sources on. */
+	readonly language: Language | null;
+}
+
+/**
+ * The word source for fenced code blocks whose nested language has loaded.
+ *
+ * Once a fence's language loads, the fence parses as nested language content
+ * and `languageDataAt` at the cursor resolves to that language alone, so the
+ * word source the chain registered on the note's language is no longer
+ * consulted there. Whether the nested language has loaded is process-wide
+ * memoization (`LanguageDescription.load`), which is why the same note offers
+ * words in a fresh process and goes quiet later: completion sources must be
+ * reachable wherever the cursor can be, not just where the top language is.
+ *
+ * This provider fills exactly that shadow and nothing else. It stays silent
+ * wherever the top language is still active at the cursor (so it never
+ * double-serves a position the chain already covers) and everywhere outside a
+ * fence (so prose silence, the explicit trigger, and every non-Markdown
+ * language behave exactly as the chain alone defines them). The served source
+ * is the same buffer-word source, so its policy — threshold, disabled words,
+ * prose quiet — still decides every query.
+ */
+export function fenceWordFallback(options: FenceWordFallbackOptions): Extension[] {
+	const { language, languageName } = options;
+	if (!language || !isMarkdownProse(languageName)) return [];
+	const source = bufferWordCompletions(options);
+	return [
+		EditorState.languageData.of((state, pos, side) => {
+			if (language.isActiveAt(state, pos, side)) return [];
+			if (!insideCodeFence(state.doc, pos)) return [];
+			return [{ autocomplete: source }];
+		}),
+	];
 }
 
 /**

@@ -14,16 +14,18 @@ import {
 	type CompletionSource,
 } from "@codemirror/autocomplete";
 import { workspaceFacet, currentDocFacet } from "./extensions/wikilinks";
-import {
-	COMPLETION_RANK_TIERS,
-	completionCompartmentExtensions,
-} from "./extensions/completion-sources";
+import { completionCompartmentExtensions } from "./extensions/completion-sources";
 import { readBufferWordSettings, type SettingReader } from "./extensions/completion-settings";
 import {
 	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
 } from "./extensions/buffer-words";
-import type { RegisteredSnippet } from "@np/core";
+import {
+	getSnippetsForLanguage,
+	PluginHost,
+	svelteLanguageRegistration,
+	type RegisteredSnippet,
+} from "@np/core";
 
 /** A settings reader over editor-level values plus one per-language map. */
 function scopedSettingReader(
@@ -234,6 +236,22 @@ function description(name: string): LanguageDescription {
 	return desc!;
 }
 
+/** How one chain is built, so every helper below reads its knobs the same way. */
+interface ChainOptions {
+	words?: boolean;
+	snippets?: readonly RegisteredSnippet[];
+	settings?: Partial<BufferWordSettings>;
+	automaticCompletions?: boolean;
+	recorder?: QueryRecorder;
+	/**
+	 * The name the completion chain sees, when it is not the description's own.
+	 * The chain decides from the language *name* — the snippet join and the
+	 * prose-quiet rule both read it — so a pack that declares `svelte` needs a
+	 * chain named `svelte` to be reachable at all.
+	 */
+	languageName?: string;
+}
+
 /**
  * The editor's extension array: note sources from the language compartment,
  * then the completion compartment. Mirrors `createEditorExtensions` ordering
@@ -243,13 +261,7 @@ function description(name: string): LanguageDescription {
  */
 async function composedExtensions(
 	desc: LanguageDescription,
-	opts: {
-		words?: boolean;
-		snippets?: readonly RegisteredSnippet[];
-		settings?: Partial<BufferWordSettings>;
-		automaticCompletions?: boolean;
-		recorder?: QueryRecorder;
-	} = {},
+	opts: ChainOptions = {},
 ): Promise<Extension[]> {
 	const languageCompartment = new Compartment();
 	const completionCompartment = new Compartment();
@@ -263,7 +275,7 @@ async function composedExtensions(
 			? []
 			: completionCompartmentExtensions({
 					language,
-					languageName: desc.name,
+					languageName: opts.languageName ?? desc.name,
 					snippets: opts.snippets ?? [],
 					automaticCompletions: opts.automaticCompletions ?? true,
 					readSettings: () => settings,
@@ -329,26 +341,41 @@ function queryRecorder(): QueryRecorder {
 }
 
 /**
- * Only the buffer-word offers. A code language brings its own completion
- * source (JavaScript offers its keywords) and the snippet pack offers its
- * triggers, so an exact list of everything on the chain would say more about
- * the other sources than about this ticket.
+ * What the buffer-word source adds at `pos`, read as the difference between a
+ * chain that has the word source and the same chain without it. The word source
+ * is the only difference between the two states, so its offers are exactly the
+ * difference — the note sources and a code language's own keywords are free to
+ * answer too, and neither has to be recognized by a field the source chose for
+ * itself.
+ *
+ * Compared as label *and* type, because a code language already offers the
+ * identifier being typed as a `variable`: differencing on the label alone would
+ * hide the word source's own offer of the same word and report that a tuned
+ * trigger changed nothing. `type` is part of the option the popover renders, so
+ * this stays a statement about what a reader would see.
  */
-function offeredWordLabels(
-	state: EditorState,
+function addedByWordSource(
+	withWords: EditorState,
+	withoutWords: EditorState,
 	pos: number,
-	explicit: boolean,
+	explicit = false,
 ): string[] {
-	return offeredOptions(state, pos, explicit)
-		.filter((o) => o.type === "text")
-		.map((o) => o.label);
+	const identity = (option: Completion) => `${option.label}/${option.type}`;
+	const rest = new Set(offeredOptions(withoutWords, pos, explicit).map(identity));
+	return offeredOptions(withWords, pos, explicit)
+		.filter((option) => !rest.has(identity(option)))
+		.map((option) => option.label);
 }
 
-/** Which rank tier an offered option belongs to, by the type its source set. */
-function tierOf(option: Completion): "note" | "snippet" | "word" {
-	if (option.type === "keyword") return "snippet";
-	if (option.type === "text") return "word";
-	return "note";
+/** A code-language state, and the same one with no word source, for diffing. */
+async function codeStates(doc: string, opts: ChainOptions = {}): Promise<[EditorState, EditorState]> {
+	const desc = description("JavaScript");
+	const state = (extensions: Extension[]) =>
+		EditorState.create({ doc, selection: { anchor: doc.length }, extensions });
+	return [
+		state(await composedExtensions(desc, opts)),
+		state(await composedExtensions(desc, { ...opts, words: false })),
+	];
 }
 
 /**
@@ -398,24 +425,37 @@ async function driveCompletion(
 	}
 }
 
-/** The ranked popover as `label:tier`, which is the order a reader would see. */
+/**
+ * The ranked popover, as `label`s in the order a reader would see them.
+ *
+ * Labels, not tiers: a fixture that gives each tier its own label proves the
+ * order without asking any source to identify itself, which is what lets the
+ * ranking assertions stay external behaviour (#259 testing decisions).
+ */
 async function rankedPopover(state: EditorState): Promise<string[]> {
 	const { options } = await driveCompletion(state, queryRecorder(), "explicit");
-	return options.map((option) => `${option.label}:${tierOf(option)}`);
+	return options.map((option) => option.label);
 }
 
-function markdownState(
-	doc: string,
-	opts: {
-		words?: boolean;
-		snippets?: readonly RegisteredSnippet[];
-		settings?: Partial<BufferWordSettings>;
-		automaticCompletions?: boolean;
-		recorder?: QueryRecorder;
-	} = {},
-): Promise<EditorState> {
+function markdownState(doc: string, opts: ChainOptions = {}): Promise<EditorState> {
 	return composedExtensions(description("Markdown"), opts).then((extensions) =>
 		EditorState.create({ doc, selection: { anchor: doc.length }, extensions }),
+	);
+}
+
+/**
+ * A state whose language name is `svelte`, which is what the shipped pack
+ * declares and therefore what the join in the snippet source keys off.
+ *
+ * The grammar behind it is JavaScript's: `@codemirror/language-data` carries no
+ * Svelte description, the real grammar arrives through the plugin host, and
+ * nothing under test here parses anything. Both sources in the chain decide
+ * from the language *name*, so the name is what this helper has to get right.
+ */
+function svelteState(doc: string, opts: ChainOptions = {}): Promise<EditorState> {
+	return composedExtensions(description("JavaScript"), { ...opts, languageName: "svelte" }).then(
+		(extensions) =>
+			EditorState.create({ doc, selection: { anchor: doc.length }, extensions }),
 	);
 }
 
@@ -470,22 +510,10 @@ describe("completion composition — Markdown", () => {
 	it("ranks every buffer word below every note option", async () => {
 		const doc = "Notebook notes\n\nSee [[Not";
 		const state = await markdownState(doc);
-		const options = offeredOptions(state, doc.length, true);
 
-		const noteBoosts = options
-			.filter((o) => o.type !== "text")
-			.map((o) => o.boost ?? 0);
-		const wordBoosts = options
-			.filter((o) => o.type === "text")
-			.map((o) => o.boost ?? 0);
-
-		expect(noteBoosts.length).toBeGreaterThan(0);
-		expect(wordBoosts.length).toBeGreaterThan(0);
-		// The existing sources carry no boost, and CodeMirror sorts on
-		// fuzzy score + boost descending with every fuzzy score <= 0 — so a
-		// negative boost is an unconditionally lower rank.
-		expect(noteBoosts).toEqual(noteBoosts.map(() => 0));
-		expect(Math.min(...wordBoosts)).toBeLessThan(0);
+		// The order the popover actually renders, read off a mounted view: the
+		// note option leads and every word follows it.
+		expect(await rankedPopover(state)).toEqual(["Note A", "Notebook", "notes"]);
 	});
 
 	it("leaves the table source's offers unchanged", async () => {
@@ -536,6 +564,28 @@ describe("completion composition — Markdown", () => {
 		expect(offeredOptions(state, doc.length, false)).toEqual([]);
 	});
 
+	it("adds automatic words inside a fenced code block in a note, and none in its prose", async () => {
+		// The fence parses as nested JavaScript only once that language has
+		// loaded, and loading is memoized process-wide — without this await the
+		// test asserts the unloaded-fence path or the nested path depending on
+		// which suites ran first, green here and red in CI for the same tree.
+		await description("JavaScript").load();
+		// One document, two cursors: silence is per prose, so the note is quiet
+		// where the sentence is being written and speaks where the code is.
+		const doc = "Notes about widgets\n\n```js\nlet notebook = 1;\nnot\n```\n\nwid";
+		const state = await markdownState(doc);
+		const baseline = await markdownState(doc, { words: false });
+		const inTheFence = doc.indexOf("\nnot\n```") + 1 + "not".length;
+
+		// "not" reaches "Notes" and "notebook" in the buffer; below the fence the
+		// same three-character prefix "wid" reaches "widgets" and gets nothing.
+		expect(addedByWordSource(state, baseline, inTheFence, false)).toEqual([
+			"Notes",
+			"notebook",
+		]);
+		expect(addedByWordSource(state, baseline, doc.length, false)).toEqual([]);
+	});
+
 	it("answers the explicit trigger in Markdown prose with document words only", async () => {
 		const doc = "Notes about widgets\n\nNot";
 		const state = await markdownState(doc);
@@ -582,12 +632,15 @@ describe("completion composition — Markdown", () => {
 		const overridden = await markdownState(doc, {
 			settings: readBufferWordSettings(read, "Markdown"),
 		});
+		const withoutWords = await markdownState(doc, { words: false });
 
 		// Prose silence is a default, not a rule: the settings UI offers this
 		// exact edit, so it has to do what it says. 'Not' is three characters,
 		// past the minimum, and the buffer holds "Notes".
 		expect(offeredOptions(quiet, doc.length, false)).toEqual([]);
-		expect(offeredWordLabels(overridden, doc.length, false)).toEqual(["Notes"]);
+		expect(addedByWordSource(overridden, withoutWords, doc.length, false)).toEqual([
+			"Notes",
+		]);
 	});
 
 	it("keeps prose quiet for an explicit 'disabled' override, as for no override", async () => {
@@ -634,48 +687,30 @@ describe("completion composition — code files", () => {
 	});
 
 	it("adds words on a typing trigger in a code file", async () => {
-		const desc = description("JavaScript");
 		const doc = "const totalCount = computeTotals(rows);\ntotal";
-		const state = EditorState.create({
-			doc,
-			selection: { anchor: doc.length },
-			extensions: await composedExtensions(desc),
-		});
-		const baseline = EditorState.create({
-			doc,
-			selection: { anchor: doc.length },
-			extensions: await composedExtensions(desc, { words: false }),
-		});
+		const [state, baseline] = await codeStates(doc);
 
-		// A code file is where the automatic trigger belongs; the baseline with
-		// no word source at all offers no words on the same keystroke.
-		expect(offeredWordLabels(state, doc.length, false)).toEqual(["totalCount"]);
-		expect(offeredWordLabels(baseline, doc.length, false)).toEqual([]);
+		// A code file is where the automatic trigger belongs. The language brings
+		// its own offers to both chains, so the word source's contribution is the
+		// difference between them rather than either chain alone.
+		expect(addedByWordSource(state, baseline, doc.length, false)).toEqual(["totalCount"]);
 	});
 
 	it("adds no words below the minimum length on a typing trigger in a code file", async () => {
-		const desc = description("JavaScript");
 		// Two characters typed against `counterValue`, under the default of three.
 		const doc = "let counterValue = 1;\nco";
-		const state = EditorState.create({
-			doc,
-			selection: { anchor: doc.length },
-			extensions: await composedExtensions(desc),
-		});
+		const [state, baseline] = await codeStates(doc);
 
-		expect(offeredWordLabels(state, doc.length, false)).toEqual([]);
+		// The two chains differ by nothing here, so the threshold is what held
+		// the word back.
+		expect(addedByWordSource(state, baseline, doc.length, false)).toEqual([]);
 	});
 
 	it("tunes the code typing trigger from the minimum length", async () => {
-		const desc = description("JavaScript");
 		const doc = "let counterValue = 1;\nco";
-		const state = EditorState.create({
-			doc,
-			selection: { anchor: doc.length },
-			extensions: await composedExtensions(desc, { settings: { minWordLength: 2 } }),
-		});
+		const [state, baseline] = await codeStates(doc, { settings: { minWordLength: 2 } });
 
-		expect(offeredWordLabels(state, doc.length, false)).toEqual(["counterValue"]);
+		expect(addedByWordSource(state, baseline, doc.length, false)).toEqual(["counterValue"]);
 	});
 
 	it("contributes no source at all in a document with no language", async () => {
@@ -726,6 +761,42 @@ describe("completion composition — snippet source", () => {
 		expect(appliedDoc(options[0], state, 0, doc.length)).toBe(body);
 	});
 
+	it("offers the real Svelte pack's triggers with its bodies, above the words", async () => {
+		// The fixture pack above proves the chain with packs it controls. This
+		// proves the pack that actually ships: read through the plugin registry
+		// exactly as the editor reads it, then offered by the composed chain.
+		// A wrong trigger or body in `svelte-language/snippets.ts` fails here.
+		const host = new PluginHost();
+		host.register(svelteLanguageRegistration);
+		await host.activate(svelteLanguageRegistration.manifest.id);
+		const pack = getSnippetsForLanguage(host.getSnippets(), "svelte");
+		await host.deactivate(svelteLanguageRegistration.manifest.id);
+		expect(pack.length).toBeGreaterThan(0);
+
+		// "reac" reaches the shipped `reactive` trigger, and the buffer in the same
+		// document offers the word "reactivity", so the trigger's rank over a
+		// word is read off a real popover rather than asserted on a boost.
+		//
+		// The word lives in a comment on purpose. Written as an identifier, the
+		// language's own source would offer it as a `variable` with no boost at
+		// all and outrank both tiers, which would prove nothing about the order
+		// the host chain sets.
+		const doc = "// reactivity\nreac";
+		const state = await svelteState(doc, { snippets: pack });
+
+		expect(await rankedPopover(state)).toEqual(["reactive", "reactivity"]);
+
+		const [trigger] = offeredOptions(state, doc.length, true).filter(
+			(o) => o.label === "reactive",
+		);
+		expect(trigger.detail).toBe("Reactive declaration ($:)");
+		// Accepting replaces the typed prefix with the body the pack registered,
+		// so the whole document is the assertion.
+		expect(appliedDoc(trigger, state, doc.length - "reac".length, doc.length)).toBe(
+			"// reactivity\n$: doubled = count * 2;",
+		);
+	});
+
 	it("answers a typing trigger as well as the explicit one", async () => {
 		const doc = "rea";
 		const state = await markdownState(doc, {
@@ -758,48 +829,16 @@ describe("completion composition — snippet source", () => {
 	});
 
 	it("ranks an exact snippet-trigger match below note sources and above words", async () => {
-		// "Not" reaches all three tiers: the wikilink source offers the note
-		// "Note A", the fixture pack offers the trigger "Notebook", and the
-		// buffer offers the word "Notebook".
-		const doc = "Notebook notes\n\nSee [[Not";
+		// One typed prefix, three tiers, three different labels: the wikilink
+		// source offers the note "Research", the pack offers the trigger
+		// "reactive", and the buffer offers the word "render". Distinct labels
+		// per tier are what lets the order be read straight off the popover.
+		const doc = "render helpers\n\nSee [[Re";
 		const state = await markdownState(doc, {
-			snippets: [snippet("notebook", "Notebook", { body: "snippet body" })],
+			snippets: [snippet("reactive", "reactive", { body: "reactive body" })],
 		});
-		const options = offeredOptions(state, doc.length, true);
 
-		const note = options.find((o) => o.label === "Note A")!;
-		const triggers = options.filter((o) => o.label === "Notebook");
-		const words = options.filter((o) => o.label === "Notebook" && o.type === "text");
-		const snippetOption = triggers.find((o) => o.type === "keyword")!;
-		expect(note).toBeDefined();
-		expect(words.length).toBe(1);
-
-		// The note sources carry no boost at all. `toBeUndefined` rather than a
-		// defaulting `?? 0`: the point is that nothing boosts them, so this fails
-		// if a boost is ever added to the note tier.
-		expect(note.boost).toBeUndefined();
-		expect(snippetOption.boost).toBe(COMPLETION_RANK_TIERS.snippets);
-		expect(words[0].boost).toBe(COMPLETION_RANK_TIERS.words);
-		expect(COMPLETION_RANK_TIERS.noteSources).toBeGreaterThan(
-			COMPLETION_RANK_TIERS.snippets,
-		);
-		expect(COMPLETION_RANK_TIERS.snippets).toBeGreaterThan(COMPLETION_RANK_TIERS.words);
-
-		// Both boosts stay below CodeMirror's fuzzy-score floor, so the tiers
-		// hold for any note label rather than only for this fixture.
-		const fuzzyFloor = -3000;
-		expect(COMPLETION_RANK_TIERS.snippets).toBeLessThan(fuzzyFloor);
-		expect(COMPLETION_RANK_TIERS.words).toBeLessThan(fuzzyFloor);
-
-		// And the order those boosts are supposed to produce, as the popover
-		// actually renders it: note first, then the exact snippet trigger, then
-		// the words.
-		expect(await rankedPopover(state)).toEqual([
-			"Note A:note",
-			"Notebook:snippet",
-			"Notebook:word",
-			"notes:word",
-		]);
+		expect(await rankedPopover(state)).toEqual(["Research", "reactive", "render"]);
 	});
 
 	it("registers the snippet source ahead of the word source in the chain", async () => {
@@ -821,12 +860,20 @@ describe("completion composition — snippet source", () => {
 			snippets: [snippet("notebook", "Notebook")],
 		});
 
-		const notes = (state: EditorState) =>
-			offeredOptions(state, doc.length, true)
-				.filter((o) => o.type !== "text" && o.type !== "keyword")
-				.map((o) => o.label);
-		expect(notes(withSnippets)).toEqual(notes(withoutSnippets));
-		expect(notes(withSnippets)).toEqual(["Note A"]);
+		// The pack adds its trigger and nothing else: the note offer and the
+		// buffer words are the same offers the chain made before it, in the same
+		// place.
+		expect(offeredLabels(withoutSnippets, doc.length, true)).toEqual([
+			"Note A",
+			"Notebook",
+			"notes",
+		]);
+		expect(offeredLabels(withSnippets, doc.length, true)).toEqual([
+			"Note A",
+			"Notebook",
+			"Notebook",
+			"notes",
+		]);
 	});
 
 	it("adds no snippet offer on a typing trigger while the popup toggle is off, and still answers the explicit one", async () => {

@@ -126,8 +126,7 @@ import {
 import {
 	createAddSnippetsTransform,
 	rebuildSnippets as rebuildSnippetRegistry,
-	getSnippetsForLanguage as filterSnippetsForLanguage,
-	type SnippetContribution,
+	type SnippetRecord,
 	type SnippetTransform,
 	type SnippetTransformEntry,
 	type RegisteredSnippet
@@ -171,7 +170,7 @@ const saveHookStorage: AsyncLocalStorageLike<ActiveHookContext> | undefined =
 	AsyncLocalStorageClass ? new AsyncLocalStorageClass<ActiveHookContext>() : undefined;
 
 const PLUGIN_HOST_INTERFACE_KEYS = new SvelteSet(
-	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision registerSnippet registerSnippets registerSnippetTransform removePluginSnippets rebuildSnippets refreshSnippets getSnippets getSnippetsForLanguage snippetRevision registerLspDescriptor registerLspDescriptors registerLspDescriptorTransform removePluginLspDescriptors rebuildLspDescriptors refreshLspDescriptors getLspDescriptors getLspDescriptorsForLanguage lspRevision applyDocumentEdit '.split(/\s+/)
+	' hostVersion platform register registerAll unregister hasPlugin getManifest getManifests getPluginState isPluginActive getDeactivationReason getActiveDependents computeActivationOrder activate activateAll deactivate dispose registerCommandTransform registerCommands removePluginCommands rebuildCommands refreshCommands getCommand getCommands getCommandsByCategory executeCommand registerKeymapTransform registerKeymapBindings removePluginKeymaps registerFileIconTransform registerProductIconTransform removePluginIcons on off emit removePluginEvents registerBeforeSaveHook registerAfterSaveHook removePluginHooks runBeforeSave runAfterSave isExecutingSaveHook getActiveSaveHook checkSaveReentry runSaveExclusive registerWorkspaceOpenedHook removePluginWorkspaceHooks runWorkspaceOpened provideService getService settings registerSettingSchema registerSettingTransform removePluginSettings rebuildSettings refreshSettings getSettingSchema getSettingSchemas ui registerSidebarPanel registerSidebarPanels removePluginSidebarPanels getSidebarPanel getSidebarPanels registerStatusBarItem registerStatusBarItems removePluginStatusBarItems getStatusBarItem getStatusBarItems registerTabContent registerTabContents removePluginTabContents getTabContent getTabContents mountContribution unmountContribution rebuildUIContributions registerEditorContribution registerEditorContributionTransform registerEditorContributions removePluginEditorContributions rebuildEditorContributions getEditorContributions editorRevision editorContributionsRevision registerLanguage registerLanguages registerLanguageTransform removePluginLanguages rebuildLanguages refreshLanguages getLanguages getLanguage getLanguageForFile getLanguageConflicts languageRevision registerSnippet registerSnippets registerSnippetTransform removePluginSnippets rebuildSnippets refreshSnippets getSnippets snippetRevision registerLspDescriptor registerLspDescriptors registerLspDescriptorTransform removePluginLspDescriptors rebuildLspDescriptors refreshLspDescriptors getLspDescriptors getLspDescriptorsForLanguage lspRevision applyDocumentEdit '.split(/\s+/)
 );
 
 /**
@@ -2223,12 +2222,12 @@ export class PluginHost implements PluginHostInterface {
 		this.snippetRevision++;
 	}
 
-	registerSnippet(pluginId: string, contribution: SnippetContribution): void {
-		this.registerSnippets(pluginId, [contribution]);
+	registerSnippet(pluginId: string, record: SnippetRecord): void {
+		this.registerSnippets(pluginId, [record]);
 	}
 
-	registerSnippets(pluginId: string, contributions: readonly SnippetContribution[]): void {
-		this.registerSnippetTransform(pluginId, createAddSnippetsTransform(contributions));
+	registerSnippets(pluginId: string, records: readonly SnippetRecord[]): void {
+		this.registerSnippetTransform(pluginId, createAddSnippetsTransform(records));
 	}
 
 	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void {
@@ -2256,10 +2255,6 @@ export class PluginHost implements PluginHostInterface {
 
 	getSnippets(): RegisteredSnippet[] {
 		return [...this.registeredSnippets];
-	}
-
-	getSnippetsForLanguage(language: string): RegisteredSnippet[] {
-		return filterSnippetsForLanguage(this.registeredSnippets, language);
 	}
 
 	// -------------------------------------------------------------------------
