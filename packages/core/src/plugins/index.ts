@@ -49,6 +49,8 @@ export {
 	LSP_STOP_ALL_SERVERS_COMMAND,
 	LSP_VIEW_LOGS_COMMAND
 } from './lsp/commands';
+export { LSP_UI_COMPONENTS_KEY, getLspUIComponents } from './lsp/ui';
+export type { LspUIComponents } from './lsp/ui';
 export type { ServerCompletionItemKind, ServerCompletionList } from './lsp/completions';
 export type {
 	LspServerState,
