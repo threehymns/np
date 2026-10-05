@@ -1,4 +1,4 @@
-import type { SnippetContribution } from '../completions';
+import type { SnippetRecord } from '../completions';
 
 /**
  * Svelte snippet pack.
@@ -13,7 +13,7 @@ import type { SnippetContribution } from '../completions';
  * no snippet variables: expanding tab stops is out of scope, so every body is
  * what lands in the document on accept.
  */
-export const SVELTE_SNIPPETS: readonly SnippetContribution[] = [
+export const SVELTE_SNIPPETS: readonly SnippetRecord[] = [
 	{
 		id: 'svelte-reactive',
 		language: 'svelte',

@@ -5,16 +5,16 @@ import { svelteLanguageRegistration } from './svelte-language/registration';
 import { SVELTE_SNIPPETS } from './svelte-language/snippets';
 import { DuplicateSnippetIdError, PluginActivationError } from './errors';
 import type { PluginHostInterface } from './types';
-import type { SnippetContribution } from './completions';
+import type { SnippetRecord } from './completions';
 
-function svelteSnippets(): SnippetContribution[] {
+function svelteSnippets(): SnippetRecord[] {
 	return [
 		{ id: 'each', language: 'svelte', trigger: 'each', body: '{#each}', description: 'Each block' }
 	];
 }
 
-function tsSnippets(): SnippetContribution[] {
-	// Plain body, per `SnippetContribution.body`: no `$1`, no tab stops.
+function tsSnippets(): SnippetRecord[] {
+	// Plain body, per `SnippetRecord.body`: no `$1`, no tab stops.
 	return [
 		{ id: 'log', language: 'typescript', trigger: 'log', body: 'console.log(value);', description: 'Log' }
 	];
@@ -25,7 +25,7 @@ function shape(host: PluginHost): string[] {
 	return host.getSnippets().map((s) => `${s.id}|${s.language}|${s.trigger}`);
 }
 
-describe('Snippet contribution interface (#262)', () => {
+describe('Snippet Pack registry interface (#262)', () => {
 	it('ships no snippets until a plugin registers a pack', () => {
 		const host = new PluginHost();
 		expect(host.getSnippets()).toEqual([]);
@@ -223,7 +223,7 @@ it('reaches plugin code through the host proxy, not just through the host', asyn
 
 describe('Snippet registry replay', () => {
 	it('carries the body through the registry verbatim, expanding nothing', () => {
-		// `SnippetContribution.body` is plain text: no placeholders, no snippet
+		// `SnippetRecord.body` is plain text: no placeholders, no snippet
 		// variables. Nothing expands it today, and this is the assertion that
 		// keeps that true — a `$1` reaching the document would be a placeholder
 		// the contract never promised to handle.

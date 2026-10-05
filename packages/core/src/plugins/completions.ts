@@ -1,7 +1,7 @@
 import { DuplicateSnippetIdError } from './errors';
 
 /**
- * Snippet contribution type (spec #194 sibling of `languages.ts`).
+ * One record in a plugin's Snippet Pack (spec #194 sibling of `languages.ts`).
  *
  * A plugin declares a set of typed triggers paired with the plain text that
  * replaces them. Joining happens on the language identity the language
@@ -19,7 +19,7 @@ import { DuplicateSnippetIdError } from './errors';
  * expanding `$1` or tab stops is out of scope, so `body` is inserted
  * verbatim on accept.
  */
-export interface SnippetContribution {
+export interface SnippetRecord {
 	/** Stable identity, unique across every registered plugin. */
 	readonly id: string;
 	/** Joins on language identity, e.g. 'svelte'. Case-insensitive. */
@@ -62,20 +62,20 @@ export interface SnippetTransformEntry {
  * contributed snippets during replay.
  */
 export function createAddSnippetsTransform(
-	contributions: readonly SnippetContribution[]
+	records: readonly SnippetRecord[]
 ): SnippetTransform {
-	const snapshot = contributions.map((c) => ({ ...c }));
+	const snapshot = records.map((c) => ({ ...c }));
 	return (previous) => {
 		const next = new Map(previous);
-		for (const contribution of snapshot) {
+		for (const record of snapshot) {
 			// Owner is bound by the entry wrapper during rebuild, so the
 			// transform stays pure and replayable from an empty initial value.
-			next.set(contribution.id, {
-				id: contribution.id,
-				language: contribution.language,
-				trigger: contribution.trigger,
-				body: contribution.body,
-				description: contribution.description,
+			next.set(record.id, {
+				id: record.id,
+				language: record.language,
+				trigger: record.trigger,
+				body: record.body,
+				description: record.description,
 				owner: ''
 			});
 		}

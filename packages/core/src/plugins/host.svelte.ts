@@ -127,7 +127,7 @@ import {
 	createAddSnippetsTransform,
 	rebuildSnippets as rebuildSnippetRegistry,
 	getSnippetsForLanguage as filterSnippetsForLanguage,
-	type SnippetContribution,
+	type SnippetRecord,
 	type SnippetTransform,
 	type SnippetTransformEntry,
 	type RegisteredSnippet
@@ -2202,12 +2202,12 @@ export class PluginHost implements PluginHostInterface {
 		this.snippetRevision++;
 	}
 
-	registerSnippet(pluginId: string, contribution: SnippetContribution): void {
-		this.registerSnippets(pluginId, [contribution]);
+	registerSnippet(pluginId: string, record: SnippetRecord): void {
+		this.registerSnippets(pluginId, [record]);
 	}
 
-	registerSnippets(pluginId: string, contributions: readonly SnippetContribution[]): void {
-		this.registerSnippetTransform(pluginId, createAddSnippetsTransform(contributions));
+	registerSnippets(pluginId: string, records: readonly SnippetRecord[]): void {
+		this.registerSnippetTransform(pluginId, createAddSnippetsTransform(records));
 	}
 
 	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void {
