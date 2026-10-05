@@ -73,18 +73,6 @@ function hostCompletionChain(options: CompletionChainOptions): Extension[] {
 	].map((source) => language.data.of({ autocomplete: source }));
 }
 
-/**
- * The three rank tiers every source in the chain sits on, in popover order.
- * Exported so the composition suite asserts the tiers against these values
- * rather than restating the numbers.
- */
-export const COMPLETION_RANK_TIERS = {
-	/** The note sources carry no boost at all; they rank first at 0. */
-	noteSources: 0,
-	snippets: SNIPPETS_RANK_BELOW_NOTE_SOURCES,
-	words: WORDS_RANK_BELOW_EVERY_SOURCE,
-} as const;
-
 export interface CompletionCompartmentOptions extends CompletionChainOptions {
 	/**
 	 * The global popup toggle. `false` stops every *automatic* offer — including
