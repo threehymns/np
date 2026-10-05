@@ -7,8 +7,19 @@ import path from 'node:path';
  * A descriptor names an executable, `vtsls`, and nothing here downloads or
  * manages a binary: the host resolves a name the user already has on the
  * machine, and the bundled package is a *fallback-first* resolution of that same
- * name rather than a second way of configuring a server. Two candidates, in
- * this order:
+ * name rather than a second way of configuring a server.
+ *
+ * Spec #263 rejects reaching into other editors' install directories, and that
+ * is a property of the *only* direction this searches: upward from the app's own
+ * path, never sideways into a conventional install location. Nothing here lists
+ * `/Applications/Code.app` or guesses a per-editor layout, because a list is
+ * where a second editor's server would come from — and running another editor's
+ * copy, at another editor's version, against this app's documents is worse than
+ * not finding a server at all. The walk is asserted in
+ * `LspCommandResolver.test.ts` against a layout holding real sibling bundles, so
+ * a resolver that grew a second direction fails a test rather than shipping.
+ *
+ * Two candidates, in this order:
  *
  * 1. The dependency the descriptor declares as `bundled`, resolved against the
  *    packaged `node_modules` — which is what makes the proof of concept work on

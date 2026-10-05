@@ -73,6 +73,47 @@ describe("bundledSearchRoots", () => {
 		expect(bundledSearchRoots("/").at(-1)).toBe("/");
 	});
 
+	it("never reaches into another editor's install to find its server", () => {
+		// Spec #263: "Reaching into other editors' install directories is rejected."
+		// True by construction — the walk only goes up from our own app path — but
+		// nothing asserted it, so a resolver that grew a second direction, or a
+		// fallback that guessed at conventional install paths, would pass every other
+		// suite here.
+		//
+		// Asserted against a layout on disk, and deliberately with **no** copy of our
+		// own: the editor's bundle is present and real, so the only way to reach it is
+		// to look outside our tree. That is what makes the negative discriminate —
+		// with our own copy in place it would pass for the wrong reason, because the
+		// walk would have stopped at ours without ever consulting the sibling.
+		const root = layout([
+			"Code.app/Contents/Resources/app/node_modules/@vtsls/language-server/bin/vtsls.js",
+			"Visual Studio Code.app/Contents/Resources/app/node_modules/@vtsls/language-server/bin/vtsls.js",
+			"Code.app.unpacked/node_modules/@vtsls/language-server/bin/vtsls.js",
+			".vscode-server/bin/node_modules/@vtsls/language-server/bin/vtsls.js"
+		]);
+		const ours = join(root, "np/resources/app");
+
+		// PATH, and PATH only: no bundled candidate is reachable from our own path.
+		const plan = resolveLanguageServerCommand("vtsls", ours, VTSLS);
+		expect(plan.source).toBe("path");
+		expect(plan.script).toBeUndefined();
+
+		// And the walk itself, stated as the property: every root is our own app
+		// directory or an ancestor of it, so nothing sideways is ever a candidate.
+		// This is the assertion that fails first if the walk grows a direction.
+		for (const candidate of bundledSearchRoots(ours)) {
+			expect(ours.startsWith(candidate)).toBe(true);
+		}
+
+		// Positive twin, in a layout that has ours: the walk *does* find a bundled
+		// server when one is in our own tree, so the negatives above are a rule being
+		// honoured rather than a resolver that finds nothing.
+		const withOurs = layout(["np/resources/app/node_modules/@vtsls/language-server/bin/vtsls.js"]);
+		expect(
+			resolveLanguageServerCommand("vtsls", join(withOurs, "np/resources/app"), VTSLS).script
+		).toBe(join(withOurs, "np/resources/app/node_modules/@vtsls/language-server/bin/vtsls.js"));
+	});
+
 	it("examines a bounded number of directories on a path deep enough to need it", () => {
 		// The bound was a constant named for five levels while the loop pushed six,
 		// and nothing asserted which, so the count is pinned here: the app's own
