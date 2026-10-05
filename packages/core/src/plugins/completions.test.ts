@@ -132,6 +132,27 @@ it('reaches plugin code through the host proxy, not just through the host', asyn
 		).toThrow(DuplicateSnippetIdError);
 	});
 
+	it('leaves the registry usable after a direct duplicate claim is rejected', () => {
+		const host = new PluginHost();
+		host.registerSnippets('plug-a', svelteSnippets());
+
+		// A direct host call has no plugin activation to roll back, so the
+		// rejected transform must never reach `snippetTransforms` in the first
+		// place — otherwise it poisons every later rebuild.
+		expect(() =>
+			host.registerSnippets('plug-b', [
+				{ id: 'each', language: 'svelte', trigger: 'each', body: 'b', description: 'B' }
+			])
+		).toThrow(DuplicateSnippetIdError);
+
+		// An unrelated id, so this can only succeed if the failure above left
+		// no residue. It used to throw, naming plug-a and plug-b.
+		host.registerSnippets('plug-c', [
+			{ id: 'unrelated', language: 'svelte', trigger: 'u', body: 'c', description: 'C' }
+		]);
+		expect(host.getSnippets().map((s) => s.id).sort()).toEqual(['each', 'unrelated']);
+	});
+
 	it('binds the owner to the registering plugin, not to the contribution', () => {
 		const host = new PluginHost();
 		host.registerSnippets('plug-a', svelteSnippets());
