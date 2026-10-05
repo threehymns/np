@@ -197,11 +197,6 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		}));
 	}
 
-	/** The same rows, named for what the commands and tests are asking for. */
-	getServers(): LspServerStatus[] {
-		return this.getStatusRows();
-	}
-
 	subscribe(listener: () => void): () => void {
 		this.statusListeners.add(listener);
 		return () => {

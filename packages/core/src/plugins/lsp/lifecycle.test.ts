@@ -224,7 +224,7 @@ async function startRuntime(
  * — which the runtime handles, but which is not what these tests are about.
  */
 async function waitForRunning(runtime: LspRuntime, count: number): Promise<void> {
-	await waitFor(() => runtime.getServers().filter((s) => s.state === 'running').length === count, {
+	await waitFor(() => runtime.getStatusRows().filter((s) => s.state === 'running').length === count, {
 		label: `${count} running server(s)`
 	});
 }
@@ -341,7 +341,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			resolveProvider: false
 		});
 
-		expect(harness.runtime.getServers()).toEqual([
+		expect(harness.runtime.getStatusRows()).toEqual([
 			{
 				server: lspServerKey('typescript', root),
 				descriptorId: 'typescript',
@@ -400,7 +400,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(harness.platform.spawned).toHaveLength(0);
 		// Not one buffer either: a note that pays for no server leaves no trace.
 		expect(harness.logs.read()).toEqual([]);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 
 		harness.open(join(root, 'src/a.ts'), 'const a = 1;');
 		await waitForRunning(harness.runtime, 1);
@@ -452,7 +452,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(harness.platform.spawned.map((s) => s.cwd).sort()).toEqual(
 			[root, join(root, 'packages/app')].sort()
 		);
-		expect(harness.runtime.getServers().map((s) => s.server)).toEqual([
+		expect(harness.runtime.getStatusRows().map((s) => s.server)).toEqual([
 			lspServerKey('typescript', root),
 			lspServerKey('typescript', join(root, 'packages/app'))
 		]);
@@ -516,7 +516,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(await harness.runtime.stopServer(outer)).toBe(true);
 		await waitFor(() => !isProcessAlive(outerPid), { label: 'the stopped server to exit' });
 		expect(isProcessAlive(innerPid)).toBe(true);
-		expect(harness.runtime.getServers().find((s) => s.server === outer)?.state).toBe('stopped');
+		expect(harness.runtime.getStatusRows().find((s) => s.server === outer)?.state).toBe('stopped');
 
 		// A stop is final: editing a document under it does not resurrect the server.
 		harness.open(join(root, 'src/a.ts'), 'const a = 2;');
@@ -530,12 +530,12 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(await harness.runtime.restartServer(outer)).toBe(true);
 		await waitFor(() => harness.platform.spawned.length === 3, { label: 'the restart' });
 		expect(harness.platform.spawned[2].cwd).toBe(root);
-		expect(harness.runtime.getServers().find((s) => s.server === outer)?.state).toBe('running');
+		expect(harness.runtime.getStatusRows().find((s) => s.server === outer)?.state).toBe('running');
 		await waitFor(() => didOpens() > before, { label: 'the re-opened document' });
 		// And the untouched server was neither restarted nor stopped with it.
 		expect(harness.platform.pids[1]).toBe(innerPid);
 		expect(isProcessAlive(innerPid)).toBe(true);
-		expect(harness.runtime.getServers().find((s) => s.server === inner)?.state).toBe('running');
+		expect(harness.runtime.getStatusRows().find((s) => s.server === inner)?.state).toBe('running');
 	});
 
 	it('restarts every server at once, replacing each process', async () => {
@@ -648,7 +648,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		const path = join(root, 'src/a.ts');
 
 		await runtime.openDocument({ path, fileName: 'a.ts', content: 'const a = 1;' });
-		await waitFor(() => runtime.getServers()[0]?.state === 'running', { label: 'the server' });
+		await waitFor(() => runtime.getStatusRows()[0]?.state === 'running', { label: 'the server' });
 		// Every change is a full-content sync, so each keystroke adds trace lines.
 		// Enough of them overflow a 20-entry buffer.
 		for (let i = 0; i < 40; i++) {
@@ -696,7 +696,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			() => harness.logs.read().some((e) => e.level === 'error' && e.message.includes('Failed to start')),
 			{ label: 'the failed start to be logged' }
 		);
-		expect(harness.runtime.getServers()[0].state).toBe('failed');
+		expect(harness.runtime.getStatusRows()[0].state).toBe('failed');
 		// A failed start must not leave the failed process behind either.
 		for (const pid of harness.platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
@@ -719,7 +719,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		});
 		await settle();
 
-		expect(runtime.getServers()[0].state).toBe('failed');
+		expect(runtime.getStatusRows()[0].state).toBe('failed');
 		expect(logs.read().some((e) => e.message.includes('did not answer "initialize"'))).toBe(true);
 		for (const pid of platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
@@ -767,7 +767,7 @@ describe('Documents presented while their server is still starting (#264)', () =
 		});
 		// The stub has the request and has not answered it, which is what `starting`
 		// means from the client's side.
-		expect(harness.runtime.getServers().map((server) => server.state)).toEqual(['starting']);
+		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
 
 		gate.release();
 		// One is proof enough that the handshake landed *and* the flush has run: that
@@ -843,7 +843,7 @@ describe('Documents presented while their server is still starting (#264)', () =
 		// queued document's send would have been redeemed.
 		const [pid] = harness.platform.pids;
 		harness.platform.spawned[0].process.kill();
-		await waitFor(() => harness.runtime.getServers()[0]?.state === 'failed', {
+		await waitFor(() => harness.runtime.getStatusRows()[0]?.state === 'failed', {
 			label: 'the start to be recorded as failed'
 		});
 		gate.release();
@@ -932,7 +932,7 @@ describe('Documents presented while their server is still starting (#264)', () =
 		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
 			label: 'the handshake to reach the server'
 		});
-		expect(harness.runtime.getServers().map((server) => server.state)).toEqual(['starting']);
+		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
 
 		// The switch alone, with no edit: the tsx document was presented before the user
 		// turned servers off for its language, and the flush reads the gate again
@@ -984,7 +984,7 @@ describe('Documents presented while their server is still starting (#264)', () =
 		// waiting on was cancelled with the process, and the gate landing afterwards
 		// changes nothing, because there is no process left to send it to.
 		expect(openedUris(harness)).toEqual([]);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 		expect(harness.settingsListeners()).toBe(0);
 		for (const pid of pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
@@ -1026,7 +1026,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		// No process, which is the whole of it: a switch a user reads as "off"
 		// while a server is spawned for the file is the bug this replaces.
 		expect(harness.platform.spawned).toHaveLength(0);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 		expect(trace(harness.logs).join('\n')).not.toContain('didOpen');
 		expect(received(harness)).toEqual([]);
 	});
@@ -1066,7 +1066,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(() => harness.open(join(root, 'notes.md'), '# Notes\n')).not.toThrow();
 		await settle();
 		expect(harness.platform.spawned).toHaveLength(0);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 	});
 
 	it('serves a sibling language from the shared process, without syncing the turned-off one', async () => {
@@ -1118,7 +1118,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		// A server nothing is served from any more is not a server the user has, so
 		// it leaves the status list rather than sitting there with no document
 		// attached. The pid is the assertion; the row is the consequence.
-		await waitFor(() => harness.runtime.getServers().length === 0, {
+		await waitFor(() => harness.runtime.getStatusRows().length === 0, {
 			label: 'the emptied server to leave the status list'
 		});
 		await waitFor(() => !isProcessAlive(pid), { label: 'the stopped server to exit' });
@@ -1162,7 +1162,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		await settle();
 		expect(isProcessAlive(pid)).toBe(true);
 		expect(harness.platform.pids).toEqual([pid]);
-		expect(harness.runtime.getServers()[0].state).toBe('running');
+		expect(harness.runtime.getStatusRows()[0].state).toBe('running');
 		// And the ts document was not closed with it: the process still holds it.
 		expect(received(harness).some((line) => line.includes('didClose') && line.includes('app.ts'))).toBe(
 			false
@@ -1209,14 +1209,14 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 
 		expect(probes).toBe(walked);
 		expect(base.spawned).toHaveLength(spawned);
-		expect(runtime.getServers()[0].state).toBe('running');
+		expect(runtime.getStatusRows()[0].state).toBe('running');
 		expect(isProcessAlive(base.pids[0])).toBe(true);
 
 		// The same subscription, on a change that does flip a gate: a negative
 		// assertion about work not done cannot tell "cheap" from "never ran", so the
 		// next line is what makes the one above mean what it says.
 		setSetting('editor', 'languages', { TypeScript: { lsp: false } });
-		await waitFor(() => runtime.getServers().length === 0, {
+		await waitFor(() => runtime.getStatusRows().length === 0, {
 			label: 'the emptied server to leave the status list'
 		});
 		await waitFor(() => !isProcessAlive(base.pids[0]), { label: 'the stopped server to exit' });
@@ -1236,7 +1236,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 
 		await harness.host.deactivate(lspRegistration.manifest.id);
 		await waitFor(() => !isProcessAlive(pid), { label: 'the disabled plugin to leave no orphan' });
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 		// The subscription went with it. A disposed runtime ignores what it hears, so
 		// the leak has no other symptom — which is exactly why it has to be pinned
 		// here rather than left to the guard that hides it.
@@ -1245,7 +1245,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(() => harness.setSetting('editor', 'languages', { TypeScript: { lsp: false } })).not.toThrow();
 		await settle();
 		expect(harness.platform.spawned).toHaveLength(1);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 	});
 
 	it('drops a report about a document whose language is turned off', async () => {
@@ -1340,7 +1340,7 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		for (const pid of platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
-		expect(runtime.getServers()).toEqual([]);
+		expect(runtime.getStatusRows()).toEqual([]);
 
 		// A later edit still declines, rather than finding a stopped entry and
 		// starting it again.
@@ -1385,9 +1385,9 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 			fileName: 'a.ts',
 			content: 'export const a = 1;\n'
 		});
-		await waitFor(() => runtime.getServers().some((s) => s.state === 'running'), {
+		await waitFor(() => runtime.getStatusRows().some((s) => s.state === 'running'), {
 			label: 'the server to start with no reader published'
 		});
-		expect(runtime.getServers()[0].state).toBe('running');
+		expect(runtime.getStatusRows()[0].state).toBe('running');
 	});
 });

@@ -100,7 +100,7 @@ async function startPlugin(
 		decorations: host
 			.getEditorContributions('decoration')
 			.filter((entry) => entry.pluginId === 'lsp').length,
-		servers: runtime?.getServers().length ?? 0
+		servers: runtime?.getStatusRows().length ?? 0
 	});
 
 	const workspace = {
@@ -148,7 +148,7 @@ async function startPlugin(
 }
 
 async function waitForRunning(runtime: LspRuntime, count: number): Promise<void> {
-	await waitFor(() => runtime.getServers().filter((server) => server.state === 'running').length === count, {
+	await waitFor(() => runtime.getStatusRows().filter((server) => server.state === 'running').length === count, {
 		label: `${count} running server(s)`
 	});
 }
@@ -264,7 +264,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		// An explicit restart is what re-opens it, with its document re-synced.
 		expect(await harness.host.executeCommand(LSP_RESTART_SERVER_COMMAND, outerKey)).toBe(true);
 		await waitFor(() => harness.platform.spawned.length === 3, { label: 'the restart' });
-		expect(harness.runtime.getServers().find((server) => server.server === outerKey)?.state).toBe(
+		expect(harness.runtime.getStatusRows().find((server) => server.server === outerKey)?.state).toBe(
 			'running'
 		);
 		// The untouched server was neither restarted nor stopped along with it.
@@ -296,7 +296,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		for (const pid of harness.platform.pids) {
 			await waitFor(() => !isProcessAlive(pid), { label: `pid ${pid} to exit` });
 		}
-		expect(harness.runtime.getServers().every((server) => server.state === 'stopped')).toBe(true);
+		expect(harness.runtime.getStatusRows().every((server) => server.state === 'stopped')).toBe(true);
 	});
 
 	it('treats stopping nothing as an ordinary outcome', async () => {
@@ -309,7 +309,7 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 			errors.restore();
 		}
 		expect(harness.platform.spawned).toHaveLength(0);
-		expect(harness.runtime.getServers()).toEqual([]);
+		expect(harness.runtime.getStatusRows()).toEqual([]);
 		expect(errors.read()).toBe('');
 	});
 
