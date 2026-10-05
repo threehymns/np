@@ -135,10 +135,16 @@ export class ServerCompletionCoordinator implements ServerOutcomeReader {
 	 * Records an answer that needs no round trip: nothing serves this document,
 	 * or the language's server completions are off. Without this the words
 	 * source would have to wait a microtask for every note in the workspace.
+	 *
+	 * The condition on {@link queryFor} is what carries most of that weight, and
+	 * the recording is what carries the rest. Recording *over* whatever is there is
+	 * the part that matters: a query still in flight at this same position is a
+	 * different request, and reading its answer as this query's would both make the
+	 * words source wait on a request this query never made and let a `serving`
+	 * answer to that one stand words down for this one — the fallback's own rule
+	 * applied to the wrong query.
 	 */
 	settleNow(position: number, outcome: CompletionAnswer): void {
-		const query = this.current;
-		if (!query || query.position !== position) return;
 		this.current = { position, settled: outcome, outcome: Promise.resolve(outcome) };
 	}
 

@@ -43,6 +43,7 @@ import {
 } from "./extensions/completion-settings";
 import {
 	DEFAULT_SERVER_COMPLETION_SETTINGS,
+	ServerCompletionCoordinator,
 	type ServerCompletionSettings,
 } from "./extensions/server-completions";
 import { resolveBufferWordPolicy } from "./extensions/buffer-words";
@@ -786,6 +787,52 @@ describe("server completion settings", () => {
 		},
 		30_000
 	);
+});
+
+describe("a declined query costs no round trip", () => {
+	it("answers a note's words in the same tick, having waited for nothing", async () => {
+		// The guarantee `settleNow` documents: a document nothing serves gets its
+		// words back without a microtask. Read through the words source's own return
+		// value, which is a promise exactly when it had to wait for something. The
+		// words source is last in the chain, which is why the order is load-bearing
+		// everywhere in this file.
+		//
+		// Green before the guard on `settleNow` came out as well, and that is the
+		// finding: the recorded answer was not what delivered this, `queryFor`
+		// returning nothing was. It stays as the guard on the guarantee rather than
+		// as a test for the change.
+		const markdown = await codeState("Notes about widgets\n\nwid", {
+			language: "Markdown",
+			filePath: "/project/note.md"
+		});
+		const chain = markdown.languageDataAt("autocomplete", 24) as any[];
+		const words = chain[chain.length - 1] as (
+			context: CompletionContext
+		) => { then?: unknown; options?: Completion[] } | null;
+
+		const result = words(new CompletionContext(markdown, 24, true));
+
+		expect(result?.options?.map((option) => option.label)).toEqual(["widgets"]);
+		expect(typeof result?.then).toBe("undefined");
+	});
+
+	it("records the decline as this query's answer, whatever was in flight before", () => {
+		// The same-position case is the one the guard got right and kept, so it is
+		// the one asserted: a query still in flight at this position is a *different*
+		// request whose answer has nothing to do with this one. Reading it would make
+		// the words source wait on a request it never made, and would let a
+		// `serving` answer to that one stand words down for this one — the fallback's
+		// own rule applied to the wrong query.
+		const coordinator = new ServerCompletionCoordinator();
+		coordinator.begin(24, new Promise(() => {}));
+
+		coordinator.settleNow(24, { state: "inactive", reason: "no server claims this document" });
+
+		expect(coordinator.queryFor(24)?.settled).toEqual({
+			state: "inactive",
+			reason: "no server claims this document"
+		});
+	});
 });
 
 describe("the server insert mode", () => {
