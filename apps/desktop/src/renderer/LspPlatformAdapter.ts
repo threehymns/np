@@ -137,6 +137,15 @@ class IpcLspProcess implements LspProcess {
 
 	/** Called once the spawn round trip names the process. */
 	attach(processId: string, pid: number | null): void {
+		// A kill that landed before the spawn reply already resolved `ready`
+		// and `exit` and never learned the id to kill. The process that just
+		// arrived belongs to a disposed adapter, so kill it by id, drop any
+		// buffered writes, and never register it.
+		if (this.disposed) {
+			this.awaitingId.length = 0;
+			void this.bridge.killLspServer(processId);
+			return;
+		}
 		this.processId = processId;
 		this.osPid = pid ?? undefined;
 		// Released before anything is replayed, so a client already waiting on the
