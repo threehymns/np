@@ -309,9 +309,14 @@ export function serverCompletions(
 		// this same pass and waits on exactly this.
 		coordinator.begin(context.pos, outcome);
 
+		// The popover range is the word alone, not the dotted path that gated
+		// the query: `foo.bar` completes `bar` and `foo.` completes after the
+		// dot, so the receiver and the dot survive the accept.
+		const word = context.matchBefore(/[A-Za-z0-9_$]*/);
+		const resultFrom = word ? word.from : context.pos;
 		return outcome.then((answer) =>
 			answer.state === "serving" && answer.items.length > 0
-				? serverResult(answer, typed.from, context.pos, settings)
+				? serverResult(answer, resultFrom, context.pos, settings)
 				: null
 		);
 	};
