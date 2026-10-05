@@ -53,7 +53,8 @@ function scopedSettingReader(
 let getLanguageExtensions: (desc: LanguageDescription | null) => Promise<Extension[]>;
 let resolveActiveLanguage: (desc: LanguageDescription | null) => Promise<any>;
 
-let installedDom = false;
+let savedWindow: unknown;
+let savedDocument: unknown;
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -63,24 +64,37 @@ beforeAll(async () => {
 	// codemirror-markdown-tables probes `window.matchMedia` from a state-field
 	// initializer, and bun test has no DOM. Both probes feed view-only editor
 	// attributes, so the real Markdown extension array builds fine with a stub.
+	// The stub carries every listener method CodeMirror may call
+	// (`addEventListener` on newer paths, `addListener` on older ones), so the
+	// suite passes whether or not another suite already installed a document.
+	savedWindow = (globalThis as Record<string, unknown>).window;
+	savedDocument = (globalThis as Record<string, unknown>).document;
 	(globalThis as Record<string, unknown>).window = {
-		matchMedia: () => ({ matches: false }),
+		...(globalThis as Record<string, unknown>).window,
+		matchMedia: () => ({
+			matches: false,
+			addListener: () => {},
+			removeListener: () => {},
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		}),
 	};
 	// The ranked-order assertion needs a mounted view (see `popoverOrder`), which
 	// needs a DOM. This is the same minimal stub `html.test.ts` installs, kept
-	// here because nothing else in this suite touches the DOM.
-	if (typeof (globalThis as Record<string, unknown>).document === "undefined") {
-		installMinimalDom();
-		installedDom = true;
-	}
+	// here because nothing else in this suite touches the DOM. Installed
+	// unconditionally so a document left behind by another suite never leaves
+	// this suite with the bare stub above.
+	installMinimalDom();
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	resolveActiveLanguage = mod.resolveActiveLanguage;
 });
 
 afterAll(() => {
-	delete (globalThis as Record<string, unknown>).window;
-	if (installedDom) delete (globalThis as Record<string, unknown>).document;
+	if (savedWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+	else (globalThis as Record<string, unknown>).window = savedWindow;
+	if (savedDocument === undefined) delete (globalThis as Record<string, unknown>).document;
+	else (globalThis as Record<string, unknown>).document = savedDocument;
 });
 
 /**
@@ -166,6 +180,8 @@ function installMinimalDom(): void {
 			matches: false,
 			addListener: () => {},
 			removeListener: () => {},
+			addEventListener: () => {},
+			removeEventListener: () => {},
 		}),
 	};
 	// The view resolves its window through `document.defaultView`, which has to
