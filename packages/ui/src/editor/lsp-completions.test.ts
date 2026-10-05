@@ -574,6 +574,33 @@ describe("server completions in the composed chain", () => {
 	);
 
 	it(
+		"falls back to words when a running server never answers at all",
+		async () => {
+			// The wedged server, and the last of the three degradation paths in story
+			// #263: nothing failed and nothing was late, the request simply never comes
+			// back. `initialize` still lands inside its own handshake bound, so the
+			// server is running and a request is on the wire — the only thing that can
+			// put words in the popover here is the words source giving up on it.
+			const server = await startStubServer(["--mode", "stall-completion"]);
+			const state = await projectState(DOC, { fetch: server.fetch });
+
+			// At the documented default of `0`, so this is the out-of-the-box shape a
+			// fresh install has, with no bound configured anywhere.
+			// One pass, because one pass is the whole claim: the words are in the same
+			// popover the server was asked for, at the same position.
+			const labels = await offeredLabels(state, DOC.length, true);
+
+			expect(labels).toContain("widgetId");
+			expect(labels).not.toContain("Widget");
+			// And the words are a fallback to a *silent* server rather than to no
+			// server: the process is running and the request really went out.
+			expect(server.platform.spawned).toHaveLength(1);
+			expect(server.requests).toHaveLength(1);
+		},
+		30_000
+	);
+
+	it(
 		"falls back to words when the server fails the request",
 		async () => {
 			const server = await startStubServer(["--mode", "fail-completion"]);

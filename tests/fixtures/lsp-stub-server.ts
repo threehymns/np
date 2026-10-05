@@ -20,6 +20,11 @@ import { basename, dirname } from 'node:path';
  *   --mode fail-completion  answer the handshake, then refuse every
  *                   `textDocument/completion`, so a request-level failure is
  *                   reachable on a server that *is* running
+ *   --mode stall-completion  answer the handshake, then never answer
+ *                   `textDocument/completion` at all, so the *wedged* server is
+ *                   reachable: no error, no exit, no late answer — the request
+ *                   simply never settles, which is the one failure no bound of
+ *                   its own can report
  *   --mode gated  answer everything as `answer` does, but withhold the
  *                   `initialize` reply until `--gate-file` exists, so a document
  *                   can be presented to a server that is provably still starting
@@ -50,7 +55,14 @@ import { basename, dirname } from 'node:path';
  * than the fetch timeout is the #265 timeout path.
  */
 
-const MODES = ['silent', 'fail', 'no-shutdown', 'fail-completion', 'gated'] as const;
+const MODES = [
+	'silent',
+	'fail',
+	'no-shutdown',
+	'fail-completion',
+	'stall-completion',
+	'gated'
+] as const;
 type StubMode = (typeof MODES)[number];
 
 interface StubOptions {
@@ -322,6 +334,12 @@ function handle(message: JsonRpcMessage): void {
 		return;
 	}
 	if (message.method === 'textDocument/completion') {
+		if (options.mode === 'stall-completion') {
+			// Not a delay: a delay long enough to still be pending is a race, and a
+			// shorter one is a late answer, which is a different failure. Nothing is
+			// sent at all, so the request is pending for as long as the client waits.
+			return;
+		}
 		if (options.mode === 'fail-completion') {
 			// A running server that refuses one method: the JSON-RPC error path,
 			// which is a different failure from a server that never started.

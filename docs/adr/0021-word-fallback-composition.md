@@ -57,11 +57,34 @@ given it. It is still `inactive` and never `unavailable` — nothing failed and
 nothing was tried, and a language the user turned servers off for is the ordinary
 path rather than a degradation.
 
-`lsp_fetch_timeout_ms` defaults to `0`, which means *no bound* — the popover waits
-for whichever server is answering. That travels to the client as `undefined`
-rather than as a zero timer: a zero timer would make the documented default an
-instant failure, which is the opposite of what it says. Zed's default is the
-reason this is easy to get backwards.
+`lsp_fetch_timeout_ms` defaults to `0`, which means *the user has chosen no
+bound*. That travels to the client as `undefined` rather than as a zero timer: a
+zero timer would make the documented default an instant failure, which is the
+opposite of what it says. Zed's default is the reason this is easy to get
+backwards.
+
+**No bound chosen is not no bound at all.** The runtime substitutes its own when
+the setting supplies none, and spec #263 asks for this: story 4 is words behind a
+server that errors *or times out*, and a request that cannot time out can never
+report one. Read literally, the two halves of the spec cancel — `0` means the
+popover waits for whichever server is answering, and a server that hangs without
+erroring is never late, only silent, so at the defaults the fallback this ADR is
+about never ran. The code resolved the tension toward silence, which is the one
+outcome `'fallback'` exists to remove, and a fix belongs to the runtime rather
+than the setting: changing the default to a non-zero number would have satisfied
+story 4 by contradicting the setting the same spec mandates.
+
+The substituted bound is the same reasoning as `initialize`'s: an unbounded wait
+on a server is a wait on a document the runtime may never be able to answer. It
+covers one round trip, not a server's whole life — the handshake and the process
+start are bounded separately — because a slow *start* is a different failure from
+a server that has stopped answering. A user who wants a different bound sets one,
+and a non-zero setting still wins over the substituted value.
+
+The setting's own description is therefore not wrong by accident: `0` does still
+mean "waits as long as the server takes", because the substituted bound is long
+enough that a server slow rather than broken answers inside it. What `0` no
+longer means is *forever*.
 
 `'enabled'` and `'disabled'` keep the meanings they had. `'disabled'` still silences
 the automatic trigger only, and still answers the explicit one; `'enabled'` is not
@@ -115,7 +138,11 @@ fill in.
 The fallback is asserted against the scripted stub over a real process: words
 answer when the stub fails the request, when it fails to start, and when its reply
 arrives later than the bound — with the bound's effect measured against the stub's
-own delay rather than observed as an eventual answer. Rank is asserted on the real
+own delay rather than observed as an eventual answer. The wedged server is a fourth
+mode of the same fixture, and it is the one that only this ADR's substituted bound
+reaches: it answers the handshake and then sends nothing at all, so `initialize`
+lands inside its own bound, the request is provably on the wire, and the words can
+only have come from the fallback standing down. Rank is asserted on the real
 popover through `currentCompletions` off a mounted view, as in ADR 0019. The
 insert modes are asserted on the resulting document, because the only difference
 between them is what a transaction replaces.

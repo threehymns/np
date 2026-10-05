@@ -132,6 +132,28 @@ interface PendingDocument {
 }
 
 /**
+ * How long a completion request is held when the caller asked for no bound.
+ *
+ * `lsp_fetch_timeout_ms` defaults to `0`, which means *the user has not chosen a
+ * bound* rather than *wait forever*: spec #263 asks for words behind a server
+ * that errors **or times out**, and a request with no bound can never time out,
+ * so out of the box a wedged server held the popover open forever and words
+ * never got their turn — silence, which is the one outcome the `fallback` mode
+ * exists to prevent (ADR 0021).
+ *
+ * So the runtime keeps its own bound rather than passing the setting's absence
+ * straight through. It is the same reasoning as `initialize`'s: an unbounded wait
+ * on a server is a wait on a document this runtime may never be able to answer.
+ * A user who wants a different bound sets one, and a non-zero setting still wins
+ * — this is only what happens when none was chosen.
+ *
+ * Sized against the round trip rather than the whole life of a server: the
+ * handshake and the process start are bounded separately, so this covers one
+ * request's silence, which is the failure `words` answers behind.
+ */
+const DEFAULT_FETCH_TIMEOUT_MS = 5000;
+
+/**
  * The running-server table, and the only reader of it.
  *
  * `implements LspServerStatusApi` because that interface is the whole of what a
@@ -294,10 +316,12 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	 *
 	 * The coordinates in `query` are the protocol's own — a zero-based line and a
 	 * UTF-16 offset within it — and `timeoutMs` is the `lsp_fetch_timeout_ms`
-	 * bound, where absent means *no bound*: the setting's own default of `0`
-	 * expressed rather than a separate sentinel. Both come from the generic query
-	 * the editor asks, which is what lets the shell issue one without naming a
-	 * language server.
+	 * bound, where absent means *no bound was chosen*: the setting's own default
+	 * of `0` expressed rather than a separate sentinel. Both come from the generic
+	 * query the editor asks, which is what lets the shell issue one without naming
+	 * a language server. An absent bound is answered with
+	 * {@link DEFAULT_FETCH_TIMEOUT_MS} rather than carried through, so `unavailable`
+	 * stays reachable for a server that hangs rather than only for one that errors.
 	 */
 	async fetch(query: CompletionQuery): Promise<CompletionAnswer> {
 		if (this.disposed) {
@@ -341,7 +365,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 					textDocument: { uri: toFileUri(path) },
 					position: { line, character }
 				},
-				timeoutMs
+				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
 			const list = parseServerCompletions(result);
 			return { state: 'serving', items: list.items, incomplete: list.incomplete };
