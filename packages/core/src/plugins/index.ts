@@ -30,7 +30,14 @@ export {
 // one by one instead: a key is a string convention, not an implementation, and it
 // is what a consumer needs in order to look up an opaque service (ADR 0008).
 export { LSP_LOG_STORE_SERVICE_KEY } from './lsp/logs';
-export type { LspLogStore, LspLogEntry, LspLogFilter, LspLogKind, LspLogLevel } from './lsp/logs';
+export type {
+	LspLogStore,
+	LspLogEntry,
+	LspLogFilter,
+	LspLogKind,
+	LspLogLevel,
+	LspLogsFocus
+} from './lsp/logs';
 // Command ids, as bare strings: the status menu has to name the commands it
 // dispatches, and importing the constants is what stops a rename in `commands`
 // from leaving the menu pointing at nothing — a literal in a component compiles

@@ -99,7 +99,11 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 		manifest.id,
 		createLspCommands({
 			runtime: () => host.getService<LspRuntime>(LSP_RUNTIME_SERVICE_KEY),
-			getWorkspace
+			getWorkspace,
+			// Closed over rather than resolved through the host: the store is the one
+			// this setup made, and the tab reads this same instance, so resolving it
+			// by key here would only be a second way to name it.
+			requestFocus: (server?: string) => logs.requestFocus(server)
 		})
 	);
 

@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
 	import * as Tooltip from '../../components/ui/tooltip/index';
-	import { lspLogFilter, lspLogsView, shortServer } from './logs-view';
+	import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer } from './logs-view';
 
 	/**
 	 * The Logs tab: the buffers the plugin already keeps (ADR 0019), filtered
@@ -28,6 +28,28 @@
 	let serverFilter = $state('');
 	let kindFilter = $state('');
 	let levelFilter = $state('');
+
+	// Which server the View Logs command last asked for, read through the same
+	// revision as the entries: a request arrives from a command rather than from a
+	// pipe, and the store notifies about it exactly as it notifies about a write.
+	const focus = $derived.by(() => {
+		revision;
+		return logs?.focused;
+	});
+
+	// A request narrows the tab even when it is already open, which is the ordinary
+	// case — the command comes from the status menu beside it. The picker cannot be
+	// derived: the reader writes it too, and a derived cannot remember which
+	// request it has already answered, so the one thing that has to cross is the
+	// request number. That is what `applyLogsFocus` keys on, which is why this
+	// effect fires on every line of protocol trace and changes nothing.
+	let adoptedFocus = -1;
+	$effect(() => {
+		const decision = applyLogsFocus(serverFilter, focus, adoptedFocus);
+		if (decision.adopted === adoptedFocus && decision.filter === serverFilter) return;
+		adoptedFocus = decision.adopted;
+		serverFilter = decision.filter;
+	});
 
 	const KINDS: readonly LspLogKind[] = ['server', 'protocol'];
 	const LEVELS: readonly LspLogLevel[] = ['error', 'warn', 'info', 'trace'];

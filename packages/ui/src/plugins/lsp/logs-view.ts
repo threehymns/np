@@ -1,4 +1,11 @@
-import type { LspLogEntry, LspLogFilter, LspLogKind, LspLogLevel, LspLogStore } from '@np/core';
+import type {
+	LspLogEntry,
+	LspLogFilter,
+	LspLogKind,
+	LspLogLevel,
+	LspLogStore,
+	LspLogsFocus
+} from '@np/core';
 
 /**
  * What the Logs tab decides, as data (spec #263, ticket #266, ADR 0019).
@@ -14,7 +21,10 @@ import type { LspLogEntry, LspLogFilter, LspLogKind, LspLogLevel, LspLogStore } 
  */
 
 /** The slice of the store the tab reads, so the view is drivable without a plugin. */
-export type LspLogsReader = Pick<LspLogStore, 'read' | 'servers' | 'droppedCount'>;
+export type LspLogsReader = Pick<
+	LspLogStore,
+	'read' | 'servers' | 'droppedCount' | 'focused'
+>;
 
 export interface LspLogServerOption {
 	/** The full `<descriptor id>@<root>` key, which is what the filter compares. */
@@ -59,6 +69,32 @@ export function shortServer(server: string): string {
 	// this picker has to keep apart.
 	const at = server.indexOf('@');
 	return at === -1 ? server : server.slice(at + 1);
+}
+
+/** What the tab does with a narrowing request: the picker value, and the request it has acted on. */
+export interface LspLogsFocusDecision {
+	readonly filter: string;
+	readonly adopted: number;
+}
+
+/**
+ * The server picker after a narrowing request.
+ *
+ * Only a request newer than the one the tab last acted on moves the picker, for
+ * two reasons that point the same way. A protocol trace writes a line per
+ * keystroke, so acting on the store's focus whenever it is read would undo the
+ * reader's own selection the moment they made it; and a request is counted
+ * rather than compared, so asking twice for the server the tab is already
+ * narrowed to still lands. A request naming no server is the palette's way of
+ * asking for every server, so it clears the picker rather than leaving it.
+ */
+export function applyLogsFocus(
+	current: string,
+	focus: LspLogsFocus | undefined,
+	adopted: number
+): LspLogsFocusDecision {
+	if (!focus || focus.request <= adopted) return { filter: current, adopted };
+	return { filter: focus.server ?? '', adopted: focus.request };
 }
 
 /**

@@ -8,7 +8,7 @@ import {
 	type LspLogLevel,
 	type LspLogStore
 } from '@np/core';
-import { lspLogFilter, lspLogsView, shortServer, type LspLogsView } from './logs-view';
+import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer, type LspLogsView } from './logs-view';
 
 /**
  * The Logs tab's decisions, over the plugin's real buffers (spec #263, ticket
@@ -232,11 +232,52 @@ describe('LSP log server keys', () => {
 		expect(shortServer('typescript@/repo/packages/app')).toBe('/repo/packages/app');
 	});
 
-	it('splits on the last separator, since a path may carry one itself', () => {
+	it('splits on the first separator, since a path may carry one itself', () => {
 		expect(shortServer('typescript@/repo/@generated')).toBe('/repo/@generated');
 	});
 
 	it('leaves a key with no root whole rather than dropping it', () => {
 		expect(shortServer('typescript')).toBe('typescript');
+	});
+});
+
+describe('Narrowing the tab to the server a command named', () => {
+	/** Nothing has been acted on yet, which is what a freshly mounted tab holds. */
+	const UNREAD = -1;
+
+	it('opens on the server the newest request named', () => {
+		expect(applyLogsFocus('', { server: ROOT, request: 1 }, UNREAD)).toEqual({
+			filter: ROOT,
+			adopted: 1
+		});
+	});
+
+	it('reads a request naming no server as every server', () => {
+		// What the palette's argument-free entry means, and what a reader who put
+		// the picker back to "All servers" gets back.
+		expect(applyLogsFocus(APP, { server: null, request: 3 }, 2)).toEqual({
+			filter: '',
+			adopted: 3
+		});
+	});
+
+	it('leaves the picker alone when the request has already been acted on', () => {
+		// The ordinary case: a protocol trace writes a line per keystroke, and a tab
+		// that re-read the focus on every notification would undo the reader's own
+		// choice the moment they made it.
+		expect(applyLogsFocus(APP, { server: ROOT, request: 1 }, 1)).toEqual({
+			filter: APP,
+			adopted: 1
+		});
+	});
+
+	it('narrows again when the same server is asked for twice', () => {
+		const first = applyLogsFocus('', { server: ROOT, request: 1 }, UNREAD);
+		const second = applyLogsFocus(APP, { server: ROOT, request: 2 }, first.adopted);
+		expect(second).toEqual({ filter: ROOT, adopted: 2 });
+	});
+
+	it('leaves the picker alone when there is no store to have asked', () => {
+		expect(applyLogsFocus(APP, undefined, UNREAD)).toEqual({ filter: APP, adopted: UNREAD });
 	});
 });

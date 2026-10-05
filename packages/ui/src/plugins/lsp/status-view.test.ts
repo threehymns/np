@@ -51,12 +51,25 @@ describe('LSP status item summary', () => {
 	});
 
 	it('counts a menu where no server is running as amber', () => {
-		const view = lspStatusItemView([row('stopped'), row('failed')]);
+		const view = lspStatusItemView([row('stopped'), row('starting')]);
 		expect(view.running).toBe(0);
 		expect(view.total).toBe(2);
 		expect(view.indicator).toBe('bg-amber-500');
 		expect(view.count).toBe('0/2');
 		expect(view.empty).toBe(false);
+	});
+
+	it('turns red once a server has failed, and says how many did', () => {
+		// A failure the status bar cannot show is a failure only the menu knows
+		// about, so red wins over both amber and green: one server failed beside a
+		// running one is the case that must not read as healthy.
+		const view = lspStatusItemView([row('running'), row('failed')]);
+		expect(view.indicator).toBe('bg-destructive');
+		expect(view.title).toBe('Language servers: 1 of 2 running, 1 failed');
+
+		const two = lspStatusItemView([row('failed'), row('failed'), row('stopped')]);
+		expect(two.indicator).toBe('bg-destructive');
+		expect(two.title).toBe('Language servers: 0 of 3 running, 2 failed');
 	});
 
 	it('turns green as soon as one of several servers runs', () => {
@@ -122,15 +135,35 @@ describe('LSP status item rows', () => {
 		);
 	});
 
-	it('offers Stop for a stopped server only as something it cannot do', () => {
-		for (const state of ALL_STATES) {
-			expect(rowViewOf(state).actions.stop.disabled).toBe(state === 'stopped');
-		}
+	it('spells out the state of any server that is not running', () => {
+		// A row is a dot of colour and a name otherwise, which is enough for the
+		// state a reader expects and nothing for the ones they have to notice.
+		expect(rowViewOf('running').stateNote).toBeNull();
+		expect(rowViewOf('starting').stateNote).toBe('starting');
+		expect(rowViewOf('stopped').stateNote).toBe('stopped');
+		expect(rowViewOf('failed').stateNote).toBe('failed');
+	});
+
+	it('offers Stop only while a server may still have a process', () => {
+		// A failed start killed its own process before reporting the row, so the
+		// entry would be a button that visibly does nothing.
+		expect(rowViewOf('running').actions.stop.visible).toBe(true);
+		expect(rowViewOf('starting').actions.stop.visible).toBe(true);
+		expect(rowViewOf('stopped').actions.stop.visible).toBe(false);
+		expect(rowViewOf('failed').actions.stop.visible).toBe(false);
 	});
 
 	it('offers Restart for every state, since a restart is how a server comes back', () => {
 		for (const state of ALL_STATES) {
-			expect(rowViewOf(state).actions.restart.disabled).toBe(false);
+			expect(rowViewOf(state).actions.restart.visible).toBe(true);
+		}
+	});
+
+	it('offers Logs for every state, since a server writes before and after it runs', () => {
+		// A failed start is logged before the row appears, and a server that exited
+		// left the buffer it exited with, so there is no row whose logs are absent.
+		for (const state of ALL_STATES) {
+			expect(rowViewOf(state).actions.viewLogs.visible).toBe(true);
 		}
 	});
 });
@@ -140,16 +173,16 @@ describe('LSP status item actions', () => {
 		const view = lspStatusItemView([row('running')]);
 		expect([
 			view.rows[0].actions.restart.label,
+			view.rows[0].actions.viewLogs.label,
 			view.rows[0].actions.stop.label,
 			view.actions.restartAll.label,
-			view.actions.stopAll.label,
-			view.actions.viewLogs.label
+			view.actions.stopAll.label
 		]).toEqual([
 			'Restart this server',
+			'View Logs',
 			'Stop this server',
 			'Restart All Servers',
-			'Stop All Servers',
-			'View Logs'
+			'Stop All Servers'
 		]);
 	});
 
@@ -157,34 +190,44 @@ describe('LSP status item actions', () => {
 		const view = lspStatusItemView([row('running')]);
 		expect(view.actions.restartAll.destructive).toBe(false);
 		expect(view.actions.stopAll.destructive).toBe(true);
-		expect(view.actions.viewLogs.destructive).toBe(false);
 		expect(view.rows[0].actions.restart.destructive).toBe(false);
+		expect(view.rows[0].actions.viewLogs.destructive).toBe(false);
 		expect(view.rows[0].actions.stop.destructive).toBe(true);
 	});
 
-	it('disables the whole-item lifecycle actions when there is no server', () => {
-		const view = lspStatusItemView([]);
-		expect(view.actions.restartAll.disabled).toBe(true);
-		expect(view.actions.stopAll.disabled).toBe(true);
-		// Logs stay reachable: a server that has already exited is exactly when
-		// there is something to read.
-		expect(view.actions.viewLogs.disabled).toBe(false);
+	it('offers the whole-item entries only once there is a server to act on', () => {
+		// Absent rather than disabled before the first server starts: an entry with
+		// nothing to act on is a button that visibly does nothing.
+		const empty = lspStatusItemView([]);
+		expect(empty.actions.restartAll.visible).toBe(false);
+		expect(empty.actions.stopAll.visible).toBe(false);
+		expect(empty.bulkVisible).toBe(false);
+
+		// A server the runtime knows is always something a restart can bring back,
+		// even once it has stopped for good.
+		const stopped = lspStatusItemView([row('stopped')]);
+		expect(stopped.actions.restartAll.visible).toBe(true);
+		expect(stopped.actions.stopAll.visible).toBe(false);
+		expect(stopped.bulkVisible).toBe(true);
 	});
 
-	it('enables the whole-item lifecycle actions as soon as one server exists', () => {
-		const view = lspStatusItemView([row('stopped')]);
-		expect(view.actions.restartAll.disabled).toBe(false);
-		expect(view.actions.stopAll.disabled).toBe(false);
+	it('hides Stop All once no server has a process left', () => {
+		expect(lspStatusItemView([row('running')]).actions.stopAll.visible).toBe(true);
+		expect(lspStatusItemView([row('starting')]).actions.stopAll.visible).toBe(true);
+		expect(lspStatusItemView([row('running'), row('stopped')]).actions.stopAll.visible).toBe(true);
+		expect(lspStatusItemView([row('stopped')]).actions.stopAll.visible).toBe(false);
+		expect(lspStatusItemView([row('stopped'), row('failed')]).actions.stopAll.visible).toBe(false);
+		expect(lspStatusItemView([]).actions.stopAll.visible).toBe(false);
 	});
 
 	it('gives each per-server action the server key it takes as an argument', () => {
 		const view = lspStatusItemView([row('running', { server: 'svelte@/repo/app' })]);
 		expect(view.rows[0].actions.restart.server).toBe('svelte@/repo/app');
+		expect(view.rows[0].actions.viewLogs.server).toBe('svelte@/repo/app');
 		expect(view.rows[0].actions.stop.server).toBe('svelte@/repo/app');
 		// Whole-item actions take no argument, so the component dispatches none.
 		expect(view.actions.restartAll.server).toBeUndefined();
 		expect(view.actions.stopAll.server).toBeUndefined();
-		expect(view.actions.viewLogs.server).toBeUndefined();
 	});
 });
 
@@ -209,8 +252,11 @@ describe('LSP status menu against the registered commands', () => {
 		const menuIds = [
 			view.actions.restartAll.id,
 			view.actions.stopAll.id,
-			view.actions.viewLogs.id,
-			...view.rows.flatMap((entry) => [entry.actions.restart.id, entry.actions.stop.id])
+			...view.rows.flatMap((entry) => [
+				entry.actions.restart.id,
+				entry.actions.viewLogs.id,
+				entry.actions.stop.id
+			])
 		].sort();
 		const registeredIds = host
 			.getCommands()

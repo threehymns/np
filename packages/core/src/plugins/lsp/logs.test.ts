@@ -120,6 +120,49 @@ describe('Per-server log buffers (#264)', () => {
 });
 
 /**
+ * The request that opens the Logs tab on one server (spec #263, ticket #266).
+ *
+ * Counted rather than compared, because the tab keeps a picker of its own: a
+ * repeat of the server it is already showing is still an ask, and an appended
+ * line is not an ask at all. Both claims are observable here, since the counter
+ * and the notification are the store's whole contribution to them.
+ */
+describe('Narrowing the Logs tab to one server', () => {
+	it('names the server a request asked for, and every server when it named none', () => {
+		const logs = new LspLogStore();
+		expect(logs.focused).toEqual({ server: null, request: 0 });
+
+		logs.requestFocus('typescript@/repo');
+		expect(logs.focused).toEqual({ server: 'typescript@/repo', request: 1 });
+
+		// What the palette's argument-free entry means: every server, not the last
+		// one asked for.
+		logs.requestFocus();
+		expect(logs.focused).toEqual({ server: null, request: 2 });
+	});
+
+	it('counts a repeated request, so asking twice for one server lands twice', () => {
+		const logs = new LspLogStore();
+		logs.requestFocus('typescript@/repo');
+		logs.requestFocus('typescript@/repo');
+		expect(logs.focused.request).toBe(2);
+	});
+
+	it('notifies a mounted tab, which is how an open Logs tab re-narrows itself', () => {
+		const logs = new LspLogStore();
+		let notifications = 0;
+		logs.subscribe(() => notifications++);
+
+		logs.requestFocus('typescript@/repo');
+		expect(notifications).toBe(1);
+
+		// A repeat is an ask too, so it notifies even though the server is the same.
+		logs.requestFocus('typescript@/repo');
+		expect(notifications).toBe(2);
+	});
+});
+
+/**
  * The trace's second bound.
  *
  * Full-content document sync means the client sends the whole open document on

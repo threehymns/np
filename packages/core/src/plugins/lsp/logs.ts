@@ -170,10 +170,28 @@ export function classifyServerOutput(line: string): LspLogLevel {
 	return 'info';
 }
 
+/**
+ * The newest request to narrow the Logs tab to one server.
+ *
+ * A request rather than a setting, because the Logs tab has a picker of its own:
+ * the command that opens the tab names a server and the tab opens on it, after
+ * which the reader is free to change or clear that selection by hand. Hence the
+ * number beside the server — the tab needs to tell a fresh request from a repeat
+ * (asking twice for the server it already shows is still an ask) and from an
+ * appended line, which is not an ask at all and arrives on every keystroke.
+ */
+export interface LspLogsFocus {
+	/** The `<descriptor id>@<root>` key to show, or null for every server. */
+	readonly server: string | null;
+	/** Bumped per request, including a repeat of the server already asked for. */
+	readonly request: number;
+}
+
 export class LspLogStore {
 	private readonly buffers = new Map<string, LspLogEntry[]>();
 	private nextSequence = 0;
 	private dropped = 0;
+	private focus: LspLogsFocus = { server: null, request: 0 };
 	private readonly listeners = new Set<() => void>();
 
 	constructor(private readonly capacityPerServer: number = DEFAULT_LOG_CAPACITY_PER_SERVER) {}
@@ -230,6 +248,27 @@ export class LspLogStore {
 	/** Server keys with buffered lines, in the order they first appeared. */
 	servers(): string[] {
 		return [...this.buffers.keys()];
+	}
+
+	/**
+	 * Asks the Logs tab to show one server's lines, or every server's when
+	 * unnamed — which is what the palette's argument-free entry means.
+	 *
+	 * Counted rather than compared: re-opening the tab for the server it is
+	 * already focused on is as much a request as any other, and the tab decides
+	 * for itself whether to act on it (see {@link LspLogsFocus}).
+	 */
+	requestFocus(server?: string): void {
+		this.focus = {
+			server: server !== undefined && server.length > 0 ? server : null,
+			request: this.focus.request + 1
+		};
+		this.notify();
+	}
+
+	/** The newest narrowing request, so the tab can tell a fresh one from a repeat. */
+	get focused(): LspLogsFocus {
+		return this.focus;
 	}
 
 	/** The Clear action: one server's buffer, or every buffer when unnamed. */

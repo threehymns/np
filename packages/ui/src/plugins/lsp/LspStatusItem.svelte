@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { lspManifest, type LspServerStatusApi } from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
-	import { ArrowClockwiseIcon, StopIcon } from 'phosphor-svelte';
+	import { ArrowClockwiseIcon, ScrollIcon, StopIcon } from 'phosphor-svelte';
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
 	import * as Tooltip from '../../components/ui/tooltip/index';
@@ -79,6 +79,12 @@
 									<DropdownMenu.SubTrigger {...props} aria-label={`${row.descriptorId} (${row.label})`}>
 										<span class="size-1.5 shrink-0 rounded-full {row.dot}"></span>
 										<span class="truncate">{row.descriptorId}</span>
+										<!-- Only for a server that is not running: a word beside every
+						     running server would make the ones that need saying harder
+						     to see. -->
+										{#if row.stateNote}
+											<span class="ml-2 text-muted-foreground">{row.stateNote}</span>
+										{/if}
 										<!-- The details slot: empty until the version and memory
 						     follow-ups land, and already in the row when they do. -->
 										{#each row.details as detail (detail.label)}
@@ -94,38 +100,39 @@
 								<ArrowClockwiseIcon />
 								{row.actions.restart.label}
 							</DropdownMenu.Item>
-							<DropdownMenu.Item
-								onclick={() => run(row.actions.stop)}
-								variant="destructive"
-								disabled={row.actions.stop.disabled}
-							>
-								<StopIcon />
-								{row.actions.stop.label}
+							<DropdownMenu.Item onclick={() => run(row.actions.viewLogs)}>
+								<ScrollIcon />
+								{row.actions.viewLogs.label}
 							</DropdownMenu.Item>
+							<!-- Absent, not disabled, once the server has no process left. -->
+							{#if row.actions.stop.visible}
+								<DropdownMenu.Item onclick={() => run(row.actions.stop)} variant="destructive">
+									<StopIcon />
+									{row.actions.stop.label}
+								</DropdownMenu.Item>
+							{/if}
 						</DropdownMenu.SubContent>
 					</DropdownMenu.Sub>
 				{/each}
 			{/if}
-			<DropdownMenu.Separator />
-			<DropdownMenu.Item
-				onclick={() => run(view.actions.restartAll)}
-				disabled={view.actions.restartAll.disabled}
-			>
-				<ArrowClockwiseIcon />
-				{view.actions.restartAll.label}
-			</DropdownMenu.Item>
-			<DropdownMenu.Item
-				onclick={() => run(view.actions.stopAll)}
-				variant="destructive"
-				disabled={view.actions.stopAll.disabled}
-			>
-				<StopIcon />
-				{view.actions.stopAll.label}
-			</DropdownMenu.Item>
-			<DropdownMenu.Separator />
-			<DropdownMenu.Item onclick={() => run(view.actions.viewLogs)}>
-				{view.actions.viewLogs.label}
-			</DropdownMenu.Item>
+			<!-- The separator belongs to the whole-item group: alone at the bottom of an
+			     empty menu it separates nothing. Which of the two entries appear is
+			     `status-view`'s decision, so the markup only asks. -->
+			{#if view.bulkVisible}
+				<DropdownMenu.Separator />
+				{#if view.actions.restartAll.visible}
+					<DropdownMenu.Item onclick={() => run(view.actions.restartAll)}>
+						<ArrowClockwiseIcon />
+						{view.actions.restartAll.label}
+					</DropdownMenu.Item>
+				{/if}
+				{#if view.actions.stopAll.visible}
+					<DropdownMenu.Item onclick={() => run(view.actions.stopAll)} variant="destructive">
+						<StopIcon />
+						{view.actions.stopAll.label}
+					</DropdownMenu.Item>
+				{/if}
+			{/if}
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
 </Tooltip.Provider>

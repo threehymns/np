@@ -15,6 +15,7 @@ import {
 } from './commands';
 import { LSP_DIAGNOSTIC_DECORATION_ID } from './diagnostic-decorations';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
+import { LspLogStore, LSP_LOG_STORE_SERVICE_KEY } from './logs';
 import { lspRegistration } from './registration';
 import { LSP_LOGS_TAB_ID, LSP_STATUS_ITEM_ID, LSP_UI_COMPONENTS_KEY } from './ui';
 import {
@@ -344,6 +345,39 @@ describe('Status menu, Logs tab and their commands (#266)', () => {
 		});
 
 		expect(await host.executeCommand(LSP_VIEW_LOGS_COMMAND)).toBe(false);
+	});
+
+	it('opens the Logs tab on one server when the menu names it', async () => {
+		const { root, outer } = nestedProject();
+		const harness = await startPlugin();
+		harness.open(outer, '');
+		await waitForRunning(harness.runtime, 1);
+		const logs = harness.host.getService<LspLogStore>(LSP_LOG_STORE_SERVICE_KEY)!;
+		const key = lspServerKey('typescript', root);
+		expect(logs.focused).toEqual({ server: null, request: 0 });
+
+		// What the status menu's per-server entry dispatches: the tab opens already
+		// narrowed to that server, rather than on whichever server was read last.
+		expect(await harness.host.executeCommand(LSP_VIEW_LOGS_COMMAND, key)).toBe(true);
+		expect(logs.focused).toEqual({ server: key, request: 1 });
+		expect(harness.activeTabId()).toBe(LSP_LOGS_TAB_ID);
+
+		// The palette entry has no server to offer, so it means every server.
+		expect(await harness.host.executeCommand(LSP_VIEW_LOGS_COMMAND)).toBe(true);
+		expect(logs.focused).toEqual({ server: null, request: 2 });
+	});
+
+	it('asks for nothing when the tab could not open, since no tab would read it', async () => {
+		const host = new PluginHost({ platform: 'desktop' });
+		host.register(lspRegistration);
+		await host.activate('lsp');
+		cleanups.push(async () => {
+			if (host.isPluginActive('lsp')) await host.deactivate('lsp');
+		});
+		const logs = host.getService<LspLogStore>(LSP_LOG_STORE_SERVICE_KEY)!;
+
+		expect(await host.executeCommand(LSP_VIEW_LOGS_COMMAND, 'typescript@/repo')).toBe(false);
+		expect(logs.focused).toEqual({ server: null, request: 0 });
 	});
 
 	it('removes the status item, the tab and the commands on disable, with no orphan process', async () => {

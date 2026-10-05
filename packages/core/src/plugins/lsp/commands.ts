@@ -19,6 +19,13 @@ export interface LspCommandContext {
 	/** The runtime, or undefined while the plugin is not the active owner. */
 	runtime(): LspRuntimeLike | undefined;
 	getWorkspace(): WorkspaceLike | undefined;
+	/**
+	 * Asks the Logs tab to show one server. Resolved at action time and separate
+	 * from the workspace because the tab reads the request from the store it
+	 * already renders, and the tab's own service is the only channel between a
+	 * command and a view the host mounts (ADR 0016).
+	 */
+	requestFocus(server?: string): void;
 }
 
 /**
@@ -90,7 +97,18 @@ export function createLspCommands(ctx: LspCommandContext): PluginCommand[] {
 			id: LSP_VIEW_LOGS_COMMAND,
 			label: 'Language Servers: View Logs',
 			category: CATEGORY,
-			action: () => openLogsTab(ctx.getWorkspace())
+			// Takes the server key the status menu holds, and opens the tab already
+			// narrowed to it, which is what makes the entry worth having per server.
+			// Without one — the palette has no target to offer — it means every
+			// server, so the two routes into the tab are the same command reading
+			// the same registry rather than two ways to open it.
+			action: (server?: string) => {
+				// Nothing is focused when the tab cannot open: a narrowing request
+				// that no tab ever reads would silently outlive the command.
+				if (!ctx.getWorkspace()) return false;
+				ctx.requestFocus(isServerKey(server) ? server : undefined);
+				return openLogsTab(ctx.getWorkspace());
+			}
 		}
 	];
 }
