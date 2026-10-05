@@ -72,6 +72,20 @@ describe("bundledSearchRoots", () => {
 	it("stops at the filesystem root instead of looping", () => {
 		expect(bundledSearchRoots("/").at(-1)).toBe("/");
 	});
+
+	it("examines a bounded number of directories on a path deep enough to need it", () => {
+		// The bound was a constant named for five levels while the loop pushed six,
+		// and nothing asserted which, so the count is pinned here: the app's own
+		// directory plus five above it, and not the sixth.
+		expect(bundledSearchRoots("/a/b/c/d/e/f/g/h/app")).toEqual([
+			"/a/b/c/d/e/f/g/h/app",
+			"/a/b/c/d/e/f/g/h",
+			"/a/b/c/d/e/f/g",
+			"/a/b/c/d/e/f",
+			"/a/b/c/d/e",
+			"/a/b/c/d"
+		]);
+	});
 });
 
 describe("resolveLanguageServerCommand", () => {

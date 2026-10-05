@@ -65,14 +65,16 @@ export interface ResolvedServerCommand {
 }
 
 /**
- * How far above the app to look for a hoisted `node_modules`.
+ * How many directories the walk examines, the app's own directory included.
  *
  * A workspace hoists, so in development the dependency sits at the repository
  * root rather than beside `apps/desktop`; in a packaged app it sits inside the
- * app itself and no walk is needed. Five levels covers a monorepo without
- * walking to the filesystem root on a machine that simply does not have it.
+ * app itself and no walk is needed. Six levels reaches a hoisted monorepo
+ * without walking to the filesystem root on a machine that simply does not
+ * have it — a cap rather than the only thing stopping it, since the loop
+ * breaks at the root anyway.
  */
-const MAX_ROOT_WALK = 5;
+const MAX_WALK_LEVELS = 6;
 
 /**
  * The directories a bundled `node_modules` might live in, most specific first.
@@ -117,7 +119,7 @@ export function bundledSearchRoots(appPath: string): string[] {
 	const roots: string[] = [];
 	if (appPath.endsWith('.asar')) roots.push(`${appPath}.unpacked`);
 	let directory = appPath.endsWith('.asar') ? path.dirname(appPath) : appPath;
-	for (let depth = 0; depth <= MAX_ROOT_WALK; depth++) {
+	for (let depth = 0; depth < MAX_WALK_LEVELS; depth++) {
 		roots.push(directory);
 		const parent = path.dirname(directory);
 		if (parent === directory) break;
