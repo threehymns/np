@@ -397,7 +397,7 @@ function registerIpcHandlers() {
 				// A server that closed its stdin makes further writes fail. The exit
 				// handler reports the death; an unhandled EPIPE here would bury it.
 			});
-			return { processId, pid: child.pid ?? null };
+			return { processId, pid: child.pid ?? null, parentPid: process.pid ?? null };
 		} catch (err) {
 			throw new Error(
 				`Failed to start language server "${plan.command}": ${(err as Error).message}`

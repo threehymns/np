@@ -262,24 +262,24 @@ export class LspClient {
 
 	/**
 	 * The client pid to declare in `initialize`, or null when the transport cannot
-	 * name the process.
+	 * name the parent.
 	 *
 	 * The spec uses `processId` for one thing: a server watches the parent and exits
 	 * when it dies, so a renderer that crashes does not leave a server running for
 	 * the rest of the login. `null` is the spec's own "no process id available", so
-	 * it stays the honest answer — but the desktop transport *does* have the pid and
-	 * arrives at it over IPC, two round trips after `spawn()` returned. Reading
-	 * `process.pid` while building the params therefore finds nothing and sends
+	 * it stays the honest answer — but the desktop transport *does* have the parent
+	 * and arrives at it over IPC, two round trips after `spawn()` returned. Reading
+	 * `process.parentPid` while building the params therefore finds nothing and sends
 	 * nothing, which is why the value is awaited rather than read once.
 	 *
 	 * Bounded by the handshake budget and degrading to `null` rather than hanging:
-	 * a transport that never names its process must not strand the runtime on a
+	 * a transport that never names its parent must not strand the runtime on a
 	 * document it can never serve. Waiting cannot cost more than it already did —
-	 * this client's first write is deferred until the transport names the process
+	 * this client's first write is deferred until the transport names the parent
 	 * anyway — so the bound is a guard against a broken transport, not against IPC.
 	 */
 	private async resolveProcessId(): Promise<number | null> {
-		const known = this.options.process.pid;
+		const known = this.options.process.parentPid;
 		if (known !== undefined) return known;
 		const ready = this.options.process.ready;
 		if (!ready) return null;

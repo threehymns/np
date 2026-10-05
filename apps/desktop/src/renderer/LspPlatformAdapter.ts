@@ -31,7 +31,7 @@ interface ElectronLspBridge {
 		plan: ResolvedLspCommand,
 		args: string[],
 		cwd: string
-	): Promise<{ processId: string; pid: number | null }>;
+	): Promise<{ processId: string; pid: number | null; parentPid: number | null }>;
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
@@ -77,6 +77,7 @@ function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 class IpcLspProcess implements LspProcess {
 	private processId: string | null = null;
 	private osPid: number | undefined;
+	private parentOsPid: number | undefined;
 	private readonly stdoutListeners = new Set<(chunk: Uint8Array) => void>();
 	private readonly stderrListeners = new Set<(chunk: Uint8Array) => void>();
 	private readonly exitDeferred = createDeferred<{
@@ -127,6 +128,10 @@ class IpcLspProcess implements LspProcess {
 		return this.osPid;
 	}
 
+	get parentPid(): number | undefined {
+		return this.parentOsPid;
+	}
+
 	get ready(): Promise<number | undefined> {
 		return this.readyDeferred.promise;
 	}
@@ -136,7 +141,7 @@ class IpcLspProcess implements LspProcess {
 	}
 
 	/** Called once the spawn round trip names the process. */
-	attach(processId: string, pid: number | null): void {
+	attach(processId: string, pid: number | null, parentPid: number | null): void {
 		// A kill that landed before the spawn reply already resolved `ready`
 		// and `exit` and never learned the id to kill. The process that just
 		// arrived belongs to a disposed adapter, so kill it by id, drop any
@@ -148,9 +153,10 @@ class IpcLspProcess implements LspProcess {
 		}
 		this.processId = processId;
 		this.osPid = pid ?? undefined;
+		this.parentOsPid = parentPid ?? undefined;
 		// Released before anything is replayed, so a client already waiting on the
-		// pid to declare its parent is not left waiting on the replay.
-		this.readyDeferred.resolve(this.osPid);
+		// parent to declare itself is not left waiting on the replay.
+		this.readyDeferred.resolve(this.parentOsPid);
 		// Registered before anything is replayed, so an exit arriving immediately
 		// after the spawn reply still reaches this process.
 		this.route.register(processId, this);
@@ -172,7 +178,7 @@ class IpcLspProcess implements LspProcess {
 		// that name before it can declare a parent. Left pending it would hold the
 		// handshake until the timeout instead of failing it on the exit that is
 		// already known.
-		this.readyDeferred.resolve(this.osPid);
+		this.readyDeferred.resolve(this.parentOsPid);
 		this.exitDeferred.resolve({ code, signal, error });
 	}
 
@@ -185,7 +191,7 @@ class IpcLspProcess implements LspProcess {
 		// stop landing before the spawn round trip returns would otherwise strand a
 		// client waiting for a parent pid that is never coming. Both resolve
 		// idempotently, so the later `attach` cannot contradict a resolved one.
-		this.readyDeferred.resolve(this.osPid);
+		this.readyDeferred.resolve(this.parentOsPid);
 		this.exitDeferred.resolve({ code: null, signal: null });
 	}
 
@@ -258,7 +264,7 @@ export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHos
 			void bridge
 				.resolveLspCommand(options.command, options.bundled)
 				.then((plan) => bridge.spawnLspServer(plan, [...options.args], options.cwd))
-				.then((spawned) => process.attach(spawned.processId, spawned.pid))
+				.then((spawned) => process.attach(spawned.processId, spawned.pid, spawned.parentPid))
 				// A spawn that never produced a process is reported as an exit, so
 				// the client's wait on `exit` resolves instead of hanging on a pid
 				// that does not exist, and the reason travels with it into the

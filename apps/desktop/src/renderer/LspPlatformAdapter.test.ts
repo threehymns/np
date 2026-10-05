@@ -27,7 +27,7 @@ describe('createElectronLspPlatform', () => {
 	let unsubscribe: ReturnType<typeof mock> | null = null;
 
 	beforeEach(() => {
-		mockSpawn = mock(async () => ({ processId: 'p1', pid: 4242 }));
+		mockSpawn = mock(async () => ({ processId: 'p1', pid: 4242, parentPid: 4243 }));
 		// Echoes the declared name, which is what a machine with nothing bundled
 		// resolves to. The bundled plan is exercised separately below.
 		mockResolve = mock(async (command: string) => ({
@@ -183,10 +183,10 @@ describe('createElectronLspPlatform', () => {
 		// The client subscribes to stdout and writes `initialize` immediately; the
 		// process id only exists one IPC round trip later. Losing either would lose
 		// the first bytes the server sends.
-		let resolveSpawn: ((value: { processId: string; pid: number }) => void) | undefined;
+		let resolveSpawn: ((value: { processId: string; pid: number; parentPid: number }) => void) | undefined;
 		mockSpawn.mockImplementation(
 			() =>
-				new Promise<{ processId: string; pid: number }>((resolve) => {
+				new Promise<{ processId: string; pid: number; parentPid: number }>((resolve) => {
 					resolveSpawn = resolve;
 				})
 		);
@@ -199,7 +199,7 @@ describe('createElectronLspPlatform', () => {
 		// The write above is still buffered: the spawn itself has not been called
 		// yet, so there is nothing to attach to.
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
-		resolveSpawn!({ processId: 'p9', pid: 77 });
+		resolveSpawn!({ processId: 'p9', pid: 77, parentPid: 78 });
 		await waitFor(() => mockWrite.mock.calls.length === 1);
 		expect(mockWrite.mock.calls[0][0]).toBe('p9');
 
@@ -208,14 +208,15 @@ describe('createElectronLspPlatform', () => {
 		expect(spawned.pid).toBe(77);
 	});
 
-	it('resolves `ready` with the pid the spawn round trip brings back', async () => {
+	it('resolves `ready` with the parent pid the spawn round trip brings back', async () => {
 		// The client waits on this before declaring `processId`, and that value is the
 		// only thing that lets a server notice its parent died — so a `ready` that
 		// resolved early or never would be a server told `null`, silently.
-		let resolveSpawn: ((value: { processId: string; pid: number }) => void) | undefined;
+		// `pid` stays the server for status; `ready` is the parent for `initialize`.
+		let resolveSpawn: ((value: { processId: string; pid: number; parentPid: number }) => void) | undefined;
 		mockSpawn.mockImplementation(
 			() =>
-				new Promise<{ processId: string; pid: number }>((resolve) => {
+				new Promise<{ processId: string; pid: number; parentPid: number }>((resolve) => {
 					resolveSpawn = resolve;
 				})
 		);
@@ -224,12 +225,14 @@ describe('createElectronLspPlatform', () => {
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 		expect(spawned.pid).toBeUndefined();
 
-		resolveSpawn!({ processId: 'p9', pid: 77 });
-		expect(await spawned.ready).toBe(77);
+		resolveSpawn!({ processId: 'p9', pid: 77, parentPid: 78 });
+		expect(await spawned.ready).toBe(78);
+		expect(spawned.pid).toBe(77);
+		expect(spawned.parentPid).toBe(78);
 	});
 
 	it('resolves `ready` even when the spawn never produced a process', async () => {
-		// A client waiting for a pid that is never coming would hang the handshake
+		// A client waiting for a parent that is never coming would hang the handshake
 		// until its timeout instead of failing on the exit that is already known.
 		mockSpawn.mockImplementation(async () => {
 			throw new Error('spawn vtsls ENOENT');
@@ -244,20 +247,25 @@ describe('createElectronLspPlatform', () => {
 	it('resolves `ready` when a kill lands before the spawn reply does', async () => {
 		// A stop can arrive mid-handshake. Leaving `ready` pending here would strand a
 		// client on a server that has already been killed.
-		let resolveSpawn: ((value: { processId: string; pid: number }) => void) | undefined;
+		let resolveSpawn: ((value: { processId: string; pid: number; parentPid: number }) => void) | undefined;
 		mockSpawn.mockImplementation(
 			() =>
-				new Promise<{ processId: string; pid: number }>((resolve) => {
+				new Promise<{ processId: string; pid: number; parentPid: number }>((resolve) => {
 					resolveSpawn = resolve;
 				})
 		);
 		const platform = createElectronLspPlatform(bridgeHost());
 		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		spawned.stdin.write(new TextEncoder().encode('early'));
 		spawned.kill();
 
 		expect(await spawned.ready).toBeUndefined();
-		// And the later attach cannot contradict an already-resolved one.
-		resolveSpawn!({ processId: 'p9', pid: 77 });
+		// And the later attach cannot contradict an already-resolved one: the late
+		// process is killed by id, buffered writes are dropped, and nothing is registered.
+		resolveSpawn!({ processId: 'p9', pid: 77, parentPid: 78 });
+		await waitFor(() => mockKill.mock.calls.length === 1);
+		expect(mockKill).toHaveBeenCalledWith('p9');
+		expect(mockWrite).not.toHaveBeenCalled();
 		expect(await spawned.ready).toBeUndefined();
 	});
 

@@ -84,6 +84,7 @@ function fakeProcess(
 	let isEnded = false;
 	return {
 		pid: 4242,
+		parentPid: 4242,
 		stdin: {
 			write: (chunk) => writes.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk)),
 			end: () => {
@@ -221,18 +222,25 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 	it('declares the client process id, so a server can notice the client died', async () => {
 		// A server told `null` cannot watch its parent, so a crashed editor leaves it
 		// running for the rest of the login — the orphan `initialize` exists to
-		// prevent. The seam already carries the pid; this is what consumes it.
+		// prevent. The seam already carries the parent pid; this is what consumes it.
 		expect((await handshakeParams(fakeProcess())).processId).toBe(4242);
 	});
 
-	it('waits for a transport that names its process late rather than sending nothing', async () => {
-		// The desktop transport learns the pid over IPC, two round trips after
-		// `spawn()` returned. Reading `pid` while building the params finds nothing,
+	it('declares the parent pid rather than the spawned server pid', async () => {
+		// `pid` is the server for status and orphan checks; `processId` must be
+		// the client the server watches, not itself.
+		expect((await handshakeParams(fakeProcess({ pid: 1111, parentPid: 2222 }))).processId).toBe(2222);
+	});
+
+	it('waits for a transport that names its parent late rather than sending nothing', async () => {
+		// The desktop transport learns the parent over IPC, two round trips after
+		// `spawn()` returned. Reading `parentPid` while building the params finds nothing,
 		// and `processId: undefined` vanishes from the JSON entirely — which is a
 		// *worse* lie than null, because the server sees no field at all.
 		let nameIt!: (pid: number | undefined) => void;
 		const process = fakeProcess({
-			pid: undefined,
+			pid: 4242,
+			parentPid: undefined,
 			ready: new Promise<number | undefined>((resolve) => {
 				nameIt = resolve;
 			})
@@ -244,9 +252,10 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		expect((await pending).processId).toBe(31337);
 	});
 
-	it('declares the spec null when the transport never names a process', async () => {
+	it('declares the spec null when the transport never names a parent', async () => {
 		// `null` is LSP's own "no process id available", so it is the honest answer
-		// rather than an omission — and a missing field is not.
-		expect((await handshakeParams(fakeProcess({ pid: undefined }))).processId).toBeNull();
+		// rather than an omission — and a missing field is not. A known server pid
+		// must not stand in for an unknown parent.
+		expect((await handshakeParams(fakeProcess({ pid: 4242, parentPid: undefined }))).processId).toBeNull();
 	});
 });

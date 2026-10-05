@@ -330,11 +330,11 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 		// The handshake carries the client's real pid, which is what lets a server
 		// watch its parent and exit rather than linger after the editor dies. Read
-		// off the wire and matched against the pid this platform actually spawned,
-		// because the claim is only true if it is *this* process — a hard-coded value
-		// would satisfy a check that only looked for "not null".
+		// off the wire and matched against this process — the parent — rather than
+		// the spawned child, because the claim is only true if it names the watcher.
+		// A hard-coded value would satisfy a check that only looked for "not null".
 		const initialize = JSON.parse(received(harness).find((line) => line.includes('"initialize"'))!);
-		expect(initialize.params.processId).toBe(harness.platform.pids[0]);
+		expect(initialize.params.processId).toBe(process.pid);
 		// And the completion support the client then asks about with
 		// `textDocument/completion`: undeclared, a server is entitled to refuse.
 		expect(initialize.params.capabilities.completionProvider).toEqual({

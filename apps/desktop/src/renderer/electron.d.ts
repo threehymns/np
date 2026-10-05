@@ -44,7 +44,7 @@ export interface ElectronAPI {
 		plan: ResolvedLspCommand,
 		args: string[],
 		cwd: string
-	): Promise<{ processId: string; pid: number | null }>;
+	): Promise<{ processId: string; pid: number | null; parentPid: number | null }>;
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;

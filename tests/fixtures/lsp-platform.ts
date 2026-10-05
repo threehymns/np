@@ -106,6 +106,9 @@ function asLspProcess(child: ChildProcess): LspProcess {
 		get pid() {
 			return child.pid;
 		},
+		get parentPid() {
+			return process.pid;
+		},
 		stdin: {
 			write: (chunk) => {
 				child.stdin.write(Buffer.from(chunk));
