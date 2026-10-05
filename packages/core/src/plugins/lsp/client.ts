@@ -218,9 +218,12 @@ export class LspClient {
 	 * `initialize` then `initialized`, the handshake every server requires
 	 * before it will answer anything else.
 	 *
-	 * Sync is declared as full-document (`1`): every change sends the whole text.
+	 * Full-document sync is what is sent: every change carries the whole text.
 	 * Incremental sync is the recorded later optimisation (ADR 0020), held back
-	 * until large-file behaviour is actually measured rather than assumed.
+	 * until large-file behaviour is actually measured rather than assumed. The
+	 * sync kind itself is the server's `change` to announce, so the client's
+	 * declaration is only which sync notifications it supports — and it sends
+	 * none of the save-time ones.
 	 */
 	async initialize(params: Record<string, unknown>): Promise<unknown> {
 		const result = await this.request(
@@ -230,26 +233,46 @@ export class LspClient {
 				clientInfo: { name: 'np' },
 				...params,
 				capabilities: {
-					textDocumentSync: 1,
-					completionProvider: {
-						// The client issues `textDocument/completion` (see
-						// `LspRuntime.fetch`) and must say so. Declaring nothing while
-						// asking for the answers anyway is a protocol error: a server is
-						// entitled to answer "no completions here" for a client that never
-						// advertised that it wanted any, and vtsls does exactly that.
-						resolveProvider: false,
-						// No `triggerCharacters`, deliberately, and the reasoning is the
-						// same as `resolveProvider` above. The characters are the client's
-						// to honour, and this client has no per-character trigger to
-						// declare: CodeMirror decides when to ask, the trigger policy
-						// filters it (`min_word_length`, prose silence, the global popup
-						// toggle), and a server that trimmed its answer to "the next
-						// character is one of these" would be trimming for a request this
-						// client never sends. Declaring them would also make the field
-						// descriptor data, and ADR 0020's boundary is exactly that the
-						// client's capability table is the client's: a descriptor that
-						// could claim a trigger character is a descriptor claiming a client
-						// behaviour it does not implement.
+					// ClientCapabilities per LSP 3.17: what this client does, not
+					// what a server offers. The previous table used
+					// server-capability names (`textDocumentSync`,
+					// `completionProvider`) here, which spec-correct servers
+					// ignore — so one answered as if no completion support had
+					// been declared at all.
+					textDocument: {
+						synchronization: {
+							dynamicRegistration: false,
+							willSave: false,
+							willSaveWaitUntil: false,
+							didSave: false
+						},
+						completion: {
+							// The client issues `textDocument/completion` (see
+							// `LspRuntime.fetch`) and must say so. Declaring nothing while
+							// asking for the answers anyway is a protocol error: a server is
+							// entitled to answer "no completions here" for a client that never
+							// advertised that it wanted any, and vtsls does exactly that.
+							dynamicRegistration: false,
+							completionItem: {
+								// No `resolveSupport`, deliberately, and the reasoning is the
+								// same as the declaration above. Nothing in the client
+								// implements `completionItem/resolve` (ADR 0021 records why:
+								// CodeMirror has no "this option is now selected" hook, so
+								// the round trip has nowhere to hang), and advertising
+								// properties to resolve would be a claim the client cannot
+								// keep — at the cost of a request per keystroke.
+								//
+								// No trigger-character declaration either, for the same
+								// reason from the other side: trigger characters arrive in
+								// the *server's* `completionProvider`, and there is no
+								// client-capability field for them. This client has no
+								// per-character trigger to declare: CodeMirror decides when
+								// to ask, the trigger policy filters it (`min_word_length`,
+								// prose silence, the global popup toggle), and the field
+								// stays descriptor data out of the client's table by the
+								// same ADR 0020 boundary as before.
+							}
+						}
 					},
 					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
 				}

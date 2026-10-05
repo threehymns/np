@@ -1111,4 +1111,44 @@ describe("the server source obeys the trigger rules", () => {
 		},
 		30_000
 	);
+
+	/**
+	 * The trigger-character gap, pinned until live trigger honoring lands.
+	 *
+	 * A TypeScript server lists `"` among its completion trigger characters, so
+	 * typing the quote in `from "` is exactly the keystroke a trigger-honoring
+	 * client would ask about. This client has no per-character trigger —
+	 * CodeMirror decides when to ask and the word-prefix gate decides whether
+	 * the query may go — so the quote lands with no typed prefix after it and
+	 * the source declines before anything reaches the wire.
+	 *
+	 * This passes now and MUST fail once live trigger honoring lands: honoring
+	 * the server's trigger characters means asking on that keystroke despite
+	 * the empty prefix, which is precisely the `requests` growth asserted
+	 * against below. When it fails, delete this guard rather than the honoring.
+	 */
+	describe("the trigger-character gap", () => {
+		it(
+			"does not auto-ask after a quote with no typed prefix, while explicit still reaches the server",
+			async () => {
+				const server = await startStubServer([]);
+				// The quote just typed after `from `, cursor directly behind it.
+				const quoted = 'import { x } from "';
+				const state = await projectState(quoted, { fetch: server.fetch });
+
+				const before = server.requests.length;
+				expect(served(await offeredOptions(state, quoted.length, false))).toEqual([]);
+				expect(server.requests.length).toBe(before);
+
+				// The control: the server is up and the explicit trigger reaches
+				// it, so the silence above is the trigger gap and not a dead
+				// server. A prefixed document, because explicit still goes
+				// through the typed-prefix gate.
+				const prefixed = await projectState(DOC, { fetch: server.fetch });
+				expect(served(await offeredOptions(prefixed, DOC.length, true))).not.toEqual([]);
+				expect(server.requests.length).toBeGreaterThan(before);
+			},
+			30_000
+		);
+	});
 });

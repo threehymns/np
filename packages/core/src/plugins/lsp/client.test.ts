@@ -203,7 +203,8 @@ describe('Protocol trace and stderr feeds (#264)', () => {
 describe('The initialize handshake declares what the client will do (#264)', () => {
 	it('declares completion support, because it issues textDocument/completion', async () => {
 		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
-		expect(capabilities.completionProvider).toBeDefined();
+		const textDocument = capabilities.textDocument as Record<string, unknown>;
+		expect(textDocument.completion).toBeDefined();
 	});
 
 	it('declares no completionItem/resolve, which nothing in the client implements', async () => {
@@ -211,12 +212,28 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		// so the round trip has nowhere to hang. Advertising it would be a claim the
 		// client cannot keep, and it would cost a request per keystroke.
 		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
-		expect(capabilities.completionProvider).toEqual({ resolveProvider: false });
+		const completion = (capabilities.textDocument as Record<string, unknown>).completion as Record<
+			string,
+			unknown
+		>;
+		expect(completion.completionItem ?? {}).not.toHaveProperty('resolveSupport');
 	});
 
-	it('declares no trigger characters, which is the same kind of lie', async () => {
+	it('sends client-capability names, never the server ones they replaced', async () => {
+		// The defect these cover was invisible from inside the client and fatal to
+		// it: `textDocumentSync` and `completionProvider` are ServerCapabilities,
+		// so a spec-correct server ignores them in the client slot and answers as
+		// if no completion support had been declared at all.
 		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
-		expect(capabilities.completionProvider).not.toHaveProperty('triggerCharacters');
+		expect(capabilities).not.toHaveProperty('textDocumentSync');
+		expect(capabilities).not.toHaveProperty('completionProvider');
+		const completion = (capabilities.textDocument as Record<string, unknown>).completion as Record<
+			string,
+			unknown
+		>;
+		// Trigger characters arrive in the server's `completionProvider`; there is
+		// no client-capability field for them, so there is nothing to declare.
+		expect(completion).not.toHaveProperty('triggerCharacters');
 	});
 
 	it('declares the client process id, so a server can notice the client died', async () => {

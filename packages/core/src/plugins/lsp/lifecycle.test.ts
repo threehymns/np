@@ -337,9 +337,15 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(initialize.params.processId).toBe(process.pid);
 		// And the completion support the client then asks about with
 		// `textDocument/completion`: undeclared, a server is entitled to refuse.
-		expect(initialize.params.capabilities.completionProvider).toEqual({
-			resolveProvider: false
-		});
+		// Read as ClientCapabilities (`textDocument.completion`): the previous
+		// shape used the server names (`completionProvider`), which a
+		// spec-correct server ignores in the client slot.
+		expect(initialize.params.capabilities).not.toHaveProperty('completionProvider');
+		expect(initialize.params.capabilities).not.toHaveProperty('textDocumentSync');
+		expect(initialize.params.capabilities.textDocument.completion).toBeDefined();
+		expect(
+			initialize.params.capabilities.textDocument.completion.completionItem ?? {}
+		).not.toHaveProperty('resolveSupport');
 
 		expect(harness.runtime.getStatusRows()).toEqual([
 			{
