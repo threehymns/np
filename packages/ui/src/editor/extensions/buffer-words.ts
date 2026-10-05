@@ -4,6 +4,7 @@ import type {
 	CompletionResult,
 	CompletionSource,
 } from "@codemirror/autocomplete";
+import type { Text } from "@codemirror/state";
 import { EDITOR_COMPLETION_DEFAULTS, type CompletionWordsMode } from "@np/core";
 
 /**
@@ -81,6 +82,49 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
 }
 
 /**
+ * A Markdown code fence: three or more backticks or tildes, indented by up to
+ * three spaces. An *opening* fence may carry an info string (the language name);
+ * a *closing* fence carries nothing after it.
+ */
+const CODE_FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Whether `pos` sits inside a fenced code block.
+ *
+ * Silence is per prose, not per document: a note holding a code block is a note
+ * *and* a code file, and #259 asks for quiet in the prose and automatic words in
+ * the code file. The rule is the fence itself rather than the syntax tree,
+ * because a text scan is a predicate a reader can predict without a parsed tree,
+ * it needs no parser installed for the question to be answerable, and it degrades
+ * the way Markdown does — a fence nobody closed yet still opens a block, because
+ * the block is still being written.
+ *
+ * Deliberately not "any code": an indented (four-space) block and an inline code
+ * span stay prose. Both are hard to tell from ordinary prose, and quiet-by-
+ * default is the safer error for a rule that has to guess.
+ */
+function insideCodeFence(doc: Text, pos: number): boolean {
+	let open: string | null = null;
+
+	for (let line = 1; line <= doc.lineAt(pos).number; line++) {
+		const match = CODE_FENCE_PATTERN.exec(doc.line(line).text);
+		if (!match) continue;
+		const [, fence, info] = match;
+		if (open === null) {
+			open = fence;
+		} else if (
+			fence[0] === open[0] &&
+			fence.length >= open.length &&
+			info.trim() === ""
+		) {
+			open = null;
+		}
+	}
+
+	return open !== null;
+}
+
+/**
  * The single place deciding what a query may offer, so the trigger split and
  * the settings land here instead of in the source body.
  *
@@ -93,15 +137,22 @@ export function isMarkdownProse(languageName: string | null | undefined): boolea
  *   so prose is never worse off than before. It is a *default*, not a hard
  *   rule: a `{ "Markdown": { "words": "enabled" } }` entry in `editor.languages`
  *   reverses it, because the settings UI offers exactly that edit and an edit
- *   that does nothing is worse than no edit at all.
+ *   that does nothing is worse than no edit at all. It is per prose and not per
+ *   document: a fenced code block inside the note is code the user is writing,
+ *   so it gets the automatic offers a code file gets.
  * - `words: 'disabled'` silences the automatic path in every language. Off
  *   means quiet, not unavailable.
  */
 export function resolveBufferWordPolicy(
 	languageName: string | null,
 	settings: BufferWordSettings,
+	doc: Text,
+	pos: number,
 ): BufferWordPolicy {
-	const proseQuiet = isMarkdownProse(languageName) && !settings.wordsOverridden;
+	const proseQuiet =
+		isMarkdownProse(languageName) &&
+		!settings.wordsOverridden &&
+		!insideCodeFence(doc, pos);
 	return {
 		automatic: settings.words !== "disabled" && !proseQuiet,
 		minWordLength: normalizeMinWordLength(settings.minWordLength),
@@ -150,7 +201,12 @@ export function bufferWordCompletions(
 	const { languageName, readSettings = staticDefaultSettings } = options;
 
 	return (context: CompletionContext): CompletionResult | null => {
-		const policy = resolveBufferWordPolicy(languageName, readSettings());
+		const policy = resolveBufferWordPolicy(
+			languageName,
+			readSettings(),
+			context.state.doc,
+			context.pos,
+		);
 
 		const typed = context.matchBefore(/[A-Za-z0-9_$]*/);
 		// An empty typed prefix would dump the whole vocabulary into the popover.

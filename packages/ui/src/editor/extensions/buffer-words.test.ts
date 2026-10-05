@@ -270,6 +270,63 @@ describe("bufferWordCompletions — automatic trigger", () => {
 		).toBeNull();
 	});
 
+	it("offers words on a typing trigger inside a fenced code block in a note", () => {
+		// The note is Markdown, so the prose above is quiet — but a fenced block
+		// is code the user is writing, and it gets the automatic offers a code
+		// file gets.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "The kettle whistles.\n\n```js\nconst totalCount = 1;\ntotal\n```\n";
+		const afterTrigger = doc.indexOf("total\n```") + "total".length;
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: afterTrigger,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("treats an unfinished fenced block as code too", () => {
+		// The fence has not been closed yet because the block is still being
+		// written; the cursor is on the code line either way.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "The kettle whistles.\n\n```js\nconst totalCount = 1;\ntotal";
+
+		expect(
+			labels(
+				query(source, {
+					doc,
+					pos: doc.length,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			),
+		).toEqual(["totalCount"]);
+	});
+
+	it("keeps the prose around a fenced block quiet in the same note", () => {
+		// One document, two cursors: quiet above the fence and quiet below it,
+		// which is what "silent in Markdown prose" means per prose rather than
+		// per document.
+		const source = bufferWordCompletions({ languageName: "Markdown" });
+		const doc = "Kettles whistle loudly\n\n```js\nconst kettlepot = 1;\nkett\n```\n\nkettl";
+
+		for (const pos of [doc.indexOf("\n\n") + 1, doc.lastIndexOf("kettl") + 4]) {
+			expect(
+				query(source, {
+					doc,
+					pos,
+					explicit: false,
+					extensions: [markdownExtension],
+				}),
+			).toBeNull();
+		}
+	});
+
 	it("treats a document with no language as not prose", () => {
 		const doc = "Kettles whistle\nkettl";
 		const source = bufferWordCompletions({ languageName: null });
