@@ -208,7 +208,14 @@ describe('the packaged server closure (#263, #265)', () => {
 		// Guards the guard: if the walk stopped finding the packages below, a list
 		// that matched it would prove nothing.
 		const closure = runtimeClosure(entry);
-		for (const expected of [
+		// One assertion naming what is absent, rather than eight identical ones.
+		// Every way this walk can come up short — `Bun.resolveSync`,
+		// `realpathSync` and `readFileSync` are each wrapped in a bare catch that
+		// reports nothing — otherwise surfaces as the same
+		// `Expected length: 1 / Received length: 0`, which cannot say which package
+		// went missing or why. The set holds a name once, so `filter(...).length`
+		// was already 0 or 1 and this asserts exactly what it did.
+		const missing = [
 			'@vtsls/language-service',
 			'@vtsls/vscode-fuzzy',
 			'@vscode/l10n',
@@ -217,9 +224,8 @@ describe('the packaged server closure (#263, #265)', () => {
 			'jsonc-parser',
 			'semver',
 			'typescript'
-		]) {
-			expect([...closure].filter((name) => name === expected)).toHaveLength(1);
-		}
+		].filter((name) => !closure.has(name));
+		expect(missing).toEqual([]);
 	});
 
 	it('unpacks every package the entry script needs', () => {
