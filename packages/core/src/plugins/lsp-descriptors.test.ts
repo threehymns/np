@@ -44,7 +44,7 @@ function shape(host: PluginHost): string[] {
 		.map((d) => `${d.id}|${d.command}|${d.args.join(' ')}|${d.rootMarkers.join(',')}|${d.languages.join(',')}`);
 }
 
-describe('Server descriptor interface (#264)', () => {
+describe('LSP descriptor interface (#264)', () => {
 	it('ships no descriptors until a plugin registers one', () => {
 		const host = new PluginHost();
 		expect(host.getLspDescriptors()).toEqual([]);
@@ -240,7 +240,7 @@ describe('Server descriptor interface (#264)', () => {
 	});
 });
 
-describe('Server descriptor registry replay', () => {
+describe('LSP descriptor registry replay', () => {
 	it('registers the bundled TypeScript descriptor through the plugin, not the host', async () => {
 		// The descriptor is configuration: the plugin declares it and the host
 		// materializes it like any other contribution, which is what makes a

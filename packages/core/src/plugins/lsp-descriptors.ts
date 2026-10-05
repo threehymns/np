@@ -1,7 +1,7 @@
 import { DuplicateLspDescriptorIdError } from './errors';
 
 /**
- * Server descriptor contribution type (spec #263).
+ * LSP descriptor contribution type (spec #263).
  *
  * A plugin declares *where a language server lives* and *which files it
  * serves*: an executable, its arguments, the markers that identify a project

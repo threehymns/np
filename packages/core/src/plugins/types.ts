@@ -321,7 +321,7 @@ export interface PluginHostInterface {
 	getSnippetsForLanguage(language: string): RegisteredSnippet[];
 	readonly snippetRevision: number;
 
-	// Server descriptor registry (spec #263). A sibling data registry: a plugin
+	// LSP descriptor registry (spec #263). A sibling data registry: a plugin
 	// declares the command, arguments, ordered root markers, and served
 	// languages of a language server, and the host rebuilds the records from
 	// plugin transforms so any number of plugins can serve any registered

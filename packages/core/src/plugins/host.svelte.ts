@@ -321,7 +321,7 @@ export class PluginHost implements PluginHostInterface {
 	private snippetTransforms: SnippetTransformEntry[] = [];
 	private registeredSnippets: RegisteredSnippet[] = [];
 
-	// Server descriptor registry (spec #263). A third sibling data registry with
+	// LSP descriptor registry (spec #263). A third sibling data registry with
 	// no seeded base: plugin transforms replay from empty in activation order.
 	// Every rebuild bumps lspRevision so a running server can re-read the
 	// registry after an enable, a disable, or a refresh.
@@ -2263,7 +2263,7 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	// -------------------------------------------------------------------------
-	// Server descriptor registry (spec #263)
+	// LSP descriptor registry (spec #263)
 	// -------------------------------------------------------------------------
 
 	private orderedLspDescriptorTransforms(

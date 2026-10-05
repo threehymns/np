@@ -1,7 +1,7 @@
 import type { LspDescriptorContribution } from '../lsp-descriptors';
 
 /**
- * The bundled server descriptors (spec #263).
+ * The bundled LSP descriptors (spec #263).
  *
  * One descriptor serves TypeScript, TSX, JavaScript and JSX, matching the
  * one-package model the language registry already uses for grammars: four

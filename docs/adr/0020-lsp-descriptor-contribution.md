@@ -1,4 +1,4 @@
-# The host owns the server descriptor; the plugin owns the server
+# The host owns the LSP descriptor; the plugin owns the server
 
 Language servers are described to the host and driven by a plugin. Host core gains one contribution type — a descriptor naming a command, its arguments, an ordered list of root markers, and the languages it serves — and nothing else. There is no client, no stdio, no JSON-RPC, no process management and no log buffer in `@np/core`. A bundled LSP Core Plugin owns all of that, plus the document walk that turns a marker list into a directory.
 

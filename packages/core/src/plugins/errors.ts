@@ -392,7 +392,7 @@ export class DuplicateSnippetIdError extends Error {
 }
 
 /**
- * Actionable diagnostic error thrown when two plugins claim one server
+ * Actionable diagnostic error thrown when two plugins claim one LSP
  * descriptor ID. The ID is the registry key, so a collision cannot be resolved
  * the way a language-name collision can: silently dropping one claim would
  * start a server nobody asked for against files the other one also serves.
@@ -404,8 +404,8 @@ export class DuplicateLspDescriptorIdError extends Error {
 
 	constructor(descriptorId: string, existingPluginId: string, incomingPluginId: string) {
 		super(
-			`Duplicate language server descriptor ID "${descriptorId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
-				`Action: Every server descriptor must declare a unique "id". Rename the descriptor ID, or narrow one of the two descriptors' ` +
+			`Duplicate LSP descriptor ID "${descriptorId}" registered by both "${existingPluginId}" and "${incomingPluginId}".\n` +
+				`Action: Every LSP descriptor must declare a unique "id". Rename the descriptor ID, or narrow one of the two descriptors' ` +
 				`"languages" so they no longer claim the same files.`
 		);
 		this.name = 'DuplicateLspDescriptorIdError';
@@ -427,7 +427,7 @@ export class ConflictingLspDescriptorError extends Error {
 
 	constructor(filePath: string, descriptorIds: readonly string[]) {
 		super(
-			`Language server descriptors ${descriptorIds.map((id) => `"${id}"`).join(' and ')} both claim "${filePath}".\n` +
+			`LSP descriptors ${descriptorIds.map((id) => `"${id}"`).join(' and ')} both claim "${filePath}".\n` +
 				`Action: Narrow one descriptor's "languages" (or remove it) so exactly one descriptor serves each file. ` +
 				`No server was started for this file because the choice would have been arbitrary.`
 		);
