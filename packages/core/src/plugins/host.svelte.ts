@@ -2211,8 +2211,11 @@ export class PluginHost implements PluginHostInterface {
 	}
 
 	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void {
-		this.snippetTransforms = [...this.snippetTransforms, { pluginId, transform }];
-		this.rebuildSnippetsInternal();
+		const next = [...this.snippetTransforms, { pluginId, transform }];
+		const rebuilt = rebuildSnippetRegistry(this.orderedSnippetTransforms(next));
+		this.snippetTransforms = next;
+		this.registeredSnippets = rebuilt;
+		this.snippetRevision++;
 	}
 
 	removePluginSnippets(pluginId: string): void {
