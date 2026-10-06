@@ -61,6 +61,59 @@ export function isOriginalOnly(status: GitChange["status"]): boolean {
 }
 
 /**
+ * Whether two GitChange snapshots differ in any field the diff panes
+ * render from. Compares by VALUE only: the viewer builds a fresh
+ * `{...fileChange, ...}` object every render, so a reference check here
+ * is always true and forces a hunk-widget reconfigure + MergeView
+ * dispatch for every file on every keystroke (lag with many expanded
+ * files). Missing fields (status/combined/filepath) would instead miss
+ * real changes, so they are compared too.
+ */
+export function hasGitChangeChanged(prev: GitChange, next: GitChange): boolean {
+	return (
+		prev.filepath !== next.filepath ||
+		prev.status !== next.status ||
+		prev.staged !== next.staged ||
+		prev.combined !== next.combined ||
+		prev.stagedContent !== next.stagedContent ||
+		prev.originalContent !== next.originalContent ||
+		prev.modifiedContent !== next.modifiedContent ||
+		prev.diff !== next.diff
+	);
+}
+
+/**
+ * Per-file memo for live hunk computation (issue: laggy typing with many
+ * expanded files). `allHunks` re-evaluates on every keystroke; without a
+ * memo each keystroke runs `Chunk.build` for EVERY expanded file. The
+ * memo reuses cached chunks when both inputs are unchanged (reference-
+ * or value-equal strings), so a keystroke recomputes only the edited
+ * file. Keyed by the caller on filepath (one entry per visible file).
+ */
+export function createLiveHunkMemo() {
+	const cache = new Map<string, { orig: string; mod: string; hunks: readonly Chunk[] }>();
+	return {
+		getOrCompute(filepath: string, originalContent: string, effectiveModified: string): readonly Chunk[] {
+			const cached = cache.get(filepath);
+			if (cached && cached.orig === originalContent && cached.mod === effectiveModified) {
+				return cached.hunks;
+			}
+			const hunks = computeLiveHunks(originalContent, effectiveModified);
+			cache.set(filepath, { orig: originalContent, mod: effectiveModified, hunks });
+			return hunks;
+		},
+		prune(activeFilepaths: Set<string>) {
+			for (const key of [...cache.keys()]) {
+				if (!activeFilepaths.has(key)) cache.delete(key);
+			}
+		},
+		size(): number {
+			return cache.size;
+		}
+	};
+}
+
+/**
  * Display/navigation hunks of the base snapshot against live working-copy
  * text (issue #272). A version-control refresh replaces the snapshot's
  * original/staged sides while the bound Document keeps unsaved pane edits,

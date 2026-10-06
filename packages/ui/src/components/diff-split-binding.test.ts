@@ -9,6 +9,8 @@ import {
 	isSplitWorkingCopyEditable,
 	isOriginalOnly,
 	computeLiveHunks,
+	createLiveHunkMemo,
+	hasGitChangeChanged,
 	resolveSplitRightContent,
 	isDiffHeaderDirty,
 	ensureSplitDocument
@@ -296,6 +298,75 @@ describe("diff split Working-copy binding (#269)", () => {
 			expect(before).toHaveLength(1);
 			const lastAfter = after[after.length - 1];
 			expect(lastAfter.fromB).toBeGreaterThan(before[0].fromB);
+		});
+	});
+
+	describe("hasGitChangeChanged (value compare; fresh spread per render)", () => {
+		function change(overrides = {}) {
+			return {
+				filepath: "src/a.ts",
+				status: "M",
+				additions: 1,
+				deletions: 0,
+				diff: "@@ -1 +1 @@",
+				staged: false,
+				combined: undefined,
+				originalContent: "a\n",
+				modifiedContent: "b\n",
+				stagedContent: undefined,
+				...overrides
+			} as Parameters<typeof hasGitChangeChanged>[0];
+		}
+
+		it("returns false for distinct objects with identical values (spread copy)", () => {
+			const prev = change();
+			const next = { ...prev };
+			expect(next).not.toBe(prev as object);
+			expect(hasGitChangeChanged(prev, next)).toBe(false);
+		});
+
+		it("returns true when rendered content actually changes", () => {
+			const prev = change();
+			expect(hasGitChangeChanged(prev, change({ modifiedContent: "c\n" }))).toBe(true);
+			expect(hasGitChangeChanged(prev, change({ originalContent: "z\n" }))).toBe(true);
+			expect(hasGitChangeChanged(prev, change({ stagedContent: "s\n" }))).toBe(true);
+			expect(hasGitChangeChanged(prev, change({ diff: "@@ -2 +2 @@" }))).toBe(true);
+		});
+
+		it("returns true when staging scope changes", () => {
+			const prev = change();
+			expect(hasGitChangeChanged(prev, change({ staged: true }))).toBe(true);
+			expect(hasGitChangeChanged(prev, change({ combined: true }))).toBe(true);
+			expect(hasGitChangeChanged(prev, change({ status: "A" }))).toBe(true);
+		});
+	});
+
+	describe("createLiveHunkMemo (per-file hunk cache; typing lag)", () => {
+		it("reuses cached hunks when inputs are unchanged", () => {
+			const memo = createLiveHunkMemo();
+			const first = memo.getOrCompute("a.ts", "a\nb\n", "a\nB\n");
+			const second = memo.getOrCompute("a.ts", "a\nb\n", "a\nB\n");
+			expect(second).toBe(first);
+		});
+
+		it("recomputes only the file whose content changed", () => {
+			const memo = createLiveHunkMemo();
+			const aBefore = memo.getOrCompute("a.ts", "a\n", "A\n");
+			const bBefore = memo.getOrCompute("b.ts", "x\n", "X\n");
+			// Keystroke in a.ts only: b.ts must return the identical chunk array.
+			const bAfter = memo.getOrCompute("b.ts", "x\n", "X\n");
+			const aAfter = memo.getOrCompute("a.ts", "a\n", "A edited\n");
+			expect(bAfter).toBe(bBefore);
+			expect(aAfter).not.toBe(aBefore);
+		});
+
+		it("prunes files that left the view", () => {
+			const memo = createLiveHunkMemo();
+			memo.getOrCompute("a.ts", "a\n", "A\n");
+			memo.getOrCompute("gone.ts", "g\n", "G\n");
+			expect(memo.size()).toBe(2);
+			memo.prune(new Set(["a.ts"]));
+			expect(memo.size()).toBe(1);
 		});
 	});
 });

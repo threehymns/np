@@ -20,7 +20,8 @@
 		ensureSplitDocument,
 		isSplitWorkingCopyEditable,
 		isOriginalOnly,
-		computeLiveHunks,
+		createLiveHunkMemo,
+		hasGitChangeChanged,
 		resolveSplitRightContent,
 		isDiffHeaderDirty
 	} from './diff-split-binding.js';
@@ -459,17 +460,6 @@
 				void focusHeader(filepath);
 			}
 		}
-	}
-
-	function hasGitChangeChanged(prev: GitChange, next: GitChange): boolean {
-		return (
-			prev !== next ||
-			prev.staged !== next.staged ||
-			prev.stagedContent !== next.stagedContent ||
-			prev.originalContent !== next.originalContent ||
-			prev.modifiedContent !== next.modifiedContent ||
-			prev.diff !== next.diff
-		);
 	}
 
 	function registerEditorView(filepath: string, entry: ViewEntry) {
@@ -1649,8 +1639,13 @@
 	// against the freshly loaded base snapshot (#272). A version-control
 	// refresh replaces the snapshot (new original/staged sides) while the
 	// Document keeps the edits, and this re-derives around them.
+	// Per-file memoized: without it every keystroke runs Chunk.build for
+	// every expanded file (typing lag scales with file count); unchanged
+	// files reuse cached chunks so only the edited file recomputes.
+	const liveHunkMemo = createLiveHunkMemo();
 	let allHunks = $derived.by(() => {
 		const list: HunkTarget[] = [];
+		const seen = new Set<string>();
 		activeChanges.forEach((change, fileIndex) => {
 			if (isFileCollapsed(change.filepath)) return; // Skip collapsed files from hunk navigation
 
@@ -1660,7 +1655,8 @@
 			const effectiveModified = bound ? bound.content : diff.modifiedContent;
 			if (!diff.originalContent && !effectiveModified) return;
 
-			const hunks = computeLiveHunks(diff.originalContent, effectiveModified);
+			seen.add(change.filepath);
+			const hunks = liveHunkMemo.getOrCompute(change.filepath, diff.originalContent, effectiveModified);
 			hunks.forEach((chunk, chunkIndex) => {
 				list.push({
 					fileIndex,
@@ -1670,6 +1666,7 @@
 				});
 			});
 		});
+		liveHunkMemo.prune(seen);
 		return list;
 	});
 

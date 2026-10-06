@@ -21,7 +21,9 @@ describe("DiffViewer refresh-safe edits plus staged and file-edge semantics (#27
 	});
 
 	it("re-derives navigation hunks around live Document content", () => {
-		expect(src).toContain("computeLiveHunks(diff.originalContent, effectiveModified)");
+		// Per-file memoized: only the edited file recomputes, the rest reuse
+		// cached chunks (typing lag must not scale with expanded-file count).
+		expect(src).toContain("liveHunkMemo.getOrCompute(change.filepath, diff.originalContent, effectiveModified)");
 		expect(src).toContain("const bound = findDiffDoc(change.filepath)");
 		expect(src).toContain("const effectiveModified = bound ? bound.content : diff.modifiedContent");
 	});
