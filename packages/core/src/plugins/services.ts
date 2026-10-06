@@ -177,6 +177,16 @@ export interface LspPlatform {
 	/** Whether a root marker exists at an absolute path. */
 	fileExists(path: string): Promise<boolean>;
 	spawn(options: LspSpawnOptions): LspProcess;
+	/**
+	 * Resident memory of one running server, in bytes, or null when unknown.
+	 *
+	 * Optional because a transport that cannot observe its child (or a test
+	 * double with nothing to observe) still starts servers: the status row
+	 * then says "not reported" rather than showing a blank or a zero (ticket
+	 * #282). The desktop transport reads the child's RSS; the test fixture
+	 * reads `/proc` on Linux and answers null elsewhere.
+	 */
+	processMemory?(pid: number): Promise<number | null>;
 }
 
 export const COMPLETION_COORDINATOR_SERVICE_KEY = 'completion:coordinator';
