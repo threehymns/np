@@ -1,3 +1,4 @@
+import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { createElectronLspPlatform, provideLspPlatform } from './LspPlatformAdapter';
 import { LSP_PLATFORM_SERVICE_KEY } from '@np/core';
@@ -18,6 +19,7 @@ describe('createElectronLspPlatform', () => {
 	let mockWrite: ReturnType<typeof mock>;
 	let mockEnd: ReturnType<typeof mock>;
 	let mockKill: ReturnType<typeof mock>;
+	let mockMemory: ReturnType<typeof mock>;
 	let mockExists: ReturnType<typeof mock>;
 	let capturedHandlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
@@ -33,6 +35,7 @@ describe('createElectronLspPlatform', () => {
 		mockWrite = mock(() => {});
 		mockEnd = mock(() => {});
 		mockKill = mock(async () => {});
+		mockMemory = mock(async () => 412 * 1024 * 1024);
 		mockExists = mock(async () => true);
 		unsubscribe = mock(() => {});
 
@@ -44,6 +47,7 @@ describe('createElectronLspPlatform', () => {
 				writeLspServer: mockWrite,
 				endLspServer: mockEnd,
 				killLspServer: mockKill,
+				lspMemory: mockMemory,
 				onLspServerData: mock((handlers: typeof capturedHandlers) => {
 					capturedHandlers = handlers;
 					return unsubscribe;
@@ -125,6 +129,39 @@ describe('createElectronLspPlatform', () => {
 		const platform = createElectronLspPlatform(bridgeHost());
 		expect(await platform.fileExists('/repo/tsconfig.json')).toBe(true);
 		expect(mockExists).toHaveBeenCalledWith('/repo/tsconfig.json');
+	});
+
+	it('reads one server’s memory through the bridge, addressed by its process id', async () => {
+		// The status row knows the OS pid; main knows the process id it
+		// minted. The adapter joins the two, so the renderer can only ask
+		// about its own servers and never about an arbitrary pid.
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		expect(await platform.processMemory?.(4242)).toBe(412 * 1024 * 1024);
+		expect(mockMemory).toHaveBeenCalledWith('p1');
+	});
+
+	it('answers no memory for a pid with no live server, without asking main', async () => {
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		expect(await platform.processMemory?.(9999)).toBeNull();
+		expect(mockMemory).not.toHaveBeenCalled();
+	});
+
+	it('answers no memory when the observation itself fails', async () => {
+		mockMemory.mockImplementation(async () => {
+			throw new Error('no /proc here');
+		});
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		// Unknown memory is "not reported" on the row, not a failed start.
+		expect(await platform.processMemory?.(4242)).toBeNull();
 	});
 
 	it('carries a chunk across as bytes, so a split character survives the bridge', async () => {

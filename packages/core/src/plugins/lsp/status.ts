@@ -31,7 +31,7 @@ export interface LspServerStatus {
 	readonly marker: string | null;
 	readonly state: LspServerState;
 	readonly pid: number | undefined;
-	/** Empty until the version and memory follow-ups land. */
+	/** Version and memory figures (ticket #282); empty once the server has no process left. */
 	readonly details: readonly LspStatusDetail[];
 }
 

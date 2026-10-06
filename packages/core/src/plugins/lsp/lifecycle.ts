@@ -28,7 +28,7 @@ import type { LspLogStore } from './logs';
 import { basenameOfUri, fromFileUri, toFileUri } from './root';
 import { describeError } from './describe-error';
 import { lspServerKey, LspTargetResolver, type LspTargetInput } from './targets';
-import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
+import type { LspServerState, LspServerStatus, LspServerStatusApi, LspStatusDetail } from './status';
 import { resolveLspPlatform } from './platform';
 
 export { lspServerKey };
@@ -157,6 +157,21 @@ interface RunningServer {
 	state: LspServerState;
 	/** Set by an explicit stop so opening a document does not resurrect it. */
 	stoppedByUser: boolean;
+	/**
+	 * The version the server reported in its `initialize` result (`serverInfo.version`),
+	 * or null until it has. Read by {@link LspRuntime.getStatusRows} for the details
+	 * slot (ticket #282); a server that reports none says so rather than showing a
+	 * blank or a zero.
+	 */
+	serverVersion: string | null;
+	/**
+	 * Resident memory in bytes the platform last observed for this server, or null
+	 * until it has. A snapshot taken after the handshake rather than a live read:
+	 * the menu re-reads rows synchronously, so a per-render IPC round trip would
+	 * put process observation on the render path. Re-taken on restart, cleared on
+	 * stop, and "not reported" while unknown.
+	 */
+	memoryBytes: number | null;
 }
 
 /** A document presented to the runtime, waiting to be synced to its server. */
@@ -277,9 +292,7 @@ export class LspRuntime
 			marker: entry.marker,
 			state: entry.state,
 			pid: entry.client?.pid,
-			// The details slot is shaped now and filled by the version and memory
-			// follow-ups, so arriving there is not a redesign of the row.
-			details: []
+			details: statusDetailsFor(entry)
 		}));
 	}
 
@@ -880,7 +893,9 @@ export class LspRuntime
 			root,
 			marker,
 			state: 'starting',
-			stoppedByUser: false
+			stoppedByUser: false,
+			serverVersion: null,
+			memoryBytes: null
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -930,8 +945,15 @@ export class LspRuntime
 				await client.stop();
 				return entry;
 			}
+			// The version arrives with the handshake it describes, so a restart —
+			// a new handshake — re-reports it and the row refreshes with it.
+			entry.serverVersion = parseServerVersion(initResult);
 			entry.state = 'running';
 			this.statusChanged();
+			// The memory snapshot follows the same handshake: re-taken on restart,
+			// and the row refreshes again when it lands. Not awaited — a slow
+			// observation must not hold the start — and never allowed to fail it.
+			void this.refreshMemory(entry);
 			this.log(
 				entry,
 				'info',
@@ -970,12 +992,42 @@ export class LspRuntime
 		}
 	}
 
+	/**
+	 * Snapshots one running server's resident memory off the platform.
+	 *
+	 * Never fails the start: a platform that cannot observe its child, a pid
+	 * that is already gone, and a read that throws all leave "not reported"
+	 * rather than failing a server that is otherwise running. Not awaited by
+	 * the start for the same reason. Guards against a stop or restart that
+	 * landed while the read was in flight, so a figure cannot be filed against
+	 * a server it was not observed on.
+	 */
+	private async refreshMemory(entry: RunningServer): Promise<void> {
+		const pid = entry.client?.pid;
+		const platform = this.resolvePlatform();
+		if (pid === undefined || platform?.processMemory === undefined) return;
+		let bytes: number | null;
+		try {
+			bytes = await platform.processMemory(pid);
+		} catch {
+			return;
+		}
+		if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return;
+		if (this.servers.get(entry.server) !== entry || entry.state !== 'running') return;
+		entry.memoryBytes = bytes;
+		this.statusChanged();
+	}
+
 	private async stopEntry(entry: RunningServer): Promise<void> {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
 		this.serverCapabilities.delete(entry.server);
 		this.dropResolved(entry.server);
+		// The figures describe a process, so they go with it: a stopped row is
+		// cleared rather than left showing the version a dead server once had.
+		entry.serverVersion = null;
+		entry.memoryBytes = null;
 		// The queue is deliberately untouched: one of this method's callers is the
 		// revival path, where the stop is about to be followed by a start that should
 		// serve whatever is still waiting. The callers that mean it drops the waiters
@@ -1201,4 +1253,54 @@ function readServerCapabilities(result: unknown): {
 		hoverProvider: hover === true || (typeof hover === 'object' && hover !== null),
 		executeCommands: commands
 	};
+}
+
+/**
+ * The version a server reported in its `initialize` result, or null when it
+ * reported none.
+ *
+ * Read off `result.serverInfo.version` (LSP 3.17): the one place a server names
+ * its own version. Total over JSON — anything without a non-empty string there
+ * is "not reported" rather than a failure — because the handshake result is
+ * server-shaped and a server that omits the field is conforming, not broken.
+ */
+export function parseServerVersion(result: unknown): string | null {
+	if (typeof result !== 'object' || result === null) return null;
+	const info = (result as { serverInfo?: unknown }).serverInfo;
+	if (typeof info !== 'object' || info === null) return null;
+	const version = (info as { version?: unknown }).version;
+	return typeof version === 'string' && version.length > 0 ? version : null;
+}
+
+/**
+ * One server's details slot (ticket #282): the version and memory figures,
+ * saying so when the server reported no version or the platform observed no
+ * memory, rather than showing a blank or a zero.
+ *
+ * Only a server that may still report one carries the slot: `running` has
+ * completed the handshake and `starting` is waiting on it, while `stopped`
+ * and `failed` have no process left and are cleared rather than left showing
+ * what a dead server once said. The summary line is untouched — this is data
+ * in the row the component already renders, not a redesign of it.
+ */
+function statusDetailsFor(entry: RunningServer): LspStatusDetail[] {
+	if (entry.state !== 'running' && entry.state !== 'starting') return [];
+	return [
+		{ label: 'version', value: entry.serverVersion ?? 'not reported' },
+		{
+			label: 'memory',
+			value: entry.memoryBytes !== null ? formatMemoryBytes(entry.memoryBytes) : 'not reported'
+		}
+	];
+}
+
+/**
+ * Resident bytes as a row-sized figure: whole MiB once past one, whole KiB
+ * below it. Never blank and never zero — a figure that cannot be computed is
+ * the caller's "not reported", not this function's empty string.
+ */
+export function formatMemoryBytes(bytes: number): string {
+	const MIB = 1024 * 1024;
+	if (bytes >= MIB) return `${Math.max(1, Math.round(bytes / MIB))} MiB`;
+	return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
 }

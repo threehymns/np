@@ -96,8 +96,8 @@ import { ArrowClockwiseIcon, LightningIcon, ScrollIcon, StopIcon } from 'phospho
 										{#if row.stateNote}
 											<span class="ml-2 text-muted-foreground">{row.stateNote}</span>
 										{/if}
-										<!-- The details slot: empty until the version and memory
-						     follow-ups land, and already in the row when they do. -->
+										<!-- The details slot: the version and memory figures,
+						     already in the row when they land. -->
 										{#each row.details as detail (detail.label)}
 											<span class="ml-2 text-muted-foreground">{detail.label} {detail.value}</span>
 										{/each}

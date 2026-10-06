@@ -28,6 +28,10 @@
 	let serverFilter = $state('');
 	let kindFilter = $state('');
 	let levelFilter = $state('');
+	// The RPC-trace toggle (ticket #282): a checkbox on the existing kind
+	// filter, nothing more. Checked is the tab as it reads today; unchecked
+	// drops the protocol feed, which grows by a line per keystroke.
+	let showTrace = $state(true);
 
 	// Which server the View Logs command last asked for, read through the same
 	// revision as the entries: a request arrives from a command rather than from a
@@ -59,7 +63,7 @@
 	// line count the drop count does not explain.
 	const view = $derived.by(() => {
 		revision;
-		return lspLogsView(logs, lspLogFilter(serverFilter, kindFilter, levelFilter));
+		return lspLogsView(logs, lspLogFilter(serverFilter, kindFilter, levelFilter), showTrace);
 	});
 
 	function clear(): void {
@@ -151,6 +155,13 @@
 		</DropdownMenu.Root>
 
 		<div class="flex-1"></div>
+
+		<label
+			class="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-foreground/80 hover:bg-accent/50"
+		>
+			<input type="checkbox" bind:checked={showTrace} aria-label="Show RPC trace" class="size-3" />
+			RPC trace
+		</label>
 
 		<span class="text-[10px] text-muted-foreground">
 			{view.lineCount}{#if view.droppedNote}&nbsp;· {view.droppedNote}{/if}

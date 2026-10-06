@@ -35,6 +35,7 @@ interface ElectronLspBridge {
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
+	lspMemory(processId: string): Promise<number | null>;
 	onLspServerData(handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;
@@ -216,6 +217,18 @@ class ProcessRouter {
 		this.processes.delete(processId);
 		process?.reportExit(code, signal, error);
 	}
+
+	/**
+	 * The process id main minted for one OS pid, or null when no live server
+	 * has it. Scanned rather than indexed: servers are few, and an exited
+	 * server is already deleted, so a pid can never resolve to a dead one.
+	 */
+	processIdForPid(pid: number): string | null {
+		for (const [id, process] of this.processes) {
+			if (process.pid === pid) return id;
+		}
+		return null;
+	}
 }
 
 /**
@@ -246,6 +259,22 @@ export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHos
 
 	return {
 		fileExists: (path) => bridge.fileExists(path),
+		/**
+		 * One server's resident memory in bytes, for the status menu's details
+		 * slot (ticket #282). Null when the pid names nothing live or the
+		 * observation fails — the row then says "not reported" rather than
+		 * showing a blank or a zero.
+		 */
+		processMemory: async (pid: number): Promise<number | null> => {
+			const id = router.processIdForPid(pid);
+			if (!id) return null;
+			try {
+				const bytes = await bridge.lspMemory(id);
+				return typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : null;
+			} catch {
+				return null;
+			}
+		},
 		spawn(options): LspProcess {
 			const process = new IpcLspProcess(bridge, router);
 			// The declared command is resolved first: `vtsls` is a name, and the

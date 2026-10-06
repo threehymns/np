@@ -169,6 +169,30 @@ describe('LSP log filters', () => {
 		expect(messages(cleared)).toHaveLength(5);
 		expect(cleared.lineCount).toBe('5 lines');
 	});
+
+	it('hides the protocol trace when the RPC-trace toggle is off (#282)', async () => {
+		// The toggle is a checkbox on the existing kind filter, nothing more:
+		// the store keeps filtering by kind and the view drops the trace feed.
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), false))).toEqual([
+			'root started',
+			'root error',
+			'app started'
+		]);
+	});
+
+	it('keeps the whole buffer when the RPC-trace toggle is on', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), true))).toHaveLength(5);
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', '')))).toHaveLength(5);
+	});
+
+	it('still narrows by server and level with the trace hidden', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter(APP, '', 'warn'), false))).toEqual([
+			'app started'
+		]);
+	});
 });
 
 describe('LSP log tab summary', () => {
