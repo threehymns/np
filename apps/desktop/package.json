@@ -23,6 +23,19 @@
 			"dist-main/**",
 			"package.json"
 		],
+		"asarUnpack": [
+			"node_modules/@vtsls/**/*",
+			"node_modules/@vscode/**/*",
+			"node_modules/vscode-*/**/*",
+			"node_modules/semver/**/*",
+			"node_modules/jsonc-parser/**/*",
+			"node_modules/source-map-support/**/*",
+			"node_modules/source-map/**/*",
+			"node_modules/buffer-from/**/*",
+			"node_modules/typescript/**/*",
+			"node_modules/lru-cache/**/*",
+			"node_modules/yallist/**/*"
+		],
 		"mac": {
 			"target": [
 				"dmg",
@@ -58,6 +71,7 @@
 		"@codemirror/view": "^6.43.8",
 		"@np/core": "workspace:*",
 		"@np/ui": "workspace:*",
+		"@vtsls/language-server": "0.3.0",
 		"jsonc-parser": "^3.3.1",
 		"phosphor-svelte": "^3.1.0"
 	}

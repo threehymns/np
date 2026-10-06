@@ -1,6 +1,9 @@
 import {
 	SettingsManager,
 	FileWorkspaceSettingsStorage,
+	EDITOR_COMPLETION_DEFAULTS,
+	type CompletionLspInsertMode,
+	type CompletionWordsMode,
 	type ResolvedSetting,
 	type SettingDiagnostic,
 	type SettingScope
@@ -37,6 +40,17 @@ const DEFAULTS = {
 	vimSyncClipboard: true,
 	tabSize: 2,
 	lineNumbers: true,
+	completionWords: EDITOR_COMPLETION_DEFAULTS.words,
+	minWordLength: EDITOR_COMPLETION_DEFAULTS.minWordLength,
+	automaticCompletions: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
+	// The four server keys, defaulted from the schema like every other
+	// completion setting. They live here rather than being re-derived in the
+	// settings UI because a default written in three places is a default that
+	// drifts, and `EDITOR_COMPLETION_DEFAULTS` says so itself.
+	serverLsp: EDITOR_COMPLETION_DEFAULTS.lsp,
+	serverFetchTimeoutMs: EDITOR_COMPLETION_DEFAULTS.lspFetchTimeoutMs,
+	serverInsertMode: EDITOR_COMPLETION_DEFAULTS.lspInsertMode,
+	showCompletionDocumentation: EDITOR_COMPLETION_DEFAULTS.showCompletionDocumentation,
 	zoom: 100,
 	theme: 'default' as Theme,
 	appearanceMode: 'system' as AppearanceMode,
@@ -65,6 +79,7 @@ export class Preferences {
 	private storageKey = 'np-prefs-v2';
 	private isInitialized = false;
 	private isRestoring = false;
+	private settingsChangeListeners = new Set<() => void>();
 
 	/** Underlying settings manager providing namespaces, schema validation, and diagnostics */
 	readonly settings: SettingsManager;
@@ -76,11 +91,32 @@ export class Preferences {
 			storageKey: this.storageKey,
 			onChange: () => {
 				this.settingsVersion++;
+				// One change, one notification, beside the bump rather than beside a
+				// second signal. `settingsVersion` is the reactive handle; this is
+				// that same signal in the plain callback form a consumer with no
+				// compiler can use. A plugin cannot read a rune, and leaving it to
+				// wait for the next document event is how a settings switch ends up
+				// looking broken.
+				for (const listener of [...this.settingsChangeListeners]) listener();
 			}
 		});
 
 		this.reload();
 		this.isInitialized = true;
+	}
+
+	/**
+	 * Subscribes to resolved settings values changing; returns the unsubscribe.
+	 *
+	 * Says *that* something changed, never what: the change is one of any setting,
+	 * so a subscriber re-reads the keys it cares about and compares rather than
+	 * assume the notification was about its own.
+	 */
+	subscribeSettings(listener: () => void): () => void {
+		this.settingsChangeListeners.add(listener);
+		return () => {
+			this.settingsChangeListeners.delete(listener);
+		};
 	}
 
 	get wordWrap(): boolean { return this._data.wordWrap; }
@@ -123,6 +159,55 @@ export class Preferences {
 		if (this._data.lineNumbers === val) return;
 		this._data.lineNumbers = val;
 		this.syncToSettingsAndSave('editor', 'line_numbers', val);
+	}
+
+	get completionWords(): CompletionWordsMode { return this._data.completionWords; }
+	set completionWords(val: CompletionWordsMode) {
+		if (this._data.completionWords === val) return;
+		this._data.completionWords = val;
+		this.syncToSettingsAndSave('editor', 'words', val);
+	}
+
+	get minWordLength(): number { return this._data.minWordLength; }
+	set minWordLength(val: number) {
+		if (this._data.minWordLength === val) return;
+		this._data.minWordLength = val;
+		this.syncToSettingsAndSave('editor', 'min_word_length', val);
+	}
+
+	get automaticCompletions(): boolean { return this._data.automaticCompletions; }
+	set automaticCompletions(val: boolean) {
+		if (this._data.automaticCompletions === val) return;
+		this._data.automaticCompletions = val;
+		this.syncToSettingsAndSave('editor', 'automatic_completions', val);
+	}
+
+	get serverLsp(): boolean { return this._data.serverLsp; }
+	set serverLsp(val: boolean) {
+		if (this._data.serverLsp === val) return;
+		this._data.serverLsp = val;
+		this.syncToSettingsAndSave('editor', 'lsp', val);
+	}
+
+	get serverFetchTimeoutMs(): number { return this._data.serverFetchTimeoutMs; }
+	set serverFetchTimeoutMs(val: number) {
+		if (this._data.serverFetchTimeoutMs === val) return;
+		this._data.serverFetchTimeoutMs = val;
+		this.syncToSettingsAndSave('editor', 'lsp_fetch_timeout_ms', val);
+	}
+
+	get serverInsertMode(): CompletionLspInsertMode { return this._data.serverInsertMode; }
+	set serverInsertMode(val: CompletionLspInsertMode) {
+		if (this._data.serverInsertMode === val) return;
+		this._data.serverInsertMode = val;
+		this.syncToSettingsAndSave('editor', 'lsp_insert_mode', val);
+	}
+
+	get showCompletionDocumentation(): boolean { return this._data.showCompletionDocumentation; }
+	set showCompletionDocumentation(val: boolean) {
+		if (this._data.showCompletionDocumentation === val) return;
+		this._data.showCompletionDocumentation = val;
+		this.syncToSettingsAndSave('editor', 'show_completion_documentation', val);
 	}
 
 	get zoom(): number { return this._data.zoom; }
@@ -297,6 +382,16 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this._data.completionWords = this.settings.resolve('editor', 'words').value;
+			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
+			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
+			this._data.serverLsp = this.settings.resolve('editor', 'lsp').value;
+			this._data.serverFetchTimeoutMs = this.settings.resolve('editor', 'lsp_fetch_timeout_ms').value;
+			this._data.serverInsertMode = this.settings.resolve('editor', 'lsp_insert_mode').value;
+			this._data.showCompletionDocumentation = this.settings.resolve(
+				'editor',
+				'show_completion_documentation'
+			).value;
 
 			this._data.theme = this.settings.resolve('ui', 'theme').value;
 			this._data.appearanceMode = this.settings.resolve('ui', 'appearance_mode').value;
@@ -359,6 +454,16 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this._data.completionWords = this.settings.resolve('editor', 'words').value;
+			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
+			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
+			this._data.serverLsp = this.settings.resolve('editor', 'lsp').value;
+			this._data.serverFetchTimeoutMs = this.settings.resolve('editor', 'lsp_fetch_timeout_ms').value;
+			this._data.serverInsertMode = this.settings.resolve('editor', 'lsp_insert_mode').value;
+			this._data.showCompletionDocumentation = this.settings.resolve(
+				'editor',
+				'show_completion_documentation'
+			).value;
 
 			// Resolve UI settings
 			this._data.theme = this.settings.resolve('ui', 'theme').value;

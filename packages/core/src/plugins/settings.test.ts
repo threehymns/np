@@ -420,6 +420,103 @@ describe('Preferences Migration onto Namespaced Schemas (#198)', () => {
 	});
 });
 
+describe('Editor completion settings (#261)', () => {
+	it('declares the documented defaults', () => {
+		const storage = new MockStorage();
+		const prefs = new Preferences(storage);
+
+		// Resolved from the schema, not from a stored value: these are the
+		// numbers the acceptance criteria name.
+		expect(prefs.resolve('editor', 'words').value).toBe('fallback');
+		expect(prefs.resolve('editor', 'min_word_length').value).toBe(3);
+		expect(prefs.resolve('editor', 'automatic_completions').value).toBe(true);
+		expect(prefs.resolve('editor', 'languages').value).toEqual({});
+
+		expect(prefs.completionWords).toBe('fallback');
+		expect(prefs.minWordLength).toBe(3);
+		expect(prefs.automaticCompletions).toBe(true);
+		expect(storage.setItemCalls.length).toBe(0);
+	});
+
+	it('round-trips the three scalars through the editor namespace', () => {
+		const storage = new MockStorage();
+		const prefs = new Preferences(storage);
+
+		prefs.completionWords = 'disabled';
+		prefs.minWordLength = 5;
+		prefs.automaticCompletions = false;
+
+		const stored = JSON.parse(storage.setItemCalls.at(-1)![1]);
+		expect(stored.editor.words).toBe('disabled');
+		expect(stored.editor.min_word_length).toBe(5);
+		expect(stored.editor.automatic_completions).toBe(false);
+
+		expect(prefs.completionWords).toBe('disabled');
+		expect(prefs.minWordLength).toBe(5);
+		expect(prefs.automaticCompletions).toBe(false);
+	});
+
+	it('honours the workspace scope like any other editor setting', async () => {
+		const storage = new MockStorage();
+		const prefs = new Preferences(storage);
+		await prefs.attachWorkspace(
+			{
+				readFile: async () => null,
+				saveFile: async () => {},
+			},
+			{ scheme: 'file', path: '/workspace', name: 'workspace' }
+		);
+
+		prefs.activeScope = 'workspace';
+		prefs.minWordLength = 2;
+
+		expect(prefs.minWordLength).toBe(2);
+		expect(prefs.hasWorkspaceOverride('editor', 'min_word_length')).toBe(true);
+		// A workspace write must not leak into the user document.
+		expect(storage.setItemCalls.length).toBe(0);
+	});
+
+	it('preserves defaults for invalid stored values instead of writing them back', () => {
+		const storage = new MockStorage({
+			'np-prefs-v2': JSON.stringify({
+				editor: { words: 'sometimes', min_word_length: 0 }
+			})
+		});
+		const prefs = new Preferences(storage);
+
+		expect(prefs.completionWords).toBe('fallback');
+		expect(prefs.minWordLength).toBe(3);
+		expect(prefs.diagnostics.some((d) => d.key === 'words')).toBe(true);
+		expect(prefs.diagnostics.some((d) => d.key === 'min_word_length')).toBe(true);
+		expect(storage.setItemCalls.length).toBe(0);
+	});
+
+	it('keeps the per-language override map readable and writable', () => {
+		const storage = new MockStorage({
+			'np-prefs-v2': JSON.stringify({
+				editor: { languages: { Markdown: { words: 'disabled' } } }
+			})
+		});
+		const prefs = new Preferences(storage);
+
+		expect(prefs.get('editor', 'languages')).toEqual({ Markdown: { words: 'disabled' } });
+		// Editor-level values are untouched by a language override.
+		expect(prefs.completionWords).toBe('fallback');
+		expect(prefs.minWordLength).toBe(3);
+	});
+
+	it('declares the completion keys with the schema types the resolver validates', () => {
+		const properties = EDITOR_SCHEMA.properties;
+
+		expect(properties.words.type).toBe('string');
+		expect(properties.words.enum).toEqual(['enabled', 'fallback', 'disabled']);
+		expect(properties.min_word_length.type).toBe('number');
+		expect(properties.min_word_length.minimum).toBe(1);
+		expect(properties.automatic_completions.type).toBe('boolean');
+		expect(properties.languages.type).toBe('object');
+	});
+});
+
 describe('Settings schema registry lifecycle (host-owned)', () => {
 	function schemaFor(namespace: string): SettingNamespaceSchema {
 		return {

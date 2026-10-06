@@ -8,6 +8,7 @@
   import { ElectronSessionPersistence } from "./ElectronSessionPersistence";
   import { ElectronConfigStorage } from "./ElectronConfigStorage";
   import { SpawnGitAdapter } from "./SpawnGitAdapter";
+  import { provideLspPlatform } from "./LspPlatformAdapter";
 
   import AppShell from "@np/ui/AppShell.svelte";
   import { MainLayout } from "@np/ui";
@@ -47,6 +48,10 @@
     exportService
   });
   storage.registerProvider("keymap", new KeymapStorageProvider(appState.keymaps));
+  // Published before the shell mounts and activates bundled plugins: the LSP
+  // plugin resolves the seam per use, and a web build never reaches this file so
+  // it simply has no platform.
+  provideLspPlatform(appState.plugins);
   setContext("appState", appState);
 
   if (typeof window !== "undefined") {

@@ -14,6 +14,16 @@ import type {
 	LanguageTransform,
 	RegisteredLanguage
 } from './languages';
+import type {
+	SnippetRecord,
+	SnippetTransform,
+	RegisteredSnippet
+} from './completions';
+import type {
+	LspDescriptorContribution,
+	LspTransform,
+	RegisteredLspDescriptor
+} from './lsp-descriptors';
 export type PluginPlatform = 'web' | 'desktop';
 
 export type PluginState = 'inactive' | 'activating' | 'active' | 'deactivating' | 'error';
@@ -296,6 +306,34 @@ export interface PluginHostInterface {
 	getLanguageForFile(filename: string): RegisteredLanguage | null;
 	getLanguageConflicts(): LanguageConflict[];
 	readonly languageRevision: number;
+
+	// Snippet registry (spec #194). A sibling data registry: plugins declare
+	// typed triggers with plain-text bodies joined on a registered language,
+	// and the host rebuilds them from plugin transforms so the editor can turn
+	// the current language's records into a completion source.
+	registerSnippet(pluginId: string, record: SnippetRecord): void;
+	registerSnippets(pluginId: string, records: readonly SnippetRecord[]): void;
+	registerSnippetTransform(pluginId: string, transform: SnippetTransform): void;
+	removePluginSnippets(pluginId: string): void;
+	rebuildSnippets(): void;
+	refreshSnippets(): void;
+	getSnippets(): RegisteredSnippet[];
+	readonly snippetRevision: number;
+
+	// LSP descriptor registry (spec #263). A sibling data registry: a plugin
+	// declares the command, arguments, ordered root markers, and served
+	// languages of a language server, and the host rebuilds the records from
+	// plugin transforms so any number of plugins can serve any registered
+	// language. All client machinery belongs to the plugin (ADR 0020).
+	registerLspDescriptor(pluginId: string, contribution: LspDescriptorContribution): void;
+	registerLspDescriptors(pluginId: string, contributions: readonly LspDescriptorContribution[]): void;
+	registerLspDescriptorTransform(pluginId: string, transform: LspTransform): void;
+	removePluginLspDescriptors(pluginId: string): void;
+	rebuildLspDescriptors(): void;
+	refreshLspDescriptors(): void;
+	getLspDescriptors(): RegisteredLspDescriptor[];
+	getLspDescriptorsForLanguage(language: string): RegisteredLspDescriptor[];
+	readonly lspRevision: number;
 
 	// Document text changes go through a host document-edit operation
 	// applied as one undo transaction with revision checks.

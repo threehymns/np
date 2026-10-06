@@ -9,7 +9,7 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { cn } from '@np/core';
-	import type { AppearanceMode } from '@np/core';
+	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode } from '@np/core';
 
 	const appState = useAppState();
 
@@ -162,6 +162,61 @@
 
 	let searchQuery = $state('');
 	let recordingCmdId = $state<string | null>(null);
+
+	// The stored schema owns the bounds; clamping here keeps an emptied number
+	// field from handing SettingsManager a value it rejects outright.
+	function setMinWordLength(raw: string) {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) return;
+		appState.prefs.minWordLength = Math.max(1, Math.trunc(parsed));
+	}
+
+	// The per-language override map is a nested object, so its control is the
+	// same raw JSON box GeneratedSettingControl gives every other object
+	// setting. A per-language list would be a better control and is a
+	// settings-UI project of its own; this keeps the map reachable in the
+	// meantime instead of leaving it settable only by hand-editing storage.
+	let languageOverridesDraft = $state('');
+	let languageOverridesError = $state<string | null>(null);
+	let lastSyncedOverrides = $state('');
+	let overridesTextarea: HTMLTextAreaElement | null = $state(null);
+
+	$effect(() => {
+		// `settingsVersion` is the reactive handle for a resolved value.
+		appState.prefs.settingsVersion;
+		const next = JSON.stringify(appState.prefs.get('editor', 'languages'), null, 2);
+		// Never clobber an edit in progress: the textarea saves only on blur,
+		// so skip the refresh while it is focused or while the draft holds
+		// unsaved changes. Otherwise keep it in sync with stored settings.
+		if (typeof document !== 'undefined' && document.activeElement === overridesTextarea) return;
+		if (languageOverridesDraft !== lastSyncedOverrides) return;
+		languageOverridesDraft = next;
+		lastSyncedOverrides = next;
+	});
+
+	function saveLanguageOverrides() {
+		try {
+			appState.prefs.set(
+				'editor',
+				'languages',
+				JSON.parse(languageOverridesDraft),
+				appState.prefs.activeScope,
+			);
+			lastSyncedOverrides = languageOverridesDraft;
+			languageOverridesError = null;
+		} catch (e) {
+			languageOverridesError = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	function setServerFetchTimeoutMs(raw: string) {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) return;
+		// The stored schema owns the bounds; clamping here keeps an emptied number
+		// field from handing SettingsManager a value it rejects outright. Same as
+		// the word-length control above.
+		appState.prefs.serverFetchTimeoutMs = Math.max(0, Math.trunc(parsed));
+	}
 
 	const allCommands = $derived(appState.commands.getAll());
 	const filteredCommands = $derived(
@@ -554,6 +609,129 @@
 											<p class="text-[10px] text-muted-foreground">Coming soon</p>
 										</div>
 										<Switch checked={false} disabled />
+									</div>
+
+									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+										<div class="space-y-0.5">
+											<Label class="text-sm font-medium">Automatic Completions</Label>
+											<p class="text-[10px] text-muted-foreground">Suggest while typing. Off keeps Ctrl-Space working</p>
+										</div>
+										<Switch bind:checked={appState.prefs.automaticCompletions} />
+									</div>
+								</div>
+
+								<div class="space-y-4">
+									<h4 class="text-sm font-semibold">Completions</h4>
+									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Words</Label>
+											<p class="text-[10px] text-muted-foreground">Offer words from this document. Fallback shows them only when a server errors or times out; off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on</p>
+											<select
+												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={appState.prefs.completionWords}
+												onchange={(e) => {
+													appState.prefs.completionWords = (e.currentTarget as HTMLSelectElement)
+														.value as CompletionWordsMode;
+												}}
+											>
+												<option value="enabled">enabled</option>
+												<option value="fallback">fallback</option>
+												<option value="disabled">disabled</option>
+											</select>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Minimum Word Length</Label>
+											<p class="text-[10px] text-muted-foreground">Shortest typed prefix that summons suggestions while typing</p>
+											<input
+												type="number"
+												min="1"
+												step="1"
+												value={appState.prefs.minWordLength}
+												onchange={(e) => setMinWordLength((e.currentTarget as HTMLInputElement).value)}
+												class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+											/>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Per-Language Overrides</Label>
+											<p class="text-[10px] text-muted-foreground">
+												Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here
+											</p>
+											<textarea
+												bind:this={overridesTextarea}
+												bind:value={languageOverridesDraft}
+												onblur={saveLanguageOverrides}
+												rows="4"
+												spellcheck="false"
+												class={cn(
+													'w-full max-w-md text-xs font-mono rounded-lg border bg-background p-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary leading-normal',
+													languageOverridesError
+														? 'border-destructive focus:ring-destructive'
+														: 'border-border',
+												)}
+											></textarea>
+											{#if languageOverridesError}
+												<p class="text-[11px] text-destructive">{languageOverridesError}</p>
+											{/if}
+										</div>
+									</div>
+								</div>
+
+								<div class="space-y-4">
+									<h4 class="text-sm font-semibold">Language Servers</h4>
+									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Language Servers</Label>
+											<p class="text-[10px] text-muted-foreground">Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed, and stops the server once it has no other document to serve; notes and words are unaffected</p>
+											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+												<Switch
+													checked={appState.prefs.serverLsp}
+													onCheckedChange={(checked: boolean) =>
+														(appState.prefs.serverLsp = checked)}
+												/>
+											</div>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Server Fetch Timeout</Label>
+											<p class="text-[10px] text-muted-foreground">Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes, up to a safety bound so a hung server cannot leave the popover empty forever</p>
+											<input
+												type="number"
+												min="0"
+												step="50"
+												value={appState.prefs.serverFetchTimeoutMs}
+												onchange={(e) => setServerFetchTimeoutMs((e.currentTarget as HTMLInputElement).value)}
+												class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+											/>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Server Insert Mode</Label>
+											<p class="text-[10px] text-muted-foreground">What accepting a server suggestion replaces. Suffix replaces what you typed; range replaces the range the server named</p>
+											<select
+												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={appState.prefs.serverInsertMode}
+												onchange={(e) =>
+													(appState.prefs.serverInsertMode = (e.currentTarget as HTMLSelectElement)
+														.value as CompletionLspInsertMode)}
+											>
+												<option value="replace_suffix">replace_suffix</option>
+												<option value="replace_range">replace_range</option>
+											</select>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Show Completion Documentation</Label>
+											<p class="text-[10px] text-muted-foreground">Show the signature and docs a server attached to its suggestion</p>
+											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+												<Switch
+													checked={appState.prefs.showCompletionDocumentation}
+													onCheckedChange={(checked: boolean) =>
+														(appState.prefs.showCompletionDocumentation = checked)}
+												/>
+											</div>
+										</div>
 									</div>
 								</div>
 
