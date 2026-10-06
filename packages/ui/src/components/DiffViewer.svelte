@@ -505,9 +505,11 @@
 	// the open one when present. Creation reads the already-loaded git
 	// snapshot (content == baseline, so clean) and opens no tab; files
 	// whose diff has not loaded yet bind on the refresh that delivers it.
-	// Staged-only entries never seed a working-tree Document (their snapshot
-	// is index content); combined and unstaged entries bind as before. Clean
-	// binding-owned tab-less Documents for files that left are pruned;
+	// Staged-only entries seed from index content (which equals working-tree
+	// content while clean); typing then dirties the Document against the
+	// index baseline, i.e. creates an unstaged modification (#268 story 11).
+	// Deleted files never bind (their presentation stays read-only).
+	// Clean binding-owned tab-less Documents for files that left are pruned;
 	// dirty Documents and tab-bound Documents are preserved.
 	$effect(() => {
 		const files = activeChanges;
@@ -523,7 +525,6 @@
 		};
 		const boundIds = appState.workspace.diffBoundDocIds;
 		for (const file of files) {
-			if (file.staged && !file.combined) continue;
 			const detail = resolveFileDiff(file);
 			ensureSplitDocument(scope, boundIds, file, detail?.modifiedContent ?? file.modifiedContent);
 		}

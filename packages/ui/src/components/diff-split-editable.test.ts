@@ -42,4 +42,11 @@ describe("DiffViewer split Working-copy pane binding", () => {
 		expect(src).not.toContain("readOnly: true,");
 		expect(src).not.toContain("EditorState.readOnly.of(currentOptions.readOnly)");
 	});
+
+	it("binds staged-only files too (typing creates an unstaged modification, #268 story 11)", () => {
+		// Regression lock: the binding effect once skipped staged-only
+		// entries, leaving their Working-copy panes permanently read-only
+		// with no bound Document to type into.
+		expect(src).not.toContain("if (file.staged && !file.combined) continue;");
+	});
 });

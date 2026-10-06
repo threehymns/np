@@ -220,6 +220,23 @@ describe("diff split Working-copy binding (#269)", () => {
 			expect(ids.get("src/a.ts")).toBe(doc!.id);
 		});
 
+		it("binds staged-only files from index content (editable; typing dirties the working tree)", () => {
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const stagedOnly = { ...makeChange("src/a.ts", "M"), staged: true };
+			const doc = ensureSplitDocument(scope, ids, stagedOnly, "index content\n");
+			expect(doc).toBeDefined();
+			expect(doc!.content).toBe("index content\n");
+			expect(doc!.isModified).toBe(false);
+			expect(isSplitWorkingCopyEditable("M", doc)).toBe(true);
+			expect(ids.get("src/a.ts")).toBe(doc!.id);
+			// Typing in a staged file's pane dirties against the index
+			// baseline: an unstaged modification, never an index move (#268
+			// story 11).
+			doc!.content = "index content\nplus pane edits\n";
+			expect(doc!.isModified).toBe(true);
+		});
+
 		it("keeps unsaved pane edits when a refresh delivers a new snapshot", () => {
 			const { scope } = makeScope();
 			const ids = new Map<string, string>();
