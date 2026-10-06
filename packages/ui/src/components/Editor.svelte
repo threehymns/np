@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, minimalTextChange, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -126,8 +126,11 @@
 						{ history: historyField },
 					);
 					if (restored.doc.toString() !== currentContent) {
+						// Minimal hunk so the restored undo history survives the
+						// content catch-up instead of being mapped away (#271).
+						const catchUp = minimalTextChange(restored.doc.toString(), currentContent);
 						restored = restored.update({
-							changes: { from: 0, to: restored.doc.length, insert: currentContent },
+							changes: catchUp ?? { from: 0, to: restored.doc.length, insert: currentContent },
 							selection: clampSelection(restored.selection, currentContent.length),
 							annotations: Transaction.addToHistory.of(false),
 						}).state;
@@ -395,8 +398,12 @@
 					const prevScrollTop = view.scrollDOM.scrollTop;
 					const prevScrollLeft = view.scrollDOM.scrollLeft;
 
+					// Minimal hunk so diff-pane keystrokes echoed here map
+					// through (rather than wipe) this view's undo history:
+					// independent stacks over the shared text (#271).
+					const syncChange = minimalTextChange(currentDoc, c);
 					view.dispatch({
-						changes: {
+						changes: syncChange ?? {
 							from: 0,
 							to: view.state.doc.length,
 							insert: c,
