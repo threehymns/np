@@ -223,11 +223,13 @@ function makeProject(files: Record<string, string>): string {
 
 interface StubServer {
 	readonly platform: RealProcessPlatform;
-	readonly requests: LspCompletionRequest[];
+	readonly requests: CompletionQuery[];
 	/** The plugin's own per-server buffers, which the Logs tab (#266) reads. */
 	readonly logs: LspLogStore;
 	/** What the completion source is given; it drives the real client. */
-	fetch(request: LspCompletionRequest): Promise<LspCompletionOutcome>;
+	fetch(request: CompletionQuery): Promise<CompletionAnswer>;
+	/** Union of live servers’ triggerCharacters, via coordinator channel. */
+	triggerCharacters(): readonly string[];
 }
 
 /**
@@ -261,7 +263,8 @@ async function startStubServer(script: readonly string[]): Promise<StubServer> {
 			// Through the runtime's public entry point, which is what a second
 			// provider would also implement (`CompletionCoordinator`).
 			return await runtime.fetch(query);
-		}
+		},
+		triggerCharacters: () => runtime.triggerCharacters()
 	};
 }
 
@@ -286,6 +289,7 @@ function reader(
 interface ChainOptions {
 	readonly language?: string;
 	readonly fetch?: StubServer["fetch"];
+	readonly triggerCharacters?: StubServer["triggerCharacters"];
 	readonly read?: SettingReader;
 	/** Overrides applied after the settings are read, for the source-level cases. */
 	readonly serverSettings?: Partial<ServerCompletionSettings>;
@@ -332,7 +336,8 @@ async function codeState(doc: string, options: ChainOptions = {}): Promise<Edito
 					server: options.fetch
 						? {
 								fetch: options.fetch,
-								readSettings: () => serverSettings
+								readSettings: () => serverSettings,
+								readTriggerCharacters: options.triggerCharacters ?? (() => [])
 							}
 						: null
 				})
@@ -1113,40 +1118,96 @@ describe("the server source obeys the trigger rules", () => {
 	);
 
 	/**
-	 * The trigger-character gap, pinned until live trigger honoring lands.
-	 *
-	 * A TypeScript server lists `"` among its completion trigger characters, so
-	 * typing the quote in `from "` is exactly the keystroke a trigger-honoring
-	 * client would ask about. This client has no per-character trigger —
-	 * CodeMirror decides when to ask and the word-prefix gate decides whether
-	 * the query may go — so the quote lands with no typed prefix after it and
-	 * the source declines before anything reaches the wire.
-	 *
-	 * This passes now and MUST fail once live trigger honoring lands: honoring
-	 * the server's trigger characters means asking on that keystroke despite
-	 * the empty prefix, which is precisely the `requests` growth asserted
-	 * against below. When it fails, delete this guard rather than the honoring.
+	 * The stub lists `"`, `/`, `.` in its completionProvider trigger characters,
+	 * so typing the quote in `from "` is the keystroke a trigger-honoring
+	 * client asks about — prose stays quiet, words still answer.
 	 */
-	describe("the trigger-character gap", () => {
+	describe("live trigger characters", () => {
 		it(
-			"does not auto-ask after a quote with no typed prefix, while explicit still reaches the server",
+			"auto-asks after a quote or slash in code with its trigger kind, while prose stays quiet",
 			async () => {
 				const server = await startStubServer([]);
+				const triggers = () => server.triggerCharacters();
+
+				// Warm the server so its handshake result is live: the first
+				// request starts it, and the triggers below are what it answered.
+				const warm = await projectState(DOC, { fetch: server.fetch, triggerCharacters: triggers });
+				expect(served(await offeredOptions(warm, DOC.length, true))).not.toEqual([]);
+				await waitFor(() => triggers().length > 0, { label: "live trigger characters" });
+				expect(triggers()).toContain('"');
+				expect(triggers()).toContain('/');
+
 				// The quote just typed after `from `, cursor directly behind it.
 				const quoted = 'import { x } from "';
-				const state = await projectState(quoted, { fetch: server.fetch });
+				const state = await projectState(quoted, { fetch: server.fetch, triggerCharacters: triggers });
 
 				const before = server.requests.length;
-				expect(served(await offeredOptions(state, quoted.length, false))).toEqual([]);
-				expect(server.requests.length).toBe(before);
-
-				// The control: the server is up and the explicit trigger reaches
-				// it, so the silence above is the trigger gap and not a dead
-				// server. A prefixed document, because explicit still goes
-				// through the typed-prefix gate.
-				const prefixed = await projectState(DOC, { fetch: server.fetch });
-				expect(served(await offeredOptions(prefixed, DOC.length, true))).not.toEqual([]);
+				expect(served(await offeredOptions(state, quoted.length, false))).not.toEqual([]);
 				expect(server.requests.length).toBeGreaterThan(before);
+				expect(server.requests[server.requests.length - 1].trigger).toEqual({
+					kind: 2,
+					character: '"'
+				});
+
+				// Slash, the other half of the acceptance: a path being typed.
+				const slashed = 'import x from "/';
+				const slashState = await projectState(slashed, {
+					fetch: server.fetch,
+					triggerCharacters: triggers
+				});
+				const slashBefore = server.requests.length;
+				expect(served(await offeredOptions(slashState, slashed.length, false))).not.toEqual([]);
+				expect(server.requests.length).toBeGreaterThan(slashBefore);
+				expect(server.requests[server.requests.length - 1].trigger).toEqual({
+					kind: 2,
+					character: '/'
+				});
+
+				// Prose stays quiet per the existing policy: the same quote in a
+				// note never reaches the wire, even though it is a trigger.
+				const markdown = await codeState('Notes about widgets\n\n"', {
+					language: "Markdown",
+					fetch: server.fetch,
+					triggerCharacters: triggers,
+					filePath: "/project/note.md"
+				});
+				const proseBefore = server.requests.length;
+				expect(served(await offeredOptions(markdown, markdown.doc.length, false))).toEqual([]);
+				expect(server.requests.length).toBe(proseBefore);
+			},
+			30_000
+		);
+
+		it(
+			"lets words answer behind a failed trigger request",
+			async () => {
+				const server = await startStubServer(["--mode", "fail-completion"]);
+				const triggers = () => server.triggerCharacters();
+
+				// The handshake still lands on a server that refuses completions,
+				// so triggers are live and the trigger request below really goes out.
+				const warm = await projectState(DOC, { fetch: server.fetch, triggerCharacters: triggers });
+				await offeredOptions(warm, DOC.length, true);
+				await waitFor(() => triggers().length > 0, { label: "live trigger characters" });
+
+				const quoted = 'import { x } from "';
+				const state = await projectState(quoted, { fetch: server.fetch, triggerCharacters: triggers });
+				const before = server.requests.length;
+				expect(served(await offeredOptions(state, quoted.length, false))).toEqual([]);
+				expect(server.requests.length).toBeGreaterThan(before);
+				expect(server.requests[server.requests.length - 1].trigger).toEqual({
+					kind: 2,
+					character: '"'
+				});
+				// Words behind the failure: the trigger request failed, so the
+				// fallback still owns the popover rather than silence. The quoted
+				// document holds `import` and `from`, which extend no empty prefix —
+				// so the assertion is that the trigger request was asked and failed,
+				// not that words dump the vocabulary: the fallback path was reached.
+				// The prefixed control proves words still answer when there is a
+				// prefix to extend.
+				const prefixed = await projectState(DOC, { fetch: server.fetch, triggerCharacters: triggers });
+				expect(await offeredWordLabels(prefixed, DOC.length, true)).toEqual(["widgetId"]);
 			},
 			30_000
 		);
