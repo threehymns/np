@@ -2,8 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Result, Schedule } from 'effect';
 import { TestClock } from 'effect/testing';
 import {
+	settleExit,
+	settleWithin,
 	timeoutFailEffect,
-	timeoutOptionEffect
+	timeoutOptionEffect,
+	withTimeout
 } from './effect-timeouts';
 import { pullBackoffSchedule, pullWithBackoff, repullSchedule, scopedPullLoop } from './pull-schedules';
 
@@ -149,5 +152,45 @@ describe('Pull schedules, on TestClock (#302)', () => {
 		// Initial run plus one per 2 s interval; leaving the scope interrupts
 		// the fiber, so nothing runs after.
 		expect(runs).toBe(3);
+	});
+});
+
+describe('Timeout wrappers preserve the promise contract (#302 review)', () => {
+	it('withTimeout rejects with the original server error, not a wrapper', async () => {
+		const original = new Error('server boom');
+		let settled: unknown;
+		try {
+			await withTimeout(
+				Promise.reject(original),
+				1000,
+				() => {},
+				() => new Error('timeout')
+			);
+		} catch (error) {
+			settled = error;
+		}
+		expect(settled).toBe(original);
+	});
+
+	it('settleWithin rejects with the original error instead of wrapping it', async () => {
+		const original = new Error('transport boom');
+		let settled: unknown;
+		try {
+			await settleWithin(Promise.reject(original), 1000);
+		} catch (error) {
+			settled = error;
+		}
+		expect(settled).toBe(original);
+	});
+
+	it('settleExit rejects with the original error instead of wrapping it', async () => {
+		const original = new Error('exit boom');
+		let settled: unknown;
+		try {
+			await settleExit(Promise.reject(original), 1000);
+		} catch (error) {
+			settled = error;
+		}
+		expect(settled).toBe(original);
 	});
 });

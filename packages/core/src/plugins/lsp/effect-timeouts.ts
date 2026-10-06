@@ -75,7 +75,10 @@ export async function withTimeout<T>(
 ): Promise<T> {
 	return Effect.runPromise(
 		timeoutFailEffect(
-			Effect.tryPromise(() => settled),
+			Effect.tryPromise({
+				try: () => settled,
+				catch: (error) => error
+			}),
 			timeoutMs,
 			onTimeout,
 			makeError
@@ -91,7 +94,10 @@ export async function withTimeout<T>(
 export async function settleWithin<T>(pending: Promise<T>, timeoutMs: number): Promise<T | null> {
 	const option = await Effect.runPromise(
 		timeoutOptionEffect(
-			Effect.tryPromise(() => pending),
+			Effect.tryPromise({
+				try: () => pending,
+				catch: (error) => error
+			}),
 			timeoutMs
 		) as Effect.Effect<Option.Option<T>, unknown>
 	);
@@ -105,7 +111,10 @@ export async function settleWithin<T>(pending: Promise<T>, timeoutMs: number): P
 export async function settleExit(exit: Promise<unknown>, timeoutMs: number): Promise<boolean> {
 	const option = await Effect.runPromise(
 		timeoutOptionEffect(
-			Effect.tryPromise(() => exit),
+			Effect.tryPromise({
+				try: () => exit,
+				catch: (error) => error
+			}),
 			timeoutMs
 		) as Effect.Effect<Option.Option<unknown>, unknown>
 	);
