@@ -14,6 +14,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	deleteEntry: (entryPath: string) => ipcRenderer.invoke('fs:deleteEntry', entryPath),
 	renameEntry: (oldPath: string, newName: string) => ipcRenderer.invoke('fs:renameEntry', oldPath, newName),
 	gitRun: (workingDir: string, args: string[]) => ipcRenderer.invoke('git:run', workingDir, args),
+	fileExists: (path: string) => ipcRenderer.invoke('fs:exists', path),
+	resolveLspCommand: (command: string, bundled?: { package: string; binary: string }) =>
+		ipcRenderer.invoke('lsp:resolveCommand', command, bundled),
+	spawnLspServer: (token: string, args: string[], cwd: string) =>
+		ipcRenderer.invoke('lsp:spawn', token, args, cwd),
+	writeLspServer: (processId: string, chunk: Uint8Array) =>
+		ipcRenderer.send('lsp:write', processId, chunk),
+	endLspServer: (processId: string) => ipcRenderer.send('lsp:end', processId),
+	killLspServer: (processId: string) => ipcRenderer.invoke('lsp:kill', processId),
+	onLspServerData: (handlers: {
+		onStdout: (processId: string, chunk: Uint8Array) => void;
+		onStderr: (processId: string, chunk: Uint8Array) => void;
+		onExit: (exit: { processId: string; code: number; signal: string | null; error?: string }) => void;
+	}) => {
+		// One listener per channel for every server: the per-process routing lives
+		// in the adapter, so a second server does not need a second subscription.
+		const stdout = (_event: unknown, payload: { processId: string; chunk: Uint8Array }) =>
+			handlers.onStdout(payload.processId, payload.chunk);
+		const stderr = (_event: unknown, payload: { processId: string; chunk: Uint8Array }) =>
+			handlers.onStderr(payload.processId, payload.chunk);
+		const exit = (_event: unknown, payload: { processId: string; code: number; signal: string | null; error?: string }) =>
+			handlers.onExit(payload);
+		ipcRenderer.on('lsp:stdout', stdout);
+		ipcRenderer.on('lsp:stderr', stderr);
+		ipcRenderer.on('lsp:exit', exit);
+		return () => {
+			ipcRenderer.removeListener('lsp:stdout', stdout);
+			ipcRenderer.removeListener('lsp:stderr', stderr);
+			ipcRenderer.removeListener('lsp:exit', exit);
+		};
+	},
 	persistenceSave: (key: string, value: any) => ipcRenderer.invoke('persistence:save', key, value),
 	persistenceLoad: (key: string) => ipcRenderer.invoke('persistence:load', key),
 	persistenceLoadAll: () => ipcRenderer.invoke('persistence:loadAll'),

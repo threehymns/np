@@ -191,6 +191,94 @@ export function rebuildSettingSchemas(
 }
 
 /**
+ * The three states of `editor.words`. `'disabled'` silences the typing trigger
+ * only — the explicit one keeps answering. `'fallback'` stands words down
+ * entirely while a server is answering for the file, so they appear behind a
+ * server that errors or times out.
+ *
+ * Declared here, next to the schema that validates against it, so the
+ * buffer-word source on the other side of the package boundary reads one
+ * union rather than restating it under a second name.
+ */
+export type CompletionWordsMode = 'enabled' | 'fallback' | 'disabled';
+
+/**
+ * Which range an accepted server completion replaces.
+ *
+ * Zed's two values, kept verbatim because the vocabulary is the point of
+ * reserving these names (spec #263): `replace_suffix` replaces only what the
+ * user has typed since the last word boundary, and `replace_range` replaces
+ * whatever range the server named for the item — which is the only one of the
+ * two that can swallow a trailing bracket or a partially typed argument.
+ */
+export type CompletionLspInsertMode = 'replace_suffix' | 'replace_range';
+
+/**
+ * Documented defaults for the `editor` completion keys (spec #259, #263).
+ *
+ * These values are the ones the schema validates a stored setting against, so
+ * the schema is where they are defined. The schema, the `Preferences` snapshot
+ * and the completion sources all read them from here: a default written in
+ * three places is a default that drifts, and the drift is invisible until a
+ * user sees a different number than the documentation promises.
+ *
+ * `words` defaults to `'fallback'` as of #263 — server items come first and
+ * words answer behind a server that errors or times out. `'enabled'` remains
+ * available and is what a language with no server, or a user who wants the
+ * vocabulary always, selects.
+ *
+ * `lspFetchTimeoutMs` defaults to `0`, which is Zed's default and means *no
+ * bound chosen*, not "instant": the popover waits for whichever server is
+ * answering, and a user who wants a shorter bound sets one.
+ *
+ * "No bound chosen" is not the same as no bound at all. Spec #263 asks for words
+ * behind a server that errors *or times out*, and a request with no bound can
+ * never time out — so the runtime substitutes a bound of its own when this one
+ * supplies none. See `DEFAULT_FETCH_TIMEOUT_MS` in the LSP runtime and ADR 0021.
+ * The setting is unchanged either way: `0` still crosses the editor seam as
+ * "nothing chosen", which is what every reader that is not the wire wants to
+ * know.
+ */
+export const EDITOR_COMPLETION_DEFAULTS: {
+	readonly words: CompletionWordsMode;
+	readonly minWordLength: number;
+	readonly automaticCompletions: boolean;
+	readonly lsp: boolean;
+	readonly lspFetchTimeoutMs: number;
+	readonly lspInsertMode: CompletionLspInsertMode;
+	readonly showCompletionDocumentation: boolean;
+} = {
+	words: 'fallback',
+	minWordLength: 3,
+	automaticCompletions: true,
+	lsp: true,
+	lspFetchTimeoutMs: 0,
+	lspInsertMode: 'replace_suffix',
+	showCompletionDocumentation: true
+};
+
+/**
+ * The `editor` keys the completion sources and the LSP runtime read, spelled once.
+ *
+ * These live beside {@link EDITOR_SCHEMA} and {@link EDITOR_COMPLETION_DEFAULTS}
+ * because they are schema keys: a reader that spells one of them differently from
+ * the schema it is validated against reads nothing and reports a default, which
+ * is a silent divergence rather than an error. The editor's completion chain and
+ * the LSP runtime both resolve `editor.languages` for themselves and must agree
+ * on every character — the whole of `editor.lsp` working depends on the two
+ * halves of the fold resolving the same key.
+ */
+export const EDITOR_SETTINGS_NAMESPACE = 'editor';
+export const WORDS_SETTING = 'words';
+export const MIN_WORD_LENGTH_SETTING = 'min_word_length';
+export const AUTOMATIC_COMPLETIONS_SETTING = 'automatic_completions';
+export const LSP_SETTING = 'lsp';
+export const LSP_FETCH_TIMEOUT_SETTING = 'lsp_fetch_timeout_ms';
+export const LSP_INSERT_MODE_SETTING = 'lsp_insert_mode';
+export const SHOW_COMPLETION_DOCUMENTATION_SETTING = 'show_completion_documentation';
+export const LANGUAGE_OVERRIDES_SETTING = 'languages';
+
+/**
  * Standard Zed-aligned Editor settings schema.
  */
 export const EDITOR_SCHEMA: SettingNamespaceSchema = {
@@ -239,6 +327,79 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			description: 'Synchronizes the Vim yank/paste register with the system clipboard',
 			control: 'toggle',
 			alias: 'vimSyncClipboard'
+		},
+		/**
+		 * The completion keys below are the `editor` category's hand-written
+		 * half: `SettingsModal.svelte` filters the `editor` namespace out of the
+		 * generated sections and builds these controls by hand, so a `control`
+		 * hint here would never be dispatched. They carry no hint for that
+		 * reason — declaring one would document a UI that does not exist. Title
+		 * and description are the contract, and the markup spells them out word
+		 * for word; `settings-markup-parity.test.ts` is what holds them to it.
+		 */
+		words: {
+			type: 'string',
+			default: EDITOR_COMPLETION_DEFAULTS.words,
+			title: 'Words',
+			description: 'Offer words from this document. Fallback shows them only when a server errors or times out; off silences the automatic trigger only; Markdown prose is quiet unless a per-language override turns it on',
+			enum: ['enabled', 'fallback', 'disabled']
+		},
+		min_word_length: {
+			type: 'number',
+			default: EDITOR_COMPLETION_DEFAULTS.minWordLength,
+			minimum: 1,
+			title: 'Minimum Word Length',
+			description: 'Shortest typed prefix that summons suggestions while typing'
+		},
+		automatic_completions: {
+			type: 'boolean',
+			default: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
+			title: 'Automatic Completions',
+			description: 'Suggest while typing. Off keeps Ctrl-Space working'
+		},
+		/**
+		 * The four server keys are Zed's reserved names, activated by spec #263
+		 * and scoped per language like the word settings: a machine that wants
+		 * server completions only for code needs one `editor.languages` entry, not
+		 * a second settings tree.
+		 */
+		lsp: {
+			type: 'boolean',
+			default: EDITOR_COMPLETION_DEFAULTS.lsp,
+			title: 'Language Servers',
+			description: 'Run a language server for this language. Off leaves the document unserved, unsynced and undiagnosed, and stops the server once it has no other document to serve; notes and words are unaffected'
+		},
+		lsp_fetch_timeout_ms: {
+			type: 'number',
+			default: EDITOR_COMPLETION_DEFAULTS.lspFetchTimeoutMs,
+			minimum: 0,
+			title: 'Server Fetch Timeout',
+			description: 'Milliseconds one server may hold up suggestions before words answer instead. 0 waits as long as the server takes, up to a safety bound so a hung server cannot leave the popover empty forever'
+		},
+		lsp_insert_mode: {
+			type: 'string',
+			default: EDITOR_COMPLETION_DEFAULTS.lspInsertMode,
+			title: 'Server Insert Mode',
+			description: 'What accepting a server suggestion replaces. Suffix replaces what you typed; range replaces the range the server named',
+			enum: ['replace_suffix', 'replace_range']
+		},
+		show_completion_documentation: {
+			type: 'boolean',
+			default: EDITOR_COMPLETION_DEFAULTS.showCompletionDocumentation,
+			title: 'Show Completion Documentation',
+			description: 'Show the signature and docs a server attached to its suggestion'
+		},
+		/**
+		 * Per-language overrides for the keys above, keyed by language name and
+		 * matched case-insensitively. Read by `scopeForLanguage`, which
+		 * deliberately ignores `automatic_completions`: that one is the global
+		 * popup toggle, and scoping it would contradict what it is for.
+		 */
+		languages: {
+			type: 'object',
+			default: {},
+			title: 'Per-Language Overrides',
+			description: 'Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here'
 		}
 	}
 };

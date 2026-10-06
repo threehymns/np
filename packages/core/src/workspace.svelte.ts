@@ -46,6 +46,11 @@ export class Workspace {
 	updateDocumentContent(doc: DocumentSession, content: string): void {
 		if (doc.content === content) return;
 		doc.content = content;
+		// Document lifecycle is observable by plugins (ADR 0013), the same way a
+		// save is. A consumer that mirrors the open document somewhere else — a
+		// language server, for one — needs the new text, and the keystroke path is
+		// the only place it exists. Observers, so the emit cannot veto the edit.
+		this.pluginHost?.emit('document:changed', { document: doc, origin: doc.origin, content });
 		this.debouncedSaveOpenFiles();
 	}
 
@@ -426,6 +431,11 @@ export class Workspace {
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
+		// A document becoming open is observable by plugins (ADR 0013), the same
+		// way a save is. It is a generic lifecycle fact, not an invitation to name
+		// a feature: consumers decide whether an untitled, origin-less document is
+		// of any interest to them.
+		this.pluginHost?.emit('document:opened', { document: newDoc, origin: newDoc.origin });
 		return newDoc;
 	}
 
@@ -461,6 +471,9 @@ export class Workspace {
 		this.documents.push(newDoc);
 		this.tabs.push({ id: newDoc.id, type: 'document' });
 		this.activeTabId = newDoc.id;
+		// Content is read before the emit, so an observer sees the document as it
+		// is on disk rather than as an empty shell it has to wait on.
+		this.pluginHost?.emit('document:opened', { document: newDoc, origin: newDoc.origin });
 		return newDoc;
 	}
 
@@ -840,6 +853,15 @@ export class Workspace {
 
 				this.documents = restoredDocs;
 				this.tabs = restoredTabs;
+				// Restored documents are open documents: observers of the open
+				// lifecycle (ADR 0013) are told once the whole set is in place, so a
+				// consumer never sees a half-restored workspace.
+				for (const restored of restoredDocs) {
+					this.pluginHost?.emit('document:opened', {
+						document: restored,
+						origin: restored.origin
+					});
+				}
 				if (restoredTabs.length === 0) {
 					await this.newFile();
 				} else if (activeId && restoredTabs.some(t => t.id === activeId)) {

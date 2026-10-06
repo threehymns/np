@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, minimalTextChange } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, minimalTextChange, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -11,6 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -31,8 +32,14 @@
 	let editorEl = $state<HTMLDivElement>();
 	let altPressed = $state(false);
 	let pendingScrollGen = 0;
+	let completionChainGen = 0;
 	const wrapCompartment = new Compartment();
 	const languageCompartment = new Compartment();
+	// Sits after the language compartment so word completions append to the note
+	// sources it registers, and so it can also carry `autocompletion()`: the
+	// global popup toggle has to reach the language-provided sources, which are
+	// not reachable per source.
+	const completionCompartment = new Compartment();
 	const vimCompartment = new Compartment();
 	const syncAnnotation = Annotation.define<boolean>();
 
@@ -77,6 +84,7 @@
 				...createEditorExtensions({
 					wrapCompartment,
 					languageCompartment,
+					completionCompartment,
 					vimCompartment,
 					editorCompartments: appState.plugins?.editorCompartments,
 					pluginContributions: appState.plugins?.getEditorContributions?.() ?? [],
@@ -305,6 +313,74 @@
 						effects: languageCompartment.reconfigure(extensions),
 					});
 				}
+			});
+		}
+	});
+
+	// Sync the completion chain. It lives in its own compartment after the
+	// language one because a source registered there appends to the language's
+	// own autocomplete chain rather than replacing it (`override` would drop
+	// the table and wikilink sources). Reads the language revision with
+	// doc.language for the same reason the language compartment above does, the
+	// settings revision because the global popup toggle lives in
+	// `autocompletion({ activateOnTyping })` — the only lever that reaches the
+	// language-provided sources — and `prefs.vimMode` because the modal
+	// keymap (`Ctrl-y` instead of Enter) lives in the same compartment. The
+	// snippet revision so enabling, disabling or refreshing a plugin pack
+	// rebuilds the chain instead of leaving the previous triggers behind. The
+	// word and server sources read their own settings per query, so a
+	// per-language override needs no reconfiguration of its own.
+	$effect(() => {
+		const _langRev = appState.plugins?.languageRevision;
+		const _settingsRev = appState.prefs.settingsVersion;
+		const _snippetRev = appState.plugins?.snippetRevision;
+		const vimEnabled = appState.prefs.vimMode;
+		const lang = doc.language;
+		const languageName = lang?.name ?? null;
+		// The source filters the whole registry itself, so handing it every
+		// registered snippet is one read rather than a read plus a filter that
+		// says the same thing.
+		const snippets = appState.plugins?.getSnippets() ?? [];
+		// Whoever can answer a completion query publishes itself under one generic
+		// key (ADR 0008); a language server is the first such provider. Absent —
+		// on web, or while the providing plugin is disabled — is the same "nothing
+		// can answer here" answer a language nothing serves gives, so the chain
+		// carries no provider source and words behave exactly as they did before.
+		// The shell names no provider, because it does not need to know which one is
+		// answering.
+		const completionCoordinator = appState.plugins?.getService<CompletionCoordinator>(
+			COMPLETION_COORDINATOR_SERVICE_KEY
+		);
+		if (view && active) {
+			const readSetting = (namespace: string, key: string) =>
+				appState.prefs.get(namespace, key);
+			// Language loading is async, so two runs can be in flight at once.
+			// The generation makes the loser a no-op instead of letting it land
+			// last and hand the editor back the previous language's chain.
+			const gen = ++completionChainGen;
+			const targetView = view;
+			resolveActiveLanguage(lang).then((language) => {
+				if (gen !== completionChainGen || targetView !== view) return;
+				targetView.dispatch({
+					effects: completionCompartment.reconfigure(
+						completionCompartmentExtensions({
+							language,
+							languageName,
+							snippets,
+							vimEnabled,
+							automaticCompletions: readAutomaticCompletions(readSetting),
+							readSettings: () =>
+								readBufferWordSettings(readSetting, languageName),
+							server: completionCoordinator
+								? {
+										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
+										readSettings: () =>
+											readServerCompletionSettings(readSetting, languageName),
+									}
+								: null,
+						}),
+					),
+				});
 			});
 		}
 	});

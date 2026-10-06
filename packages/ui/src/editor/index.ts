@@ -21,9 +21,11 @@ import {
 	foldGutter,
 	syntaxHighlighting,
 	LanguageDescription,
+	LanguageSupport,
+	type Language,
 } from "@codemirror/language";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { closeBrackets, closeBracketsKeymap, autocompletion } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { Table, GFM, type MarkdownExtension } from "@lezer/markdown";
@@ -81,6 +83,7 @@ import { linkHandlers } from "./extensions/link-events";
 import { editorTheme } from "./extensions/theme";
 import { smartIndent } from "./extensions/lists";
 import { WikiLinkExtension, wikilinkAutocompletion } from "./extensions/wikilinks";
+import { completionCompartmentExtensions } from "./extensions/completion-sources";
 import { StrikethroughExtension } from "./extensions/strikethrough";
 import { HighlightExtension } from "./extensions/inline-highlight";
 import { HashTagExtension } from "./extensions/hash-tags";
@@ -169,6 +172,27 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 	];
 }
 
+/**
+ * The `Language` whose data facet carries completions for `langDesc`.
+ *
+ * Markdown is special-cased: `getLanguageExtensions` builds its own superset
+ * with `markdown({ ... })`, but that language shares `@codemirror/lang-markdown`'s
+ * module-level data facet, so registering on `markdownLanguage` reaches the
+ * superset at exactly the slot the table and wikilink sources already occupy.
+ *
+ * `LanguageDescription.load()` memoizes, so awaiting it in both
+ * `getLanguageExtensions` and here costs nothing.
+ */
+export async function resolveActiveLanguage(
+	langDesc: LanguageDescription | null,
+): Promise<Language | null> {
+	if (!langDesc) return null;
+	if (langDesc.name === "Markdown") return markdownLanguage;
+	const loaded = await langDesc.load();
+	// StreamLanguage-based descriptions load a bare Language; the rest load support.
+	return loaded instanceof LanguageSupport ? loaded.language : (loaded as Language);
+}
+
 const markdownTableTheme = {
 	light: TableTheme.light.with({
 		"--tbl-theme-row-background": "var(--background)",
@@ -210,9 +234,30 @@ const markdownTableTheme = {
 	}),
 };
 
+/**
+ * The compartment's starting content: the popup gate at its default and no
+ * sources, because a document's language is loaded asynchronously. It keeps
+ * the popup machinery present in the editor's very first state rather than
+ * appearing a tick later; the editor component's completion effect
+ * reconfigures the compartment with the real language and the real settings.
+ *
+ * Takes the mount-time `vimEnabled` so the very first keymap is already the
+ * modal one — a bound Enter in the first state would eat a newline typed
+ * before the effect lands.
+ */
+const initialCompletionExtensions = (vimEnabled: boolean): Extension[] =>
+	completionCompartmentExtensions({
+		language: null,
+		languageName: null,
+		snippets: [],
+		automaticCompletions: true,
+		vimEnabled,
+	});
+
 export function createEditorExtensions(options: {
 	wrapCompartment: Compartment;
 	languageCompartment: Compartment;
+	completionCompartment: Compartment;
 	vimCompartment: Compartment;
 	gutterCompartment?: Compartment;
 	decorationsCompartment?: Compartment;
@@ -227,6 +272,7 @@ export function createEditorExtensions(options: {
 	const {
 		wrapCompartment,
 		languageCompartment,
+		completionCompartment,
 		vimCompartment,
 		gutterCompartment,
 		decorationsCompartment,
@@ -250,6 +296,13 @@ export function createEditorExtensions(options: {
 	return [
 		wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
 		languageCompartment.of(initialLanguageExtensions),
+		// After the language compartment on purpose: the language-data facet
+		// concatenates its inputs in configuration order, so a source
+		// registered here appends to the chain the language already built
+		// instead of reordering it. The same compartment carries
+		// `autocompletion()`, which is the only lever the global popup toggle
+		// has over the language-provided sources.
+		completionCompartment.of(initialCompletionExtensions(vimEnabled)),
 		vimCompartment.of(vimEnabled ? vim() : []),
 		...resolvedPluginExtensions,
 		highlightSpecialChars(),
@@ -262,7 +315,6 @@ export function createEditorExtensions(options: {
 		indentOnInput(),
 		bracketMatching(),
 		closeBrackets(),
-		autocompletion(),
 		rectangularSelection(),
 		crosshairCursor(),
 		highlightActiveLine(),
@@ -299,6 +351,10 @@ export * from "./extensions/embeds";
 export * from "./extensions/hide-markers";
 export * from "./extensions/link-events";
 export * from "./extensions/wikilinks";
+export * from "./extensions/buffer-words";
+export * from "./extensions/completion-sources";
+export * from "./extensions/completion-settings";
+export * from "./extensions/server-completions";
 export * from "./extensions/strikethrough";
 export * from "./extensions/inline-highlight";
 export * from "./extensions/hash-tags";

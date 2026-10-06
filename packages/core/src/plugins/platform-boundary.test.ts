@@ -72,7 +72,13 @@ describe('Platform separation static boundary', () => {
 	});
 
 	it('keeps the bundled manifests platform-neutral on disk', () => {
-		for (const file of ['git/manifest.ts', 'svelte-language/manifest.ts']) {
+		for (const file of [
+			'git/manifest.ts',
+			'svelte-language/manifest.ts',
+			// Desktop-only by manifest, and pure data to say so with: an import
+			// here would be the only way this plugin could leak a platform.
+			'lsp/manifest.ts'
+		]) {
 			const filePath = join(import.meta.dir, file);
 			const result = checkManifestFile(filePath);
 			expect(result.valid).toBe(true);
@@ -126,6 +132,9 @@ describe('Platform separation static boundary', () => {
 			'events.ts',
 			'errors.ts',
 			'languages.ts',
+			'language-scope.ts',
+			'completions.ts',
+			'lsp-descriptors.ts',
 			'git/index.ts',
 			'git/commands.ts',
 			'git/lifecycle.ts',
@@ -134,8 +143,25 @@ describe('Platform separation static boundary', () => {
 			'git/registration.ts',
 			'git/manifest.ts',
 			'svelte-language/index.ts',
+			'svelte-language/snippets.ts',
 			'svelte-language/registration.ts',
-			'svelte-language/manifest.ts'
+			'svelte-language/manifest.ts',
+			'lsp/index.ts',
+			'lsp/client.ts',
+			'lsp/completions.ts',
+			'lsp/commands.ts',
+			'lsp/descriptors.ts',
+			'lsp/diagnostic-decorations.ts',
+			'lsp/diagnostics.ts',
+			'lsp/lifecycle.ts',
+			'lsp/logs.ts',
+			'lsp/root.ts',
+			'lsp/status.ts',
+			'lsp/platform.ts',
+			'lsp/targets.ts',
+			'lsp/ui.ts',
+			'lsp/registration.ts',
+			'lsp/manifest.ts'
 		];
 		const offenders: string[] = [];
 		for (const file of neutralModules) {

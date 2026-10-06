@@ -19,6 +19,7 @@ import {
 	DIALOGS_SERVICE_KEY,
 	DIFF_NAVIGATOR_SERVICE_KEY,
 	PLUGIN_UI_LOADER_SERVICE_KEY,
+	SETTINGS_READER_SERVICE_KEY,
 	type PluginUILoader
 } from './plugins/services';
 
@@ -206,6 +207,23 @@ export class AppState {
 		}
 		this.plugins.provideService(DIFF_NAVIGATOR_SERVICE_KEY, {
 			getCurrentNavigator: () => this.activeDiffNavigator ?? undefined
+		});
+		// Resolved settings values, for a plugin that has to decide something at
+		// runtime rather than at configuration time. The plugin host's own settings
+		// surface is schemas (ADR 0012, ADR 0014); resolution lives here, in the
+		// manager that owns the layered store. Publishing it means a plugin that must
+		// act on a setting — whether to start a process for a document, say — reads
+		// the user's own answer without the editor shell passing it down, which
+		// would put the setting's name in the shell.
+		//
+		// The subscription is the other half of that promise. A consumer that reads
+		// on use still waits for its next use, and a plugin's next use is a
+		// keystroke — so "off" would land whenever the user happened to type next,
+		// which is how a switch comes to look broken. Same generic key, no feature
+		// named in either half.
+		this.plugins.provideService(SETTINGS_READER_SERVICE_KEY, {
+			read: (namespace: string, key: string) => this.prefs.get(namespace, key),
+			subscribe: (listener: () => void) => this.prefs.subscribeSettings(listener)
 		});
 		this.workspace.onRootOriginChange = async (origin) => {
 			if (origin && this.workspace.project.hasRootPermission) {

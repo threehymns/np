@@ -70,8 +70,11 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Reload**: Rebuilding a registry from its current transforms, for example after a plugin refreshes its underlying data.
 - **Reactivation**: Dropping one plugin's transforms and running its new code after the plugin is added, edited, removed, enabled, or disabled, then rebuilding affected registries.
 - **Event**: A record that something happened, offered for observation only. Subscribers cannot mutate, veto, or fail the operation.
+- **Language Server**: An external process speaking the Language Server Protocol for one or more languages: completions, hover, diagnostics, navigation. Managed by the LSP plugin, never by the host directly.
+- **LSP Descriptor**: A plugin contribution describing how to start and scope a Language Server: its command, arguments, root markers, and the languages it serves. _Avoid_: Server Descriptor (unscoped; a future headless server will need the bare word).
 - **Hook**: Participation in a running host operation through before/after phases. Before-hooks run sequentially in activation order and may modify inputs or cancel with a reason.
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
+- **Snippet Pack**: A plugin's set of trigger/body/description records registered for one language, composed into the completion config by the host. Bodies are plain text — no placeholders, no snippet variables. _Avoid_: completion contribution, snippet contribution type, templates
 - **UI Icon Pack (Product Icon Theme)**: A collection of icons representing application UI actions, controls, and navigation elements (e.g., Phosphor, Codicons).
 - **File Icon Pack (File Icon Theme)**: A collection of icons representing document types, language modes, and file configurations, typically mapped by extension, name, or language mode (e.g., Catppuccin, Material, VS Code Icons).
 - **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
@@ -81,6 +84,9 @@ A searchable dialog interface allowing the user to search and run registered act
 - **VCSAdapter**: The interface through which the app performs version-control operations, abstracting the underlying engine (system git, isomorphic-git) behind one contract. _Avoid_: git adapter, SimpleGitAdapter
 - **Carry-Forward**: The property of a branch switch that preserves modified and staged files instead of overwriting them. _Avoid_: auto-merge, preserve
 - **Hunk Action**: A partial-file edit applied by text-splicing a single diff hunk (stage, unstage, or discard), requiring direct index/working-tree writes beyond file-level git commands.
+- **Diff Viewer**: The presentation of a file's original versus working-copy content for review and staging, in split or inline mode. Distinct from an Editor tab: it shows the same working-copy Document through a diff lens.
+- **Original Pane**: The read-only side of the Diff Viewer showing base content (HEAD or staged). Never editable. _Avoid_: left side, side a
+- **Working-copy Pane**: The editable side of the Diff Viewer showing the working-tree Document. Keystrokes are unsaved edits to the same Document an Editor tab shows. _Avoid_: right side, side b
 
 ## Testing
 - **Contract Test**: A behavior test that exercises a module through its public interface against a real engine (system git, isomorphic-git) in throwaway repositories, asserting semantic outcomes (contents, status, branch) rather than command construction. _Avoid_: integration test, end-to-end test
