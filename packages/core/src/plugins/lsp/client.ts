@@ -254,25 +254,43 @@ export class LspClient {
 							// advertised that it wanted any, and vtsls does exactly that.
 							dynamicRegistration: false,
 							completionItem: {
-								// No `resolveSupport`, deliberately, and the reasoning is the
-								// same as the declaration above. Nothing in the client
-								// implements `completionItem/resolve` (ADR 0021 records why:
-								// CodeMirror has no "this option is now selected" hook, so
-								// the round trip has nowhere to hang), and advertising
-								// properties to resolve would be a claim the client cannot
-								// keep — at the cost of a request per keystroke.
-								//
-								// No trigger-character declaration either, for the same
-								// reason from the other side: trigger characters arrive in
-								// the *server's* `completionProvider`, and there is no
-								// client-capability field for them. This client has no
-								// per-character trigger to declare: CodeMirror decides when
-								// to ask, the trigger policy filters it (`min_word_length`,
-								// prose silence, the global popup toggle), and the field
-								// stays descriptor data out of the client's table by the
-								// same ADR 0020 boundary as before.
+								// `resolveSupport` for the four properties the
+								// visible-window round trip fills (spec #280, Zed
+								// contract #292): `documentation` and `detail`
+								// land in labels immediately, `additionalTextEdits`
+								// and `command` defer to confirm time. `textEdit`
+								// is deliberately excluded — "otherwise Zed
+								// becomes slow to complete things" — so only
+								// its `newText` is ever re-derived, never its
+								// range. This amends ADR 0021's declared
+								// absence: advertising without implementing
+								// would be a lie that costs a round trip, and
+								// this slice implements it.
+								resolveSupport: {
+									properties: ['additionalTextEdits', 'command', 'detail', 'documentation']
+								},
+								documentationFormat: ['markdown', 'plaintext']
 							}
+						},
+						hover: {
+							// Hover is its own `textDocument/hover` request with
+							// no resolve phase (spec #280, #292): markdown-only,
+							// sharing only the fan-out shape and the Markdown
+							// pipeline with the resolve path.
+							dynamicRegistration: false,
+							contentFormat: ['markdown']
 						}
+						// No trigger-character declaration, for the same
+						// client-table reason from the other side: trigger
+						// characters arrive in the *server's*
+						// `completionProvider`, and there is no
+						// client-capability field for them. This client has no
+						// per-character trigger to declare: CodeMirror decides when
+						// to ask, the trigger policy filters it (`min_word_length`,
+						// prose silence, the global popup toggle), and live
+						// honoring of the server's characters is its own
+						// follow-up (#297) which amends ADR 0021's
+						// absent-characters clause.
 					},
 					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
 				}

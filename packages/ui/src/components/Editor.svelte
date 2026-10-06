@@ -11,7 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
-	import { COMPLETION_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -348,6 +348,12 @@
 		const completionCoordinator = appState.plugins?.getService<CompletionCoordinator>(
 			COMPLETION_COORDINATOR_SERVICE_KEY
 		);
+		const hoverCoordinator = appState.plugins?.getService<HoverCoordinator>(
+			HOVER_COORDINATOR_SERVICE_KEY
+		);
+		const resolveCoordinator = appState.plugins?.getService<CompletionResolveCoordinator>(
+			COMPLETION_RESOLVE_SERVICE_KEY
+		);
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -371,10 +377,27 @@
 							server: completionCoordinator
 								? {
 										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
+										resolve: resolveCoordinator
+											? (item, document) => resolveCoordinator.resolveItem(item, document)
+											: undefined,
+										runCommand: resolveCoordinator
+											? (command, args, document) =>
+													resolveCoordinator.runCommand(command, args, document)
+											: undefined,
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
 									}
 								: null,
+								hover: hoverCoordinator
+									? {
+											fetchHover: (query) => hoverCoordinator.fetchHover(query),
+											readSettings: () => ({
+												lsp: readServerCompletionSettings(readSetting, languageName).lsp,
+											}),
+											fetchTimeoutMs:
+												readServerCompletionSettings(readSetting, languageName).fetchTimeoutMs ||
+												undefined,
+										},
 						}),
 					),
 				});

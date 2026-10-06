@@ -1,9 +1,16 @@
 import {
+	COMPLETION_RESOLVE_SERVICE_KEY,
+	HOVER_COORDINATOR_SERVICE_KEY,
 	SETTINGS_READER_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
 	type CompletionAnswer,
 	type CompletionCoordinator,
 	type CompletionQuery,
+	type CompletionResolveCoordinator,
+	type CompletionSuggestion,
+	type HoverAnswer as GenericHoverAnswer,
+	type HoverCoordinator,
+	type HoverQuery as GenericHoverQuery,
 	type LspPlatform,
 	type SettingsReader,
 	type SettingsRead,
@@ -13,7 +20,8 @@ import {
 import type { PluginHostInterface } from '../types';
 import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
-import { parseServerCompletions } from './completions';
+import { mergeResolvedCompletion, parseServerCompletions, toResolveParams } from './completions';
+import { parseServerHover, type ServerHover } from './hover';
 import { parsePublishDiagnostics, type LspDiagnosticsStore } from './diagnostics';
 import { lspDisabledReason, lspEnabledFor } from './lsp-gate';
 import type { LspLogStore } from './logs';
@@ -59,6 +67,37 @@ export interface LspDocumentInput {
 	 */
 	readonly language?: string | null;
 }
+
+/**
+ * One position's hover query, as the hover source states it (spec #280).
+ *
+ * The coordinates are the protocol's own — a zero-based line and a UTF-16
+ * offset within it — and `timeoutMs` is the same `lsp_fetch_timeout_ms` bound
+ * completions use, where absent means no bound was chosen.
+ */
+export interface HoverQuery {
+	readonly document: LspDocumentInput;
+	readonly line: number;
+	readonly character: number;
+	readonly timeoutMs?: number;
+}
+
+/**
+ * The three-way answer a hover provider gives.
+ *
+ * `'serving'` with a null hover is still serving: the server answered and
+ * reported nothing, which hovers to nothing rather than to an error. Only
+ * `'unavailable'` is a failure, and it degrades to the same nothing on screen
+ * — diagnostics, completions and note hovers keep their current behaviour
+ * because a hover that cannot answer never claims the tooltip.
+ */
+export type HoverAnswer =
+	| { readonly state: 'inactive'; readonly reason: string }
+	| { readonly state: 'serving'; readonly hover: ServerHover | null }
+	| { readonly state: 'unavailable'; readonly provider: string; readonly reason: string };
+
+/** How far either side of the selection the visible-window resolve covers (#292). */
+export const RESOLVE_WINDOW_BEFORE_AFTER = 4;
 
 export interface LspRuntimeOptions {
 	readonly host: PluginHostInterface;
@@ -161,7 +200,9 @@ const DEFAULT_FETCH_TIMEOUT_MS = 5000;
  * a consumer that would rather poll than subscribe. Nothing else about starting
  * and stopping a process is exposed by reading status.
  */
-export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
+export class LspRuntime
+	implements LspServerStatusApi, CompletionCoordinator, HoverCoordinator, CompletionResolveCoordinator
+{
 	private readonly servers = new Map<string, RunningServer>();
 	private readonly openDocuments = new Map<string, OpenDocument>();
 	/** Document URI to the server it is synced to, so a restart re-opens it. */
@@ -190,6 +231,29 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	private unsubscribeSettings?: () => void;
 	private statusRevision = 0;
 	private disposed = false;
+	/**
+	 * What each running server said it can do, read out of its own
+	 * `initialize` reply (spec #280, #292).
+	 *
+	 * `resolveProvider` gates the `completionItem/resolve` round trip and
+	 * `hoverProvider` gates `textDocument/hover`; `executeCommands` gates a
+	 * resolved `command` at confirm time. All three are the server's to
+	 * announce, and a server that never announced one is treated as not
+	 * offering it.
+	 */
+	private readonly serverCapabilities = new Map<
+		string,
+		{ resolveProvider: boolean; hoverProvider: boolean; executeCommands: readonly string[] }
+	>();
+	/**
+	 * Once-only resolve guard per item (spec #280, #292).
+	 *
+	 * Keyed `${server}\0${label}\0${data-json}`: one successful round trip
+	 * fills docs/detail for good, and a second request for the same item is
+	 * a request the server already answered. Cleared with the server, so a
+	 * restart re-resolves rather than serving stale docs.
+	 */
+	private readonly resolvedItems = new Set<string>();
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -384,6 +448,244 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	}
 
 	/**
+	 * One `textDocument/hover` round trip for a position (spec #280).
+	 *
+	 * Hover is its own request with no resolve phase (#292): it shares only
+	 * the fan-out shape and the Markdown pipeline with the resolve path, and
+	 * a symbol the server does not report hovers to nothing rather than to
+	 * an error — so `serving` with a null hover and every non-serving state
+	 * all mean "no tooltip", leaving diagnostics, completions and note hovers
+	 * exactly as they were.
+	 *
+	 * Contained like every entry point here: a failed request is recorded and
+	 * returned rather than raised.
+	 */
+	async fetchHover(query: HoverQuery | GenericHoverQuery): Promise<HoverAnswer> {
+		if (this.disposed) {
+			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
+		}
+		const { document, line, character, timeoutMs } = query;
+		const path = document.path;
+		if (!path) {
+			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
+		}
+		let server = 'lsp';
+		try {
+			const gate = this.gateFor(document);
+			if (!gate.enabled) {
+				return { state: 'inactive', reason: gate.reason };
+			}
+			const target = await this.targets.resolve(document);
+			if (!target) {
+				return { state: 'inactive', reason: 'No language server claims this document.' };
+			}
+			server = lspServerKey(target.descriptor.id, target.root);
+			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
+			if (entry.state !== 'running' || !entry.client) {
+				return {
+					state: 'unavailable',
+					provider: server,
+					reason: `Server "${server}" is ${entry.state}, so it cannot answer.`
+				};
+			}
+			if (!this.canHover(server)) {
+				return { state: 'inactive', reason: `Server "${server}" offers no hover.` };
+			}
+			this.syncDocument(entry, { ...document, path });
+			this.flushPending(entry);
+			const result = await entry.client.request(
+				'textDocument/hover',
+				{
+					textDocument: { uri: toFileUri(path) },
+					position: { line, character }
+				},
+				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
+			);
+			return { state: 'serving', hover: parseServerHover(result) };
+		} catch (error) {
+			const reason = describeError(error);
+			this.options.logs.appendServerNote(server, 'warn', `Hover request failed: ${reason}`);
+			return { state: 'unavailable', provider: server, reason };
+		}
+	}
+
+	/**
+	 * One `completionItem/resolve` round trip for an item (spec #280, #292).
+	 *
+	 * Gated per server on `resolveProvider`: a server that never announced it
+	 * keeps its first reply as its last, and the item is returned unchanged.
+	 * Once-only per item via {@link resolvedItems}: a second request for the
+	 * same key is one the server already answered. A failed resolve degrades
+	 * to the unresolved item rather than to an error, because docs that never
+	 * arrive are the pre-resolve behaviour rather than a new failure.
+	 */
+	async resolveCompletion(
+		document: LspDocumentInput,
+		item: CompletionSuggestion,
+		timeoutMs?: number
+	): Promise<CompletionSuggestion> {
+		const path = document.path;
+		if (this.disposed || !path) return item;
+		if (!this.gateFor(document).enabled) return item;
+		let server = 'lsp';
+		try {
+			const target = await this.targets.resolve(document);
+			if (!target) return item;
+			server = lspServerKey(target.descriptor.id, target.root);
+			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
+			if (entry.state !== 'running' || !entry.client) return item;
+			if (!this.canResolve(server)) return item;
+			const key = this.resolveKey(server, item);
+			if (this.resolvedItems.has(key)) return item;
+			this.syncDocument(entry, { ...document, path });
+			this.flushPending(entry);
+			const result = await entry.client.request(
+				'completionItem/resolve',
+				toResolveParams(item),
+				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
+			);
+			this.resolvedItems.add(key);
+			return mergeResolvedCompletion(item, result);
+		} catch (error) {
+			this.options.logs.appendServerNote(
+				server,
+				'warn',
+				`Resolve request failed, keeping the unresolved item: ${describeError(error)}`
+			);
+			return item;
+		}
+	}
+
+	/**
+	 * Resolves the visible window around one selection, once-only (#292).
+	 *
+	 * The window is the selection plus {@link RESOLVE_WINDOW_BEFORE_AFTER}
+	 * entries either side. Items whose documentation already arrived are
+	 * skipped except the selection itself, which is always re-resolved for
+	 * out-of-spec servers that return more later; items already resolved are
+	 * never asked twice. Returns the items in order, with resolved entries
+	 * replaced by their merged form.
+	 */
+	async resolveVisible(
+		document: LspDocumentInput,
+		items: readonly CompletionSuggestion[],
+		selectedIndex: number,
+		timeoutMs?: number
+	): Promise<readonly CompletionSuggestion[]> {
+		if (items.length === 0) return items;
+		const selected = Math.max(0, Math.min(selectedIndex, items.length - 1));
+		const from = Math.max(0, selected - RESOLVE_WINDOW_BEFORE_AFTER);
+		const to = Math.min(items.length - 1, selected + RESOLVE_WINDOW_BEFORE_AFTER);
+		const resolved = [...items];
+		for (let index = from; index <= to; index++) {
+			const item = resolved[index];
+			// Already documented and not the selection: nothing withheld.
+			if (item.documentation && index !== selected) continue;
+			resolved[index] = await this.resolveCompletion(document, item, timeoutMs);
+		}
+		return resolved;
+	}
+
+	/** Generic resolve seam: hands back the suggestion with docs/detail filled. */
+	async resolveItem(
+		item: CompletionSuggestion,
+		document: GenericHoverQuery['document'],
+		timeoutMs?: number
+	): Promise<CompletionSuggestion> {
+		return this.resolveCompletion(
+			{
+				path: document.path,
+				fileName: document.fileName,
+				content: document.content,
+				language: document.language
+			},
+			item,
+			timeoutMs
+		);
+	}
+
+	/** Generic command seam: fire-and-forget, gated on the server offering it. */
+	runCommand(
+		command: string,
+		args: readonly unknown[] | undefined,
+		document: GenericHoverQuery['document']
+	): void {
+		void this.executeCompletionCommand(
+			{
+				path: document.path,
+				fileName: document.fileName,
+				content: document.content,
+				language: document.language
+			},
+			command,
+			args
+		);
+	}
+
+	/** Whether one server announced `completionProvider.resolveProvider`. */
+	canResolve(server: string): boolean {
+		return this.serverCapabilities.get(server)?.resolveProvider === true;
+	}
+
+	/** Whether one server announced a hover provider. */
+	canHover(server: string): boolean {
+		return this.serverCapabilities.get(server)?.hoverProvider === true;
+	}
+
+	/**
+	 * Runs one resolved command at confirm time, gated on the server offering
+	 * it in `executeCommandProvider` (#292).
+	 *
+	 * Fire-and-forget: a command that fails is logged, not raised, because the
+	 * primary insert already landed and failing the document over a follow-up
+	 * would be worse than dropping it.
+	 */
+	async executeCompletionCommand(
+		document: LspDocumentInput,
+		command: string,
+		args?: readonly unknown[]
+	): Promise<void> {
+		const path = document.path;
+		if (this.disposed || !path) return;
+		if (!this.gateFor(document).enabled) return;
+		let server = 'lsp';
+		try {
+			const target = await this.targets.resolve(document);
+			if (!target) return;
+			server = lspServerKey(target.descriptor.id, target.root);
+			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
+			if (entry.state !== 'running' || !entry.client) return;
+			if (!this.canExecuteCommand(server, command)) return;
+			await entry.client.request(
+				'workspace/executeCommand',
+				{ command, arguments: args ?? [] },
+				DEFAULT_FETCH_TIMEOUT_MS
+			);
+		} catch (error) {
+			this.options.logs.appendServerNote(
+				server,
+				'warn',
+				`Command "${command}" failed: ${describeError(error)}`
+			);
+		}
+	}
+
+	/** Whether one server may run a resolved command at confirm time (#292). */
+	canExecuteCommand(server: string, command: string): boolean {
+		return this.serverCapabilities.get(server)?.executeCommands.includes(command) === true;
+	}
+
+	private resolveKey(server: string, item: CompletionSuggestion): string {
+		let data = '';
+		try {
+			data = JSON.stringify(item.data ?? null);
+		} catch {
+			data = String(item.data);
+		}
+		return `${server}|${item.label}|${data}`;
+	}
+
+	/**
 	 * Sends the document's current text to one running server: `didOpen` the
 	 * first time, full-content `didChange` after that (ADR 0020).
 	 *
@@ -466,6 +768,13 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 	 * it back, and dropping the queue there would throw away the very document that
 	 * caused the restart, along with every other one presented while it was down.
 	 */
+	private dropResolved(server: string): void {
+		if (this.resolvedItems.size === 0) return;
+		for (const key of [...this.resolvedItems]) {
+			if (key.startsWith(server + '|')) this.resolvedItems.delete(key);
+		}
+	}
+
 	private dropPending(server: string): void {
 		if (this.pendingDocuments.size === 0) return;
 		for (const [uri, pending] of this.pendingDocuments) {
@@ -535,6 +844,8 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		this.openDocuments.clear();
 		this.pendingDocuments.clear();
 		this.documentServers.clear();
+		this.serverCapabilities.clear();
+		this.resolvedItems.clear();
 		this.targets.clear();
 		this.statusChanged();
 	}
@@ -606,11 +917,12 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 				onNotification: (method, params) => this.onNotification(server, method, params)
 			});
 			entry.client = client;
-			await client.initialize({
+			const initResult = await client.initialize({
 				rootUri: toFileUri(root),
 				workspaceFolders: [{ uri: toFileUri(root), name: descriptor.id }],
 				capabilities: {}
 			});
+			this.serverCapabilities.set(server, readServerCapabilities(initResult));
 			// A stop or a restart that landed while the handshake was in flight
 			// wins. Otherwise the awaiting start would come back afterwards and
 			// report a server the user had already stopped as running again.
@@ -662,6 +974,8 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
+		this.serverCapabilities.delete(entry.server);
+		this.dropResolved(entry.server);
 		// The queue is deliberately untouched: one of this method's callers is the
 		// revival path, where the stop is about to be followed by a start that should
 		// serve whatever is still waiting. The callers that mean it drops the waiters
@@ -858,3 +1172,33 @@ console.error(
 	}
 }
 
+/**
+ * Reads what a server offered out of its own `initialize` reply.
+ *
+ * All three are the server's to announce: a missing capability is not an
+ * error, it is a server that does not offer it. `hoverProvider` arrives as
+ * a boolean or an options object per the spec, so any truthy non-boolean
+ * counts as offered.
+ */
+function readServerCapabilities(result: unknown): {
+	resolveProvider: boolean;
+	hoverProvider: boolean;
+	executeCommands: readonly string[];
+} {
+	const caps = (result as { capabilities?: unknown } | null | undefined)?.capabilities;
+	if (typeof caps !== 'object' || caps === null) {
+		return { resolveProvider: false, hoverProvider: false, executeCommands: [] };
+	}
+	const record = caps as Record<string, unknown>;
+	const completion = record.completionProvider as Record<string, unknown> | undefined;
+	const hover = record.hoverProvider;
+	const execute = record.executeCommandProvider as Record<string, unknown> | undefined;
+	const commands = Array.isArray(execute?.commands)
+		? (execute as { commands: unknown[] }).commands.filter((c): c is string => typeof c === 'string')
+		: [];
+	return {
+		resolveProvider: (completion?.resolveProvider as boolean | undefined) === true,
+		hoverProvider: hover === true || (typeof hover === 'object' && hover !== null),
+		executeCommands: commands
+	};
+}
