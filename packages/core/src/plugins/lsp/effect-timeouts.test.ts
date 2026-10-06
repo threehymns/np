@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Result, Schedule } from 'effect';
+import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Schedule } from 'effect';
 import { TestClock } from 'effect/testing';
 import {
-	settleExit,
-	settleWithin,
 	timeoutFailEffect,
 	timeoutOptionEffect,
+	settleExit,
+	settleWithin,
 	withTimeout
 } from './effect-timeouts';
-import { pullBackoffSchedule, pullWithBackoff, repullSchedule, scopedPullLoop } from './pull-schedules';
+import { WORKSPACE_PULL_BACKOFF_MAX, pullBackoffSchedule, pullWithBackoff, repullSchedule, scopedPullLoop } from './pull-schedules';
 
 class DomainTimeout extends Error {
 	readonly _tag = 'DomainTimeout';
@@ -192,5 +192,55 @@ describe('Timeout wrappers preserve the promise contract (#302 review)', () => {
 			settled = error;
 		}
 		expect(settled).toBe(original);
+	});
+});
+
+describe('Pull backoff caps delay, never stops (#302 review)', () => {
+	it('retries past the old 1s cutoff until the pull succeeds', async () => {
+		let attempts = 0;
+		const program = Effect.gen(function* () {
+			const fiber = yield* pullWithBackoff(
+				Effect.sync(() => {
+					attempts++;
+				}).pipe(
+					Effect.flatMap(() =>
+						attempts < 8 ? Effect.fail('boom' as const) : Effect.void
+					)
+				)
+			).pipe(Effect.forkChild);
+			yield* TestClock.adjust('30 seconds');
+			yield* Fiber.join(fiber);
+		});
+		await runTestClock(program);
+		expect(attempts).toBe(8);
+	});
+
+	it('never waits more than WORKSPACE_PULL_BACKOFF_MAX between retries', async () => {
+		const stamps: number[] = [];
+		let attempts = 0;
+		const program = Effect.gen(function* () {
+			const fiber = yield* pullWithBackoff(
+				Effect.gen(function* () {
+					stamps.push(yield* Clock.currentTimeMillis);
+					attempts++;
+					return yield* (
+						attempts < 8 ? Effect.fail('boom' as const) : Effect.void
+					);
+				})
+			).pipe(Effect.forkChild);
+			yield* TestClock.adjust('30 seconds');
+			yield* Fiber.join(fiber);
+		});
+		await runTestClock(program);
+		expect(attempts).toBe(8);
+		const ceiling = Duration.toMillis(WORKSPACE_PULL_BACKOFF_MAX);
+		const gaps = stamps.slice(1).map((stamp, index) => stamp - stamps[index]);
+		expect(gaps).toHaveLength(7);
+		for (const gap of gaps) {
+			// 1 µs of headroom: gaps are differences of accumulated float
+			// virtual timestamps, so an exact 1000 ms sleep can read back as
+			// 1000.0000000000002. An uncapped delay would exceed by tens of ms.
+			expect(gap).toBeLessThanOrEqual(ceiling + 0.001);
+		}
 	});
 });

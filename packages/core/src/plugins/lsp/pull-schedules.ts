@@ -15,7 +15,8 @@ import { Duration, Effect, Schedule, type Fiber, type Scope } from 'effect';
  *   unchanged.
  * - `Schedule.upTo` now takes `{ duration?, times? }` (elapsed/recurrence
  *   bound), not a bare `Duration`. It does *not* clamp backoff delays, so the
- *   30–1000 ms clamp is a `while` predicate on the delay output instead.
+ *   30–1000 ms clamp is a `modifyDelay` cap on each selected delay instead:
+ *   retries continue indefinitely at no more than the ceiling.
  * - `Schedule.intersect` / `union` from the 3.x sketch are `min` / `max` in v4
  *   terms for delay combination; neither is needed for the two schedules here.
  */
@@ -42,16 +43,17 @@ export const repullSchedule: Schedule.Schedule<number> = Schedule.spaced(
  * Exponential backoff with jitter, capped at one second.
  *
  * `exponential("50 millis")` *is* Zed's `50 * 2^attempts` (factor 2
- * default); `jittered` guards thundering-herd restarts; the `while` cap keeps
- * a wedged server's retry at the documented 1000 ms ceiling instead of
- * growing without bound.
+ * default); `jittered` guards thundering-herd restarts; the `modifyDelay`
+ * cap keeps every selected delay at or under the documented 1000 ms ceiling
+ * while retrying indefinitely, instead of stopping recurrence once a delay
+ * outgrows it.
  */
 export const pullBackoffSchedule: Schedule.Schedule<Duration.Duration> = Schedule.exponential(
 	WORKSPACE_PULL_BACKOFF_BASE
 ).pipe(
 	Schedule.jittered,
-	Schedule.while((metadata) =>
-		Duration.isLessThanOrEqualTo(metadata.output, WORKSPACE_PULL_BACKOFF_MAX)
+	Schedule.modifyDelay(({ duration }) =>
+		Effect.succeed(Duration.min(duration, WORKSPACE_PULL_BACKOFF_MAX))
 	)
 );
 

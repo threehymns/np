@@ -52,8 +52,10 @@ The #301 loop sketch (`repeat` + `retry` + `timeout` + `Scope`, `spaced` +
   fails — one combinator rather than two, same contract. `timeoutOption` is
   unchanged and still spells `settleWithin` exactly.
 - `upTo` no longer clamps delays: it bounds elapsed time or recurrence count.
-  The 30–1000 ms backoff clamp is a `Schedule.while` predicate on the delay
-  output instead, which is what `pull-schedules.ts` carries.
+  The 30–1000 ms backoff clamp is a `Schedule.modifyDelay` cap on each
+  selected, jittered delay instead, which is what `pull-schedules.ts`
+  carries — retries continue indefinitely at no more than the ceiling rather
+  than stopping once a delay outgrows it.
 - `Schedule.intersect` / `union` from the sketch are `min` / `max` in v4
   vocabulary; neither is needed for the two schedules here, so neither is
   imported.
