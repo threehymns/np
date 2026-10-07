@@ -178,13 +178,9 @@ export interface LspPlatform {
 	fileExists(path: string): Promise<boolean>;
 	spawn(options: LspSpawnOptions): LspProcess;
 	/**
-	 * Resident memory of one running server, in bytes, or null when unknown.
-	 *
-	 * Optional because a transport that cannot observe its child (or a test
-	 * double with nothing to observe) still starts servers: the status row
-	 * then says "not reported" rather than showing a blank or a zero (ticket
-	 * #282). The desktop transport reads the child's RSS; the test fixture
-	 * reads `/proc` on Linux and answers null elsewhere.
+	 * Optional because a transport that cannot observe its child still has to
+	 * start servers, and some transports (and test doubles) observe nothing.
+	 * Null means "not reported".
 	 */
 	processMemory?(pid: number): Promise<number | null>;
 }

@@ -86,12 +86,7 @@ export function createRealProcessPlatform(
 			});
 			return lspProcess;
 		},
-		/**
-		 * The stub's resident memory off `/proc`, so the status details slot is
-		 * asserted against a real process rather than a canned figure. Null
-		 * off Linux or when the process is already gone, which is the same
-		 * "not reported" the row shows in production when memory is unknown.
-		 */
+		/** Real `/proc` RSS, so the details slot is asserted against a live process. Null off Linux. */
 		async processMemory(pid: number): Promise<number | null> {
 			try {
 				const status = await readFile(`/proc/${pid}/status`, 'utf-8');

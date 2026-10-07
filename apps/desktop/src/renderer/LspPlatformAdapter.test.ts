@@ -131,10 +131,7 @@ describe('createElectronLspPlatform', () => {
 		expect(mockExists).toHaveBeenCalledWith('/repo/tsconfig.json');
 	});
 
-	it('reads one server’s memory through the bridge, addressed by its process id', async () => {
-		// The status row knows the OS pid; main knows the process id it
-		// minted. The adapter joins the two, so the renderer can only ask
-		// about its own servers and never about an arbitrary pid.
+	it('reads one server\'s memory through the bridge, addressed by its process id', async () => {
 		const platform = createElectronLspPlatform(bridgeHost());
 		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
@@ -160,7 +157,6 @@ describe('createElectronLspPlatform', () => {
 		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		await waitFor(() => mockSpawn.mock.calls.length === 1);
 
-		// Unknown memory is "not reported" on the row, not a failed start.
 		expect(await platform.processMemory?.(4242)).toBeNull();
 	});
 

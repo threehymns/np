@@ -218,11 +218,7 @@ class ProcessRouter {
 		process?.reportExit(code, signal, error);
 	}
 
-	/**
-	 * The process id main minted for one OS pid, or null when no live server
-	 * has it. Scanned rather than indexed: servers are few, and an exited
-	 * server is already deleted, so a pid can never resolve to a dead one.
-	 */
+	/** Scanned, not indexed: servers are few, and an exited server is already deleted. */
 	processIdForPid(pid: number): string | null {
 		for (const [id, process] of this.processes) {
 			if (process.pid === pid) return id;
@@ -259,12 +255,6 @@ export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHos
 
 	return {
 		fileExists: (path) => bridge.fileExists(path),
-		/**
-		 * One server's resident memory in bytes, for the status menu's details
-		 * slot (ticket #282). Null when the pid names nothing live or the
-		 * observation fails — the row then says "not reported" rather than
-		 * showing a blank or a zero.
-		 */
 		processMemory: async (pid: number): Promise<number | null> => {
 			const id = router.processIdForPid(pid);
 			if (!id) return null;

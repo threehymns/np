@@ -101,13 +101,7 @@ export function applyLogsFocus(
  * The tab over one store. An absent store is the ordinary case of a plugin that
  * is not active: the tab still renders, empty, rather than failing inside a
  * plugin-owned view.
- *
- * `showTrace` is the RPC-trace toggle's checkbox (ticket #282, map #291): a
- * checkbox on the existing kind filter, nothing more. The store keeps
- * filtering by kind and this drops the protocol feed when the box is
- * unchecked, so no new store surface is needed. True by default, which is the
- * tab as it reads today — the counter, the pickers and the empty state are
- * unchanged.
+ * `showTrace` false drops the protocol feed, which grows a line per keystroke.
  */
 export function lspLogsView(
 	logs: LspLogsReader | undefined,

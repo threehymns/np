@@ -171,8 +171,6 @@ describe('LSP log filters', () => {
 	});
 
 	it('hides the protocol trace when the RPC-trace toggle is off (#282)', async () => {
-		// The toggle is a checkbox on the existing kind filter, nothing more:
-		// the store keeps filtering by kind and the view drops the trace feed.
 		const logs = await seededStore();
 		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), false))).toEqual([
 			'root started',
