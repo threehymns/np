@@ -28,9 +28,7 @@
 	let serverFilter = $state('');
 	let kindFilter = $state('');
 	let levelFilter = $state('');
-	// The RPC-trace toggle (ticket #282): a checkbox on the existing kind
-	// filter, nothing more. Checked is the tab as it reads today; unchecked
-	// drops the protocol feed, which grows by a line per keystroke.
+	// Default on; hiding the protocol feed is the opt-out, and it grows a line per keystroke.
 	let showTrace = $state(true);
 
 	// Which server the View Logs command last asked for, read through the same

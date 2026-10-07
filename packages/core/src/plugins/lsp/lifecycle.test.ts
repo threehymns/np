@@ -364,9 +364,6 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			state: 'running',
 			pid: harness.platform.pids[0]
 		});
-		// The details slot ships filled: the version the stub reported on the
-		// wire, and either the memory snapshot or its "not reported" fallback —
-		// the snapshot lands just after `running` and must not be awaited here.
 		expect(statusRow.details).toContainEqual({ label: 'version', value: '0.0.0' });
 		const memoryFigure = statusRow.details.find((detail) => detail.label === 'memory')!;
 		expect(memoryFigure.value).toMatch(/^(\d+ (KiB|MiB)|not reported)$/);
@@ -379,9 +376,6 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 
-		// The stub answers `serverInfo: { name: 'stub-ls', version: '0.0.0' }`,
-		// so the version figure has an independent source of truth on the wire
-		// rather than in this file.
 		const row = harness.runtime.getStatusRows()[0];
 		expect(row.details).toContainEqual({ label: 'version', value: '0.0.0' });
 	});
@@ -392,9 +386,8 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 
-		// The figure is the stub's real RSS off `/proc`, so it varies by
-		// machine: what is pinned is the shape (never blank, never zero) and
-		// that it arrived at all, not the number itself.
+		// The stub's RSS is real, so it varies by machine: the assertion pins
+		// the shape (never blank, never zero) and that it arrived, not the number.
 		await waitFor(
 			() =>
 				(harness.runtime.getStatusRows()[0]?.details ?? []).some(
@@ -420,8 +413,6 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		});
 		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
 
-		// Nothing has been reported yet, so the slot says so rather than
-		// showing a blank or a zero.
 		expect(harness.runtime.getStatusRows()[0].details).toEqual([
 			{ label: 'version', value: 'not reported' },
 			{ label: 'memory', value: 'not reported' }
@@ -454,8 +445,6 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(
 			harness.runtime.getStatusRows().find((server) => server.server === key)?.details
 		).toContainEqual({ label: 'version', value: '0.0.0' });
-		// The memory snapshot is re-taken for the new process rather than kept
-		// from the dead one.
 		await waitFor(
 			() =>
 				(harness.runtime

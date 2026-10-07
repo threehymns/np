@@ -70,15 +70,8 @@ function killAllLspProcesses(): void {
 	for (const processId of [...lspProcesses.keys()]) killLspProcess(processId);
 }
 
-/**
- * One server's resident set in bytes, off `/proc` on Linux and null
- * everywhere else (ticket #282).
- *
- * Linux-only by construction: macOS and Windows name the same figure
- * differently and need their own reader before the row can show it there.
- * Total — an unreadable or unparseable status is unknown memory, not a
- * failed observation — because this answers a status row, not a diagnostic.
- */
+/** Linux only. macOS and Windows report this figure differently, and an
+ * unreadable or unparseable status is unknown memory, not a failed read. */
 async function readProcessMemoryBytes(pid: number): Promise<number | null> {
 	if (process.platform !== 'linux') return null;
 	try {
@@ -472,12 +465,8 @@ function registerIpcHandlers() {
 		killLspProcess(processId);
 	});
 
-	// Resident memory of one running server, in bytes, for the status menu's
-	// details slot (ticket #282). Addressed by the process id main minted at
-	// spawn rather than by pid, so a compromised renderer can only ask about
-	// its own servers and never about an arbitrary pid. Null when the server
-	// is gone or its memory cannot be observed; the row then says
-	// "not reported" rather than showing a blank or a zero.
+	// Resolve the renderer's process id back to a pid: a compromised renderer
+	// can ask about its own servers, never an arbitrary pid.
 	ipcMain.handle('lsp:memory', async (_event, processId: string) => {
 		const child = typeof processId === 'string' ? lspProcesses.get(processId) : undefined;
 		if (!child?.pid) return null;

@@ -41,11 +41,6 @@ export interface ElectronAPI {
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
-	/**
-	 * One server's resident memory in bytes, or null when unknown (ticket
-	 * #282). Addressed by the process id main minted at spawn, so the
-	 * renderer can only ask about its own servers.
-	 */
 	lspMemory(processId: string): Promise<number | null>;
 	onLspServerData(handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
