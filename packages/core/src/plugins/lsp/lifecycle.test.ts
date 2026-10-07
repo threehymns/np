@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
-import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
+import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey, parseTriggerCharacters } from './lifecycle';
 import { LspDiagnosticsStore } from './diagnostics';
 import {
 	LSP_PLATFORM_SERVICE_KEY,
@@ -1395,5 +1395,76 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 			label: 'the server to start with no reader published'
 		});
 		expect(runtime.getStatusRows()[0].state).toBe('running');
+	});
+});
+
+/**
+ * Live triggerCharacters + CompletionContext: handshake-derived triggers
+ * reach the client via the coordinator channel — no descriptor field, no new
+ * service key — and each completion request carries its trigger kind.
+ */
+describe('live triggerCharacters plus CompletionContext (#306)', () => {
+	it('reads trigger characters live from the handshake, empty before any server', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const harness = await startPlugin();
+		expect(harness.runtime.triggerCharacters()).toEqual([]);
+
+		harness.open(join(root, 'src/a.ts'), 'export const a = 1;\n');
+		await waitForRunning(harness.runtime, 1);
+		await waitFor(() => harness.runtime.triggerCharacters().length > 0, {
+			label: 'live trigger characters'
+		});
+		expect(harness.runtime.triggerCharacters()).toContain('.');
+		expect(harness.runtime.triggerCharacters()).toContain('"');
+		expect(harness.runtime.triggerCharacters()).toContain('/');
+	});
+
+	it('sends CompletionContext with trigger kind plus trigger character on each request', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const harness = await startPlugin();
+		const path = join(root, 'src/a.ts');
+		harness.open(path, 'export const a = 1;\n');
+		await waitForRunning(harness.runtime, 1);
+
+		// Invoked: the ordinary prefix query carries kind 1 and no character.
+		await harness.runtime.fetch({
+			document: { path, fileName: 'a.ts', content: 'export const a = 1;\n', language: 'TypeScript' },
+			line: 0,
+			character: 5,
+			trigger: { kind: 1 }
+		});
+		// Trigger character: the quote just typed carries kind 2 plus the character.
+		await harness.runtime.fetch({
+			document: { path, fileName: 'a.ts', content: 'import { x } from "', language: 'TypeScript' },
+			line: 0,
+			character: 19,
+			trigger: { kind: 2, character: '"' }
+		});
+
+		await waitFor(
+			() => received(harness).filter((line) => line.includes('textDocument/completion')).length >= 2,
+			{ label: 'both completion requests on the wire' }
+		);
+		const completions = received(harness)
+			.filter((line) => line.includes('textDocument/completion'))
+			.map((line) => JSON.parse(line).params);
+		expect(completions[0].context).toEqual({ triggerKind: 1 });
+		expect(completions[1].context).toEqual({ triggerKind: 2, triggerCharacter: '"' });
+		expect(completions[1].position).toEqual({ line: 0, character: 19 });
+	});
+
+	it('parses a malformed handshake as no triggers rather than failing', () => {
+		expect(parseTriggerCharacters(null)).toEqual([]);
+		expect(parseTriggerCharacters({})).toEqual([]);
+		expect(parseTriggerCharacters({ capabilities: {} })).toEqual([]);
+		expect(parseTriggerCharacters({ capabilities: { completionProvider: {} } })).toEqual([]);
+		expect(
+			parseTriggerCharacters({ capabilities: { completionProvider: { triggerCharacters: '".' } } })
+		).toEqual([]);
+		expect(
+			parseTriggerCharacters({
+				capabilities: { completionProvider: { triggerCharacters: ['.', 7, '', '"'] } }
+			})
+		).toEqual(['.', '"']);
 	});
 });
