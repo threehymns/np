@@ -1248,9 +1248,9 @@ export function parseServerVersion(result: unknown): string | null {
 
 /**
  * Version and memory for live and starting servers; stopped and failed rows
- * are cleared. The value is the whole display form — the row renders it
- * without the label, so the version carries its `v` and an unknown figure is
- * a dash, not a label-less sentence.
+ * are cleared. The value is the whole display form — the submenu's footer
+ * renders it without the label, so the version carries its `v` and an unknown
+ * figure is a dash, not a label-less sentence.
  */
 function statusDetailsFor(entry: RunningServer): LspStatusDetail[] {
 	if (entry.state !== 'running' && entry.state !== 'starting') return [];
