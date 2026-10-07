@@ -16,6 +16,7 @@ import {
 	type ServerCompletionSettings,
 	type ServerCompletionSourceOptions,
 } from "./server-completions";
+import { serverHover, type ServerHoverOptions } from "./server-hover";
 
 /**
  * The completion bindings minus Enter, plus vim's own accept key.
@@ -140,6 +141,13 @@ export const COMPLETION_RANK_TIERS = {
 
 export interface CompletionCompartmentOptions extends CompletionChainOptions {
 	/**
+	 * Server hover, or null when nothing serves this document. Separate from
+	 * the completion chain (it is a tooltip, not a source) but reconfigured
+	 * with it, because both depend on the same language and the same `lsp`
+	 * gate. Null leaves every other hover behaviour exactly where it was.
+	 */
+	readonly hover?: ServerHoverOptions | null;
+	/**
 	 * The global popup toggle. `false` stops every *automatic* offer — including
 	 * the table and wikilink sources, which are registered through the
 	 * language-data facet and cannot be gated per source without editing them.
@@ -177,6 +185,10 @@ export function completionCompartmentExtensions(
 	options: CompletionCompartmentOptions,
 ): Extension[] {
 	const vimEnabled = options.vimEnabled ?? false;
+	const hover =
+		options.hover === null || options.hover === undefined
+			? null
+			: serverHover({ ...options.hover, languageName: options.languageName });
 	return [
 		autocompletion({
 			activateOnTyping: options.automaticCompletions,
@@ -184,5 +196,6 @@ export function completionCompartmentExtensions(
 		}),
 		...(vimEnabled ? [Prec.highest(keymap.of(VIM_COMPLETION_KEYMAP))] : []),
 		...hostCompletionChain(options),
+		...(hover ? [hover] : []),
 	];
 }

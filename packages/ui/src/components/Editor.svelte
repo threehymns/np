@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -11,7 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
-	import { COMPLETION_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -348,6 +348,12 @@
 		const completionCoordinator = appState.plugins?.getService<CompletionCoordinator>(
 			COMPLETION_COORDINATOR_SERVICE_KEY
 		);
+		const hoverCoordinator = appState.plugins?.getService<HoverCoordinator>(
+			HOVER_COORDINATOR_SERVICE_KEY
+		);
+		const resolveCoordinator = appState.plugins?.getService<CompletionResolveCoordinator>(
+			COMPLETION_RESOLVE_SERVICE_KEY
+		);
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -371,10 +377,27 @@
 							server: completionCoordinator
 								? {
 										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
+										resolve: resolveCoordinator
+											? (item, document) => resolveCoordinator.resolveItem(item, document)
+											: undefined,
+										runCommand: resolveCoordinator
+											? (command, args, document) =>
+													resolveCoordinator.runCommand(command, args, document)
+											: undefined,
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
 									}
 								: null,
+								hover: hoverCoordinator
+									? {
+											fetchHover: (query) => hoverCoordinator.fetchHover(query),
+											readSettings: () =>
+												readServerHoverSettings(readSetting, languageName),
+											fetchTimeoutMs:
+												readServerCompletionSettings(readSetting, languageName).fetchTimeoutMs ||
+												undefined,
+										}
+									: null,
 						}),
 					),
 				});

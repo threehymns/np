@@ -181,6 +181,24 @@ export interface LspPlatform {
 
 export const COMPLETION_COORDINATOR_SERVICE_KEY = 'completion:coordinator';
 
+/**
+ * Whoever can answer a hover query about a document (spec #280).
+ *
+ * Generic like its completion sibling: the editor shell asks about a position
+ * and receives Markdown, without naming what is answering. A language server
+ * is the first such provider.
+ */
+export const HOVER_COORDINATOR_SERVICE_KEY = 'hover:coordinator';
+
+/**
+ * Whoever can resolve what a first completion reply withheld (spec #280).
+ *
+ * Generic like the fetch it completes: the shell hands back the suggestion
+ * it was given with its opaque `data`, and receives the same suggestion with
+ * docs/detail filled (and confirm-time edits/command kept for later).
+ */
+export const COMPLETION_RESOLVE_SERVICE_KEY = 'completion:resolve';
+
 export const SETTINGS_READER_SERVICE_KEY = 'settings:reader';
 
 /**
@@ -299,6 +317,34 @@ export interface CompletionSuggestion {
 	readonly kind: number | null;
 	/** Only meaningful for a provider whose settings name a range replace. */
 	readonly replaceRange: CompletionSuggestionRange | null;
+	/**
+	 * Opaque provider data for a later resolve round trip (spec #280).
+	 *
+	 * Generic on purpose: a language server keeps its `data` here so a
+	 * `completionItem/resolve` can ask for what the first reply withheld,
+	 * and any other provider with a two-phase answer uses the same slot.
+	 * Absent means nothing was withheld.
+	 */
+	readonly data?: unknown;
+	/**
+	 * Edits beyond the primary insert, applied at confirm time in a separate
+	 * transaction (spec #280, Zed contract #292). Absent means none.
+	 */
+	readonly additionalTextEdits?: readonly CompletionAdditionalEdit[] | null;
+	/** Command to run after the edits land, gated on the provider offering it. */
+	readonly command?: CompletionSuggestionCommand | null;
+}
+
+/** One extra edit a resolved item carries, applied after the primary insert. */
+export interface CompletionAdditionalEdit {
+	readonly range: CompletionSuggestionRange;
+	readonly newText: string;
+}
+
+/** A command a resolved item asks to run at confirm time. */
+export interface CompletionSuggestionCommand {
+	readonly command: string;
+	readonly args?: readonly unknown[];
 }
 
 /**
@@ -332,6 +378,41 @@ export type CompletionAnswer =
  */
 export interface CompletionCoordinator {
 	fetch(query: CompletionQuery): Promise<CompletionAnswer>;
+}
+
+/** One position's hover query, as the hover source states it. */
+export interface HoverQuery {
+	readonly document: CompletionQueryDocument;
+	readonly line: number;
+	readonly character: number;
+	readonly timeoutMs?: number;
+}
+
+/** One hover answer: Markdown to render, or null when there is none. */
+export interface HoverResult {
+	readonly contents: string;
+}
+
+/**
+ * The three-way answer a hover provider gives.
+ *
+ * `'serving'` with a null hover is still serving: the provider answered and
+ * reported nothing, which hovers to nothing rather than to an error.
+ */
+export type HoverAnswer =
+	| { readonly state: 'inactive'; readonly reason: string }
+	| { readonly state: 'serving'; readonly hover: HoverResult | null }
+	| { readonly state: 'unavailable'; readonly provider: string; readonly reason: string };
+
+/** Hover coordination, published by whoever can answer a hover query. */
+export interface HoverCoordinator {
+	fetchHover(query: HoverQuery): Promise<HoverAnswer>;
+}
+
+/** Resolve coordination, published by whoever withholds docs until asked. */
+export interface CompletionResolveCoordinator {
+	resolveItem(item: CompletionSuggestion, document: CompletionQueryDocument, timeoutMs?: number): Promise<CompletionSuggestion>;
+	runCommand(command: string, args: readonly unknown[] | undefined, document: CompletionQueryDocument): void;
 }
 
 export interface PluginUILoader {

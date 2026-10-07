@@ -49,6 +49,17 @@ import { basename, dirname } from 'node:path';
  *                   assert what actually arrived on the wire. The protocol trace
  *                   deliberately does not retain document bodies, so this is the
  *                   only place full-content sync is observable
+ *   --mode lazy-docs  answer completions without `documentation`/`detail` but
+ *                   with `data`, so the resolve round trip has something to
+ *                   fill (vtsls withholds JSDoc until asked, spec #280)
+ *   --mode no-hover  answer `textDocument/hover` with null, so "no hover"
+ *                   hovers to nothing rather than to an error (spec #280)
+ *   --mode fail-hover  refuse every `textDocument/hover`, so the hover failure
+ *                   path is reachable on a running server
+ *   --mode fail-resolve  refuse every `completionItem/resolve`, so the resolve
+ *                   failure path is reachable while completions still answer
+ *   --mode stall-resolve  never answer `completionItem/resolve` at all, so the
+ *                   wedged-resolve path is reachable
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
  * without making the suite slow: a `textDocument/completion` that arrives later
@@ -61,6 +72,11 @@ const MODES = [
 	'no-shutdown',
 	'fail-completion',
 	'stall-completion',
+	'lazy-docs',
+	'no-hover',
+	'fail-hover',
+	'fail-resolve',
+	'stall-resolve',
 	'gated'
 ] as const;
 type StubMode = (typeof MODES)[number];
@@ -287,7 +303,8 @@ function handle(message: JsonRpcMessage): void {
 							// Declared so the reply describes the server this really is:
 							// one that answers completions and would need a resolve
 							// round trip for documentation.
-							completionProvider: { resolveProvider: true, triggerCharacters: ['.'] }
+							completionProvider: { resolveProvider: true, triggerCharacters: ['.'] },
+							hoverProvider: true
 						},
 						serverInfo: { name: 'stub-ls', version: '0.0.0' },
 						// Echoed so a test can read the resolved root straight out of the
@@ -354,7 +371,9 @@ function handle(message: JsonRpcMessage): void {
 		// A real `CompletionList` with the three fields the source reads:
 		// a signature in `detail`, JSDoc in `documentation`, and the range the
 		// server would replace. `isIncomplete` stays false so the popover keeps
-		// this list until the user moves off the word.
+		// this list until the user moves off the word. Every item carries
+		// `data`, the opaque key the resolve round trip sends back (spec #280).
+		const lazy = options.mode === 'lazy-docs';
 		delayed(() =>
 			send({
 				id: message.id,
@@ -364,9 +383,14 @@ function handle(message: JsonRpcMessage): void {
 						{
 							label: 'Widget',
 							kind: 7,
-							detail: '(class) Widget',
-							documentation: { kind: 'markdown', value: 'A thing with an id and a label.' },
+							...(lazy
+								? {}
+								: {
+										detail: '(class) Widget',
+										documentation: { kind: 'markdown', value: 'A thing with an id and a label.' }
+									}),
 							insertText: 'Widget',
+							data: { id: 'widget' },
 							textEdit: {
 								range: {
 									start: completionRange(message, 5),
@@ -378,17 +402,99 @@ function handle(message: JsonRpcMessage): void {
 						{
 							label: 'WidgetFactory',
 							kind: 7,
-							detail: '(class) WidgetFactory',
-							documentation: 'Builds widgets.',
-							insertText: 'WidgetFactory'
+							...(lazy
+								? {}
+								: {
+										detail: '(class) WidgetFactory',
+										documentation: 'Builds widgets.'
+									}),
+							insertText: 'WidgetFactory',
+							data: { id: 'factory' }
 						},
 						{
 							label: 'widgetId',
 							kind: 6,
-							detail: '(property) string widgetId',
-							insertText: 'widgetId'
+							...(lazy ? {} : { detail: '(property) string widgetId' }),
+							insertText: 'widgetId',
+							data: { id: 'prop' }
 						}
 					]
+				}
+			})
+		);
+		return;
+	}
+	if (message.method === 'completionItem/resolve') {
+		if (options.mode === 'stall-resolve') return;
+		if (options.mode === 'fail-resolve') {
+			delayed(() =>
+				send({
+					id: message.id,
+					error: { code: -32603, message: 'stub server: resolve is unavailable' }
+				})
+			);
+			return;
+		}
+		// Fills what the first reply withheld, keyed off `data` like vtsls
+		// does. `additionalTextEdits` and `command` ride along for the
+		// confirm-time path; `textEdit` is never returned here because the
+		// client never advertises it in `resolveSupport` (#292).
+		const params = (message.params ?? {}) as { label?: unknown; data?: unknown };
+		const label = typeof params.label === 'string' ? params.label : '';
+		const docs: Record<string, { detail: string; documentation: unknown }> = {
+			Widget: {
+				detail: '(class) Widget',
+				documentation: { kind: 'markdown', value: 'A thing with an id and a label.' }
+			},
+			WidgetFactory: { detail: '(class) WidgetFactory', documentation: 'Builds widgets.' },
+			widgetId: { detail: '(property) string widgetId', documentation: 'The widget identifier.' }
+		};
+		const known = docs[label];
+		delayed(() =>
+			send({
+				id: message.id,
+				result: {
+					...(params as Record<string, unknown>),
+					...(known ? { detail: known.detail, documentation: known.documentation } : {}),
+					...(label === 'Widget'
+						? {
+								additionalTextEdits: [
+									{
+										range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+										newText: 'import { Widget } from "./widgets";\n'
+									}
+								]
+							}
+						: {})
+				}
+			})
+		);
+		return;
+	}
+	if (message.method === 'textDocument/hover') {
+		if (options.mode === 'no-hover') {
+			delayed(() => send({ id: message.id, result: null }));
+			return;
+		}
+		if (options.mode === 'fail-hover') {
+			delayed(() =>
+				send({
+					id: message.id,
+					error: { code: -32603, message: 'stub server: hover is unavailable' }
+				})
+			);
+			return;
+		}
+		// Type, signature and documentation in one Markdown blob: the
+		// presentation #263 said hover needed and did not exist yet (spec #280).
+		delayed(() =>
+			send({
+				id: message.id,
+				result: {
+					contents: {
+						kind: 'markdown',
+						value: '```typescript\n(class) Widget\n```\n\nA thing with an id and a label.'
+					}
 				}
 			})
 		);
