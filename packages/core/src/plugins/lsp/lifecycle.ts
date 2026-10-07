@@ -979,7 +979,7 @@ export class LspRuntime
 	}
 
 	/**
-	 * Never fails the start: any observation failure leaves "not reported".
+	 * Never fails the start: any observation failure leaves the figure at "—".
 	 * Guarded against a stop or restart that landed while the read was in flight.
 	 */
 	private async refreshMemory(entry: RunningServer): Promise<void> {
@@ -1246,19 +1246,24 @@ export function parseServerVersion(result: unknown): string | null {
 	return typeof version === 'string' && version.length > 0 ? version : null;
 }
 
-/** Version and memory for live and starting servers; stopped and failed rows are cleared. */
+/**
+ * Version and memory for live and starting servers; stopped and failed rows
+ * are cleared. The value is the whole display form — the row renders it
+ * without the label, so the version carries its `v` and an unknown figure is
+ * a dash, not a label-less sentence.
+ */
 function statusDetailsFor(entry: RunningServer): LspStatusDetail[] {
 	if (entry.state !== 'running' && entry.state !== 'starting') return [];
 	return [
-		{ label: 'version', value: entry.serverVersion ?? 'not reported' },
+		{ label: 'version', value: entry.serverVersion !== null ? `v${entry.serverVersion}` : 'v—' },
 		{
 			label: 'memory',
-			value: entry.memoryBytes !== null ? formatMemoryBytes(entry.memoryBytes) : 'not reported'
+			value: entry.memoryBytes !== null ? formatMemoryBytes(entry.memoryBytes) : '—'
 		}
 	];
 }
 
-/** Never blank and never zero: an unknown figure is the caller's "not reported". */
+/** Never blank and never zero: an unknown figure is the caller's "—". */
 export function formatMemoryBytes(bytes: number): string {
 	const MIB = 1024 * 1024;
 	if (bytes >= MIB) return `${Math.max(1, Math.round(bytes / MIB))} MiB`;

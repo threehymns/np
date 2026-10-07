@@ -364,9 +364,9 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			state: 'running',
 			pid: harness.platform.pids[0]
 		});
-		expect(statusRow.details).toContainEqual({ label: 'version', value: '0.0.0' });
+		expect(statusRow.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
 		const memoryFigure = statusRow.details.find((detail) => detail.label === 'memory')!;
-		expect(memoryFigure.value).toMatch(/^(\d+ (KiB|MiB)|not reported)$/);
+		expect(memoryFigure.value).toMatch(/^(\d+ (KiB|MiB)|—)$/);
 		expect(memoryFigure.value).not.toBe('0 MiB');
 	});
 
@@ -377,7 +377,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		await waitForRunning(harness.runtime, 1);
 
 		const row = harness.runtime.getStatusRows()[0];
-		expect(row.details).toContainEqual({ label: 'version', value: '0.0.0' });
+		expect(row.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
 	});
 
 	it('fills the status details slot with the memory the platform observed (#282)', async () => {
@@ -391,7 +391,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		await waitFor(
 			() =>
 				(harness.runtime.getStatusRows()[0]?.details ?? []).some(
-					(detail) => detail.label === 'memory' && detail.value !== 'not reported'
+					(detail) => detail.label === 'memory' && detail.value !== '—'
 				),
 			{ label: 'the memory figure' }
 		);
@@ -403,7 +403,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(memory.value).not.toBe('0 KiB');
 	});
 
-	it('says "not reported" while the handshake is still in flight (#282)', async () => {
+	it('shows dashes while the handshake is still in flight (#282)', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
 		const gate = makeGate();
 		const harness = await startPlugin(gate.script);
@@ -414,15 +414,15 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
 
 		expect(harness.runtime.getStatusRows()[0].details).toEqual([
-			{ label: 'version', value: 'not reported' },
-			{ label: 'memory', value: 'not reported' }
+			{ label: 'version', value: 'v—' },
+			{ label: 'memory', value: '—' }
 		]);
 
 		gate.release();
 		await waitForRunning(harness.runtime, 1);
 		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
 			label: 'version',
-			value: '0.0.0'
+			value: 'v0.0.0'
 		});
 	});
 
@@ -444,14 +444,14 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		await waitForRunning(harness.runtime, 1);
 		expect(
 			harness.runtime.getStatusRows().find((server) => server.server === key)?.details
-		).toContainEqual({ label: 'version', value: '0.0.0' });
+		).toContainEqual({ label: 'version', value: 'v0.0.0' });
 		await waitFor(
 			() =>
 				(harness.runtime
 					.getStatusRows()
 					.find((server) => server.server === key)
 					?.details ?? []).some(
-					(detail) => detail.label === 'memory' && detail.value !== 'not reported'
+					(detail) => detail.label === 'memory' && detail.value !== '—'
 				),
 			{ label: 'the re-reported memory figure' }
 		);

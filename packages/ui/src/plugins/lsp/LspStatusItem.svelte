@@ -96,8 +96,10 @@ import { ArrowClockwiseIcon, LightningIcon, ScrollIcon, StopIcon } from 'phospho
 										{#if row.stateNote}
 											<span class="ml-2 text-muted-foreground">{row.stateNote}</span>
 										{/if}
+										<!-- Value only: it arrives display-ready (v0.2.2, 312 MiB), and
+									     the label's job is the stable key, not visible text. -->
 										{#each row.details as detail (detail.label)}
-											<span class="ml-2 text-muted-foreground">{detail.label} {detail.value}</span>
+											<span class="ml-2 text-muted-foreground">{detail.value}</span>
 										{/each}
 									</DropdownMenu.SubTrigger>
 								{/snippet}

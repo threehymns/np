@@ -17,7 +17,12 @@
 
 export type LspServerState = 'starting' | 'running' | 'stopped' | 'failed';
 
-/** One extra line on a server's status row, such as a version or a memory figure. */
+/**
+ * One extra figure on a server's status row, such as a version or a memory
+ * reading. The label is the figure's stable name — the menu keys the figures
+ * by it — while the value is the whole display form, prefix and unit
+ * included, because the row renders the value on its own.
+ */
 export interface LspStatusDetail {
 	readonly label: string;
 	readonly value: string;
