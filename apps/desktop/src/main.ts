@@ -70,6 +70,20 @@ function killAllLspProcesses(): void {
 	for (const processId of [...lspProcesses.keys()]) killLspProcess(processId);
 }
 
+/** Linux only. macOS and Windows report this figure differently, and an
+ * unreadable or unparseable status is unknown memory, not a failed read. */
+async function readProcessMemoryBytes(pid: number): Promise<number | null> {
+	if (process.platform !== 'linux') return null;
+	try {
+		const status = await fs.readFile(`/proc/${pid}/status`, 'utf-8');
+		const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+		if (!match) return null;
+		return Number(match[1]) * 1024;
+	} catch {
+		return null;
+	}
+}
+
 // Helpers to get AppData persistence path
 const getAppDataPath = () => {
 	const userPath = app.getPath('userData');
@@ -449,6 +463,14 @@ function registerIpcHandlers() {
 
 	ipcMain.handle('lsp:kill', async (_event, processId: string) => {
 		killLspProcess(processId);
+	});
+
+	// Resolve the renderer's process id back to a pid: a compromised renderer
+	// can ask about its own servers, never an arbitrary pid.
+	ipcMain.handle('lsp:memory', async (_event, processId: string) => {
+		const child = typeof processId === 'string' ? lspProcesses.get(processId) : undefined;
+		if (!child?.pid) return null;
+		return readProcessMemoryBytes(child.pid);
 	});
 
 	// Persistence handlers

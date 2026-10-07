@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LspProcess, LspSpawnOptions, LspPlatform } from '@np/core';
 
@@ -85,6 +85,17 @@ export function createRealProcessPlatform(
 				cwd: spawnOptions.cwd
 			});
 			return lspProcess;
+		},
+		/** Real `/proc` RSS, so the details slot is asserted against a live process. Null off Linux. */
+		async processMemory(pid: number): Promise<number | null> {
+			try {
+				const status = await readFile(`/proc/${pid}/status`, 'utf-8');
+				const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+				if (!match) return null;
+				return Number(match[1]) * 1024;
+			} catch {
+				return null;
+			}
 		}
 	};
 }

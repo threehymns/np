@@ -28,7 +28,7 @@ import type { LspLogStore } from './logs';
 import { basenameOfUri, fromFileUri, toFileUri } from './root';
 import { describeError } from './describe-error';
 import { lspServerKey, LspTargetResolver, type LspTargetInput } from './targets';
-import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
+import type { LspServerState, LspServerStatus, LspServerStatusApi, LspStatusDetail } from './status';
 import { resolveLspPlatform } from './platform';
 
 export { lspServerKey };
@@ -157,6 +157,10 @@ interface RunningServer {
 	state: LspServerState;
 	/** Set by an explicit stop so opening a document does not resurrect it. */
 	stoppedByUser: boolean;
+	/** Null until the server's `initialize` result reports it. */
+	serverVersion: string | null;
+	/** Snapshot, not a live read: the menu reads rows synchronously on render. */
+	memoryBytes: number | null;
 }
 
 /** A document presented to the runtime, waiting to be synced to its server. */
@@ -277,9 +281,7 @@ export class LspRuntime
 			marker: entry.marker,
 			state: entry.state,
 			pid: entry.client?.pid,
-			// The details slot is shaped now and filled by the version and memory
-			// follow-ups, so arriving there is not a redesign of the row.
-			details: []
+			details: statusDetailsFor(entry)
 		}));
 	}
 
@@ -880,7 +882,9 @@ export class LspRuntime
 			root,
 			marker,
 			state: 'starting',
-			stoppedByUser: false
+			stoppedByUser: false,
+			serverVersion: null,
+			memoryBytes: null
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -930,8 +934,12 @@ export class LspRuntime
 				await client.stop();
 				return entry;
 			}
+			// A restart is a new handshake, so the version is re-reported here.
+			entry.serverVersion = parseServerVersion(initResult);
 			entry.state = 'running';
 			this.statusChanged();
+			// Fire and forget: a slow or failed observation must not hold the start.
+			void this.refreshMemory(entry);
 			this.log(
 				entry,
 				'info',
@@ -970,12 +978,35 @@ export class LspRuntime
 		}
 	}
 
+	/**
+	 * Never fails the start: any observation failure leaves the figure at "—".
+	 * Guarded against a stop or restart that landed while the read was in flight.
+	 */
+	private async refreshMemory(entry: RunningServer): Promise<void> {
+		const pid = entry.client?.pid;
+		const platform = this.resolvePlatform();
+		if (pid === undefined || platform?.processMemory === undefined) return;
+		let bytes: number | null;
+		try {
+			bytes = await platform.processMemory(pid);
+		} catch {
+			return;
+		}
+		if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return;
+		if (this.servers.get(entry.server) !== entry || entry.state !== 'running') return;
+		entry.memoryBytes = bytes;
+		this.statusChanged();
+	}
+
 	private async stopEntry(entry: RunningServer): Promise<void> {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
 		this.serverCapabilities.delete(entry.server);
 		this.dropResolved(entry.server);
+		// A stopped row keeps no figures from the dead process.
+		entry.serverVersion = null;
+		entry.memoryBytes = null;
 		// The queue is deliberately untouched: one of this method's callers is the
 		// revival path, where the stop is about to be followed by a start that should
 		// serve whatever is still waiting. The callers that mean it drops the waiters
@@ -1201,4 +1232,40 @@ function readServerCapabilities(result: unknown): {
 		hoverProvider: hover === true || (typeof hover === 'object' && hover !== null),
 		executeCommands: commands
 	};
+}
+
+/**
+ * Null for anything but a non-empty `serverInfo.version` string. A server that
+ * omits the field is conforming, not broken.
+ */
+export function parseServerVersion(result: unknown): string | null {
+	if (typeof result !== 'object' || result === null) return null;
+	const info = (result as { serverInfo?: unknown }).serverInfo;
+	if (typeof info !== 'object' || info === null) return null;
+	const version = (info as { version?: unknown }).version;
+	return typeof version === 'string' && version.length > 0 ? version : null;
+}
+
+/**
+ * Version and memory for live and starting servers; stopped and failed rows
+ * are cleared. The value is the whole display form — the submenu's footer
+ * renders it without the label, so the version carries its `v` and an unknown
+ * figure is a dash, not a label-less sentence.
+ */
+function statusDetailsFor(entry: RunningServer): LspStatusDetail[] {
+	if (entry.state !== 'running' && entry.state !== 'starting') return [];
+	return [
+		{ label: 'version', value: entry.serverVersion !== null ? `v${entry.serverVersion}` : 'v—' },
+		{
+			label: 'memory',
+			value: entry.memoryBytes !== null ? formatMemoryBytes(entry.memoryBytes) : '—'
+		}
+	];
+}
+
+/** Never blank and never zero: an unknown figure is the caller's "—". */
+export function formatMemoryBytes(bytes: number): string {
+	const MIB = 1024 * 1024;
+	if (bytes >= MIB) return `${Math.max(1, Math.round(bytes / MIB))} MiB`;
+	return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
 }

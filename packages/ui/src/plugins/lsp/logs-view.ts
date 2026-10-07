@@ -101,9 +101,15 @@ export function applyLogsFocus(
  * The tab over one store. An absent store is the ordinary case of a plugin that
  * is not active: the tab still renders, empty, rather than failing inside a
  * plugin-owned view.
+ * `showTrace` false drops the protocol feed, which grows a line per keystroke.
  */
-export function lspLogsView(logs: LspLogsReader | undefined, filter: LspLogFilter): LspLogsView {
-	const entries = logs?.read(filter) ?? [];
+export function lspLogsView(
+	logs: LspLogsReader | undefined,
+	filter: LspLogFilter,
+	showTrace = true
+): LspLogsView {
+	const read = logs?.read(filter) ?? [];
+	const entries = showTrace ? read : read.filter((entry) => entry.kind !== 'protocol');
 	const dropped = logs?.droppedCount ?? 0;
 	return {
 		entries,
