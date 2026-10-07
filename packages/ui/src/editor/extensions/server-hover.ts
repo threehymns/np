@@ -34,13 +34,20 @@ export type HoverFetchResult =
 
 export type HoverFetch = (query: HoverFetchQuery) => Promise<HoverFetchResult>;
 
+/**
+ * The one setting the hover source consults: the same server gate the
+ * completion source reads. A language whose server is off answers neither a
+ * completion nor a hover, so there is no hover-specific switch to read.
+ */
+export type ServerHoverSettings = { readonly lsp: boolean };
+
 export interface ServerHoverOptions {
 	readonly fetchHover: HoverFetch;
-	readonly readSettings?: () => { readonly lsp: boolean };
+	readonly readSettings?: () => ServerHoverSettings;
 	readonly fetchTimeoutMs?: number;
 }
 
-function defaultSettings(): { readonly lsp: boolean } {
+function defaultSettings(): ServerHoverSettings {
 	return { lsp: true };
 }
 

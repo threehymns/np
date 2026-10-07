@@ -3,6 +3,7 @@ import { EDITOR_SCHEMA, SettingsManager } from "@np/core";
 import {
 	readAutomaticCompletions,
 	readBufferWordSettings,
+	readServerHoverSettings,
 	type SettingReader,
 } from "./completion-settings";
 import { DEFAULT_BUFFER_WORD_SETTINGS } from "./buffer-words";
@@ -148,6 +149,35 @@ describe("readBufferWordSettings", () => {
 			key === "words" ? "sometimes" : read(namespace, key);
 
 		expect(readBufferWordSettings(overridden, "TypeScript").words).toBe("fallback");
+	});
+});
+
+describe("readServerHoverSettings", () => {
+	it("defaults to on for an editor with nothing stored", () => {
+		expect(readServerHoverSettings(readerFor(), "TypeScript")).toEqual({ lsp: true });
+		expect(readServerHoverSettings(readerFor(), null)).toEqual({ lsp: true });
+	});
+
+	it("reads the editor-level switch and one language's override", () => {
+		const read = readerFor({
+			lsp: false,
+			languages: { TypeScript: { lsp: true } },
+		});
+
+		expect(readServerHoverSettings(read, "TypeScript")).toEqual({ lsp: true });
+		expect(readServerHoverSettings(read, "Markdown")).toEqual({ lsp: false });
+		expect(readServerHoverSettings(read, null)).toEqual({ lsp: false });
+	});
+
+	it("keeps the default for a value hand-edited past the schema", () => {
+		// The schema refuses to store a non-boolean, so reaching the reader
+		// with one means the document was hand-edited. Silence and nonsense
+		// both read as the documented default, never as "off".
+		const base = readerFor();
+		const read: SettingReader = (namespace, key) =>
+			key === "lsp" ? "sometimes" : base(namespace, key);
+
+		expect(readServerHoverSettings(read, "Markdown")).toEqual({ lsp: true });
 	});
 });
 

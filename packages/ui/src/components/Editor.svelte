@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -391,13 +391,13 @@
 								hover: hoverCoordinator
 									? {
 											fetchHover: (query) => hoverCoordinator.fetchHover(query),
-											readSettings: () => ({
-												lsp: readServerCompletionSettings(readSetting, languageName).lsp,
-											}),
+											readSettings: () =>
+												readServerHoverSettings(readSetting, languageName),
 											fetchTimeoutMs:
 												readServerCompletionSettings(readSetting, languageName).fetchTimeoutMs ||
 												undefined,
-										},
+										}
+									: null,
 						}),
 					),
 				});
