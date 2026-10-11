@@ -94,7 +94,7 @@ export function createHoverSource(
 			return null;
 		}
 		if (answer.state !== "serving" || !answer.hover) return null;
-		const dom = renderLspMarkdown(answer.hover.contents);
+		const dom = await renderLspMarkdown(answer.hover.contents);
 		dom.className = "cm-lsp-hover";
 		return { pos, end: pos, create: () => ({ dom }) };
 	};

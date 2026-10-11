@@ -446,12 +446,18 @@ describe("server completions in the composed chain", () => {
 			expect(labels).toContain("widgetId");
 
 			// The signature is `detail` and the JSDoc is `info`, which is the pair
-			// `show_completion_documentation` maps to.
+			// `show_completion_documentation` maps to. Both render through the
+			// Markdown pipeline, without costing a resolve round trip.
 			const widget = options.find((option) => option.label === "Widget")!;
 			expect(widget.detail).toBe("(class) Widget");
-			expect(widget.info).toBe("A thing with an id and a label.");
+			expect(typeof widget.info).toBe("function");
+			expect(((await (widget.info as any)(widget)) as HTMLElement).innerHTML).toContain(
+				"A thing with an id and a label."
+			);
 			const factory = options.find((option) => option.label === "WidgetFactory")!;
-			expect(factory.info).toBe("Builds widgets.");
+			expect(((await (factory.info as any)(factory)) as HTMLElement).innerHTML).toContain(
+				"Builds widgets."
+			);
 
 			// Fallback is a fallback: a server that answered owns the popover, so the
 			// buffer word that extends the same prefix is not offered alongside it.

@@ -25,6 +25,7 @@ import { completionCompartmentExtensions } from "./extensions/completion-sources
 import { readBufferWordSettings, readServerCompletionSettings } from "./extensions/completion-settings";
 import {
 	DEFAULT_SERVER_COMPLETION_SETTINGS,
+	renderLspMarkdown,
 	type ServerCompletionSettings,
 } from "./extensions/server-completions";
 import { createHoverSource } from "./extensions/server-hover";
@@ -79,6 +80,7 @@ function installMinimalDom(): void {
 		clientWidth = 100;
 		clientHeight = 20;
 		textContent = "";
+		innerHTML = "";
 		className = "";
 		constructor(tag = "DIV") {
 			this.tagName = tag.toUpperCase();
@@ -308,8 +310,8 @@ describe("hover tooltips", () => {
 			const tooltip = await source({ state } as any, 10);
 			expect(tooltip).not.toBeNull();
 			const dom = (tooltip!.create as any)().dom as any;
-			expect(dom.textContent).toContain("(class) Widget");
-			expect(dom.textContent).toContain("A thing with an id");
+			expect(dom.innerHTML).toContain("(class) Widget");
+			expect(dom.innerHTML).toContain("A thing with an id");
 		} finally {
 			await cleanup();
 		}
@@ -346,6 +348,42 @@ describe("hover tooltips", () => {
 	});
 });
 
+describe("lsp markdown rendering", () => {
+	it("parses markdown and sanitizes dangerous html", async () => {
+		const dom = await renderLspMarkdown('**hi** <script>alert(1)</script>');
+		expect(dom.innerHTML).toContain("<strong>hi</strong>");
+		expect(dom.innerHTML).not.toContain("<script>");
+	});
+
+	it("renders immediate docs through the same pipeline with no round trip", async () => {
+		let resolves = 0;
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: "**Widget** docs",
+			kind: 7,
+			replaceRange: null
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		const resolve = async (current: any, _document: any) => {
+			resolves++;
+			return current;
+		};
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			expect(typeof widget.info).toBe("function");
+			const dom = await (widget.info as any)(widget);
+			expect((dom as HTMLElement).innerHTML).toContain("<strong>Widget</strong>");
+			expect(resolves).toBe(0);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
 describe("completion resolve in the popover", () => {
 	it("fills withheld docs through info, without changing ranking", async () => {
 		const server = await startStubServer(["--mode", "lazy-docs"]);
@@ -359,7 +397,7 @@ describe("completion resolve in the popover", () => {
 			// Withheld: info hangs the round trip rather than a string.
 			expect(typeof widget.info).toBe("function");
 			const dom = await (widget.info as any)(widget);
-			expect((dom as any)?.textContent ?? dom).toContain("A thing with an id");
+			expect((dom as any)?.innerHTML ?? dom).toContain("A thing with an id");
 			// Ranking untouched: server items still tie the note tier.
 			expect(widget.boost).toBe(0);
 		} finally {
@@ -367,7 +405,7 @@ describe("completion resolve in the popover", () => {
 		}
 	}, 30_000);
 
-	it("keeps immediate docs as a string with no round trip", async () => {
+	it("renders immediate docs with no round trip", async () => {
 		const server = await startStubServer([]);
 		try {
 			let resolves = 0;
@@ -379,8 +417,9 @@ describe("completion resolve in the popover", () => {
 			const state = await projectState(DOC, { fetch, resolve });
 			const options = await offeredOptions(state, DOC.length);
 			const widget = options.find((o) => o.label === "Widget")!;
-			expect(typeof widget.info).toBe("string");
-			expect(widget.info).toContain("A thing with an id");
+			expect(typeof widget.info).toBe("function");
+			const dom = await (widget.info as any)(widget);
+			expect((dom as HTMLElement).innerHTML).toContain("A thing with an id");
 			expect(resolves).toBe(0);
 		} finally {
 			await cleanup();

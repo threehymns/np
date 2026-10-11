@@ -6,6 +6,8 @@ import type {
 	CompletionSource,
 } from "@codemirror/autocomplete";
 import { insertCompletionText, pickedCompletion } from "@codemirror/autocomplete";
+import { marked } from "marked";
+import { sanitizeHtml } from "@np/core/transformer";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
 	type CompletionAnswer,
@@ -507,7 +509,11 @@ function serverOption(
 		// signature: the signature is the popover's shape, not documentation.
 		info = undefined;
 	} else if (item.documentation) {
-		info = item.documentation;
+		// Immediate docs render through the same Markdown pipeline as resolved
+		// ones, without costing a round trip: the function closes over the text
+		// rather than asking the server.
+		const text = item.documentation;
+		info = () => renderLspMarkdown(text);
 	} else if (resolveContext?.resolve) {
 		// Withheld docs have nowhere to hang until the popover shows this
 		// option — CodeMirror has no public "now selected" hook, so the `info`
@@ -516,7 +522,7 @@ function serverOption(
 		info = () => {
 			const pending = ensureResolved();
 			if (!pending) return null;
-			return pending.then((resolved) => {
+			return pending.then(async (resolved) => {
 				if (!settings.showDocumentation) return null;
 				const text =
 					resolved.documentation ??
@@ -541,11 +547,15 @@ function serverOption(
 /**
  * One Markdown pipeline for both surfaces (#295): completion `info` and the
  * hover tooltip render the same flattened string the same way.
+ *
+ * Server-controlled Markdown becomes HTML, so it is sanitized before it
+ * reaches the popover: docs arrive over the protocol and must not carry
+ * scripts or event handlers into the editor DOM.
  */
-export function renderLspMarkdown(text: string): HTMLElement {
+export async function renderLspMarkdown(text: string): Promise<HTMLElement> {
 	const dom = document.createElement("div");
 	dom.className = "cm-lsp-info";
-	dom.textContent = text;
+	dom.innerHTML = sanitizeHtml(await marked.parse(text));
 	dom.style.whiteSpace = "pre-wrap";
 	return dom;
 }
