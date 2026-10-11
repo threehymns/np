@@ -177,6 +177,12 @@ export interface LspPlatform {
 	/** Whether a root marker exists at an absolute path. */
 	fileExists(path: string): Promise<boolean>;
 	spawn(options: LspSpawnOptions): LspProcess;
+	/**
+	 * Optional because a transport that cannot observe its child still has to
+	 * start servers, and some transports (and test doubles) observe nothing.
+	 * Null means "not reported".
+	 */
+	processMemory?(pid: number): Promise<number | null>;
 }
 
 export const COMPLETION_COORDINATOR_SERVICE_KEY = 'completion:coordinator';
