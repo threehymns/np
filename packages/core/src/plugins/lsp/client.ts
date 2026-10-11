@@ -253,6 +253,10 @@ export class LspClient {
 							// entitled to answer "no completions here" for a client that never
 							// advertised that it wanted any, and vtsls does exactly that.
 							dynamicRegistration: false,
+							// Fetch sends `params.context` (triggerKind / triggerCharacter)
+							// with every request (see lifecycle.ts), so the client must
+							// declare that it understands that field.
+							contextSupport: true,
 							completionItem: {
 								// No `resolveSupport`, deliberately, and the reasoning is the
 								// same as the declaration above. Nothing in the client

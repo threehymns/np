@@ -275,6 +275,22 @@ export interface CompletionQuery {
 	readonly character: number;
 	/** How long a provider may hold this query up. Absent means no bound. */
 	readonly timeoutMs?: number;
+	/**
+	 * `kind`: 1 invoked (explicit or long prefix), 2 trigger character, 3 incomplete.
+	 * `character`: the typed trigger, present only for `kind 2`. Absent means invoked.
+	 */
+	readonly trigger?: CompletionTrigger;
+}
+
+/**
+ * The shell names no protocol: `kind 2` + `character` goes on the wire as LSP
+ * `context: { triggerKind: 2, triggerCharacter }`, other cases become `triggerKind: 1` or none.
+ */
+export interface CompletionTrigger {
+	/** LSP `CompletionTriggerKind`: 1 invoked, 2 trigger character, 3 incomplete. */
+	readonly kind: 1 | 2 | 3;
+	/** The typed trigger character, for `kind 2` only. */
+	readonly character?: string;
 }
 
 /** The range an accepted suggestion replaces, when the provider named one. */
@@ -332,6 +348,13 @@ export type CompletionAnswer =
  */
 export interface CompletionCoordinator {
 	fetch(query: CompletionQuery): Promise<CompletionAnswer>;
+	/**
+	 * Union of every running server’s `completionProvider.triggerCharacters`,
+	 * read live — optional so a server with none keeps working. A union (not
+	 * per-document) because the gate needs a synchronous answer and prose/
+	 * disabled checks run first.
+	 */
+	triggerCharacters?(): readonly string[];
 }
 
 export interface PluginUILoader {

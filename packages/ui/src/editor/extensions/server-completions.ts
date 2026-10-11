@@ -173,6 +173,11 @@ export interface ServerCompletionSourceOptions {
 	 * built without any settings reader gets.
 	 */
 	readonly readTriggerSettings?: () => BufferWordSettings;
+	/**
+	 * Read per query, so a server started since the last keystroke is honored.
+	 * Defaults to no triggers before the handshake.
+	 */
+	readonly readTriggerCharacters?: () => readonly string[];
 }
 
 function staticServerSettings(): ServerCompletionSettings {
@@ -181,6 +186,24 @@ function staticServerSettings(): ServerCompletionSettings {
 
 function staticTriggerSettings(): BufferWordSettings {
 	return DEFAULT_BUFFER_WORD_SETTINGS;
+}
+
+function staticNoTriggers(): readonly string[] {
+	return [];
+}
+
+/**
+ * The typed trigger character, when the character just before the cursor is a
+ * live server trigger. Null otherwise — including for the explicit trigger,
+ * which is the user asking rather than a character asking.
+ */
+function triggerCharacterBefore(
+	context: CompletionContext,
+	triggerCharacters: readonly string[]
+): string | null {
+	if (context.explicit || triggerCharacters.length === 0 || context.pos <= 0) return null;
+	const char = context.state.doc.sliceString(context.pos - 1, context.pos);
+	return triggerCharacters.includes(char) ? char : null;
 }
 
 /** Why a query may not reach the server, or null when it may. */
@@ -244,6 +267,7 @@ export function serverCompletions(
 ): ServerCompletionChain {
 	const { languageName, fetch, readSettings = staticServerSettings } = options;
 	const readTriggerSettings = options.readTriggerSettings ?? staticTriggerSettings;
+	const readTriggerCharacters = options.readTriggerCharacters ?? staticNoTriggers;
 	const coordinator = new ServerCompletionCoordinator();
 
 	const source: CompletionSource = (context: CompletionContext) => {
@@ -271,6 +295,59 @@ export function serverCompletions(
 			return null;
 		}
 
+		const requestWith = (trigger: { kind: 1 } | { kind: 2; character: string }) => {
+			const line = context.state.doc.lineAt(context.pos);
+			const outcome = fetch({
+				document: {
+					path,
+					fileName: document?.fileName ?? path,
+					content: context.state.doc.toString(),
+					language: languageName
+				},
+				line: line.number - 1,
+				character: context.pos - line.from,
+				timeoutMs: normalizeFetchTimeout(settings.fetchTimeoutMs),
+				trigger
+			});
+			// Registered before returning the promise: the words source runs later in
+			// this same pass and waits on exactly this.
+			coordinator.begin(context.pos, outcome);
+
+			// The popover range is the word alone, not the dotted path that gated
+			// the query: `foo.bar` completes `bar`, so receiver+dot survive accept.
+			const word = context.matchBefore(/[A-Za-z0-9_$]*/);
+			const resultFrom = word ? word.from : context.pos;
+			return outcome.then((answer) =>
+				answer.state === "serving" && answer.items.length > 0
+					? serverResult(answer, resultFrom, context.pos, settings)
+					: null
+			);
+		};
+
+		// Trigger character before the cursor asks the server even on an empty
+		// prefix; prose+disabled brakes still apply. Union of live triggers.
+		const triggerChar = triggerCharacterBefore(context, readTriggerCharacters());
+		if (triggerChar !== null) {
+			const triggerSettings = readTriggerSettings();
+			const policy = resolveBufferWordPolicy(
+				languageName,
+				triggerSettings,
+				context.state.doc,
+				context.pos
+			);
+			if (!policy.automatic) {
+				coordinator.settleNow(context.pos, {
+					state: "inactive",
+					reason:
+						isMarkdownProse(languageName) && !triggerSettings.wordsOverridden
+							? "Prose is quiet on a typing trigger; ask explicitly to reach a server."
+							: "Automatic suggestions are off for this language; ask explicitly to reach a server."
+				});
+				return null;
+			}
+			return requestWith({ kind: 2, character: triggerChar });
+		}
+
 		const typed = context.matchBefore(/[A-Za-z0-9_$.]*/);
 		if (!typed || typed.from === context.pos) {
 			coordinator.settleNow(context.pos, {
@@ -293,32 +370,7 @@ export function serverCompletions(
 			return null;
 		}
 
-		const line = context.state.doc.lineAt(context.pos);
-		const outcome = fetch({
-			document: {
-				path,
-				fileName: document?.fileName ?? path,
-				content: context.state.doc.toString(),
-				language: languageName
-			},
-			line: line.number - 1,
-			character: context.pos - line.from,
-			timeoutMs: normalizeFetchTimeout(settings.fetchTimeoutMs)
-		});
-		// Registered before returning the promise: the words source runs later in
-		// this same pass and waits on exactly this.
-		coordinator.begin(context.pos, outcome);
-
-		// The popover range is the word alone, not the dotted path that gated
-		// the query: `foo.bar` completes `bar` and `foo.` completes after the
-		// dot, so the receiver and the dot survive the accept.
-		const word = context.matchBefore(/[A-Za-z0-9_$]*/);
-		const resultFrom = word ? word.from : context.pos;
-		return outcome.then((answer) =>
-			answer.state === "serving" && answer.items.length > 0
-				? serverResult(answer, resultFrom, context.pos, settings)
-				: null
-		);
+		return requestWith({ kind: 1 });
 	};
 
 	return { source, coordinator };

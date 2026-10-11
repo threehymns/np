@@ -373,6 +373,8 @@
 										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
+										readTriggerCharacters: () =>
+											completionCoordinator.triggerCharacters?.() ?? [],
 									}
 								: null,
 						}),

@@ -287,7 +287,7 @@ function handle(message: JsonRpcMessage): void {
 							// Declared so the reply describes the server this really is:
 							// one that answers completions and would need a resolve
 							// round trip for documentation.
-							completionProvider: { resolveProvider: true, triggerCharacters: ['.'] }
+							completionProvider: { resolveProvider: true, triggerCharacters: ['.', '"', '/', "'"] }
 						},
 						serverInfo: { name: 'stub-ls', version: '0.0.0' },
 						// Echoed so a test can read the resolved root straight out of the
