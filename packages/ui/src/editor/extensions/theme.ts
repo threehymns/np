@@ -299,4 +299,14 @@ export const editorTheme = EditorView.theme({
 	".cm-lsp-hover a": {
 		color: "var(--primary)",
 	},
+	// Native selection inside the tooltip containers is hidden so the
+	// tooltip-selection overlay above is the only highlight: without this
+	// every tooltip drag shows both the browser rectangle and the rounded
+	// path. (No comma selectors: the theme prefixes only the first one.)
+	".cm-lsp-hover ::selection": {
+		backgroundColor: "transparent",
+	},
+	".cm-lsp-info ::selection": {
+		backgroundColor: "transparent",
+	},
 });

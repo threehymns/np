@@ -50,6 +50,13 @@
 	background-color: transparent !important;
 }
 
+/* Fill for the tooltip-selection overlay svg, which lives at page level
+   (position:fixed) rather than inside .cm-editor, so the rule above cannot
+   reach it. Same token mix as the editor selection. */
+svg.cm-tooltip-selection path.cm-selectionBackground {
+	fill: color-mix(in oklch, var(--primary) 25%, transparent);
+}
+
 .cm-editor .cm-rounded-selectionLayer {
 	z-index: 100 !important;
 }
