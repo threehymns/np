@@ -672,6 +672,39 @@ export interface TooltipLineMeasurer {
 }
 
 /**
+ * Final cover for one grouped line rect: the line-height fill unioned with
+ * single-line inline boxes (code pills paint padding outside the line box).
+ * Multi-line inline ancestors — notably a fenced block's `code` wrapper,
+ * which is `display: inline` yet spans every line — are excluded: unioning
+ * one would fill the whole section for a one-line selection.
+ *
+ * Pure in its inputs (fragment, block line height, inline boxes), so the
+ * rule is assertable without layout; the host's measurer only collects.
+ */
+export function coverLineBox(
+	fragment: SelectionRect,
+	lineHeight: number,
+	inlineBoxes: readonly SelectionRect[]
+): { readonly top: number; readonly bottom: number } {
+	const height = fragment.bottom - fragment.top;
+	let top = fragment.top;
+	let bottom = fragment.bottom;
+	if (lineHeight > height) {
+		const extra = (lineHeight - height) / 2;
+		top -= extra;
+		bottom += extra;
+	}
+	const singleLineCeil = Math.max(lineHeight, height) * 1.5;
+	for (const box of inlineBoxes) {
+		if (box.bottom - box.top > singleLineCeil) continue;
+		if (box.right <= box.left || box.bottom <= box.top) continue;
+		top = Math.min(top, box.top);
+		bottom = Math.max(bottom, box.bottom);
+	}
+	return { top, bottom };
+}
+
+/**
  * Groups raw client rects into visual lines: fragments on one line overlap
  * substantially in Y (shared text band), while adjacent lines merely touch.
  * Stroking each fragment separately notches the path at every inline
@@ -836,11 +869,10 @@ class TooltipSelectionHost {
 	}
 
 	/**
-	 * The real line coverage measurer: line height from the nearest block
-	 * ancestor plus the boxes of padded inline ancestors (code pills paint
-	 * padding outside the line box, so the line height alone would leave
-	 * them sticking out). Anything unreadable yields null, which keeps the
-	 * tight line rect.
+	 * The real line coverage measurer: collects the block line height and
+	 * the inline ancestor boxes at the line's center, then lets
+	 * {@link coverLineBox} combine them. Anything unreadable yields null,
+	 * which keeps the tight line rect.
 	 */
 	private documentMeasurer(doc: Document): TooltipLineMeasurer {
 		return {
@@ -853,8 +885,7 @@ class TooltipSelectionHost {
 					const node = caret?.startContainer ?? null;
 					let element =
 						node?.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null);
-					let top = line.top;
-					let bottom = line.bottom;
+					const inlineBoxes: SelectionRect[] = [];
 					let lineHeight = 0;
 					while (element) {
 						const style = doc.defaultView?.getComputedStyle(element);
@@ -867,18 +898,16 @@ class TooltipSelectionHost {
 							break;
 						}
 						const box = element.getBoundingClientRect();
-						if (box.right > box.left && box.bottom > box.top) {
-							top = Math.min(top, box.top);
-							bottom = Math.max(bottom, box.bottom);
-						}
+						inlineBoxes.push({
+							left: box.left,
+							top: box.top,
+							right: box.right,
+							bottom: box.bottom
+						});
 						element = element.parentElement ?? null;
 					}
-					if (lineHeight > bottom - top) {
-						const extra = (lineHeight - (bottom - top)) / 2;
-						top -= extra;
-						bottom += extra;
-					}
-					return { top, bottom };
+					const cover = coverLineBox(line, lineHeight, inlineBoxes);
+					return { top: cover.top, bottom: cover.bottom };
 				} catch {
 					return null;
 				}

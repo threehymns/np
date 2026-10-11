@@ -6,6 +6,7 @@ import { Direction, type EditorView } from "@codemirror/view";
 import {
 	buildRoundedSelectionPath,
 	RoundedSelectionMarker,
+	coverLineBox,
 	tightRectanglesForRange,
 	isPosInTable,
 	tooltipSelectionState,
@@ -678,5 +679,39 @@ describe("tooltipSelectionState line coverage", () => {
 		);
 		expect(state).not.toBeNull();
 		expect(state!.bounds).toEqual({ left: 20, top: 20, width: 80, height: 80 });
+	});
+});
+
+/**
+ * Multi-line inline ancestors must not leak into a line's cover: a fenced
+ * block's `code` wrapper is `display: inline` yet spans every line, and
+ * unioning it fills the whole section for a one-line selection. Only
+ * single-line inlines (code pills) join the line-height fill.
+ */
+describe("coverLineBox", () => {
+	const fragment = { left: 20, top: 26, right: 100, bottom: 38 };
+
+	it("fills to the line height with no inline boxes", () => {
+		// Height 12 with line height 20: 4px of leading each side.
+		expect(coverLineBox(fragment, 20, [])).toEqual({ top: 22, bottom: 42 });
+	});
+
+	it("unions single-line pill boxes that paint outside the line box", () => {
+		const cover = coverLineBox(fragment, 20, [{ left: 60, top: 24, right: 110, bottom: 44 }]);
+		expect(cover).toEqual({ top: 22, bottom: 44 });
+	});
+
+	it("excludes a multi-line wrapper box", () => {
+		// The fenced block's code wrapper around one selected line: covering
+		// it would fill the whole section.
+		const cover = coverLineBox(fragment, 20, [
+			{ left: 60, top: 24, right: 110, bottom: 40 },
+			{ left: 20, top: 20, right: 150, bottom: 120 },
+		]);
+		expect(cover).toEqual({ top: 22, bottom: 42 });
+	});
+
+	it("keeps the fragment when there is nothing to cover with", () => {
+		expect(coverLineBox(fragment, 0, [])).toEqual({ top: 26, bottom: 38 });
 	});
 });
