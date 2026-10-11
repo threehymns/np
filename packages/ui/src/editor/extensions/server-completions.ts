@@ -581,14 +581,26 @@ function serverApply(
 ): NonNullable<Completion["apply"]> {
 	return (view, completion, applyFrom, applyTo) => {
 		const item = box.current;
+		const preState = view.state;
 		const range =
 			insertMode === "replace_range" && item.replaceRange !== null
-				? serverRangeToOffsets(view.state, item.replaceRange)
+				? serverRangeToOffsets(preState, item.replaceRange)
 				: { from: applyFrom, to: applyTo };
-		view.dispatch({
-			...insertCompletionText(view.state, item.insertText, range.from, range.to),
+		const spec = {
+			...insertCompletionText(preState, item.insertText, range.from, range.to),
 			annotations: pickedCompletion.of(completion)
-		});
+		};
+		// Built for mapping only: the dispatched spec is the same object, so
+		// the changes below describe exactly the primary insert that landed.
+		const primary = preState.update(spec);
+		view.dispatch(spec);
+		const postDoc = view.state.doc;
+		// The primary's post-transaction extent, for the overlap check: the
+		// insert starts where the pre-range started and runs for the inserted
+		// text. Mapped edits are compared against this, not against the
+		// pre-transaction range, so both sides are in post-transaction space.
+		const primaryFrom = primary.changes.mapPos(range.from, 1);
+		const primaryTo = primaryFrom + item.insertText.length;
 		// Confirm-time additional edits (#292): the primary insert lands first
 		// in its own transaction, and the extra edits land after in a second
 		// one, skipping anything overlapping the primary. A command runs only
@@ -598,15 +610,28 @@ function serverApply(
 			box.current = resolved;
 			const edits = resolved.additionalTextEdits;
 			if (edits && edits.length > 0) {
-				const changes = [];
-				for (const edit of edits) {
-					const offsets = serverRangeToOffsets(view.state, edit.range);
-					// Overlap-skip: an extra edit touching the primary range
-					// would fight the insert that just landed.
-					if (offsets.from < range.to && offsets.to > range.from) continue;
-					changes.push({ from: offsets.from, to: offsets.to, insert: edit.newText });
+				// The document moved under a deferred resolve (the user kept
+				// typing while the round trip was in flight): positions from
+				// the server's revision no longer map cleanly, so the extras
+				// are dropped rather than mis-placed. The command below still
+				// runs, because it names no position.
+				if (view.state.doc !== postDoc) {
+					// Fall through to the command.
+				} else {
+					const changes = [];
+					for (const edit of edits) {
+						// Against the pre-dispatch revision the server answered
+						// for, then mapped through the primary insert.
+						const pre = serverRangeToOffsets(preState, edit.range);
+						const from = primary.changes.mapPos(pre.from, 1);
+						const to = primary.changes.mapPos(pre.to, 1);
+						// Overlap-skip: an extra edit touching the primary range
+						// would fight the insert that just landed.
+						if (from < primaryTo && to > primaryFrom) continue;
+						changes.push({ from, to, insert: edit.newText });
+					}
+					if (changes.length > 0) view.dispatch({ changes });
 				}
-				if (changes.length > 0) view.dispatch({ changes });
 			}
 			const command = resolved.command;
 			if (command && resolveContext?.runCommand && resolveContext.document.path) {

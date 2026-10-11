@@ -469,4 +469,46 @@ describe("completion resolve in the popover", () => {
 			await cleanup();
 		}
 	});
+
+	it("maps an edit at the insertion end through the primary insert", async () => {
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: null,
+			kind: 7,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		const resolve = async (current: any) => ({
+			...current,
+			documentation: "docs",
+			additionalTextEdits: [
+				{
+					range: { start: { line: 0, character: DOC.length }, end: { line: 0, character: DOC.length } },
+					newText: ";"
+				}
+			]
+		});
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			let current: any = state;
+			const view: any = {
+				get state() {
+					return current;
+				},
+				dispatch(tr: any) {
+					current = current.update(tr).state;
+				}
+			};
+			(widget.apply as any)(view, widget, DOC.length - 3, DOC.length);
+			await new Promise((done) => setTimeout(done, 30));
+			expect(current.doc.toString()).toBe("const w = Widget;");
+		} finally {
+			await cleanup();
+		}
+	});
 });
