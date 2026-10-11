@@ -157,6 +157,25 @@ interface RunningServer {
 	state: LspServerState;
 	/** Set by an explicit stop so opening a document does not resurrect it. */
 	stoppedByUser: boolean;
+	/**
+	 * Read from the handshake, like Zed: the server names its own
+	 * completionProvider.triggerCharacters. Empty until the handshake.
+	 */
+	triggerCharacters: readonly string[];
+}
+
+/**
+ * Total over JSON: unusable keys become no triggers, not a failure.
+ */
+export function parseTriggerCharacters(result: unknown): readonly string[] {
+	if (typeof result !== 'object' || result === null) return [];
+	const capabilities = (result as Record<string, unknown>).capabilities;
+	if (typeof capabilities !== 'object' || capabilities === null) return [];
+	const provider = (capabilities as Record<string, unknown>).completionProvider;
+	if (typeof provider !== 'object' || provider === null) return [];
+	const characters = (provider as Record<string, unknown>).triggerCharacters;
+	if (!Array.isArray(characters)) return [];
+	return characters.filter((c): c is string => typeof c === 'string' && c.length > 0);
 }
 
 /** A document presented to the runtime, waiting to be synced to its server. */
@@ -296,6 +315,20 @@ export class LspRuntime
 	}
 
 	/**
+	 * Union of every live server’s triggerCharacters (handshake result),
+	 * not descriptor data. A union because the gate needs a synchronous answer;
+	 * prose and disabled are checked first.
+	 */
+	triggerCharacters(): readonly string[] {
+		const seen = new Set<string>();
+		for (const entry of this.servers.values()) {
+			if (entry.state !== 'running') continue;
+			for (const c of entry.triggerCharacters) seen.add(c);
+		}
+		return [...seen];
+	}
+
+	/**
 	 * Reacts to one opened or changed document: resolve its descriptor, resolve
 	 * its project root, start that server if it is not running, and sync the
 	 * document to it. Returns the server key it was attributed to, or null when
@@ -391,7 +424,7 @@ export class LspRuntime
 		if (this.disposed) {
 			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
 		}
-		const { document, line, character, timeoutMs } = query;
+		const { document, line, character, timeoutMs, trigger } = query;
 		const path = document.path;
 		if (!path) {
 			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
@@ -427,7 +460,13 @@ export class LspRuntime
 				'textDocument/completion',
 				{
 					textDocument: { uri: toFileUri(path) },
-					position: { line, character }
+					position: { line, character },
+					context: {
+						triggerKind: trigger?.kind ?? 1,
+						...(trigger?.kind === 2 && trigger.character !== undefined
+							? { triggerCharacter: trigger.character }
+							: {})
+					}
 				},
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
@@ -880,7 +919,8 @@ export class LspRuntime
 			root,
 			marker,
 			state: 'starting',
-			stoppedByUser: false
+			stoppedByUser: false,
+			triggerCharacters: []
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -923,6 +963,9 @@ export class LspRuntime
 				capabilities: {}
 			});
 			this.serverCapabilities.set(server, readServerCapabilities(initResult));
+			// Live from the handshake, never descriptor data: the server names
+			// its own trigger characters and the coordinator channel carries them.
+			entry.triggerCharacters = parseTriggerCharacters(initResult);
 			// A stop or a restart that landed while the handshake was in flight
 			// wins. Otherwise the awaiting start would come back afterwards and
 			// report a server the user had already stopped as running again.

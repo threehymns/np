@@ -1,5 +1,6 @@
 import type { LspProcess } from '../services';
 import { describeError } from './describe-error';
+import { settleExit, settleWithin, withTimeout } from './effect-timeouts';
 import { LspLogStore, splitLogLines } from './logs';
 
 /**
@@ -253,6 +254,10 @@ export class LspClient {
 							// entitled to answer "no completions here" for a client that never
 							// advertised that it wanted any, and vtsls does exactly that.
 							dynamicRegistration: false,
+							// Fetch sends `params.context` (triggerKind / triggerCharacter)
+							// with every request (see lifecycle.ts), so the client must
+							// declare that it understands that field.
+							contextSupport: true,
 							completionItem: {
 								// `resolveSupport` for the four properties the
 								// visible-window round trip fills (spec #280, Zed
@@ -361,19 +366,7 @@ export class LspClient {
 
 	private async waitForExit(timeoutMs: number): Promise<boolean> {
 		if (this.exitInfo !== null) return true;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const expiry = new Promise<'timeout'>((resolve) => {
-			timer = setTimeout(() => resolve('timeout'), timeoutMs);
-		});
-		try {
-			const outcome = await Promise.race([
-				this.options.process.exit.then(() => 'exited' as const),
-				expiry
-			]);
-			return outcome === 'exited';
-		} finally {
-			if (timer !== undefined) clearTimeout(timer);
-		}
+		return settleExit(this.options.process.exit.then(() => 'exited' as const), timeoutMs);
 	}
 
 	/**
@@ -439,44 +432,5 @@ export class LspClient {
 		for (const line of lines) {
 			if (line.trim().length > 0) this.options.logs.appendServerLine(this.options.server, line);
 		}
-	}
-}
-
-async function withTimeout<T>(
-	settled: Promise<T>,
-	timeoutMs: number,
-	onTimeout: () => void,
-	makeError: () => Error
-): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const expiry = new Promise<never>((_resolve, reject) => {
-		timer = setTimeout(() => {
-			onTimeout();
-			reject(makeError());
-		}, timeoutMs);
-	});
-	try {
-		return await Promise.race([settled, expiry]);
-	} finally {
-		if (timer !== undefined) clearTimeout(timer);
-	}
-}
-
-/**
- * A value, or null when it did not arrive in time. Unlike {@link withTimeout}
- * this does not fail the operation it is waiting on: a late answer to a question
- * whose default is "none" is the same answer as no answer, and raising here would
- * turn a slow transport into a failed handshake.
- */
-async function settleWithin<T>(pending: Promise<T>, timeoutMs: number): Promise<T | null> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const expiry = new Promise<'timeout'>((resolve) => {
-		timer = setTimeout(() => resolve('timeout'), timeoutMs);
-	});
-	try {
-		const outcome = await Promise.race([pending, expiry]);
-		return outcome === 'timeout' ? null : outcome;
-	} finally {
-		if (timer !== undefined) clearTimeout(timer);
 	}
 }

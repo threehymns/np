@@ -5,12 +5,26 @@
 	import { fileDiffFromChange, diffCacheKey, DEFAULT_DIFF_CONFIG } from '@np/core';
 	import { useAppState, type AppState } from '@np/core/state.svelte';
 	import { Checkbox } from './ui/checkbox';
-	import { EditorView, lineNumbers, keymap, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
+	import { EditorView, lineNumbers, WidgetType, Decoration, type DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 	import { EditorState, Compartment, Text, RangeSetBuilder } from "@codemirror/state";
 	import { syntaxHighlighting, foldedRanges } from "@codemirror/language";
-	import { MergeView, unifiedMergeView, Chunk, getChunks } from "@codemirror/merge";
+	import { MergeView, unifiedMergeView, Chunk } from "@codemirror/merge";
+	import {
+		createViewRegistry,
+		MULTIBUFFER_COLLAPSE_CONFIG,
+		isAtBufferBoundary,
+		createFileNavKeymap,
+		makeGutterClickHandler,
+		focusSectionHeader,
+		focusEditorFirstLine,
+		focusEditorLastLine,
+		cursorSyncExtension,
+		trackCursorFocus,
+		type MultibufferViewEntry
+	} from './multibuffer.js';
 	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport } from '../editor/index';
 	import Button from './ui/button/button.svelte';
+	import MultiBuffer from './MultiBuffer.svelte';
 
 	class HunkWidget extends WidgetType {
 		hunkIndex: number;
@@ -187,213 +201,29 @@
 		);
 	}
 
-	type ViewEntry = { inline?: EditorView; split?: MergeView };
+	// Multibuffer view registry: active EditorView or MergeView per filepath
+	// (shared reusable infrastructure in ./multibuffer.js).
+	const viewRegistry = createViewRegistry();
 
-	// Map to track active EditorView or MergeView per filepath
-	let editorViews = new Map<string, ViewEntry>();
-	// Pending getOrWaitEditor waiters, keyed to the requested mode so a
-	// registration for one mode never resolves a waiter for the other mode
-	// during rapid inline<->split switches (issue #81).
-	type ViewWaiter = {
-		mode: 'inline' | 'split';
-		preferSide: 'a' | 'b';
-		resolve: (view: EditorView | undefined) => void;
-	};
-	let editorResolvers = new Map<string, Array<ViewWaiter>>();
+	function registerEditorView(filepath: string, entry: MultibufferViewEntry) {
+		viewRegistry.register(filepath, entry);
+	}
 
-	function makeGutterClickHandler(getView: () => EditorView | undefined, getFilepath: () => string) {
-		return (event: MouseEvent) => {
-			const target = event.target as HTMLElement;
-			const gutterElement = target.closest('.cm-gutterElement');
-			if (gutterElement && gutterElement.closest('.cm-lineNumbers')) {
-				const view = getView();
-				if (view) {
-					const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-					if (pos !== null) {
-						const lineNum = view.state.doc.lineAt(pos).number;
-						openFileInRegularTab(getFilepath(), lineNum);
-					}
-				}
+	const DIFF_COLLAPSE_CONFIG = MULTIBUFFER_COLLAPSE_CONFIG;
+
+	function fileNavKeymap(filepath: string) {
+		return createFileNavKeymap({
+			isAtBoundary: (v, direction) => isAtBufferBoundary(v, direction),
+			onBoundary: (v, direction) => {
+				const views = viewRegistry.get(filepath);
+				const side = (views?.split?.a === v) ? 'a' : 'b';
+				navigateFromFileEditor(filepath, direction, side);
 			}
-		};
-	}
-
-	const DIFF_COLLAPSE_CONFIG = { margin: 3, minSize: 4 } as const;
-
-	function getBufferBoundaries(state: EditorState): { firstLine: number; lastLine: number } {
-		const doc = state.doc;
-		const chunkInfo = getChunks(state);
-		if (!chunkInfo || chunkInfo.chunks.length === 0) {
-			return { firstLine: 1, lastLine: doc.lines };
-		}
-
-		const { chunks, side } = chunkInfo;
-		const isA = side === 'a';
-
-		// Calculate top boundary (first visible line considering collapsed unchanged lines)
-		let firstLine = 1;
-		const firstChunk = chunks[0];
-		const firstChunkFrom = isA ? firstChunk.fromA : firstChunk.fromB;
-		const firstChunkLine = doc.lineAt(Math.min(firstChunkFrom, doc.length)).number;
-		const topCollapseTo = firstChunkLine - 1 - DIFF_COLLAPSE_CONFIG.margin;
-		if (topCollapseTo >= DIFF_COLLAPSE_CONFIG.minSize) {
-			firstLine = topCollapseTo + 1;
-		}
-
-		// Calculate bottom boundary (last visible line considering collapsed unchanged lines)
-		let lastLine = doc.lines;
-		const lastChunk = chunks[chunks.length - 1];
-		const lastChunkTo = Math.min(doc.length, isA ? lastChunk.toA : lastChunk.toB);
-		const lastChunkLine = doc.lineAt(lastChunkTo).number;
-		const bottomCollapseFrom = lastChunkLine + DIFF_COLLAPSE_CONFIG.margin;
-		const bottomCollapsedLines = doc.lines - bottomCollapseFrom + 1;
-		if (bottomCollapsedLines >= DIFF_COLLAPSE_CONFIG.minSize) {
-			lastLine = bottomCollapseFrom - 1;
-		}
-
-		return { firstLine, lastLine };
-	}
-
-	function isAtBufferBoundary(view: EditorView, direction: 'down' | 'up'): boolean {
-		const sel = view.state.selection.main;
-		const doc = view.state.doc;
-		const curLine = doc.lineAt(sel.head).number;
-		const { firstLine, lastLine } = getBufferBoundaries(view.state);
-		return direction === 'up' ? curLine <= firstLine : curLine >= lastLine;
-	}
-
-	function pickView(views: ViewEntry | undefined, mode: 'inline' | 'split', preferSide: 'a' | 'b'): EditorView | undefined {
-		if (mode === 'split') {
-			const split = views?.split;
-			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
-		}
-		return views?.inline;
-	}
-
-	async function getOrWaitEditor(filepath: string, mode: 'inline' | 'split', preferSide: 'a' | 'b' = 'b'): Promise<EditorView | undefined> {
-		const targetView = pickView(editorViews.get(filepath), mode, preferSide);
-		if (targetView) return targetView;
-
-		return new Promise<EditorView | undefined>((resolve) => {
-			// Last-resort backstop for genuinely slow registrations (view setup
-			// awaits async language extensions). Mode-aware paths below settle
-			// first in every normal flow.
-			const timer = setTimeout(() => {
-				removeWaiter(filepath, waiter);
-				resolve(pickView(editorViews.get(filepath), mode, preferSide));
-			}, 500);
-
-			const waiter: ViewWaiter = {
-				mode,
-				preferSide,
-				resolve: (view) => {
-					clearTimeout(timer);
-					resolve(view);
-				}
-			};
-			const list = editorResolvers.get(filepath) || [];
-			list.push(waiter);
-			editorResolvers.set(filepath, list);
 		});
 	}
 
-	function removeWaiter(filepath: string, waiter: ViewWaiter) {
-		const list = editorResolvers.get(filepath);
-		if (!list) return;
-		const idx = list.indexOf(waiter);
-		if (idx !== -1) list.splice(idx, 1);
-		if (list.length === 0) editorResolvers.delete(filepath);
-	}
-
-	// Resolve only waiters whose requested mode now has a matching view.
-	// Waiters for other modes stay queued for their own registration.
-	function fireReadyResolvers(filepath: string) {
-		const list = editorResolvers.get(filepath);
-		if (!list || list.length === 0) return;
-		const views = editorViews.get(filepath);
-		for (const waiter of [...list]) {
-			const view = pickView(views, waiter.mode, waiter.preferSide);
-			if (view !== undefined) {
-				removeWaiter(filepath, waiter);
-				waiter.resolve(view);
-			}
-		}
-	}
-
-	// Settle waiters for a view that is being torn down (mode switch or file
-	// removal) with undefined so callers skip instead of hanging on the
-	// backstop or being resolved by a stale registration. When mode is
-	// omitted, all waiters for the filepath are aborted.
-	function abortResolvers(filepath: string, mode?: 'inline' | 'split') {
-		const list = editorResolvers.get(filepath);
-		if (!list || list.length === 0) return;
-		for (const waiter of [...list]) {
-			if (mode === undefined || waiter.mode === mode) {
-				removeWaiter(filepath, waiter);
-				waiter.resolve(undefined);
-			}
-		}
-	}
-
-	function createFileNavKeymap(filepath: string) {
-		return keymap.of([
-			{
-				key: "ArrowDown",
-				run: (v) => {
-					if (isAtBufferBoundary(v, 'down')) {
-						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'down', side);
-						return true;
-					}
-					return false;
-				}
-			},
-			{
-				key: "ArrowUp",
-				run: (v) => {
-					if (isAtBufferBoundary(v, 'up')) {
-						const views = editorViews.get(filepath);
-						const side = (views?.split?.a === v) ? 'a' : 'b';
-						navigateFromFileEditor(filepath, 'up', side);
-						return true;
-					}
-					return false;
-				}
-			}
-		]);
-	}
-
-	async function focusHeader(filepath: string) {
-		const header = document.getElementById(`diff-header-${filepath}`);
-		if (header) {
-			header.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-			await tick();
-			header.focus();
-		}
-	}
-
-	async function focusEditorAtLine(editor: EditorView, targetLineNum: number) {
-		const clampedLine = Math.min(Math.max(1, targetLineNum), editor.state.doc.lines);
-		const line = editor.state.doc.line(clampedLine);
-		editor.dispatch({
-			selection: { anchor: line.from, head: line.from },
-			effects: EditorView.scrollIntoView(line.from, { y: 'center' })
-		});
-		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-		await tick();
-		editor.focus();
-	}
-
-	function focusEditorFirstLine(editor: EditorView) {
-		const { firstLine } = getBufferBoundaries(editor.state);
-		void focusEditorAtLine(editor, firstLine);
-	}
-
-	function focusEditorLastLine(editor: EditorView) {
-		const { lastLine } = getBufferBoundaries(editor.state);
-		void focusEditorAtLine(editor, lastLine);
+	function focusHeader(filepath: string) {
+		void focusSectionHeader(`diff-header-${filepath}`);
 	}
 
 	async function navigateFromFileEditor(filepath: string, direction: 'down' | 'up', side: 'a' | 'b' = 'b') {
@@ -408,7 +238,7 @@
 			if (isNextCollapsed) {
 				void focusHeader(nextFile.filepath);
 			} else {
-				const editor = await getOrWaitEditor(nextFile.filepath, viewMode, side);
+				const editor = await viewRegistry.getOrWait(nextFile.filepath, viewMode, side);
 				if (editor) focusEditorFirstLine(editor);
 			}
 		} else {
@@ -418,7 +248,7 @@
 				if (isPrevCollapsed) {
 					void focusHeader(prevFile.filepath);
 				} else {
-					const editor = await getOrWaitEditor(prevFile.filepath, viewMode, side);
+					const editor = await viewRegistry.getOrWait(prevFile.filepath, viewMode, side);
 					if (editor) focusEditorLastLine(editor);
 				}
 			} else {
@@ -436,14 +266,6 @@
 			prev.modifiedContent !== next.modifiedContent ||
 			prev.diff !== next.diff
 		);
-	}
-
-	function registerEditorView(filepath: string, entry: ViewEntry) {
-		const current = editorViews.get(filepath) || {};
-		const updated = { ...current, ...entry };
-		editorViews.set(filepath, updated);
-
-		fireReadyResolvers(filepath);
 	}
 
 	// Silent sync for scroll-past / cursor-focus / header-focus paths.
@@ -472,20 +294,14 @@
 		syncActiveFileSilent(filepath);
 	}
 
-	function cursorSyncExtension(getFilepath: () => string) {
-		return EditorView.updateListener.of((update) => {
-			if (update.docChanged || update.selectionSet) {
-				syncActiveFileFromCursor(getFilepath(), update.view);
-			}
-		});
+	function diffCursorSync(getFilepath: () => string) {
+		return cursorSyncExtension(getFilepath, syncActiveFileFromCursor);
 	}
 
 	// Focus without a selection change (e.g. jumpToChunk focuses the editor
 	// after dispatching the new selection) still counts as cursor activity.
-	function trackCursorFocus(view: EditorView, getFilepath: () => string) {
-		const onFocusIn = () => syncActiveFileFromCursor(getFilepath(), view);
-		view.dom.addEventListener('focusin', onFocusIn);
-		return () => view.dom.removeEventListener('focusin', onFocusIn);
+	function diffTrackCursorFocus(view: EditorView, getFilepath: () => string) {
+		return trackCursorFocus(view, getFilepath, syncActiveFileFromCursor);
 	}
 
 	// Svelte action to initialize CodeMirror editor for inline unified diff
@@ -532,8 +348,8 @@
 					syntaxHighlighting(markdownHighlight),
 					editorTheme,
 					diffTheme,
-					createFileNavKeymap(options.filepath),
-					cursorSyncExtension(() => currentOptions.filepath),
+					fileNavKeymap(options.filepath),
+					diffCursorSync(() => currentOptions.filepath),
 					wrapCompartment.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 				]
 			});
@@ -542,11 +358,11 @@
 				state,
 				parent: node
 			});
-			untrackCursorFocus = trackCursorFocus(view, () => currentOptions.filepath);
+			untrackCursorFocus = diffTrackCursorFocus(view, () => currentOptions.filepath);
 			registerEditorView(currentOptions.filepath, { inline: view });
 		});
 
-		const clickHandler = makeGutterClickHandler(() => view, () => currentOptions.filepath);
+		const clickHandler = makeGutterClickHandler(() => view, () => currentOptions.filepath, openFileInRegularTab);
 		node.addEventListener('click', clickHandler);
 
 		return {
@@ -603,14 +419,9 @@
 				disposed = true;
 				node.removeEventListener('click', clickHandler);
 				untrackCursorFocus?.();
-				const existing = editorViews.get(currentOptions.filepath);
-				if (existing) {
-					delete existing.inline;
-					if (!existing.split) editorViews.delete(currentOptions.filepath);
-				}
 				// The inline view is gone: settle its waiters now instead of
 				// leaving them for the backstop or a stale registration.
-				abortResolvers(currentOptions.filepath, 'inline');
+				viewRegistry.unregisterInline(currentOptions.filepath);
 				view?.destroy();
 			}
 		};
@@ -651,8 +462,8 @@
 						syntaxHighlighting(markdownHighlight),
 						editorTheme,
 						diffTheme,
-						createFileNavKeymap(options.filepath),
-						cursorSyncExtension(() => currentOptions.filepath),
+						fileNavKeymap(options.filepath),
+						diffCursorSync(() => currentOptions.filepath),
 						wrapCompartmentA.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -672,8 +483,8 @@
 							}
 						}),
 						diffTheme,
-						createFileNavKeymap(options.filepath),
-						cursorSyncExtension(() => currentOptions.filepath),
+						fileNavKeymap(options.filepath),
+						diffCursorSync(() => currentOptions.filepath),
 						wrapCompartmentB.of(currentOptions.wrap ? EditorView.lineWrapping : [])
 					]
 				},
@@ -723,15 +534,15 @@
 			}
 
 			registerEditorView(currentOptions.filepath, { split: view });
-			const untrackA = trackCursorFocus(view.a, () => currentOptions.filepath);
-			const untrackB = trackCursorFocus(view.b, () => currentOptions.filepath);
+			const untrackA = diffTrackCursorFocus(view.a, () => currentOptions.filepath);
+			const untrackB = diffTrackCursorFocus(view.b, () => currentOptions.filepath);
 			untrackCursorFocus = () => {
 				untrackA();
 				untrackB();
 			};
 		});
 
-		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath);
+		const clickHandler = makeGutterClickHandler(() => view ? view.b : undefined, () => currentOptions.filepath, openFileInRegularTab);
 		node.addEventListener('click', clickHandler);
 
 		return {
@@ -798,14 +609,9 @@
 				node.removeEventListener('click', clickHandler);
 				cleanupSync?.();
 				untrackCursorFocus?.();
-				const existing = editorViews.get(currentOptions.filepath);
-				if (existing) {
-					delete existing.split;
-					if (!existing.inline) editorViews.delete(currentOptions.filepath);
-				}
 				// The split view is gone: settle its waiters now instead of
 				// leaving them for the backstop or a stale registration.
-				abortResolvers(currentOptions.filepath, 'split');
+				viewRegistry.unregisterSplit(currentOptions.filepath);
 				view?.destroy();
 			}
 		};
@@ -1108,7 +914,7 @@
 
 	function getActiveCursorLocation(): { filepath: string; pos: number } | null {
 		// Check focused editor first (checking both split.a and split.b)
-		for (const [filepath, views] of editorViews.entries()) {
+		for (const [filepath, views] of viewRegistry.entries()) {
 			if (viewMode === 'split' && views.split) {
 				if (views.split.b.hasFocus) {
 					return { filepath, pos: views.split.b.state.selection.main.head };
@@ -1123,7 +929,7 @@
 		// Fallback to active diff file from repo state
 		const activeFile = repo?.activeDiffFile?.filepath;
 		if (activeFile) {
-			const views = editorViews.get(activeFile);
+			const views = viewRegistry.get(activeFile);
 			if (viewMode === 'split' && views?.split) {
 				const ed = views.split.b.hasFocus ? views.split.b : (views.split.a.hasFocus ? views.split.a : views.split.b);
 				return { filepath: activeFile, pos: ed.state.selection.main.head };
@@ -1188,7 +994,7 @@
 		}
 
 		// Get editor instance
-		const editor = await getOrWaitEditor(targetHunk.filepath, viewMode);
+		const editor = await viewRegistry.getOrWait(targetHunk.filepath, viewMode);
 
 		if (editor) {
 			const pos = Math.min(targetHunk.posB, editor.state.doc.length);
@@ -1210,7 +1016,7 @@
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
 			if (!isCollapsed) {
-				const editor = await getOrWaitEditor(filepath, viewMode);
+				const editor = await viewRegistry.getOrWait(filepath, viewMode);
 				if (editor) focusEditorFirstLine(editor);
 			} else {
 				const nextFile = activeChanges[idx + 1];
@@ -1222,7 +1028,7 @@
 			if (prevFile) {
 				const isPrevCollapsed = isFileCollapsed(prevFile.filepath);
 				if (!isPrevCollapsed) {
-					const editor = await getOrWaitEditor(prevFile.filepath, viewMode);
+					const editor = await viewRegistry.getOrWait(prevFile.filepath, viewMode);
 					if (editor) focusEditorLastLine(editor);
 				} else {
 					void focusHeader(prevFile.filepath);
@@ -1244,25 +1050,12 @@
 		}
 	}
 
-	let diffContainerEl = $state<HTMLDivElement | null>(null);
-
-	function handleContainerScroll() {
-		if (!diffContainerEl) return;
-		// Guard: only drive activeDiffFile if diff container holds focus (mirroring Zed contains_focused)
-		if (!diffContainerEl.contains(document.activeElement)) return;
-
-		const containerRect = diffContainerEl.getBoundingClientRect();
-		for (const fileChange of activeChanges) {
-			const el = document.getElementById(`diff-file-${fileChange.filepath}`);
-			if (el) {
-				const rect = el.getBoundingClientRect();
-				if (rect.bottom > containerRect.top + 40 && rect.top <= containerRect.top + 80) {
-					syncActiveFileSilent(fileChange.filepath);
-					break;
-				}
-			}
-		}
-	}
+	// Multibuffer sections: one stacked section per active change, keyed by
+	// filepath + staged flag (shared reusable component in ./MultiBuffer.svelte).
+	let changeByFilepath = $derived(new Map(activeChanges.map((c) => [c.filepath, c])));
+	let multibufferSections = $derived(
+		activeChanges.map((c) => ({ filepath: c.filepath, key: c.filepath + '-' + c.staged }))
+	);
 </script>
 
 <div class="flex flex-col h-full w-full bg-background border-l border-border select-text">
@@ -1369,143 +1162,145 @@
 		</div>
 	</div>
 
-	<!-- Scrollable stacked Multibuffer Diffs -->
-	<div
-		bind:this={diffContainerEl}
-		onscroll={handleContainerScroll}
-		class="flex flex-col gap-2 flex-1 overflow-y-auto select-text bg-background"
-	>
-		{#if activeChanges.length === 0}
-			<div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground h-full">
-				<InfoIcon class="size-6 text-primary mb-2 opacity-80" />
-				<p class="font-bold text-xs">No active diffs</p>
-				<p class="text-[9px] opacity-75 mt-0.5">All modified changes committed.</p>
-			</div>
-		{:else}
-			{#each activeChanges as fileChange (fileChange.filepath + '-' + fileChange.staged)}
-				{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
-				<div class="flex flex-col bg-background" id="diff-file-{fileChange.filepath}">
-					<!-- File Header inside multibuffer -->
-					<div class="sticky top-0 z-10 bg-background pt-2 pb-1 px-2">
-						<div
-							role="button"
-							tabindex="0"
-							id="diff-header-{fileChange.filepath}"
-							class="flex items-center rounded-lg justify-between px-3 py-1 bg-muted/40 hover:bg-muted/70 border border-border/80 hover:border-border select-none shrink-0 font-mono text-[10.5px] h-9 transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:bg-muted/80 focus-visible:border-primary/60 cursor-pointer"
-							onfocusin={() => syncActiveFileSilent(fileChange.filepath)}
-							onclick={(e) => {
-								syncActiveFileSilent(fileChange.filepath);
-								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
-								toggleCollapse(fileChange.filepath);
-							}}
-							onkeydown={(e) => {
-								if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
-								handleHeaderKeydown(e, fileChange.filepath);
-							}}
-						>
-							<div class="flex items-center gap-2">
-								<!-- Caret expand/collapse -->
-								<button
-									type="button"
-									onclick={() => toggleCollapse(fileChange.filepath)}
-									class="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center"
-									title={isCollapsed ? "Expand" : "Collapse"}
-								>
-									{#if isCollapsed}
-										<CaretRightIcon class="size-3.5" />
-									{:else}
-										<CaretDownIcon class="size-3.5" />
-									{/if}
-								</button>
+	<!-- Scrollable stacked Multibuffer Diffs (shared reusable component) -->
+	{#snippet emptyDiffState()}
+		<div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground h-full">
+			<InfoIcon class="size-6 text-primary mb-2 opacity-80" />
+			<p class="font-bold text-xs">No active diffs</p>
+			<p class="text-[9px] opacity-75 mt-0.5">All modified changes committed.</p>
+		</div>
+	{/snippet}
 
-								<!-- Checkbox to Stage/Unstage -->
-								<Checkbox
-									checked={fileChange.staged}
-									onCheckedChange={(val) => {
-										if (repo) {
-											if (val) {
-												appState.commands.execute('git.stage', fileChange.filepath);
-											} else {
-												appState.commands.execute('git.unstage', fileChange.filepath);
-											}
-										}
-									}}
-									class="size-3.5 shrink-0"
-									title={fileChange.staged ? "Unstage entire file" : "Stage entire file"}
-								/>
+	{#snippet diffHeader(filepath: string)}
+		{@const fileChange = changeByFilepath.get(filepath)}
+		{#if fileChange}
+			{@const isCollapsed = isFileCollapsed(fileChange.filepath)}
+			<div
+				role="button"
+				tabindex="0"
+				id="diff-header-{fileChange.filepath}"
+				class="flex items-center rounded-lg justify-between px-3 py-1 bg-muted/40 hover:bg-muted/70 border border-border/80 hover:border-border select-none shrink-0 font-mono text-[10.5px] h-9 transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:bg-muted/80 focus-visible:border-primary/60 cursor-pointer"
+				onfocusin={() => syncActiveFileSilent(fileChange.filepath)}
+				onclick={(e) => {
+					syncActiveFileSilent(fileChange.filepath);
+					if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
+					toggleCollapse(fileChange.filepath);
+				}}
+				onkeydown={(e) => {
+					if ((e.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
+					handleHeaderKeydown(e, fileChange.filepath);
+				}}
+			>
+				<div class="flex items-center gap-2">
+					<!-- Caret expand/collapse -->
+					<button
+						type="button"
+						onclick={() => toggleCollapse(fileChange.filepath)}
+						class="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground cursor-pointer flex items-center justify-center"
+						title={isCollapsed ? "Expand" : "Collapse"}
+					>
+						{#if isCollapsed}
+							<CaretRightIcon class="size-3.5" />
+						{:else}
+							<CaretDownIcon class="size-3.5" />
+						{/if}
+					</button>
 
-								<!-- Clickable filepath opens in regular tab -->
-								<button
-									type="button"
-									onclick={() => openFileInRegularTab(fileChange.filepath)}
-									class="font-bold text-foreground hover:text-primary hover:underline transition-colors font-mono cursor-pointer text-left text-xs"
-									title="Open file in regular tab"
-								>
-									{fileChange.filepath.split('/').pop() || fileChange.filepath}
-								</button>
-								<span class="text-muted-foreground text-[10px] font-mono opacity-80 select-none">
-									{fileChange.filepath.includes('/') ? fileChange.filepath.substring(0, fileChange.filepath.lastIndexOf('/') + 1) : ''}
-								</span>
-							</div>
-							<div class="flex items-center gap-1.5 text-[9px] font-bold">
-								{#if fileChange.additions > 0}
-									<span class="text-emerald-500 font-bold">+{fileChange.additions}</span>
-								{/if}
-								{#if fileChange.deletions > 0}
-									<span class="text-rose-500 font-bold">-{fileChange.deletions}</span>
-								{/if}
-							</div>
-						</div>
-					</div>
+					<!-- Checkbox to Stage/Unstage -->
+					<Checkbox
+						checked={fileChange.staged}
+						onCheckedChange={(val) => {
+							if (repo) {
+								if (val) {
+									appState.commands.execute('git.stage', fileChange.filepath);
+								} else {
+									appState.commands.execute('git.unstage', fileChange.filepath);
+								}
+							}
+						}}
+						class="size-3.5 shrink-0"
+						title={fileChange.staged ? "Unstage entire file" : "Stage entire file"}
+					/>
 
-					<!-- Diff Content (collapsible) -->
-					{#if !isCollapsed}
-						{@const diff = resolveFileDiff(fileChange)}
-						<div class="bg-muted/5 relative group border-t border-border/40">
-							{#if diff}
-								{@const effectiveChange = {
-									...fileChange,
-									originalContent: diff.originalContent,
-									modifiedContent: diff.modifiedContent,
-									stagedContent: diff.stagedContent
-								}}
-								{#if viewMode === 'inline'}
-									<!-- Inline View: Single Editor showing unified diff of the whole file -->
-									<div class="flex-1 overflow-hidden bg-background">
-										<div use:setupEditor={{
-											content: diff.modifiedContent,
-											originalContent: diff.originalContent,
-											readOnly: true,
-											filepath: fileChange.filepath,
-											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap,
-											hunks: diff.hunks,
-											unstagedChunks: diff.unstagedChunks
-										}}></div>
-									</div>
-								{:else}
-									<!-- Split View: Side-by-side MergeView of the whole file -->
-									<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
-										<div use:setupMergeView={{
-											leftContent: diff.originalContent,
-											rightContent: diff.modifiedContent,
-											filepath: fileChange.filepath,
-											fileChange: effectiveChange,
-											wrap: appState.prefs.wordWrap,
-											hunks: diff.hunks,
-											unstagedChunks: diff.unstagedChunks
-										}}></div>
-									</div>
-								{/if}
-							{:else}
-								<div class="flex items-center justify-center p-6 text-muted-foreground text-xs font-mono">
-									<span class="animate-pulse">Loading diff...</span>
-								</div>
-							{/if}
-						</div>
+					<!-- Clickable filepath opens in regular tab -->
+					<button
+						type="button"
+						onclick={() => openFileInRegularTab(fileChange.filepath)}
+						class="font-bold text-foreground hover:text-primary hover:underline transition-colors font-mono cursor-pointer text-left text-xs"
+						title="Open file in regular tab"
+					>
+						{fileChange.filepath.split('/').pop() || fileChange.filepath}
+					</button>
+					<span class="text-muted-foreground text-[10px] font-mono opacity-80 select-none">
+						{fileChange.filepath.includes('/') ? fileChange.filepath.substring(0, fileChange.filepath.lastIndexOf('/') + 1) : ''}
+					</span>
+				</div>
+				<div class="flex items-center gap-1.5 text-[9px] font-bold">
+					{#if fileChange.additions > 0}
+						<span class="text-emerald-500 font-bold">+{fileChange.additions}</span>
+					{/if}
+					{#if fileChange.deletions > 0}
+						<span class="text-rose-500 font-bold">-{fileChange.deletions}</span>
 					{/if}
 				</div>
-			{/each}
+			</div>
 		{/if}
-	</div>
+	{/snippet}
+
+	{#snippet diffContent(filepath: string)}
+		{@const fileChange = changeByFilepath.get(filepath)}
+		{#if fileChange}
+			{@const diff = resolveFileDiff(fileChange)}
+			{#if diff}
+				{@const effectiveChange = {
+					...fileChange,
+					originalContent: diff.originalContent,
+					modifiedContent: diff.modifiedContent,
+					stagedContent: diff.stagedContent
+				}}
+				{#if viewMode === 'inline'}
+					<!-- Inline View: Single Editor showing unified diff of the whole file -->
+					<div class="flex-1 overflow-hidden bg-background">
+						<div use:setupEditor={{
+							content: diff.modifiedContent,
+							originalContent: diff.originalContent,
+							readOnly: true,
+							filepath: fileChange.filepath,
+							fileChange: effectiveChange,
+							wrap: appState.prefs.wordWrap,
+							hunks: diff.hunks,
+							unstagedChunks: diff.unstagedChunks
+						}}></div>
+					</div>
+				{:else}
+					<!-- Split View: Side-by-side MergeView of the whole file -->
+					<div class="flex-1 overflow-hidden bg-background min-w-[800px]">
+						<div use:setupMergeView={{
+							leftContent: diff.originalContent,
+							rightContent: diff.modifiedContent,
+							filepath: fileChange.filepath,
+							fileChange: effectiveChange,
+							wrap: appState.prefs.wordWrap,
+							hunks: diff.hunks,
+							unstagedChunks: diff.unstagedChunks
+						}}></div>
+					</div>
+				{/if}
+			{:else}
+				<div class="flex items-center justify-center p-6 text-muted-foreground text-xs font-mono">
+					<span class="animate-pulse">Loading diff...</span>
+				</div>
+			{/if}
+		{/if}
+	{/snippet}
+
+	<MultiBuffer
+		sections={multibufferSections}
+		isCollapsed={isFileCollapsed}
+		idPrefix="diff-"
+		emptyState={emptyDiffState}
+		header={diffHeader}
+		content={diffContent}
+		onTopSectionVisible={(filepath) => syncActiveFileSilent(filepath)}
+	/>
 </div>

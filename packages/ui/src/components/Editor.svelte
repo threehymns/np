@@ -386,6 +386,8 @@
 											: undefined,
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
+										readTriggerCharacters: () =>
+											completionCoordinator.triggerCharacters?.() ?? [],
 									}
 								: null,
 								hover: hoverCoordinator
