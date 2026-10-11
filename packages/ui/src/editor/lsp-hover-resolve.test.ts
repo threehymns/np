@@ -25,6 +25,7 @@ import { completionCompartmentExtensions } from "./extensions/completion-sources
 import { readBufferWordSettings, readServerCompletionSettings } from "./extensions/completion-settings";
 import {
 	DEFAULT_SERVER_COMPLETION_SETTINGS,
+	highlightFencedCode,
 	renderLspMarkdown,
 	type ServerCompletionSettings,
 } from "./extensions/server-completions";
@@ -354,6 +355,30 @@ describe("lsp markdown rendering", () => {
 		expect(dom.innerHTML).toContain("<strong>hi</strong>");
 		expect(dom.innerHTML).not.toContain("<script>");
 	});
+
+	it("highlights fenced code with the editor's token colors", async () => {
+		const html = await highlightFencedCode("const x: number = 1;", "typescript");
+		expect(html).toContain("<span");
+		expect(html).toContain("const");
+	}, 30_000);
+
+	it("leaves unknown fence languages as escaped plain text", async () => {
+		expect(await highlightFencedCode("plain", "nosuchlang")).toBe("plain");
+		expect(await highlightFencedCode("a < b", "")).toBe("a &lt; b");
+	});
+
+	it("drops the fence's trailing newline so no phantom line renders", async () => {
+		const html = await highlightFencedCode("const x = 1;\n", "typescript");
+		expect(html).toContain("<span");
+		expect(html.endsWith("\n")).toBe(false);
+	}, 30_000);
+
+	it("escapes html inside highlighted code", async () => {
+		const html = await highlightFencedCode("const el = <div />;", "typescript");
+		expect(html).not.toContain("<div");
+		expect(html).toContain("&lt;");
+		expect(html).toContain("&gt;");
+	}, 30_000);
 
 	it("renders immediate docs through the same pipeline with no round trip", async () => {
 		let resolves = 0;

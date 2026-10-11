@@ -6,10 +6,13 @@ import type {
 	CompletionSource,
 } from "@codemirror/autocomplete";
 import { insertCompletionText, pickedCompletion } from "@codemirror/autocomplete";
+import type { Tree } from "@lezer/common";
+import { highlightCode } from "@lezer/highlight";
 import { marked } from "marked";
 import { sanitizeHtml } from "@np/core/transformer";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
+	getActiveLanguages,
 	type CompletionAnswer,
 	type CompletionLspInsertMode,
 	type CompletionQuery,
@@ -22,6 +25,7 @@ import {
 	type BufferWordSettings,
 } from "./buffer-words";
 import { currentDocFacet } from "./wikilinks";
+import { markdownHighlight } from "./highlight";
 
 /**
  * Server completion items as one more source on the existing chain (spec #263,
@@ -556,8 +560,92 @@ export async function renderLspMarkdown(text: string): Promise<HTMLElement> {
 	const dom = document.createElement("div");
 	dom.className = "cm-lsp-info";
 	dom.innerHTML = sanitizeHtml(await marked.parse(text));
-	dom.style.whiteSpace = "pre-wrap";
+	await highlightCodeBlocks(dom);
+	// No `white-space: pre-wrap`: the div holds block HTML now, not plain
+	// text, and pre-wrap would preserve the newlines between blocks as
+	// forced breaks — a phantom empty line under every block.
 	return dom;
+}
+
+/** A Lezer parser behind its fence language, loaded once and cached. */
+const fenceParsers = new Map<string, Promise<{ parse(code: string): Tree } | null>>();
+
+function fenceLanguage(info: string): string {
+	return info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+async function fenceParser(language: string): Promise<{ parse(code: string): Tree } | null> {
+	const cached = fenceParsers.get(language);
+	if (cached) return cached;
+	const pending = (async () => {
+		try {
+			if (!language) return null;
+			const desc = getActiveLanguages().find(
+				(candidate) =>
+					candidate.name.toLowerCase() === language ||
+					candidate.alias.some((name) => name.toLowerCase() === language)
+			);
+			if (!desc) return null;
+			const loaded = (await desc.load()) as unknown;
+			const candidates = Array.isArray(loaded) ? loaded : [loaded];
+			for (const candidate of candidates) {
+				const parser = (candidate as { language?: { parser?: unknown } })?.language?.parser ??
+					(candidate as { parser?: unknown })?.parser;
+				if (parser && typeof (parser as { parse?: unknown }).parse === "function") {
+					return parser as { parse(code: string): Tree };
+				}
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	})();
+	fenceParsers.set(language, pending);
+	return pending;
+}
+
+function escapeCodeHtml(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Highlights one fenced code block to inner HTML with the editor's own token
+ * colors and no editor instance: the Lezer parser for the fence language plus
+ * `highlightCode` over the shared `markdownHighlight` style, whose classes the
+ * open editor already mounts. Unknown languages and load failures degrade to
+ * escaped plain text, never to an error.
+ */
+export async function highlightFencedCode(code: string, info: string): Promise<string> {
+	// Fences conventionally end in a newline, which inside `<pre>` renders as
+	// a phantom empty line below the code. Strip it before parsing so the
+	// tree and the emitted text agree.
+	const source = code.replace(/\n+$/, "");
+	const parser = await fenceParser(fenceLanguage(info));
+	if (!parser) return escapeCodeHtml(source);
+	try {
+		let html = "";
+		highlightCode(source, parser.parse(source), markdownHighlight, (text, classes) => {
+			html += classes
+				? `<span class="${classes}">${escapeCodeHtml(text)}</span>`
+				: escapeCodeHtml(text);
+		}, () => {
+			html += "\n";
+		});
+		return html;
+	} catch {
+		return escapeCodeHtml(source);
+	}
+}
+
+/** Highlights every fenced code block the Markdown parser emitted. */
+async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
+	const blocks = dom.querySelectorAll("pre code");
+	for (const block of Array.from(blocks)) {
+		const element = block as HTMLElement;
+		const match = /(?:^|\s)language-([\w+-]+)/.exec(element.className);
+		if (!match) continue;
+		element.innerHTML = await highlightFencedCode(element.textContent ?? "", match[1]);
+	}
 }
 
 /**

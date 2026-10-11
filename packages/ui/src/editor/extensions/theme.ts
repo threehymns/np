@@ -226,4 +226,77 @@ export const editorTheme = EditorView.theme({
 	".cm-completionIcon-section": {
 		"&:after": { content: "'§'" },
 	},
+	// Server hover tooltips and the completion info pane. Without these the
+	// surfaces fall back to the autocomplete baseTheme's hardcoded light/dark
+	// colors instead of the app's theme tokens — the container carries the
+	// editor theme classes, so these track light/dark the same way the
+	// autocomplete popup above does.
+	".cm-tooltip.cm-tooltip-hover": {
+		backgroundColor: "var(--popover)",
+		color: "var(--popover-foreground)",
+		border: "1px solid var(--border)",
+		borderRadius: "var(--radius)",
+		boxShadow: "0 8px 24px rgba(0, 0, 0, 0.18)",
+		fontFamily: "ui-sans-serif, system-ui, sans-serif",
+		fontSize: "0.85rem",
+		padding: "0.5rem 0.65rem",
+		maxWidth: "32rem",
+	},
+	// The completion info pane is appended *inside* the autocomplete popup,
+	// which already carries the card chrome above: painting it as a second
+	// card nests one inside the other, so it blends into the container with
+	// only a divider between the options and the docs.
+	".cm-tooltip.cm-completionInfo": {
+		backgroundColor: "transparent",
+		color: "var(--popover-foreground)",
+		border: "none",
+		borderLeft: "1px solid var(--border)",
+		borderRadius: "0",
+		boxShadow: "none",
+		fontFamily: "ui-sans-serif, system-ui, sans-serif",
+		fontSize: "0.85rem",
+		padding: "0.5rem 0.65rem",
+		maxWidth: "32rem",
+	},
+	// Rendered server Markdown inside both surfaces: without these `code`,
+	// `pre` and `a` fall back to browser defaults rather than theme tokens.
+	// The pill targets inline code only (`:not(pre) > code`): the `code`
+	// element wrapping a fenced block is a block-level wrapper, not inline
+	// code, and must not get the pill background.
+	".cm-lsp-info :not(pre) > code": {
+		fontFamily: "var(--font-mono)",
+		fontSize: "0.8em",
+		backgroundColor: "color-mix(in srgb, var(--muted) 45%, transparent)",
+		color: "var(--foreground)",
+		borderRadius: "calc(var(--radius) - 4px)",
+		padding: "0.1rem 0.3rem",
+	},
+	".cm-lsp-hover :not(pre) > code": {
+		fontFamily: "var(--font-mono)",
+		fontSize: "0.8em",
+		backgroundColor: "color-mix(in srgb, var(--muted) 45%, transparent)",
+		color: "var(--foreground)",
+		borderRadius: "calc(var(--radius) - 4px)",
+		padding: "0.1rem 0.3rem",
+	},
+	// Fenced blocks stay flat inside the tooltip: no background, padding or
+	// border of their own — the tooltip card already provides the surface,
+	// and token colors carry the code. Only the UA default margin is
+	// neutralized and overflow kept sideways.
+	".cm-lsp-info pre": {
+		margin: "0",
+		padding: "0",
+		overflowX: "auto",
+	},
+	".cm-lsp-hover pre": {
+		margin: "0",
+		padding: "0",
+		overflowX: "auto",
+	},
+	".cm-lsp-info a": {
+		color: "var(--primary)",
+	},
+	".cm-lsp-hover a": {
+		color: "var(--primary)",
+	},
 });
