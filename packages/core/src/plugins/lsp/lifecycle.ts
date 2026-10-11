@@ -161,6 +161,25 @@ interface RunningServer {
 	serverVersion: string | null;
 	/** Snapshot, not a live read: the menu reads rows synchronously on render. */
 	memoryBytes: number | null;
+	/**
+	 * Read from the handshake, like Zed: the server names its own
+	 * completionProvider.triggerCharacters. Empty until the handshake.
+	 */
+	triggerCharacters: readonly string[];
+}
+
+/**
+ * Total over JSON: unusable keys become no triggers, not a failure.
+ */
+export function parseTriggerCharacters(result: unknown): readonly string[] {
+	if (typeof result !== 'object' || result === null) return [];
+	const capabilities = (result as Record<string, unknown>).capabilities;
+	if (typeof capabilities !== 'object' || capabilities === null) return [];
+	const provider = (capabilities as Record<string, unknown>).completionProvider;
+	if (typeof provider !== 'object' || provider === null) return [];
+	const characters = (provider as Record<string, unknown>).triggerCharacters;
+	if (!Array.isArray(characters)) return [];
+	return characters.filter((c): c is string => typeof c === 'string' && c.length > 0);
 }
 
 /** A document presented to the runtime, waiting to be synced to its server. */
@@ -252,12 +271,12 @@ export class LspRuntime
 	/**
 	 * Once-only resolve guard per item (spec #280, #292).
 	 *
-	 * Keyed `${server}\0${label}\0${data-json}`: one successful round trip
-	 * fills docs/detail for good, and a second request for the same item is
-	 * a request the server already answered. Cleared with the server, so a
-	 * restart re-resolves rather than serving stale docs.
+	 * Keyed `${server}|${label}|${data-json}` to the merged suggestion: one
+	 * successful round trip fills docs/detail for good, and a second request
+	 * for the same item is a request the server already answered. Cleared
+	 * with the server, so a restart re-resolves rather than serving stale docs.
 	 */
-	private readonly resolvedItems = new Set<string>();
+	private readonly resolvedItems = new Map<string, CompletionSuggestion>();
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -295,6 +314,20 @@ export class LspRuntime
 	/** Bumped on every status change, so a consumer can notice without subscribing. */
 	get revision(): number {
 		return this.statusRevision;
+	}
+
+	/**
+	 * Union of every live server’s triggerCharacters (handshake result),
+	 * not descriptor data. A union because the gate needs a synchronous answer;
+	 * prose and disabled are checked first.
+	 */
+	triggerCharacters(): readonly string[] {
+		const seen = new Set<string>();
+		for (const entry of this.servers.values()) {
+			if (entry.state !== 'running') continue;
+			for (const c of entry.triggerCharacters) seen.add(c);
+		}
+		return [...seen];
 	}
 
 	/**
@@ -393,7 +426,7 @@ export class LspRuntime
 		if (this.disposed) {
 			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
 		}
-		const { document, line, character, timeoutMs } = query;
+		const { document, line, character, timeoutMs, trigger } = query;
 		const path = document.path;
 		if (!path) {
 			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
@@ -429,7 +462,13 @@ export class LspRuntime
 				'textDocument/completion',
 				{
 					textDocument: { uri: toFileUri(path) },
-					position: { line, character }
+					position: { line, character },
+					context: {
+						triggerKind: trigger?.kind ?? 1,
+						...(trigger?.kind === 2 && trigger.character !== undefined
+							? { triggerCharacter: trigger.character }
+							: {})
+					}
 				},
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
@@ -538,7 +577,8 @@ export class LspRuntime
 			if (entry.state !== 'running' || !entry.client) return item;
 			if (!this.canResolve(server)) return item;
 			const key = this.resolveKey(server, item);
-			if (this.resolvedItems.has(key)) return item;
+			const cached = this.resolvedItems.get(key);
+			if (cached) return cached;
 			this.syncDocument(entry, { ...document, path });
 			this.flushPending(entry);
 			const result = await entry.client.request(
@@ -546,8 +586,9 @@ export class LspRuntime
 				toResolveParams(item),
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
-			this.resolvedItems.add(key);
-			return mergeResolvedCompletion(item, result);
+			const merged = mergeResolvedCompletion(item, result);
+			this.resolvedItems.set(key, merged);
+			return merged;
 		} catch (error) {
 			this.options.logs.appendServerNote(
 				server,
@@ -772,7 +813,7 @@ export class LspRuntime
 	 */
 	private dropResolved(server: string): void {
 		if (this.resolvedItems.size === 0) return;
-		for (const key of [...this.resolvedItems]) {
+		for (const key of [...this.resolvedItems.keys()]) {
 			if (key.startsWith(server + '|')) this.resolvedItems.delete(key);
 		}
 	}
@@ -884,7 +925,8 @@ export class LspRuntime
 			state: 'starting',
 			stoppedByUser: false,
 			serverVersion: null,
-			memoryBytes: null
+			memoryBytes: null,
+			triggerCharacters: []
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -926,16 +968,21 @@ export class LspRuntime
 				workspaceFolders: [{ uri: toFileUri(root), name: descriptor.id }],
 				capabilities: {}
 			});
-			this.serverCapabilities.set(server, readServerCapabilities(initResult));
 			// A stop or a restart that landed while the handshake was in flight
 			// wins. Otherwise the awaiting start would come back afterwards and
 			// report a server the user had already stopped as running again.
+			// Capability and trigger publication waits behind the same check, so
+			// a stale client cannot overwrite them for its replacement.
 			if (entry.client !== client) {
 				await client.stop();
 				return entry;
 			}
+			this.serverCapabilities.set(server, readServerCapabilities(initResult));
 			// A restart is a new handshake, so the version is re-reported here.
 			entry.serverVersion = parseServerVersion(initResult);
+			// Live from the handshake, never descriptor data: the server names
+			// its own trigger characters and the coordinator channel carries them.
+			entry.triggerCharacters = parseTriggerCharacters(initResult);
 			entry.state = 'running';
 			this.statusChanged();
 			// Fire and forget: a slow or failed observation must not hold the start.

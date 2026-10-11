@@ -25,6 +25,8 @@ import { completionCompartmentExtensions } from "./extensions/completion-sources
 import { readBufferWordSettings, readServerCompletionSettings } from "./extensions/completion-settings";
 import {
 	DEFAULT_SERVER_COMPLETION_SETTINGS,
+	highlightFencedCode,
+	renderLspMarkdown,
 	type ServerCompletionSettings,
 } from "./extensions/server-completions";
 import { createHoverSource } from "./extensions/server-hover";
@@ -53,12 +55,11 @@ beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({ SvelteMap: Map, SvelteSet: Set }));
 	// Same minimal DOM stub `lsp-completions.test.ts` installs; duplicated rather
 	// than shared because it is a test-local crutch, not production surface.
-	// Only when nothing has installed one: clobbering `window` out from under a
-	// suite that already installed a DOM leaves the next mounted view with no
-	// `document` at all.
-	if (typeof (globalThis as Record<string, unknown>).document === "undefined") {
-		installMinimalDom();
-	}
+	// Installed unconditionally (the `completion-composition.test.ts` precedent):
+	// a bare stub left behind by another suite has no `querySelectorAll` or
+	// `innerHTML`, which is exactly what the Markdown pipeline needs, and the
+	// guard below would keep it.
+	installMinimalDom();
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	resolveActiveLanguage = mod.resolveActiveLanguage;
@@ -79,6 +80,7 @@ function installMinimalDom(): void {
 		clientWidth = 100;
 		clientHeight = 20;
 		textContent = "";
+		innerHTML = "";
 		className = "";
 		constructor(tag = "DIV") {
 			this.tagName = tag.toUpperCase();
@@ -308,8 +310,8 @@ describe("hover tooltips", () => {
 			const tooltip = await source({ state } as any, 10);
 			expect(tooltip).not.toBeNull();
 			const dom = (tooltip!.create as any)().dom as any;
-			expect(dom.textContent).toContain("(class) Widget");
-			expect(dom.textContent).toContain("A thing with an id");
+			expect(dom.innerHTML).toContain("(class) Widget");
+			expect(dom.innerHTML).toContain("A thing with an id");
 		} finally {
 			await cleanup();
 		}
@@ -344,6 +346,117 @@ describe("hover tooltips", () => {
 			await cleanup();
 		}
 	});
+
+	it("covers the reported symbol range so same-word moves keep the tooltip", async () => {
+		// CodeMirror hides a point tooltip on every inter-character move and
+		// re-shows it a hoverTime plus a round trip later: visible flicker
+		// across one word. A ranged tooltip survives while the mouse stays
+		// inside [pos, end), so the server's own range must reach the tooltip.
+		const source = createHoverSource({
+			fetchHover: async () => ({
+				state: "serving" as const,
+				hover: {
+					contents: "(class) Widget",
+					range: { start: { line: 0, character: 9 }, end: { line: 0, character: 15 } },
+				},
+			}),
+			languageName: "TypeScript",
+		});
+		const root = makeProject({ "tsconfig.json": "{}", "a.ts": "const x = Widget;\n" });
+		try {
+			const state = await codeState("const x = Widget;\n", {
+				filePath: join(root, "a.ts"),
+			});
+			const tooltip = await source({ state } as any, 10);
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.pos).toBe(10);
+			expect(tooltip!.end).toBe(15);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("falls back to a point when the server names no range", async () => {
+		const source = createHoverSource({
+			fetchHover: async () => ({
+				state: "serving" as const,
+				hover: { contents: "(class) Widget", range: null },
+			}),
+			languageName: "TypeScript",
+		});
+		const root = makeProject({ "tsconfig.json": "{}", "a.ts": "const x = Widget;\n" });
+		try {
+			const state = await codeState("const x = Widget;\n", {
+				filePath: join(root, "a.ts"),
+			});
+			const tooltip = await source({ state } as any, 10);
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.pos).toBe(10);
+			expect(tooltip!.end).toBe(10);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+describe("lsp markdown rendering", () => {
+	it("parses markdown and sanitizes dangerous html", async () => {
+		const dom = await renderLspMarkdown('**hi** <script>alert(1)</script>');
+		expect(dom.innerHTML).toContain("<strong>hi</strong>");
+		expect(dom.innerHTML).not.toContain("<script>");
+	});
+
+	it("highlights fenced code with the editor's token colors", async () => {
+		const html = await highlightFencedCode("const x: number = 1;", "typescript");
+		expect(html).toContain("<span");
+		expect(html).toContain("const");
+	}, 30_000);
+
+	it("leaves unknown fence languages as escaped plain text", async () => {
+		expect(await highlightFencedCode("plain", "nosuchlang")).toBe("plain");
+		expect(await highlightFencedCode("a < b", "")).toBe("a &lt; b");
+	});
+
+	it("drops the fence's trailing newline so no phantom line renders", async () => {
+		const html = await highlightFencedCode("const x = 1;\n", "typescript");
+		expect(html).toContain("<span");
+		expect(html.endsWith("\n")).toBe(false);
+	}, 30_000);
+
+	it("escapes html inside highlighted code", async () => {
+		const html = await highlightFencedCode("const el = <div />;", "typescript");
+		expect(html).not.toContain("<div");
+		expect(html).toContain("&lt;");
+		expect(html).toContain("&gt;");
+	}, 30_000);
+
+	it("renders immediate docs through the same pipeline with no round trip", async () => {
+		let resolves = 0;
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: "**Widget** docs",
+			kind: 7,
+			replaceRange: null
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		const resolve = async (current: any, _document: any) => {
+			resolves++;
+			return current;
+		};
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			expect(typeof widget.info).toBe("function");
+			const dom = await (widget.info as any)(widget);
+			expect((dom as HTMLElement).innerHTML).toContain("<strong>Widget</strong>");
+			expect(resolves).toBe(0);
+		} finally {
+			await cleanup();
+		}
+	});
 });
 
 describe("completion resolve in the popover", () => {
@@ -359,7 +472,7 @@ describe("completion resolve in the popover", () => {
 			// Withheld: info hangs the round trip rather than a string.
 			expect(typeof widget.info).toBe("function");
 			const dom = await (widget.info as any)(widget);
-			expect((dom as any)?.textContent ?? dom).toContain("A thing with an id");
+			expect((dom as any)?.innerHTML ?? dom).toContain("A thing with an id");
 			// Ranking untouched: server items still tie the note tier.
 			expect(widget.boost).toBe(0);
 		} finally {
@@ -367,7 +480,7 @@ describe("completion resolve in the popover", () => {
 		}
 	}, 30_000);
 
-	it("keeps immediate docs as a string with no round trip", async () => {
+	it("renders immediate docs with no round trip", async () => {
 		const server = await startStubServer([]);
 		try {
 			let resolves = 0;
@@ -379,11 +492,98 @@ describe("completion resolve in the popover", () => {
 			const state = await projectState(DOC, { fetch, resolve });
 			const options = await offeredOptions(state, DOC.length);
 			const widget = options.find((o) => o.label === "Widget")!;
-			expect(typeof widget.info).toBe("string");
-			expect(widget.info).toContain("A thing with an id");
+			expect(typeof widget.info).toBe("function");
+			const dom = await (widget.info as any)(widget);
+			expect((dom as HTMLElement).innerHTML).toContain("A thing with an id");
 			expect(resolves).toBe(0);
 		} finally {
 			await cleanup();
 		}
 	}, 30_000);
+
+	it("resolves a documented item with data at confirm time to land its extras", async () => {
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: "already here",
+			kind: 7,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		let resolves = 0;
+		const resolve = async (current: any) => {
+			resolves++;
+			return {
+				...current,
+				additionalTextEdits: [
+					{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: 'import { Widget } from "./widgets";\n' }
+				]
+			};
+		};
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			let current: any = state;
+			const view: any = {
+				get state() {
+					return current;
+				},
+				dispatch(tr: any) {
+					current = current.update(tr).state;
+				}
+			};
+			(widget.apply as any)(view, widget, DOC.length - 3, DOC.length);
+			await new Promise((done) => setTimeout(done, 20));
+			expect(resolves).toBe(1);
+			expect(current.doc.toString()).toContain('import { Widget } from "./widgets";');
+			expect(current.doc.toString()).toContain("Widget");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("maps an edit at the insertion end through the primary insert", async () => {
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: null,
+			kind: 7,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		const resolve = async (current: any) => ({
+			...current,
+			documentation: "docs",
+			additionalTextEdits: [
+				{
+					range: { start: { line: 0, character: DOC.length }, end: { line: 0, character: DOC.length } },
+					newText: ";"
+				}
+			]
+		});
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			let current: any = state;
+			const view: any = {
+				get state() {
+					return current;
+				},
+				dispatch(tr: any) {
+					current = current.update(tr).state;
+				}
+			};
+			(widget.apply as any)(view, widget, DOC.length - 3, DOC.length);
+			await new Promise((done) => setTimeout(done, 30));
+			expect(current.doc.toString()).toBe("const w = Widget;");
+		} finally {
+			await cleanup();
+		}
+	});
 });

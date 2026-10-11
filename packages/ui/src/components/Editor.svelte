@@ -273,6 +273,40 @@
 		};
 	});
 
+	// Focus-scoped keymap context for the clipboard bindings: `editor` stays
+	// true for the whole active tab, but cut/copy/paste must only fire when
+	// the editor truly has focus. A hover tooltip never takes focus, so a
+	// tooltip text selection reads here as "unfocused" and falls through to
+	// native copy instead of being hijacked into edit.copy of a collapsed
+	// editor selection. Movement within the editor (content to search panel)
+	// keeps the context: only leaving the editor root clears it.
+	$effect(() => {
+		if (!active || !view) return;
+		const root = view.dom;
+		const syncFocus = () => {
+			if (typeof document === "undefined") return;
+			if (root.contains(document.activeElement)) {
+				appState.keymaps.setContext("editorFocused", true);
+			} else {
+				appState.keymaps.setContext("editorFocused", undefined);
+			}
+		};
+		const onFocusIn = () => {
+			appState.keymaps.setContext("editorFocused", true);
+		};
+		const onFocusOut = (e: FocusEvent) => {
+			if (e.relatedTarget instanceof Node && root.contains(e.relatedTarget)) return;
+			appState.keymaps.setContext("editorFocused", undefined);
+		};
+		syncFocus();
+		root.addEventListener("focusin", onFocusIn);
+		root.addEventListener("focusout", onFocusOut);
+		return () => {
+			root.removeEventListener("focusin", onFocusIn);
+			root.removeEventListener("focusout", onFocusOut);
+			appState.keymaps.setContext("editorFocused", undefined);
+		};
+	});
 	// Also sync mode when view changes or vim is toggled
 	$effect(() => {
 		if (view && active && appState.prefs.vimMode) {
@@ -386,6 +420,8 @@
 											: undefined,
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
+										readTriggerCharacters: () =>
+											completionCoordinator.triggerCharacters?.() ?? [],
 									}
 								: null,
 								hover: hoverCoordinator

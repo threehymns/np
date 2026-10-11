@@ -6,8 +6,13 @@ import type {
 	CompletionSource,
 } from "@codemirror/autocomplete";
 import { insertCompletionText, pickedCompletion } from "@codemirror/autocomplete";
+import type { Tree } from "@lezer/common";
+import { highlightCode } from "@lezer/highlight";
+import { marked } from "marked";
+import { sanitizeHtml } from "@np/core/transformer";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
+	getActiveLanguages,
 	type CompletionAnswer,
 	type CompletionLspInsertMode,
 	type CompletionQuery,
@@ -20,6 +25,7 @@ import {
 	type BufferWordSettings,
 } from "./buffer-words";
 import { currentDocFacet } from "./wikilinks";
+import { markdownHighlight } from "./highlight";
 
 /**
  * Server completion items as one more source on the existing chain (spec #263,
@@ -202,6 +208,11 @@ export interface ServerCompletionSourceOptions {
 	 * built without any settings reader gets.
 	 */
 	readonly readTriggerSettings?: () => BufferWordSettings;
+	/**
+	 * Read per query, so a server started since the last keystroke is honored.
+	 * Defaults to no triggers before the handshake.
+	 */
+	readonly readTriggerCharacters?: () => readonly string[];
 }
 
 function staticServerSettings(): ServerCompletionSettings {
@@ -210,6 +221,24 @@ function staticServerSettings(): ServerCompletionSettings {
 
 function staticTriggerSettings(): BufferWordSettings {
 	return DEFAULT_BUFFER_WORD_SETTINGS;
+}
+
+function staticNoTriggers(): readonly string[] {
+	return [];
+}
+
+/**
+ * The typed trigger character, when the character just before the cursor is a
+ * live server trigger. Null otherwise — including for the explicit trigger,
+ * which is the user asking rather than a character asking.
+ */
+function triggerCharacterBefore(
+	context: CompletionContext,
+	triggerCharacters: readonly string[]
+): string | null {
+	if (context.explicit || triggerCharacters.length === 0 || context.pos <= 0) return null;
+	const char = context.state.doc.sliceString(context.pos - 1, context.pos);
+	return triggerCharacters.includes(char) ? char : null;
 }
 
 /** Why a query may not reach the server, or null when it may. */
@@ -279,6 +308,7 @@ export function serverCompletions(
 		readSettings = staticServerSettings
 	} = options;
 	const readTriggerSettings = options.readTriggerSettings ?? staticTriggerSettings;
+	const readTriggerCharacters = options.readTriggerCharacters ?? staticNoTriggers;
 	const coordinator = new ServerCompletionCoordinator();
 
 	const source: CompletionSource = (context: CompletionContext) => {
@@ -306,6 +336,68 @@ export function serverCompletions(
 			return null;
 		}
 
+		const requestWith = (trigger: { kind: 1 } | { kind: 2; character: string }) => {
+			const line = context.state.doc.lineAt(context.pos);
+			const outcome = fetch({
+				document: {
+					path,
+					fileName: document?.fileName ?? path,
+					content: context.state.doc.toString(),
+					language: languageName
+				},
+				line: line.number - 1,
+				character: context.pos - line.from,
+				timeoutMs: normalizeFetchTimeout(settings.fetchTimeoutMs),
+				trigger
+			});
+			// Registered before returning the promise: the words source runs later in
+			// this same pass and waits on exactly this.
+			coordinator.begin(context.pos, outcome);
+
+			// The popover range is the word alone, not the dotted path that gated
+			// the query: `foo.bar` completes `bar`, so receiver+dot survive accept.
+			const word = context.matchBefore(/[A-Za-z0-9_$]*/);
+			const resultFrom = word ? word.from : context.pos;
+			return outcome.then((answer) =>
+				answer.state === "serving" && answer.items.length > 0
+					? serverResult(answer, resultFrom, context.pos, settings, {
+							resolve,
+							runCommand,
+							document: {
+								path: path ?? '',
+								fileName: document?.fileName ?? path ?? '',
+								content: context.state.doc.toString(),
+								language: languageName
+							}
+						})
+					: null
+			);
+		};
+
+		// Trigger character before the cursor asks the server even on an empty
+		// prefix; prose+disabled brakes still apply. Union of live triggers.
+		const triggerChar = triggerCharacterBefore(context, readTriggerCharacters());
+		if (triggerChar !== null) {
+			const triggerSettings = readTriggerSettings();
+			const policy = resolveBufferWordPolicy(
+				languageName,
+				triggerSettings,
+				context.state.doc,
+				context.pos
+			);
+			if (!policy.automatic) {
+				coordinator.settleNow(context.pos, {
+					state: "inactive",
+					reason:
+						isMarkdownProse(languageName) && !triggerSettings.wordsOverridden
+							? "Prose is quiet on a typing trigger; ask explicitly to reach a server."
+							: "Automatic suggestions are off for this language; ask explicitly to reach a server."
+				});
+				return null;
+			}
+			return requestWith({ kind: 2, character: triggerChar });
+		}
+
 		const typed = context.matchBefore(/[A-Za-z0-9_$.]*/);
 		if (!typed || typed.from === context.pos) {
 			coordinator.settleNow(context.pos, {
@@ -328,41 +420,7 @@ export function serverCompletions(
 			return null;
 		}
 
-		const line = context.state.doc.lineAt(context.pos);
-		const outcome = fetch({
-			document: {
-				path,
-				fileName: document?.fileName ?? path,
-				content: context.state.doc.toString(),
-				language: languageName
-			},
-			line: line.number - 1,
-			character: context.pos - line.from,
-			timeoutMs: normalizeFetchTimeout(settings.fetchTimeoutMs)
-		});
-		// Registered before returning the promise: the words source runs later in
-		// this same pass and waits on exactly this.
-		coordinator.begin(context.pos, outcome);
-
-		// The popover range is the word alone, not the dotted path that gated
-		// the query: `foo.bar` completes `bar` and `foo.` completes after the
-		// dot, so the receiver and the dot survive the accept.
-		const word = context.matchBefore(/[A-Za-z0-9_$]*/);
-		const resultFrom = word ? word.from : context.pos;
-		return outcome.then((answer) =>
-			answer.state === "serving" && answer.items.length > 0
-				? serverResult(answer, resultFrom, context.pos, settings, {
-						resolve,
-						runCommand,
-						document: {
-							path: path ?? '',
-							fileName: document?.fileName ?? path ?? '',
-							content: context.state.doc.toString(),
-							language: languageName
-						}
-					})
-				: null
-		);
+		return requestWith({ kind: 1 });
 	};
 
 	return { source, coordinator };
@@ -432,10 +490,10 @@ function serverOption(
 	let resolving: Promise<CompletionSuggestion> | null = null;
 	const ensureResolved = (): Promise<CompletionSuggestion> | null => {
 		if (!resolveContext?.resolve || !resolveContext.document.path) return null;
-		// Already documented: nothing withheld (the selection exception lives
-		// in `resolveVisible` on the runtime side, where the window is known;
-		// here the popover only ever asks about the shown option).
-		if (box.current.documentation) return null;
+		// Opaque data is what makes a resolve worthwhile: docs may already have
+		// arrived while edits/command were withheld for confirm time, so a
+		// documented item with data still resolves. Without data there is no
+		// key to send back, so nothing is asked.
 		if (!box.current.data) return null;
 		if (resolving) return resolving;
 		resolving = resolveContext
@@ -455,7 +513,11 @@ function serverOption(
 		// signature: the signature is the popover's shape, not documentation.
 		info = undefined;
 	} else if (item.documentation) {
-		info = item.documentation;
+		// Immediate docs render through the same Markdown pipeline as resolved
+		// ones, without costing a round trip: the function closes over the text
+		// rather than asking the server.
+		const text = item.documentation;
+		info = () => renderLspMarkdown(text);
 	} else if (resolveContext?.resolve) {
 		// Withheld docs have nowhere to hang until the popover shows this
 		// option — CodeMirror has no public "now selected" hook, so the `info`
@@ -464,7 +526,7 @@ function serverOption(
 		info = () => {
 			const pending = ensureResolved();
 			if (!pending) return null;
-			return pending.then((resolved) => {
+			return pending.then(async (resolved) => {
 				if (!settings.showDocumentation) return null;
 				const text =
 					resolved.documentation ??
@@ -489,13 +551,101 @@ function serverOption(
 /**
  * One Markdown pipeline for both surfaces (#295): completion `info` and the
  * hover tooltip render the same flattened string the same way.
+ *
+ * Server-controlled Markdown becomes HTML, so it is sanitized before it
+ * reaches the popover: docs arrive over the protocol and must not carry
+ * scripts or event handlers into the editor DOM.
  */
-export function renderLspMarkdown(text: string): HTMLElement {
+export async function renderLspMarkdown(text: string): Promise<HTMLElement> {
 	const dom = document.createElement("div");
 	dom.className = "cm-lsp-info";
-	dom.textContent = text;
-	dom.style.whiteSpace = "pre-wrap";
+	dom.innerHTML = sanitizeHtml(await marked.parse(text));
+	await highlightCodeBlocks(dom);
+	// No `white-space: pre-wrap`: the div holds block HTML now, not plain
+	// text, and pre-wrap would preserve the newlines between blocks as
+	// forced breaks — a phantom empty line under every block.
 	return dom;
+}
+
+/** A Lezer parser behind its fence language, loaded once and cached. */
+const fenceParsers = new Map<string, Promise<{ parse(code: string): Tree } | null>>();
+
+function fenceLanguage(info: string): string {
+	return info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+async function fenceParser(language: string): Promise<{ parse(code: string): Tree } | null> {
+	const cached = fenceParsers.get(language);
+	if (cached) return cached;
+	const pending = (async () => {
+		try {
+			if (!language) return null;
+			const desc = getActiveLanguages().find(
+				(candidate) =>
+					candidate.name.toLowerCase() === language ||
+					candidate.alias.some((name) => name.toLowerCase() === language)
+			);
+			if (!desc) return null;
+			const loaded = (await desc.load()) as unknown;
+			const candidates = Array.isArray(loaded) ? loaded : [loaded];
+			for (const candidate of candidates) {
+				const parser = (candidate as { language?: { parser?: unknown } })?.language?.parser ??
+					(candidate as { parser?: unknown })?.parser;
+				if (parser && typeof (parser as { parse?: unknown }).parse === "function") {
+					return parser as { parse(code: string): Tree };
+				}
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	})();
+	fenceParsers.set(language, pending);
+	return pending;
+}
+
+function escapeCodeHtml(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Highlights one fenced code block to inner HTML with the editor's own token
+ * colors and no editor instance: the Lezer parser for the fence language plus
+ * `highlightCode` over the shared `markdownHighlight` style, whose classes the
+ * open editor already mounts. Unknown languages and load failures degrade to
+ * escaped plain text, never to an error.
+ */
+export async function highlightFencedCode(code: string, info: string): Promise<string> {
+	// Fences conventionally end in a newline, which inside `<pre>` renders as
+	// a phantom empty line below the code. Strip it before parsing so the
+	// tree and the emitted text agree.
+	const source = code.replace(/\n+$/, "");
+	const parser = await fenceParser(fenceLanguage(info));
+	if (!parser) return escapeCodeHtml(source);
+	try {
+		let html = "";
+		highlightCode(source, parser.parse(source), markdownHighlight, (text, classes) => {
+			html += classes
+				? `<span class="${classes}">${escapeCodeHtml(text)}</span>`
+				: escapeCodeHtml(text);
+		}, () => {
+			html += "\n";
+		});
+		return html;
+	} catch {
+		return escapeCodeHtml(source);
+	}
+}
+
+/** Highlights every fenced code block the Markdown parser emitted. */
+async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
+	const blocks = dom.querySelectorAll("pre code");
+	for (const block of Array.from(blocks)) {
+		const element = block as HTMLElement;
+		const match = /(?:^|\s)language-([\w+-]+)/.exec(element.className);
+		if (!match) continue;
+		element.innerHTML = await highlightFencedCode(element.textContent ?? "", match[1]);
+	}
 }
 
 /**
@@ -519,14 +669,26 @@ function serverApply(
 ): NonNullable<Completion["apply"]> {
 	return (view, completion, applyFrom, applyTo) => {
 		const item = box.current;
+		const preState = view.state;
 		const range =
 			insertMode === "replace_range" && item.replaceRange !== null
-				? serverRangeToOffsets(view.state, item.replaceRange)
+				? serverRangeToOffsets(preState, item.replaceRange)
 				: { from: applyFrom, to: applyTo };
-		view.dispatch({
-			...insertCompletionText(view.state, item.insertText, range.from, range.to),
+		const spec = {
+			...insertCompletionText(preState, item.insertText, range.from, range.to),
 			annotations: pickedCompletion.of(completion)
-		});
+		};
+		// Built for mapping only: the dispatched spec is the same object, so
+		// the changes below describe exactly the primary insert that landed.
+		const primary = preState.update(spec);
+		view.dispatch(spec);
+		const postDoc = view.state.doc;
+		// The primary's post-transaction extent, for the overlap check: the
+		// insert starts where the pre-range started and runs for the inserted
+		// text. Mapped edits are compared against this, not against the
+		// pre-transaction range, so both sides are in post-transaction space.
+		const primaryFrom = primary.changes.mapPos(range.from, 1);
+		const primaryTo = primaryFrom + item.insertText.length;
 		// Confirm-time additional edits (#292): the primary insert lands first
 		// in its own transaction, and the extra edits land after in a second
 		// one, skipping anything overlapping the primary. A command runs only
@@ -536,15 +698,28 @@ function serverApply(
 			box.current = resolved;
 			const edits = resolved.additionalTextEdits;
 			if (edits && edits.length > 0) {
-				const changes = [];
-				for (const edit of edits) {
-					const offsets = serverRangeToOffsets(view.state, edit.range);
-					// Overlap-skip: an extra edit touching the primary range
-					// would fight the insert that just landed.
-					if (offsets.from < range.to && offsets.to > range.from) continue;
-					changes.push({ from: offsets.from, to: offsets.to, insert: edit.newText });
+				// The document moved under a deferred resolve (the user kept
+				// typing while the round trip was in flight): positions from
+				// the server's revision no longer map cleanly, so the extras
+				// are dropped rather than mis-placed. The command below still
+				// runs, because it names no position.
+				if (view.state.doc !== postDoc) {
+					// Fall through to the command.
+				} else {
+					const changes = [];
+					for (const edit of edits) {
+						// Against the pre-dispatch revision the server answered
+						// for, then mapped through the primary insert.
+						const pre = serverRangeToOffsets(preState, edit.range);
+						const from = primary.changes.mapPos(pre.from, 1);
+						const to = primary.changes.mapPos(pre.to, 1);
+						// Overlap-skip: an extra edit touching the primary range
+						// would fight the insert that just landed.
+						if (from < primaryTo && to > primaryFrom) continue;
+						changes.push({ from, to, insert: edit.newText });
+					}
+					if (changes.length > 0) view.dispatch({ changes });
 				}
-				if (changes.length > 0) view.dispatch({ changes });
 			}
 			const command = resolved.command;
 			if (command && resolveContext?.runCommand && resolveContext.document.path) {
@@ -569,8 +744,11 @@ function serverApply(
  * against an older revision of the document can point past its end, and every
  * consumer of an out-of-bounds offset would throw, so it is clamped into the
  * document rather than trusted.
+ *
+ * Shared with the hover source, which covers the reported symbol range the
+ * same way completions cover the named replace range.
  */
-function serverRangeToOffsets(
+export function serverRangeToOffsets(
 	state: EditorState,
 	range: NonNullable<CompletionSuggestion["replaceRange"]>
 ): { from: number; to: number } {

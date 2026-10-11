@@ -170,17 +170,20 @@ describe('completionItem/resolve', () => {
 		const document = docFor(root, 'a.ts', 'const w = wid');
 
 		const fetched = await runtime.fetch({ document, line: 0, character: 13 });
+		expect(fetched.state).toBe('serving');
 		if (fetched.state !== 'serving') return;
 
-		await runtime.resolveCompletion(document, fetched.items[0]);
+		const first = await runtime.resolveCompletion(document, fetched.items[0]);
 		await waitFor(() => received(wireLog).filter((l) => l.includes('completionItem/resolve')).length >= 1, {
 			label: 'the first resolve'
 		});
 		const before = received(wireLog).filter((l) => l.includes('completionItem/resolve')).length;
 
-		await runtime.resolveCompletion(document, fetched.items[0]);
+		const second = await runtime.resolveCompletion(document, fetched.items[0]);
 		// Settled without another request: once-only.
 		expect(received(wireLog).filter((l) => l.includes('completionItem/resolve'))).toHaveLength(before);
+		// Cached: the second answer carries what the first round trip filled.
+		expect(second.documentation).toContain('A thing with an id');
 	}, 30_000);
 
 	it('resolves the visible window plus-minus four, skipping documented items except the selection', async () => {
@@ -214,6 +217,7 @@ describe('completionItem/resolve', () => {
 		const document = docFor(root, 'a.ts', 'const w = wid');
 
 		const fetched = await runtime.fetch({ document, line: 0, character: 13 });
+		expect(fetched.state).toBe('serving');
 		if (fetched.state !== 'serving') return;
 
 		const resolved = await runtime.resolveCompletion(document, fetched.items[0]);

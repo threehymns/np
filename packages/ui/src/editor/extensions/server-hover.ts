@@ -1,7 +1,8 @@
 import { hoverTooltip, type Tooltip } from "@codemirror/view";
 import type { EditorState } from "@codemirror/state";
+import type { CompletionSuggestionRange } from "@np/core";
 import { currentDocFacet } from "./wikilinks";
-import { renderLspMarkdown } from "./server-completions";
+import { renderLspMarkdown, serverRangeToOffsets } from "./server-completions";
 
 /**
  * Server hover as a tooltip (spec #280).
@@ -29,7 +30,14 @@ export type HoverFetchQuery = {
 
 export type HoverFetchResult =
 	| { readonly state: "inactive"; readonly reason: string }
-	| { readonly state: "serving"; readonly hover: { readonly contents: string } | null }
+	| {
+			readonly state: "serving";
+			readonly hover: {
+				readonly contents: string;
+				/** The symbol's own range, when the server named one. */
+				readonly range?: CompletionSuggestionRange | null;
+			} | null;
+		}
 	| { readonly state: "unavailable"; readonly provider: string; readonly reason: string };
 
 export type HoverFetch = (query: HoverFetchQuery) => Promise<HoverFetchResult>;
@@ -94,9 +102,19 @@ export function createHoverSource(
 			return null;
 		}
 		if (answer.state !== "serving" || !answer.hover) return null;
-		const dom = renderLspMarkdown(answer.hover.contents);
+		const dom = await renderLspMarkdown(answer.hover.contents);
 		dom.className = "cm-lsp-hover";
-		return { pos, end: pos, create: () => ({ dom }) };
+		// Cover the symbol's own range rather than a point: CodeMirror hides
+		// a point tooltip on every inter-character mousemove and re-shows it
+		// a hoverTime plus a round trip later — a visible flicker across one
+		// word. While the mouse stays inside [pos, end) the tooltip survives
+		// untouched (no hide, no re-query, no DOM swap), so the cycle only
+		// runs when the mouse truly leaves the symbol.
+		let end = pos;
+		if (answer.hover.range) {
+			end = Math.max(pos, serverRangeToOffsets(view.state, answer.hover.range).to);
+		}
+		return { pos, end, create: () => ({ dom }) };
 	};
 }
 

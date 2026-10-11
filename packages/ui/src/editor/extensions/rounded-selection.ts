@@ -1,6 +1,7 @@
 import {
 	EditorView,
 	layer,
+	ViewPlugin,
 	type LayerMarker,
 	Direction,
 } from "@codemirror/view";
@@ -612,3 +613,267 @@ export const roundedSelectionLayer = layer({
 	},
 	class: "cm-rounded-selectionLayer",
 });
+
+/**
+ * Rounded selection for LSP tooltip text (hover + completion info).
+ *
+ * Tooltips render plain DOM outside the document, so the editor-state
+ * `roundedSelectionLayer` above cannot see their selections: a DOM range in
+ * a tooltip leaves the editor's own selection collapsed. This overlay draws
+ * the same rounded path over such a range instead.
+ *
+ * Deliberately not another `layer()`: layers recompute on editor
+ * transactions only, and dispatching transactions while the user drags
+ * inside a tooltip risks recreating the tooltip mid-gesture and collapsing
+ * the selection being drawn. A fixed-position page overlay driven by
+ * `selectionchange` (plus scroll/resize, which move viewport rects) needs
+ * no transaction at all. Native selection inside the tooltip containers is
+ * hidden by the theme (`::selection`), so exactly one highlight shows.
+ */
+
+/** Minimal structural view of a DOM Selection, kept fake-friendly for tests. */
+export interface TooltipSelection {
+	readonly isCollapsed: boolean;
+	readonly anchorNode: Node | null;
+	getRangeAt(index: number): {
+		getClientRects(): ArrayLike<{
+			readonly left: number;
+			readonly top: number;
+			readonly right: number;
+			readonly bottom: number;
+		}>;
+	};
+}
+
+/** Minimal structural view of a tooltip container, kept fake-friendly. */
+export interface TooltipSelectionContainer {
+	contains(node: Node | null): boolean;
+	getBoundingClientRect(): {
+		readonly left: number;
+		readonly top: number;
+		readonly right: number;
+		readonly bottom: number;
+	};
+}
+
+export interface TooltipSelectionOverlay {
+	/** Viewport-space bounds: the overlay svg is position:fixed. */
+	readonly bounds: MarkerBounds;
+	readonly pathData: string;
+}
+
+/**
+ * Measures one fragment rect's full line height in pixels. Return 0 (or NaN)
+ * to skip expansion. Split out so the geometry stays unit-testable without
+ * layout: the host passes a measurer bound to the real document, tests pass
+ * a canned one.
+ */
+export interface TooltipLineMeasurer {
+	lineHeightAt(rect: SelectionRect, index: number): number;
+}
+
+/**
+ * The overlay to draw for a DOM selection, or null to draw nothing.
+ *
+ * Draws only when the drag started inside `container` (the anchor): the
+ * editor's own layer owns editor-content selections, and a range merely
+ * passing through the tooltip is clipped to it. Rects are viewport-space
+ * client rects, so no editor coordinate math is involved.
+ *
+ * Each fragment rect is expanded to its measured line height first, like the
+ * editor layer fills the rendered line block: raw client rects hug the glyph
+ * ink and would paint a thin band per line instead of the full line box.
+ */
+export function tooltipSelectionState(
+	selection: TooltipSelection | null,
+	container: TooltipSelectionContainer,
+	measure?: TooltipLineMeasurer
+): TooltipSelectionOverlay | null {
+	if (!selection || selection.isCollapsed) return null;
+	if (!container.contains(selection.anchorNode)) return null;
+	let range: ReturnType<TooltipSelection["getRangeAt"]>;
+	try {
+		range = selection.getRangeAt(0);
+	} catch {
+		return null;
+	}
+	const box = container.getBoundingClientRect();
+	const rects: SelectionRect[] = [];
+	const clientRects = range.getClientRects();
+	for (let i = 0; i < clientRects.length; i++) {
+		const r = clientRects[i];
+		let left = Math.max(r.left, box.left);
+		let top = Math.max(r.top, box.top);
+		let right = Math.min(r.right, box.right);
+		let bottom = Math.min(r.bottom, box.bottom);
+		// Drop zero-area caret rects before measuring: expanding one would
+		// paint a full-height sliver where no text is selected.
+		if (right <= left || bottom <= top) continue;
+		if (measure) {
+			const height = bottom - top;
+			const lineHeight = measure.lineHeightAt({ left, top, right, bottom }, rects.length);
+			if (Number.isFinite(lineHeight) && lineHeight > height) {
+				const extra = (lineHeight - height) / 2;
+				top = Math.max(top - extra, box.top);
+				bottom = Math.min(bottom + extra, box.bottom);
+			}
+		}
+		if (right > left && bottom > top) rects.push({ left, top, right, bottom });
+	}
+	if (rects.length === 0) return null;
+	// Shift to marker-local coordinates, like the editor layer does.
+	let minLeft = Infinity;
+	let minTop = Infinity;
+	let maxRight = -Infinity;
+	let maxBottom = -Infinity;
+	for (const rect of rects) {
+		minLeft = Math.min(minLeft, rect.left);
+		minTop = Math.min(minTop, rect.top);
+		maxRight = Math.max(maxRight, rect.right);
+		maxBottom = Math.max(maxBottom, rect.bottom);
+	}
+	const localRects = rects.map((rect) => ({
+		left: rect.left - minLeft,
+		top: rect.top - minTop,
+		right: rect.right - minLeft,
+		bottom: rect.bottom - minTop,
+	}));
+	const pathData = buildRoundedSelectionPath(localRects, 4);
+	if (!pathData) return null;
+	return {
+		bounds: { left: minLeft, top: minTop, width: maxRight - minLeft, height: maxBottom - minTop },
+		pathData
+	};
+}
+
+const TOOLTIP_SELECTION_CLASS = "cm-tooltip-selection";
+const TOOLTIP_SELECTION_Z_INDEX = "600";
+
+/**
+ * One overlay per mounted editor: redraws on `selectionchange` (which fires
+ * continuously through a drag) and on scroll/resize (which move viewport
+ * rects), drawing only when the selection started in a tooltip inside this
+ * view. Headless-safe: without a real `getSelection` it constructs quietly
+ * and never draws.
+ */
+class TooltipSelectionHost {
+	private marker: RoundedSelectionMarker | null = null;
+	private svg: HTMLElement | null = null;
+	private observer: MutationObserver | null = null;
+	private readonly onSelectionChange = () => this.redraw();
+	private readonly onScrollResize = () => this.redraw();
+	private readonly onMutate = () => this.redraw();
+
+	constructor(private readonly view: EditorView) {
+		const doc = this.selectionDoc();
+		if (!doc) return;
+		doc.addEventListener("selectionchange", this.onSelectionChange);
+		doc.addEventListener("scroll", this.onScrollResize, true);
+		doc.defaultView?.addEventListener("resize", this.onScrollResize);
+		// Tooltip open/close is plain DOM add/remove under the editor root
+		// and fires no selectionchange of its own: without this, removing a
+		// tooltip leaves a stale overlay until the next click. The overlay
+		// svg itself lives in the body, outside the observed tree, so
+		// redrawing here cannot loop. Headless environments without
+		// MutationObserver simply skip it (selectionDoc already returned).
+		if (typeof MutationObserver === "function") {
+			this.observer = new MutationObserver(this.onMutate);
+			this.observer.observe(this.view.dom, { childList: true, subtree: true });
+		}
+		this.redraw();
+	}
+
+	destroy() {
+		const doc = this.selectionDoc();
+		doc?.removeEventListener("selectionchange", this.onSelectionChange);
+		doc?.removeEventListener("scroll", this.onScrollResize, true);
+		doc?.defaultView?.removeEventListener("resize", this.onScrollResize);
+		this.observer?.disconnect();
+		this.observer = null;
+		this.svg?.remove();
+		this.svg = null;
+		this.marker = null;
+	}
+
+	private selectionDoc(): Document | null {
+		const doc = this.view.dom.ownerDocument as Document | undefined;
+		return doc && typeof doc.getSelection === "function" ? doc : null;
+	}
+
+	/**
+	 * The real line-height measurer: finds the element behind a fragment
+	 * rect and reads its computed line height (`normal` resolves against
+	 * the font size, per CSS). Anything unreadable yields 0, which skips
+	 * expansion and keeps the tight rect.
+	 */
+	private documentMeasurer(doc: Document): TooltipLineMeasurer {
+		return {
+			lineHeightAt: (rect) => {
+				try {
+					const caret = doc.caretRangeFromPoint?.(
+						rect.left + 1,
+						(rect.top + rect.bottom) / 2
+					);
+					const node = caret?.startContainer ?? null;
+					const element =
+						node?.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null);
+					const style = element ? doc.defaultView?.getComputedStyle(element) : null;
+					if (!style) return 0;
+					const fontPx = parseFloat(style.fontSize);
+					const lineHeight =
+						style.lineHeight === "normal" ? fontPx * 1.2 : parseFloat(style.lineHeight);
+					return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 0;
+				} catch {
+					return 0;
+				}
+			}
+		};
+	}
+
+	private redraw() {
+		const doc = this.selectionDoc();
+		if (!doc) {
+			this.clear();
+			return;
+		}
+		const selection = doc.getSelection();
+		const anchor = selection && !selection.isCollapsed ? selection.anchorNode : null;
+		const element = anchor instanceof Element ? anchor : anchor?.parentElement ?? null;
+		const container = element?.closest?.(".cm-lsp-hover, .cm-lsp-info") ?? null;
+		const state =
+			container && this.view.dom.contains(container)
+				? tooltipSelectionState(
+						selection as unknown as TooltipSelection,
+						container as unknown as TooltipSelectionContainer,
+						this.documentMeasurer(doc)
+					)
+				: null;
+		if (!state) {
+			this.clear();
+			return;
+		}
+		const next = new RoundedSelectionMarker(state.bounds, state.pathData, TOOLTIP_SELECTION_CLASS);
+		if (this.marker && this.svg && next.eq(this.marker)) {
+			next.update(this.svg, this.marker);
+			this.marker = next;
+			return;
+		}
+		this.clear();
+		const svg = next.draw();
+		// Viewport-space overlay above the tooltips (base z-index 500).
+		svg.style.position = "fixed";
+		svg.style.zIndex = TOOLTIP_SELECTION_Z_INDEX;
+		(doc.body ?? this.view.dom).appendChild(svg);
+		this.svg = svg;
+		this.marker = next;
+	}
+
+	private clear() {
+		this.svg?.remove();
+		this.svg = null;
+		this.marker = null;
+	}
+}
+
+/** Draws rounded selection over LSP tooltip text for one editor. */
+export const tooltipSelectionOverlay = ViewPlugin.fromClass(TooltipSelectionHost);
