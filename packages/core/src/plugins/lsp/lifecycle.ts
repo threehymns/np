@@ -964,17 +964,19 @@ export class LspRuntime
 				workspaceFolders: [{ uri: toFileUri(root), name: descriptor.id }],
 				capabilities: {}
 			});
-			this.serverCapabilities.set(server, readServerCapabilities(initResult));
-			// Live from the handshake, never descriptor data: the server names
-			// its own trigger characters and the coordinator channel carries them.
-			entry.triggerCharacters = parseTriggerCharacters(initResult);
 			// A stop or a restart that landed while the handshake was in flight
 			// wins. Otherwise the awaiting start would come back afterwards and
 			// report a server the user had already stopped as running again.
+			// Capability and trigger publication waits behind the same check, so
+			// a stale client cannot overwrite them for its replacement.
 			if (entry.client !== client) {
 				await client.stop();
 				return entry;
 			}
+			this.serverCapabilities.set(server, readServerCapabilities(initResult));
+			// Live from the handshake, never descriptor data: the server names
+			// its own trigger characters and the coordinator channel carries them.
+			entry.triggerCharacters = parseTriggerCharacters(initResult);
 			entry.state = 'running';
 			this.statusChanged();
 			this.log(

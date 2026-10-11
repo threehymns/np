@@ -903,6 +903,10 @@ describe('Documents presented while their server is still starting (#264)', () =
 		gate.release();
 		await settle();
 		expect(openedUris(harness)).toEqual([]);
+		// A stale handshake must not publish capabilities for its replacement:
+		// the stop cleared them, and the late reply belongs to a client that is gone.
+		expect(harness.runtime.canResolve(server)).toBe(false);
+		expect(harness.runtime.canHover(server)).toBe(false);
 
 		// A server stopped by the user gets no flush it never asked for. The next edit
 		// presents its document again and is declined exactly as the one before it was,
