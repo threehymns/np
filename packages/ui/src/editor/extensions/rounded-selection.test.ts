@@ -583,7 +583,7 @@ describe("tooltipSelectionState", () => {
  * fills the rendered line block: raw client rects hug the glyph ink and
  * would otherwise paint a thin band per line instead of the full line box.
  */
-describe("tooltipSelectionState line-height expansion", () => {
+describe("tooltipSelectionState line coverage", () => {
 	const box = { left: 10, top: 20, right: 210, bottom: 100 };
 
 	function container(inside: unknown) {
@@ -601,24 +601,54 @@ describe("tooltipSelectionState line-height expansion", () => {
 		};
 	}
 
-	it("expands tight fragment rects to the measured line height", () => {
+	it("merges same-line fragments into one rect without a measurer", () => {
+		const inside = {};
+		// Text, pill, text slivers of one visual line: stroking each
+		// separately notches the path at every inline boundary.
+		const state = tooltipSelectionState(
+			selection(inside, [
+				{ left: 20, top: 26, right: 60, bottom: 38 },
+				{ left: 60, top: 24, right: 110, bottom: 40 },
+				{ left: 110, top: 26, right: 150, bottom: 38 },
+			]),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 24, width: 130, height: 16 });
+		expect(state!.pathData.match(/Z/g)).toHaveLength(1);
+	});
+
+	it("keeps adjacent lines separate for the seam snap", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection(inside, [
+				{ left: 20, top: 22, right: 100, bottom: 38 },
+				{ left: 20, top: 42, right: 80, bottom: 58 },
+			]),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		// 4px gap: two polygons, joined visually by the seam snap.
+		expect(state!.pathData.match(/Z/g)).toHaveLength(2);
+	});
+
+	it("covers each line with the measured span", () => {
 		const inside = {};
 		const state = tooltipSelectionState(
 			selection(inside, [{ left: 20, top: 26, right: 100, bottom: 38 }]),
 			container(inside),
-			{ lineHeightAt: () => 20 }
+			{ coverLine: () => ({ top: 22, bottom: 42 }) }
 		);
 		expect(state).not.toBeNull();
-		// Height 12 with line height 20: 4px of leading each side.
 		expect(state!.bounds).toEqual({ left: 20, top: 22, width: 80, height: 20 });
 	});
 
-	it("leaves rects alone when measurement is unavailable", () => {
+	it("keeps the tight line rect when measurement is unavailable", () => {
 		const inside = {};
 		const rect = { left: 20, top: 26, right: 100, bottom: 38 };
 		expect(
 			tooltipSelectionState(selection(inside, [rect]), container(inside), {
-				lineHeightAt: () => 0,
+				coverLine: () => null,
 			})!.bounds
 		).toEqual({ left: 20, top: 26, width: 80, height: 12 });
 		expect(
@@ -626,30 +656,27 @@ describe("tooltipSelectionState line-height expansion", () => {
 		).toEqual({ left: 20, top: 26, width: 80, height: 12 });
 	});
 
-	it("merges adjacent lines into one path once expanded", () => {
+	it("covers pill overhang reported by the measurer", () => {
 		const inside = {};
+		// Glyph band 26..38 with a padded pill painting 22..42: the cover
+		// carries the overhang so the pill stays inside the highlight.
 		const state = tooltipSelectionState(
-			selection(inside, [
-				{ left: 20, top: 22, right: 100, bottom: 38 },
-				{ left: 20, top: 42, right: 80, bottom: 58 },
-			]),
+			selection(inside, [{ left: 20, top: 26, right: 100, bottom: 38 }]),
 			container(inside),
-			{ lineHeightAt: () => 20 }
+			{ coverLine: () => ({ top: 22, bottom: 42 }) }
 		);
 		expect(state).not.toBeNull();
-		// Expanded to 20..40 and 40..60: one connected polygon, one close.
-		expect(state!.bounds).toEqual({ left: 20, top: 20, width: 80, height: 40 });
-		expect(state!.pathData.match(/Z/g)).toHaveLength(1);
+		expect(state!.bounds).toEqual({ left: 20, top: 22, width: 80, height: 20 });
 	});
 
-	it("clamps expansion to the tooltip box", () => {
+	it("clamps coverage to the tooltip box", () => {
 		const inside = {};
 		const state = tooltipSelectionState(
 			selection(inside, [{ left: 20, top: 21, right: 100, bottom: 35 }]),
 			container(inside),
-			{ lineHeightAt: () => 30 }
+			{ coverLine: () => ({ top: 5, bottom: 200 }) }
 		);
 		expect(state).not.toBeNull();
-		expect(state!.bounds.top).toBe(20);
+		expect(state!.bounds).toEqual({ left: 20, top: 20, width: 80, height: 80 });
 	});
 });

@@ -663,13 +663,37 @@ export interface TooltipSelectionOverlay {
 }
 
 /**
- * Measures one fragment rect's full line height in pixels. Return 0 (or NaN)
- * to skip expansion. Split out so the geometry stays unit-testable without
- * layout: the host passes a measurer bound to the real document, tests pass
- * a canned one.
+ * Coverage for one visual line: the vertical span the highlight must fill.
+ * Kept injectable so the geometry stays unit-testable without layout: the
+ * host passes a measurer bound to the real document, tests pass a canned one.
  */
 export interface TooltipLineMeasurer {
-	lineHeightAt(rect: SelectionRect, index: number): number;
+	coverLine(line: SelectionRect, index: number): { readonly top: number; readonly bottom: number } | null;
+}
+
+/**
+ * Groups raw client rects into visual lines: fragments on one line overlap
+ * substantially in Y (shared text band), while adjacent lines merely touch.
+ * Stroking each fragment separately notches the path at every inline
+ * boundary (notably around code pills); one rect per line keeps it smooth,
+ * like the editor layer's per-line rects.
+ */
+function groupLineRects(rects: SelectionRect[]): SelectionRect[] {
+	const sorted = [...rects].sort((a, b) => a.top - b.top || a.left - b.left);
+	const lines: SelectionRect[] = [];
+	for (const cur of sorted) {
+		const prev = lines[lines.length - 1];
+		const overlap = prev ? Math.min(prev.bottom, cur.bottom) - Math.max(prev.top, cur.top) : 0;
+		if (prev && overlap > 1) {
+			prev.left = Math.min(prev.left, cur.left);
+			prev.right = Math.max(prev.right, cur.right);
+			prev.top = Math.min(prev.top, cur.top);
+			prev.bottom = Math.max(prev.bottom, cur.bottom);
+		} else {
+			lines.push({ ...cur });
+		}
+	}
+	return lines;
 }
 
 /**
@@ -680,9 +704,11 @@ export interface TooltipLineMeasurer {
  * passing through the tooltip is clipped to it. Rects are viewport-space
  * client rects, so no editor coordinate math is involved.
  *
- * Each fragment rect is expanded to its measured line height first, like the
- * editor layer fills the rendered line block: raw client rects hug the glyph
- * ink and would paint a thin band per line instead of the full line box.
+ * Raw client rects are grouped into visual lines first (see
+ * {@link groupLineRects}), then each line is covered by the measurer — line
+ * height plus padded inline ancestors like code pills, which paint outside
+ * the line box. Covering per line (not per fragment) is what keeps pills
+ * inside the highlight without notching its edges.
  */
 export function tooltipSelectionState(
 	selection: TooltipSelection | null,
@@ -698,27 +724,36 @@ export function tooltipSelectionState(
 		return null;
 	}
 	const box = container.getBoundingClientRect();
-	const rects: SelectionRect[] = [];
+	const fragments: SelectionRect[] = [];
 	const clientRects = range.getClientRects();
 	for (let i = 0; i < clientRects.length; i++) {
 		const r = clientRects[i];
-		let left = Math.max(r.left, box.left);
-		let top = Math.max(r.top, box.top);
-		let right = Math.min(r.right, box.right);
-		let bottom = Math.min(r.bottom, box.bottom);
-		// Drop zero-area caret rects before measuring: expanding one would
-		// paint a full-height sliver where no text is selected.
-		if (right <= left || bottom <= top) continue;
-		if (measure) {
-			const height = bottom - top;
-			const lineHeight = measure.lineHeightAt({ left, top, right, bottom }, rects.length);
-			if (Number.isFinite(lineHeight) && lineHeight > height) {
-				const extra = (lineHeight - height) / 2;
-				top = Math.max(top - extra, box.top);
-				bottom = Math.min(bottom + extra, box.bottom);
-			}
+		const left = Math.max(r.left, box.left);
+		const top = Math.max(r.top, box.top);
+		const right = Math.min(r.right, box.right);
+		const bottom = Math.min(r.bottom, box.bottom);
+		// Drop zero-area caret rects: they carry no text and would otherwise
+		// join a line group as a stray sliver.
+		if (right > left && bottom > top) fragments.push({ left, top, right, bottom });
+	}
+	if (fragments.length === 0) return null;
+	const rects: SelectionRect[] = [];
+	for (const line of groupLineRects(fragments)) {
+		let top = line.top;
+		let bottom = line.bottom;
+		const cover = measure?.coverLine(
+			{ left: line.left, top, right: line.right, bottom },
+			rects.length
+		);
+		if (cover) {
+			top = cover.top;
+			bottom = cover.bottom;
 		}
-		if (right > left && bottom > top) rects.push({ left, top, right, bottom });
+		top = Math.max(top, box.top);
+		bottom = Math.min(bottom, box.bottom);
+		if (line.right > line.left && bottom > top) {
+			rects.push({ left: line.left, top, right: line.right, bottom });
+		}
 	}
 	if (rects.length === 0) return null;
 	// Shift to marker-local coordinates, like the editor layer does.
@@ -801,30 +836,51 @@ class TooltipSelectionHost {
 	}
 
 	/**
-	 * The real line-height measurer: finds the element behind a fragment
-	 * rect and reads its computed line height (`normal` resolves against
-	 * the font size, per CSS). Anything unreadable yields 0, which skips
-	 * expansion and keeps the tight rect.
+	 * The real line coverage measurer: line height from the nearest block
+	 * ancestor plus the boxes of padded inline ancestors (code pills paint
+	 * padding outside the line box, so the line height alone would leave
+	 * them sticking out). Anything unreadable yields null, which keeps the
+	 * tight line rect.
 	 */
 	private documentMeasurer(doc: Document): TooltipLineMeasurer {
 		return {
-			lineHeightAt: (rect) => {
+			coverLine: (line) => {
 				try {
 					const caret = doc.caretRangeFromPoint?.(
-						rect.left + 1,
-						(rect.top + rect.bottom) / 2
+						(line.left + line.right) / 2,
+						(line.top + line.bottom) / 2
 					);
 					const node = caret?.startContainer ?? null;
-					const element =
+					let element =
 						node?.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null);
-					const style = element ? doc.defaultView?.getComputedStyle(element) : null;
-					if (!style) return 0;
-					const fontPx = parseFloat(style.fontSize);
-					const lineHeight =
-						style.lineHeight === "normal" ? fontPx * 1.2 : parseFloat(style.lineHeight);
-					return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 0;
+					let top = line.top;
+					let bottom = line.bottom;
+					let lineHeight = 0;
+					while (element) {
+						const style = doc.defaultView?.getComputedStyle(element);
+						if (!style) break;
+						if (style.display !== "inline" && style.display !== "contents") {
+							const fontPx = parseFloat(style.fontSize);
+							const claimed =
+								style.lineHeight === "normal" ? fontPx * 1.2 : parseFloat(style.lineHeight);
+							if (Number.isFinite(claimed) && claimed > 0) lineHeight = claimed;
+							break;
+						}
+						const box = element.getBoundingClientRect();
+						if (box.right > box.left && box.bottom > box.top) {
+							top = Math.min(top, box.top);
+							bottom = Math.max(bottom, box.bottom);
+						}
+						element = element.parentElement ?? null;
+					}
+					if (lineHeight > bottom - top) {
+						const extra = (lineHeight - (bottom - top)) / 2;
+						top -= extra;
+						bottom += extra;
+					}
+					return { top, bottom };
 				} catch {
-					return 0;
+					return null;
 				}
 			}
 		};
