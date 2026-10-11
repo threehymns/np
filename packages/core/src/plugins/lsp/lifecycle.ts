@@ -267,12 +267,12 @@ export class LspRuntime
 	/**
 	 * Once-only resolve guard per item (spec #280, #292).
 	 *
-	 * Keyed `${server}\0${label}\0${data-json}`: one successful round trip
-	 * fills docs/detail for good, and a second request for the same item is
-	 * a request the server already answered. Cleared with the server, so a
-	 * restart re-resolves rather than serving stale docs.
+	 * Keyed `${server}|${label}|${data-json}` to the merged suggestion: one
+	 * successful round trip fills docs/detail for good, and a second request
+	 * for the same item is a request the server already answered. Cleared
+	 * with the server, so a restart re-resolves rather than serving stale docs.
 	 */
-	private readonly resolvedItems = new Set<string>();
+	private readonly resolvedItems = new Map<string, CompletionSuggestion>();
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -575,7 +575,8 @@ export class LspRuntime
 			if (entry.state !== 'running' || !entry.client) return item;
 			if (!this.canResolve(server)) return item;
 			const key = this.resolveKey(server, item);
-			if (this.resolvedItems.has(key)) return item;
+			const cached = this.resolvedItems.get(key);
+			if (cached) return cached;
 			this.syncDocument(entry, { ...document, path });
 			this.flushPending(entry);
 			const result = await entry.client.request(
@@ -583,8 +584,9 @@ export class LspRuntime
 				toResolveParams(item),
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
-			this.resolvedItems.add(key);
-			return mergeResolvedCompletion(item, result);
+			const merged = mergeResolvedCompletion(item, result);
+			this.resolvedItems.set(key, merged);
+			return merged;
 		} catch (error) {
 			this.options.logs.appendServerNote(
 				server,
@@ -809,7 +811,7 @@ export class LspRuntime
 	 */
 	private dropResolved(server: string): void {
 		if (this.resolvedItems.size === 0) return;
-		for (const key of [...this.resolvedItems]) {
+		for (const key of [...this.resolvedItems.keys()]) {
 			if (key.startsWith(server + '|')) this.resolvedItems.delete(key);
 		}
 	}
