@@ -484,10 +484,10 @@ function serverOption(
 	let resolving: Promise<CompletionSuggestion> | null = null;
 	const ensureResolved = (): Promise<CompletionSuggestion> | null => {
 		if (!resolveContext?.resolve || !resolveContext.document.path) return null;
-		// Already documented: nothing withheld (the selection exception lives
-		// in `resolveVisible` on the runtime side, where the window is known;
-		// here the popover only ever asks about the shown option).
-		if (box.current.documentation) return null;
+		// Opaque data is what makes a resolve worthwhile: docs may already have
+		// arrived while edits/command were withheld for confirm time, so a
+		// documented item with data still resolves. Without data there is no
+		// key to send back, so nothing is asked.
 		if (!box.current.data) return null;
 		if (resolving) return resolving;
 		resolving = resolveContext

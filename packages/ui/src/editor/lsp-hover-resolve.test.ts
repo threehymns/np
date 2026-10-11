@@ -386,4 +386,48 @@ describe("completion resolve in the popover", () => {
 			await cleanup();
 		}
 	}, 30_000);
+
+	it("resolves a documented item with data at confirm time to land its extras", async () => {
+		const item = {
+			label: "Widget",
+			insertText: "Widget",
+			detail: null,
+			documentation: "already here",
+			kind: 7,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+		const fetch = async () => ({ state: "serving" as const, items: [item], incomplete: false });
+		let resolves = 0;
+		const resolve = async (current: any) => {
+			resolves++;
+			return {
+				...current,
+				additionalTextEdits: [
+					{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: 'import { Widget } from "./widgets";\n' }
+				]
+			};
+		};
+		const state = await projectState(DOC, { fetch, resolve });
+		try {
+			const options = await offeredOptions(state, DOC.length);
+			const widget = options.find((o) => o.label === "Widget")!;
+			let current: any = state;
+			const view: any = {
+				get state() {
+					return current;
+				},
+				dispatch(tr: any) {
+					current = current.update(tr).state;
+				}
+			};
+			(widget.apply as any)(view, widget, DOC.length - 3, DOC.length);
+			await new Promise((done) => setTimeout(done, 20));
+			expect(resolves).toBe(1);
+			expect(current.doc.toString()).toContain('import { Widget } from "./widgets";');
+			expect(current.doc.toString()).toContain("Widget");
+		} finally {
+			await cleanup();
+		}
+	});
 });
