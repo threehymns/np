@@ -66,15 +66,28 @@ export const defaultKeymap: KeymapBinding[] = [
 		bindings: {
 			"cmd+z": "edit.undo",
 			"cmd+shift+z": "edit.redo",
-			"cmd+x": "edit.cut",
-			"cmd+c": "edit.copy",
-			"cmd+v": "edit.paste",
 			"cmd+f": "edit.find",
 			"cmd+a": "edit.selectAll",
 			"cmd+k m": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
 			"cmd+f8": "diff.nextHunk",
 			"cmd+shift+f8": "diff.prevHunk"
+		}
+	},
+	{
+		// Clipboard bindings are focus-scoped, not merely tab-scoped: the
+		// `editor` context stays true for the whole active tab, including
+		// while the user selects text in a hover tooltip (which never takes
+		// focus). Firing copy into a collapsed editor selection kills the
+		// native copy and writes nothing, so these wait for real focus and a
+		// tooltip selection falls through to the browser instead. First
+		// focus-scoped context; richer focus/selection predicates plug into
+		// this same `context` vocabulary when contextual keybinds land.
+		context: "editor && editorFocused",
+		bindings: {
+			"cmd+x": "edit.cut",
+			"cmd+c": "edit.copy",
+			"cmd+v": "edit.paste",
 		}
 	},
 	{
