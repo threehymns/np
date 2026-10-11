@@ -347,6 +347,57 @@ describe("hover tooltips", () => {
 			await cleanup();
 		}
 	});
+
+	it("covers the reported symbol range so same-word moves keep the tooltip", async () => {
+		// CodeMirror hides a point tooltip on every inter-character move and
+		// re-shows it a hoverTime plus a round trip later: visible flicker
+		// across one word. A ranged tooltip survives while the mouse stays
+		// inside [pos, end), so the server's own range must reach the tooltip.
+		const source = createHoverSource({
+			fetchHover: async () => ({
+				state: "serving" as const,
+				hover: {
+					contents: "(class) Widget",
+					range: { start: { line: 0, character: 9 }, end: { line: 0, character: 15 } },
+				},
+			}),
+			languageName: "TypeScript",
+		});
+		const root = makeProject({ "tsconfig.json": "{}", "a.ts": "const x = Widget;\n" });
+		try {
+			const state = await codeState("const x = Widget;\n", {
+				filePath: join(root, "a.ts"),
+			});
+			const tooltip = await source({ state } as any, 10);
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.pos).toBe(10);
+			expect(tooltip!.end).toBe(15);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("falls back to a point when the server names no range", async () => {
+		const source = createHoverSource({
+			fetchHover: async () => ({
+				state: "serving" as const,
+				hover: { contents: "(class) Widget", range: null },
+			}),
+			languageName: "TypeScript",
+		});
+		const root = makeProject({ "tsconfig.json": "{}", "a.ts": "const x = Widget;\n" });
+		try {
+			const state = await codeState("const x = Widget;\n", {
+				filePath: join(root, "a.ts"),
+			});
+			const tooltip = await source({ state } as any, 10);
+			expect(tooltip).not.toBeNull();
+			expect(tooltip!.pos).toBe(10);
+			expect(tooltip!.end).toBe(10);
+		} finally {
+			await cleanup();
+		}
+	});
 });
 
 describe("lsp markdown rendering", () => {

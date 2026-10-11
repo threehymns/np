@@ -744,8 +744,11 @@ function serverApply(
  * against an older revision of the document can point past its end, and every
  * consumer of an out-of-bounds offset would throw, so it is clamped into the
  * document rather than trusted.
+ *
+ * Shared with the hover source, which covers the reported symbol range the
+ * same way completions cover the named replace range.
  */
-function serverRangeToOffsets(
+export function serverRangeToOffsets(
 	state: EditorState,
 	range: NonNullable<CompletionSuggestion["replaceRange"]>
 ): { from: number; to: number } {
