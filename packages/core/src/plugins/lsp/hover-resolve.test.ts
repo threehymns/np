@@ -170,6 +170,7 @@ describe('completionItem/resolve', () => {
 		const document = docFor(root, 'a.ts', 'const w = wid');
 
 		const fetched = await runtime.fetch({ document, line: 0, character: 13 });
+		expect(fetched.state).toBe('serving');
 		if (fetched.state !== 'serving') return;
 
 		const first = await runtime.resolveCompletion(document, fetched.items[0]);
@@ -216,6 +217,7 @@ describe('completionItem/resolve', () => {
 		const document = docFor(root, 'a.ts', 'const w = wid');
 
 		const fetched = await runtime.fetch({ document, line: 0, character: 13 });
+		expect(fetched.state).toBe('serving');
 		if (fetched.state !== 'serving') return;
 
 		const resolved = await runtime.resolveCompletion(document, fetched.items[0]);
