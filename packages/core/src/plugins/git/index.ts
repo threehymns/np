@@ -10,7 +10,7 @@ import { createPilotComponent } from '../ui-contributions';
 import type { DialogService } from '../../state.svelte';
 import { toURI } from '../../storage';
 import { manifest } from './manifest';
-import { createGitCommands, type GitCommandContext } from './commands';
+import { createGitCommands, findDirtyDocument, type DirtyDocumentLike, type GitCommandContext } from './commands';
 import {
 	createWorkspaceGitState,
 	openFolderRepository,
@@ -74,12 +74,60 @@ export async function setup(host: PluginHostInterface): Promise<PluginCleanup> {
 	// Collaborators resolve lazily at action time, so activation order
 	// relative to app construction does not matter. Missing services
 	// degrade to no-op/false, matching dialog-less pre-plugin behavior.
+	//
+	// The working-copy collaborators below read the narrow structural
+	// surface Hunk Actions need (bound Documents + the keystroke path)
+	// through one contained cast: the published workspace service is
+	// generic by design, while the real Workspace owns documents and
+	// updateDocumentContent. Headless contexts simply omit both and stay
+	// on the snapshot path.
+	type DocumentBearer = {
+		documents?: readonly DirtyDocumentLike[];
+		updateDocumentContent?: (doc: DirtyDocumentLike, content: string) => void;
+		/**
+		 * Diff-filepath -> bound Document id map the mounted Diff Viewer
+		 * writes (owned by the Workspace). Threaded into the shared lookup
+		 * so Hunk Actions find the same Document as the pane, including
+		 * after a Save As moved its origin. Absent in headless contexts,
+		 * which stay on URI matching.
+		 */
+		diffBoundDocIds?: Map<string, string>;
+	};
+	const bearerOf = (): DocumentBearer | undefined =>
+		getWorkspace() as unknown as DocumentBearer | undefined;
 	const ctx: GitCommandContext = {
 		getWorkspace,
 		alert: (message) => getDialogs()?.alert?.(message),
 		confirm: (message) => getDialogs()?.confirm?.(message) ?? false,
 		getDiffNavigator: () =>
-			host.getService<DiffNavigatorProvider>(DIFF_NAVIGATOR_SERVICE_KEY)?.getCurrentNavigator()
+			host.getService<DiffNavigatorProvider>(DIFF_NAVIGATOR_SERVICE_KEY)?.getCurrentNavigator(),
+		getWorkingCopyContent: (filepath) => {
+			const workspace = getWorkspace();
+			if (!workspace) return undefined;
+			const doc = findDirtyDocument(
+				bearerOf()?.documents,
+				workspace.project.rootOrigin,
+				filepath,
+				bearerOf()?.diffBoundDocIds
+			);
+			if (!doc || doc.isLoaded !== true) return undefined;
+			return { content: doc.content };
+		},
+		applyWorkingTreeEdit: (filepath, content) => {
+			const workspace = getWorkspace();
+			if (!workspace) return false;
+			const bearer = bearerOf();
+			const doc = findDirtyDocument(
+				bearer?.documents,
+				workspace.project.rootOrigin,
+				filepath,
+				bearer?.diffBoundDocIds
+			);
+			if (!doc || !bearer?.updateDocumentContent) return false;
+			if (doc.content === content) return true;
+			bearer.updateDocumentContent(doc, content);
+			return true;
+		}
 	};
 
 	host.registerCommands(

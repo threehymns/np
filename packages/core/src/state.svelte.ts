@@ -2,6 +2,7 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
+import type { DocumentSession } from './document.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
@@ -152,6 +153,14 @@ export class AppState {
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.
 	activeDiffNavigator = $state<DiffHunkNavigator | undefined>(undefined);
+	/**
+	 * Document bound to the focused split-diff Working-copy pane (#269).
+	 * Published by the mounted DiffViewer (focus or active-diff-file
+	 * fallback), cleared on unmount. `saveFile`/`saveFileAs` fall back to
+	 * it when no document tab is active, so saving from the diff pane
+	 * routes through the standard file-save path for that Document.
+	 */
+	activeDiffDocument = $state<DocumentSession | undefined>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
@@ -352,8 +361,12 @@ export class AppState {
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
 	async saveFile() {
-		if (this.activeDocument) {
-			const ok = await this.workspace.saveDocument(this.activeDocument);
+		// With a diff tab active there is no activeDocument; fall back to
+		// the focused diff pane's bound Document (#269). A real document
+		// tab always wins when one is active.
+		const target = this.activeDocument ?? this.activeDiffDocument;
+		if (target) {
+			const ok = await this.workspace.saveDocument(target);
 			if (!ok && this.workspace.lastSaveCancellationReason) {
 				if (this.dialogService?.alert) {
 					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -365,8 +378,9 @@ export class AppState {
 		}
 	}
 	async saveFileAs() {
-		if (this.activeDocument) {
-			const ok = await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+		const target = this.activeDocument ?? this.activeDiffDocument;
+		if (target) {
+			const ok = await this.workspace.saveDocument(target, { forceNewOrigin: true });
 			if (!ok && this.workspace.lastSaveCancellationReason) {
 				if (this.dialogService?.alert) {
 					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);

@@ -1,6 +1,7 @@
 export * from './polyfills';
 export * from './utils';
 export * from './storage';
+export * from './diff-binding';
 export * from './persistence';
 export * from './preferences.svelte';
 export * from './document.svelte';

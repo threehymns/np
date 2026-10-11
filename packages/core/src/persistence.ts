@@ -29,6 +29,13 @@ export interface SerializedDocument {
 	 * Whether the file was deleted on disk while the tab remained open.
 	 */
 	deletedOnDisk?: boolean;
+	/**
+	 * Whether this entry is a tab-less bound Document (e.g. a Diff Viewer
+	 * Working-copy pane binding for a file with no open tab, issue #272).
+	 * Restored as a Document without creating a tab, so unsaved pane edits
+	 * survive a restart exactly as tab drafts do.
+	 */
+	tabless?: boolean;
 }
 
 /**

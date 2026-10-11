@@ -337,7 +337,6 @@ export class DocumentSession {
 		}
 		return false;
 	}
-
 	restoreDraft(draftContent: string) {
 		this._content = draftContent;
 		this.isLoaded = true;
@@ -373,5 +372,21 @@ export class DocumentSession {
 				}
 			);
 		}
+	}
+
+	/**
+	 * Sync a clean bound Document to new repository content (diff snapshot
+	 * refresh). No-op when dirty (preserves edits) or content already
+	 * matches. Updates both content and baseline so the Document stays
+	 * clean; the snapshot delivery counts as loaded.
+	 */
+	syncCleanSnapshot(content: string): void {
+		if (this.isModified) return;
+		if (this._content === content) return;
+		this._content = content;
+		this.savedBaseline = content;
+		this._revision++;
+		this.isLoaded = true;
+		this.baselinePending = false;
 	}
 }
