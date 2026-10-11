@@ -207,16 +207,33 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		expect(textDocument.completion).toBeDefined();
 	});
 
-	it('declares no completionItem/resolve, which nothing in the client implements', async () => {
-		// ADR 0021 records why: CodeMirror has no "this option is now selected" hook,
-		// so the round trip has nowhere to hang. Advertising it would be a claim the
-		// client cannot keep, and it would cost a request per keystroke.
+	it('declares the four-property resolveSupport the visible-window round trip implements', async () => {
+		// Spec #280, Zed contract #292, amending ADR 0021's declared absence:
+		// `documentation` and `detail` land in labels immediately,
+		// `additionalTextEdits` and `command` defer to confirm time. `textEdit`
+		// is never advertised — "otherwise Zed becomes slow" — so only its
+		// `newText` is ever re-derived, never its range.
 		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
 		const completion = (capabilities.textDocument as Record<string, unknown>).completion as Record<
 			string,
 			unknown
 		>;
-		expect(completion.completionItem ?? {}).not.toHaveProperty('resolveSupport');
+		const item = (completion.completionItem ?? {}) as Record<string, unknown>;
+		const support = (item.resolveSupport ?? {}) as Record<string, unknown>;
+		expect(support.properties).toEqual(['additionalTextEdits', 'command', 'detail', 'documentation']);
+		expect(support.properties).not.toContain('textEdit');
+		expect(item.documentationFormat).toEqual(['markdown', 'plaintext']);
+	});
+
+	it('declares markdown-only hover with no resolve phase', async () => {
+		// Hover is its own `textDocument/hover` request sharing only the
+		// Markdown pipeline with resolve (#292).
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const hover = (capabilities.textDocument as Record<string, unknown>).hover as Record<
+			string,
+			unknown
+		>;
+		expect(hover.contentFormat).toEqual(['markdown']);
 	});
 
 	it('sends client-capability names, never the server ones they replaced', async () => {

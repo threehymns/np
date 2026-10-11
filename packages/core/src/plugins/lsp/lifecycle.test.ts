@@ -343,9 +343,16 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(initialize.params.capabilities).not.toHaveProperty('completionProvider');
 		expect(initialize.params.capabilities).not.toHaveProperty('textDocumentSync');
 		expect(initialize.params.capabilities.textDocument.completion).toBeDefined();
+		// Spec #280 flips ADR 0021's declared absence: the client now
+		// implements the visible-window round trip, so it advertises the four
+		// properties it resolves (never `textEdit`) alongside markdown docs.
 		expect(
-			initialize.params.capabilities.textDocument.completion.completionItem ?? {}
-		).not.toHaveProperty('resolveSupport');
+			initialize.params.capabilities.textDocument.completion.completionItem?.resolveSupport
+				?.properties
+		).toEqual(['additionalTextEdits', 'command', 'detail', 'documentation']);
+		expect(
+			initialize.params.capabilities.textDocument.hover?.contentFormat
+		).toEqual(['markdown']);
 
 		expect(harness.runtime.getStatusRows()).toEqual([
 			{
@@ -896,6 +903,10 @@ describe('Documents presented while their server is still starting (#264)', () =
 		gate.release();
 		await settle();
 		expect(openedUris(harness)).toEqual([]);
+		// A stale handshake must not publish capabilities for its replacement:
+		// the stop cleared them, and the late reply belongs to a client that is gone.
+		expect(harness.runtime.canResolve(server)).toBe(false);
+		expect(harness.runtime.canHover(server)).toBe(false);
 
 		// A server stopped by the user gets no flush it never asked for. The next edit
 		// presents its document again and is declined exactly as the one before it was,

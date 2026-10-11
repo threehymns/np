@@ -1,4 +1,9 @@
-import type { CompletionSuggestion, CompletionSuggestionRange } from '../services';
+import type {
+	CompletionAdditionalEdit,
+	CompletionSuggestion,
+	CompletionSuggestionCommand,
+	CompletionSuggestionRange
+} from '../services';
 
 /**
  * Server completion items, as this plugin hands them to the editor.
@@ -92,6 +97,10 @@ function readRange(value: unknown): CompletionSuggestionRange | null {
  * An item missing a usable label is dropped rather than offered: CodeMirror
  * filters every option against the typed pattern by label, so a nameless item
  * can never match anything and would only widen the result.
+ *
+ * The server's opaque `data` is kept for the resolve round trip (spec #280):
+ * vtsls withholds documentation until asked, so the item that arrives without
+ * docs carries the key the `completionItem/resolve` request sends back.
  */
 export function parseServerCompletions(result: unknown): ServerCompletionList {
 	const rawItems = Array.isArray(result)
@@ -117,11 +126,116 @@ export function parseServerCompletions(result: unknown): ServerCompletionList {
 			detail: typeof raw.detail === 'string' && raw.detail.length > 0 ? raw.detail : null,
 			documentation: flattenMarkup(raw.documentation),
 			kind: typeof raw.kind === 'number' ? raw.kind : null,
-			replaceRange: textEdit ? readRange(textEdit.range) : null
+			replaceRange: textEdit ? readRange(textEdit.range) : null,
+			// Opaque for resolve; absent means nothing was withheld. Left
+			// undefined (rather than null) when the server sent none, so the
+			// shape stays exactly what it was for items that need no resolve.
+			...(raw.data !== undefined ? { data: raw.data } : {}),
+			...readAdditionalEdits(raw),
+			...readCommand(raw)
 		});
 	}
 	return {
 		items,
 		incomplete: isRecord(result) && result.isIncomplete === true
 	};
+}
+
+/**
+ * Merges one `completionItem/resolve` reply into the suggestion it resolves
+ * (spec #280, Zed contract #292).
+ *
+ * `documentation` and `detail` land immediately — they are what the popover
+ * and the hover surface show. Only the *text* of a resolved edit is
+ * re-derived into `insertText` (the `completeFunctionCalls` flow that adds
+ * snippet parentheses during resolve); the ranges stay as the anchors the
+ * first reply named, because they were converted from the original response
+ * and stay valid across buffer edits. `textEdit` itself is never advertised
+ * in `resolveSupport` (it makes Zed slow), so a resolved range is ignored
+ * rather than trusted.
+ *
+ * `additionalTextEdits` and `command` are kept for confirm time rather than
+ * applied here: the edits land in a separate transaction with overlap-skip,
+ * and the command runs only when the server's `executeCommandProvider`
+ * offers it.
+ */
+export function mergeResolvedCompletion(
+	original: CompletionSuggestion,
+	resolved: unknown
+): CompletionSuggestion {
+	if (!isRecord(resolved)) return original;
+	const textEdit = isRecord(resolved.textEdit) ? resolved.textEdit : null;
+	const newText =
+		typeof textEdit?.newText === 'string' && textEdit.newText.length > 0
+			? textEdit.newText
+			: typeof resolved.insertText === 'string' && resolved.insertText.length > 0
+				? resolved.insertText
+				: original.insertText;
+	const detail =
+		typeof resolved.detail === 'string' && resolved.detail.length > 0
+			? resolved.detail
+			: original.detail;
+	const documentation = flattenMarkup(resolved.documentation) ?? original.documentation;
+	return {
+		...original,
+		insertText: newText,
+		detail,
+		documentation,
+		// The range stays the original's: a resolved edit's range is against
+		// the revision the server answered for, not the document as it is now.
+		replaceRange: original.replaceRange,
+		...readAdditionalEdits(resolved, original.additionalTextEdits),
+		...readCommand(resolved, original.command)
+	};
+}
+
+/** Builds the params for one `completionItem/resolve` request from a suggestion. */
+export function toResolveParams(item: CompletionSuggestion): Record<string, unknown> {
+	return {
+		label: item.label,
+		...(item.kind !== null && item.kind !== undefined ? { kind: item.kind } : {}),
+		...(item.detail ? { detail: item.detail } : {}),
+		...(item.documentation
+			? { documentation: { kind: 'markdown', value: item.documentation } }
+			: {}),
+		...(item.insertText && item.insertText !== item.label ? { insertText: item.insertText } : {}),
+		...(item.data !== undefined ? { data: item.data } : {})
+	};
+}
+
+function readAdditionalEdits(
+	raw: Record<string, unknown>,
+	fallback?: readonly CompletionAdditionalEdit[] | null
+): { additionalTextEdits?: readonly CompletionAdditionalEdit[] | null } {
+	if (!Array.isArray(raw.additionalTextEdits)) {
+		return fallback !== undefined ? { additionalTextEdits: fallback } : {};
+	}
+	const edits: CompletionAdditionalEdit[] = [];
+	for (const entry of raw.additionalTextEdits) {
+		if (!isRecord(entry) || typeof entry.newText !== 'string') continue;
+		const range = readRange(entry.range);
+		if (!range) continue;
+		edits.push({ range, newText: entry.newText });
+	}
+	if (edits.length === 0) return fallback !== undefined ? { additionalTextEdits: fallback } : {};
+	return { additionalTextEdits: edits };
+}
+
+function readCommand(
+	raw: Record<string, unknown>,
+	fallback?: CompletionSuggestionCommand | null
+): { command?: CompletionSuggestionCommand | null } {
+	const value = raw.command;
+	if (typeof value === 'string' && value.length > 0) {
+		return { command: { command: value } };
+	}
+	if (isRecord(value) && typeof value.command === 'string' && value.command.length > 0) {
+		return {
+			command: {
+				command: value.command,
+				...(Array.isArray(value.arguments) ? { args: value.arguments } : {})
+			}
+		};
+	}
+	return fallback !== undefined ? { command: fallback } : {};
 }

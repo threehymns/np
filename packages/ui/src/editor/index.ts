@@ -89,7 +89,7 @@ import { HighlightExtension } from "./extensions/inline-highlight";
 import { HashTagExtension } from "./extensions/hash-tags";
 import { MathExtension } from "./extensions/math";
 import { htmlPassthroughPlugin } from "./extensions/html";
-import { roundedSelectionLayer } from "./extensions/rounded-selection";
+import { roundedSelectionLayer, tooltipSelectionOverlay } from "./extensions/rounded-selection";
 
 // Central Markdown language composition (WikiLinkExtension precedent). The
 // Editor's Markdown language must be a single markdown() superset — never a
@@ -309,6 +309,7 @@ export function createEditorExtensions(options: {
 		history(),
 		drawSelection(),
 		roundedSelectionLayer,
+		tooltipSelectionOverlay,
 		foldGutter(),
 		dropCursor(),
 		EditorState.allowMultipleSelections.of(true),
