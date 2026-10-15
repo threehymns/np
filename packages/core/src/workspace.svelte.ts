@@ -10,16 +10,30 @@ import type { RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
-export interface WorkspaceTab {
-	id: string;
-	type: 'document' | 'diff';
-	pluginId?: string;
-}
+import {
+	Pane,
+	Axis,
+	type LayoutNode,
+	type SplitDirection,
+	type SplitMode,
+	type WorkspaceTab,
+	getAllPanes,
+	findPane,
+	findPaneWithTab,
+	splitPane,
+	removePane,
+	findPaneInDirection,
+	canSplitTab,
+	type Rect,
+	WORKSPACE_PERSISTENCE_VERSION
+} from './split-tree.svelte';
+
+export type { WorkspaceTab } from './split-tree.svelte';
 
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
-	tabs = $state<WorkspaceTab[]>([]);
-	activeTabId = $state<string>('');
+	layout = $state<LayoutNode>(new Pane());
+	activePaneId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
 	project: Project;
 	// NOTE (#254): recent-folders history reads window-scoped but is
@@ -144,7 +158,7 @@ export class Workspace {
 
 		for (const [tabId, pending] of [...this.pendingDiffRestore]) {
 			// The persisted tab is gone; drop its queued selection.
-			if (!this.tabs.some(t => t.id === tabId)) {
+			if (!this.getAllTabs().some(t => t.id === tabId)) {
 				this.pendingDiffRestore.delete(tabId);
 				continue;
 			}
@@ -178,43 +192,52 @@ export class Workspace {
 	}
 
 	private serializeTabs(): SerializedDocument[] {
-		return this.tabs.map(tab => {
-			if (tab.type === 'diff') {
-				const serialized: SerializedDocument = {
-					id: tab.id,
-					origin: null,
-					virtualTabType: 'diff',
-					...(tab.pluginId ? { pluginId: tab.pluginId } : {})
-				};
-				const active = this.project.repository?.activeDiffFile;
-				if (active) {
-					serialized.diffFilepath = active.filepath;
-					serialized.diffStaged = active.staged;
-				} else {
-					// Session restore can finish before the repository's refresh
-					// applies the persisted selection; serialize the queued one so a
-					// save in that window doesn't drop it.
-					const pending = this.pendingDiffRestore.get(tab.id);
-					if (pending) {
-						serialized.diffFilepath = pending.filepath;
-						serialized.diffStaged = pending.staged;
+		const serializedMap = new Map<string, SerializedDocument>();
+		for (const pane of this.getAllPanes()) {
+			for (const tab of pane.tabs) {
+				if (serializedMap.has(tab.id)) continue;
+				if (tab.type === 'diff') {
+					const serialized: SerializedDocument = {
+						id: tab.id,
+						origin: null,
+						virtualTabType: 'diff',
+						...(tab.pluginId ? { pluginId: tab.pluginId } : {})
+					};
+					const active = this.project.repository?.activeDiffFile;
+					if (active) {
+						serialized.diffFilepath = active.filepath;
+						serialized.diffStaged = active.staged;
+					} else {
+						// Session restore can finish before the repository's refresh
+						// applies the persisted selection; serialize the queued one so a
+						// save in that window doesn't drop it.
+						const pending = this.pendingDiffRestore.get(tab.id);
+						if (pending) {
+							serialized.diffFilepath = pending.filepath;
+							serialized.diffStaged = pending.staged;
+						}
 					}
+					serializedMap.set(tab.id, serialized);
+				} else {
+					const docId = tab.docId ?? tab.id;
+					const doc = this.documents.find(d => d.id === docId);
+					if (!doc) continue;
+					const serialized: SerializedDocument = {
+						id: doc.id,
+						origin: doc.origin ? $state.snapshot(doc.origin) : null,
+						untitledTitle: doc.untitledTitle,
+						deletedOnDisk: doc.deletedOnDisk ? true : undefined
+					};
+					if (doc.isModified || !doc.origin || doc.deletedOnDisk) {
+						serialized.draftContent = doc.content;
+					}
+					serializedMap.set(tab.id, serialized);
 				}
-				return serialized;
 			}
-			const doc = this.documents.find(d => d.id === tab.id);
-			if (!doc) return null;
-			const serialized: SerializedDocument = {
-				id: doc.id,
-				origin: doc.origin ? $state.snapshot(doc.origin) : null,
-				untitledTitle: doc.untitledTitle,
-				deletedOnDisk: doc.deletedOnDisk ? true : undefined
-			};
-			if (doc.isModified || !doc.origin || doc.deletedOnDisk) {
-				serialized.draftContent = doc.content;
-			}
-			return serialized;
-		}).filter(Boolean) as SerializedDocument[];
+		}
+		const docs = Array.from(serializedMap.values());
+		(docs as any).version = WORKSPACE_PERSISTENCE_VERSION;
+		return docs;
 	}
 
   async flushSaveOpenFiles(): Promise<void> {
@@ -238,6 +261,7 @@ export class Workspace {
 		pluginHost?: PluginHostInterface
 	) {
 		this.project = new Project(storage, vcsFactory, persistence);
+		this.activePaneId = (this.layout as Pane).id;
 		this.project.projectTree.setWindowHooks({
 			markDocumentsDeleted: (origin) => this.markDocumentsDeleted(origin),
 			reconcileExternalDeletions: () => this.reconcileExternalDeletions(),
@@ -270,7 +294,7 @@ export class Workspace {
 				if (this.isRestoring) return;
 				
 				const _folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
-				const _tabs = this.tabs.map(t => t.id).join(',');
+				const _tabs = this.getAllTabs().map(t => t.id).join(',');
 				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
 				
 				this.debouncedSaveOpenFiles();
@@ -303,13 +327,51 @@ export class Workspace {
 		});
 	}
 
+	get activePane(): Pane {
+		if (this.activePaneId) {
+			const pane = findPane(this.layout, this.activePaneId);
+			if (pane) return pane;
+		}
+		const all = getAllPanes(this.layout);
+		if (all.length > 0) {
+			this.activePaneId = all[0].id;
+			return all[0];
+		}
+		const fresh = new Pane();
+		this.layout = fresh;
+		this.activePaneId = fresh.id;
+		return fresh;
+	}
+
+	get rootPane(): Pane {
+		const all = getAllPanes(this.layout);
+		return all[0] ?? (this.layout as Pane);
+	}
+
+	get tabs(): WorkspaceTab[] {
+		return this.activePane.tabs;
+	}
+
+	set tabs(value: WorkspaceTab[]) {
+		this.activePane.tabs = value;
+	}
+
+	get activeTabId(): string {
+		return this.activePane.activeTabId;
+	}
+
+	set activeTabId(value: string) {
+		this.activePane.activeTabId = value;
+	}
+
 	get activeTab() {
-		return this.tabs.find(t => t.id === this.activeTabId);
+		return this.activePane.activeTab;
 	}
 
 	get activeDocument() {
 		if (this.activeTab?.type === 'document') {
-			return this.documents.find((doc) => doc.id === this.activeTabId);
+			const docId = this.activeTab.docId ?? this.activeTab.id;
+			return this.documents.find((doc) => doc.id === docId);
 		}
 		return undefined;
 	}
@@ -320,6 +382,71 @@ export class Workspace {
 
 	set activeDocumentId(value: string) {
 		this.activeTabId = value;
+	}
+
+	findPane(id: string): Pane | null {
+		return findPane(this.layout, id);
+	}
+
+	getAllPanes(): Pane[] {
+		return getAllPanes(this.layout);
+	}
+
+	getAllTabs(): WorkspaceTab[] {
+		return getAllPanes(this.layout).flatMap((p) => p.tabs);
+	}
+
+	findPaneWithTab(tabId: string): Pane | null {
+		return findPaneWithTab(this.layout, tabId);
+	}
+
+	countTabsForDocument(docId: string): number {
+		let count = 0;
+		for (const pane of this.getAllPanes()) {
+			for (const tab of pane.tabs) {
+				if ((tab.docId ?? tab.id) === docId) {
+					count++;
+				}
+			}
+		}
+		return count;
+	}
+
+	splitActivePane(direction: SplitDirection, mode: SplitMode = 'clone'): Pane {
+		const sourcePane = this.activePane;
+		const activeTab = sourcePane.activeTab;
+		const newPane = new Pane();
+
+		if (mode === 'move') {
+			if (activeTab) {
+				const idx = sourcePane.tabs.findIndex((t) => t.id === activeTab.id);
+				if (idx !== -1) {
+					sourcePane.tabs.splice(idx, 1);
+					sourcePane.activeTabId = sourcePane.tabs[Math.max(0, idx - 1)]?.id ?? '';
+				}
+				newPane.tabs = [{ ...activeTab }];
+				newPane.activeTabId = activeTab.id;
+			}
+		} else if (mode === 'clone') {
+			if (activeTab && canSplitTab(activeTab)) {
+				newPane.tabs = [{ ...activeTab }];
+				newPane.activeTabId = activeTab.id;
+			}
+		}
+
+		this.layout = splitPane(this.layout, sourcePane.id, direction, newPane);
+		this.activePaneId = newPane.id;
+		this.debouncedSaveOpenFiles();
+		return newPane;
+	}
+
+	focusPaneInDirection(direction: SplitDirection, rectsMap?: Map<string, Rect>): boolean {
+		const targetId = findPaneInDirection(this.activePane.id, direction, rectsMap);
+		if (targetId) {
+			this.activePaneId = targetId;
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -422,7 +549,13 @@ export class Workspace {
 		const targetUri = toURI(origin);
 		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
 		if (existing) {
-			this.activeTabId = existing.id;
+			const existingTab = this.activePane.tabs.find(t => (t.docId ?? t.id) === existing.id);
+			if (existingTab) {
+				this.activePane.activeTabId = existingTab.id;
+			} else {
+				this.activePane.tabs.push({ id: existing.id, type: 'document' });
+				this.activePane.activeTabId = existing.id;
+			}
 			return existing;
 		}
 
@@ -534,77 +667,110 @@ export class Workspace {
 		this.closeTab(id);
 	}
 
-	closeTab(id: string) {
-		const tab = this.tabs.find(t => t.id === id);
+	async closeTab(id: string, paneId?: string) {
+		const targetPane = paneId
+			? this.findPane(paneId)
+			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
+		if (!targetPane) return;
+
+		const tab = targetPane.tabs.find(t => t.id === id);
 		if (!tab) return;
 
-		if (tab.type === 'document') {
-			const index = this.documents.findIndex(doc => doc.id === id);
-			if (index !== -1) {
-				const doc = this.documents[index];
-				if (doc.isModified) {
-					this.pendingCloseId = id;
-					return;
-				}
+		const docId = tab.docId ?? tab.id;
+		const totalDocTabs = this.countTabsForDocument(docId);
+
+		// The save/discard prompt fires only when the last tab referencing a session closes.
+		// Closing a cloned tab while the session lives on elsewhere closes silently.
+		if (totalDocTabs <= 1 && tab.type === 'document') {
+			const doc = this.documents.find(d => d.id === docId);
+			if (doc && doc.isModified) {
+				this.pendingCloseId = id;
+				return;
 			}
 		}
 
-		// Closing the last tab also creates its replacement, so the close can
-		// still fail after this returns; nothing awaits it, so a rejection has
-		// to be reported here rather than dropped.
-		this.finalizeClose(id).catch((err) => {
+		this.finalizeClose(id, false, targetPane.id).catch((err) => {
 			console.error('[Workspace] Failed to close tab', err);
 		});
 	}
 
-	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
-		const tab = this.tabs.find(t => t.id === id);
+	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
+		const targetPane = paneId
+			? this.findPane(paneId)
+			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
+		if (!targetPane) return false;
+
+		const tab = targetPane.tabs.find(t => t.id === id);
 		if (!tab) return false;
 
-		if (tab.type === 'document') {
-			const index = this.documents.findIndex(doc => doc.id === id);
-			if (index !== -1) {
-				const doc = this.documents[index];
-				if (saveFirst) {
-					try {
-						const saved = await this.saveDocument(doc);
-						if (saved) await this.performClose(id);
-						return saved;
-					} catch (err) {
-						console.error('[Workspace] Save before close failed', err);
-						return false;
-					} finally {
-						this.pendingCloseId = null;
-					}
+		const docId = tab.docId ?? tab.id;
+		const totalDocTabs = this.countTabsForDocument(docId);
+
+		if (totalDocTabs <= 1 && tab.type === 'document') {
+			const doc = this.documents.find(d => d.id === docId);
+			if (doc && saveFirst) {
+				try {
+					const saved = await this.saveDocument(doc);
+					if (saved) await this.performClose(id, targetPane.id);
+					return saved;
+				} catch (err) {
+					console.error('[Workspace] Save before close failed', err);
+					return false;
+				} finally {
+					this.pendingCloseId = null;
 				}
 			}
 		}
 
-		await this.performClose(id);
+		await this.performClose(id, targetPane.id);
 		this.pendingCloseId = null;
 		return true;
 	}
 
-	private async performClose(id: string) {
-		const tabIndex = this.tabs.findIndex(t => t.id === id);
+	private async performClose(id: string, paneId?: string) {
+		const targetPane = paneId
+			? this.findPane(paneId)
+			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
+		if (!targetPane) return;
+
+		const tabIndex = targetPane.tabs.findIndex(t => t.id === id);
 		if (tabIndex === -1) return;
 
-		const tab = this.tabs[tabIndex];
+		const tab = targetPane.tabs[tabIndex];
+		const docId = tab.docId ?? tab.id;
 
-		if (tab.type === 'document') {
-			const docIndex = this.documents.findIndex(doc => doc.id === id);
+		targetPane.tabs.splice(tabIndex, 1);
+
+		const totalDocTabs = this.countTabsForDocument(docId);
+		if (totalDocTabs === 0 && tab.type === 'document') {
+			const docIndex = this.documents.findIndex(doc => doc.id === docId);
 			if (docIndex !== -1) {
 				this.documents.splice(docIndex, 1);
 			}
 		}
 
-		this.tabs.splice(tabIndex, 1);
-
-		if (this.tabs.length === 0) {
-			await this.newFile();
-		} else if (this.activeTabId === id) {
-			this.activeTabId = this.tabs[Math.max(0, tabIndex - 1)].id;
+		if (targetPane.tabs.length > 0) {
+			if (targetPane.activeTabId === id) {
+				targetPane.activeTabId = targetPane.tabs[Math.max(0, tabIndex - 1)].id;
+			}
+		} else {
+			const allPanes = this.getAllPanes();
+			if (allPanes.length > 1) {
+				// Implicit death: a pane whose last tab closes is removed, tree collapses, focus falls back to a neighbor
+				const result = removePane(this.layout, targetPane.id);
+				if (result) {
+					this.layout = result.newRoot;
+					if (this.activePaneId === targetPane.id) {
+						this.activePaneId = result.neighborId ?? this.getAllPanes()[0]?.id ?? '';
+					}
+				}
+			} else {
+				// Last pane is guarded and survives as an empty pane
+				targetPane.activeTabId = '';
+			}
 		}
+
+		this.debouncedSaveOpenFiles();
 	}
 
 	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
@@ -750,56 +916,65 @@ export class Workspace {
 			const origins = await this.project.loadOpenFiles(folderUri);
 			const activeId = await this.project.loadActiveDocumentId(folderUri);
 
+			// Version-key check: on version mismatch, start fresh (empty). No migration code.
+			if (origins && typeof origins === 'object' && ('version' in (origins as any))) {
+				if ((origins as any).version !== WORKSPACE_PERSISTENCE_VERSION) {
+					this.documents = [];
+					const freshPane = new Pane();
+					this.layout = freshPane;
+					this.activePaneId = freshPane.id;
+					return;
+				}
+			}
+
 			if (origins && origins.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
 				const restoredTabs: WorkspaceTab[] = [];
 				for (const serialized of origins) {
 					const isNewSchema = serialized && typeof serialized === 'object' && ('id' in serialized);
+					if (!isNewSchema) {
+						// Stale / old shape mismatch: skip (no migration code)
+						continue;
+					}
+					if (serialized.version !== undefined && serialized.version !== WORKSPACE_PERSISTENCE_VERSION) {
+						continue;
+					}
 
 					let doc: DocumentSession | null = null;
-					if (isNewSchema) {
-						if (serialized.virtualTabType === 'diff') {
-							if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
-								continue;
-							}
-							restoredTabs.push({
-								id: serialized.id,
-								type: 'diff',
-								...(serialized.pluginId ? { pluginId: serialized.pluginId } : {})
-							});
-							if (serialized.diffFilepath) {
-								this.pendingDiffRestore.set(serialized.id, {
-									filepath: serialized.diffFilepath,
-									staged: serialized.diffStaged
-								});
-							}
+					if (serialized.virtualTabType === 'diff') {
+						if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
 							continue;
 						}
-						doc = new DocumentSession(
-							this.project.storage,
-							'',
-							serialized.origin,
-							serialized.untitledTitle || 'Untitled'
-						);
-						doc.id = serialized.id as any;
-						if (serialized.deletedOnDisk) {
-							// Restores a previously persisted flag verbatim; this is
-							// not a fresh delete, so no baseline seq bump. A
-							// restoreDraft read that follows re-checks the disk and
-							// clears it if the file is back.
-							doc.deletedOnDisk = true;
+						restoredTabs.push({
+							id: serialized.id,
+							type: 'diff',
+							canSplit: false,
+							...(serialized.pluginId ? { pluginId: serialized.pluginId } : {})
+						});
+						if (serialized.diffFilepath) {
+							this.pendingDiffRestore.set(serialized.id, {
+								filepath: serialized.diffFilepath,
+								staged: serialized.diffStaged
+							});
 						}
-						if (serialized.origin) {
-							doc.refreshPermissionState(this.project.coversOrigin(serialized.origin));
-						}
-						if (serialized.draftContent !== undefined) {
-							doc.restoreDraft(serialized.draftContent);
-						}
-					} else {
-						// Old schema compatibility
-						const origin = serialized as unknown as FileOrigin;
-						doc = new DocumentSession(this.project.storage, '', origin);
-						doc.refreshPermissionState(this.project.coversOrigin(origin));
+						continue;
+					}
+
+					doc = new DocumentSession(
+						this.project.storage,
+						'',
+						serialized.origin,
+						serialized.untitledTitle || 'Untitled'
+					);
+					doc.id = serialized.id as any;
+					if (serialized.deletedOnDisk) {
+						doc.deletedOnDisk = true;
+					}
+					if (serialized.origin) {
+						doc.refreshPermissionState(this.project.coversOrigin(serialized.origin));
+					}
+					if (serialized.draftContent !== undefined) {
+						doc.restoreDraft(serialized.draftContent);
 					}
 					restoredDocs.push(doc);
 					restoredTabs.push({
@@ -809,10 +984,13 @@ export class Workspace {
 				}
 
 				this.documents = restoredDocs;
-				this.tabs = restoredTabs;
-				// Restored documents are open documents: observers of the open
-				// lifecycle (ADR 0013) are told once the whole set is in place, so a
-				// consumer never sees a half-restored workspace.
+				const rootPane = new Pane(
+					restoredTabs,
+					activeId && restoredTabs.some(t => t.id === activeId) ? activeId : (restoredTabs[0]?.id || '')
+				);
+				this.layout = rootPane;
+				this.activePaneId = rootPane.id;
+
 				for (const restored of restoredDocs) {
 					this.pluginHost?.emit('document:opened', {
 						document: restored,
@@ -821,23 +999,22 @@ export class Workspace {
 				}
 				if (restoredTabs.length === 0) {
 					await this.newFile();
-				} else if (activeId && restoredTabs.some(t => t.id === activeId)) {
-					this.activeTabId = activeId;
-				} else {
-					this.activeTabId = restoredTabs[0]?.id || '';
 				}
-				// Repository already refreshed (folder-open path): apply now.
 				this.applyPendingDiffRestore();
 			} else {
 				this.documents = [];
-				this.tabs = [];
+				const freshPane = new Pane();
+				this.layout = freshPane;
+				this.activePaneId = freshPane.id;
 				await this.newFile();
 			}
 		} catch (e) {
 			console.error('[Workspace] Failed to load folder state', e);
 			this.pendingDiffRestore.clear();
 			this.documents = [];
-			this.tabs = [];
+			const freshPane = new Pane();
+			this.layout = freshPane;
+			this.activePaneId = freshPane.id;
 			await this.newFile();
 		}
 	}
@@ -913,7 +1090,9 @@ export class Workspace {
 			} catch (e) {
 				console.error('[Workspace] Failed to restore session', e);
 				this.documents = [];
-				this.tabs = [];
+				const freshPane = new Pane();
+				this.layout = freshPane;
+				this.activePaneId = freshPane.id;
 				await this.newFile();
 			} finally {
 				if (this.latestRestoreId === currentRestoreId) {

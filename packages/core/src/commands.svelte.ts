@@ -538,6 +538,62 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'pane.splitRight',
+		label: 'Split Right',
+		category: 'View',
+		action: () => { appState.workspace.splitActivePane('right', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitLeft',
+		label: 'Split Left',
+		category: 'View',
+		action: () => { appState.workspace.splitActivePane('left', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitUp',
+		label: 'Split Up',
+		category: 'View',
+		action: () => { appState.workspace.splitActivePane('up', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitDown',
+		label: 'Split Down',
+		category: 'View',
+		action: () => { appState.workspace.splitActivePane('down', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusLeft',
+		label: 'Focus Left Pane',
+		category: 'View',
+		action: () => { appState.workspace.focusPaneInDirection('left'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusRight',
+		label: 'Focus Right Pane',
+		category: 'View',
+		action: () => { appState.workspace.focusPaneInDirection('right'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusUp',
+		label: 'Focus Up Pane',
+		category: 'View',
+		action: () => { appState.workspace.focusPaneInDirection('up'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusDown',
+		label: 'Focus Down Pane',
+		category: 'View',
+		action: () => { appState.workspace.focusPaneInDirection('down'); }
+	});
+
+	coreCommands.push({
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',

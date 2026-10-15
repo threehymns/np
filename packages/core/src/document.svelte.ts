@@ -5,6 +5,12 @@ import { LanguageSupport, getActiveLanguages } from './editor/language.svelte';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
+export interface DocumentViewState {
+	editorState?: any;
+	scrollPosition?: { top: number; left: number } | null;
+	pendingLineToScroll?: number | null;
+}
+
 export class DocumentSession {
 	id = crypto.randomUUID();
 	private _content = $state('');
@@ -14,9 +20,50 @@ export class DocumentSession {
 	permissionState = $state<PermissionState>('granted');
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
-	pendingLineToScroll = $state<number | null>(null);
-	editorState = $state.raw<any>(null);
-	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
+
+	private _viewStates = new Map<string, DocumentViewState>();
+
+	getViewState(viewId: string): DocumentViewState {
+		let vs = this._viewStates.get(viewId);
+		if (!vs) {
+			vs = {};
+			this._viewStates.set(viewId, vs);
+		}
+		return vs;
+	}
+
+	setViewState(viewId: string, state: Partial<DocumentViewState>): void {
+		const vs = this.getViewState(viewId);
+		Object.assign(vs, state);
+	}
+
+	deleteViewState(viewId: string): void {
+		this._viewStates.delete(viewId);
+	}
+
+	get editorState(): any {
+		return this.getViewState('default').editorState ?? null;
+	}
+
+	set editorState(val: any) {
+		this.setViewState('default', { editorState: val });
+	}
+
+	get scrollPosition(): { top: number; left: number } | null {
+		return this.getViewState('default').scrollPosition ?? null;
+	}
+
+	set scrollPosition(val: { top: number; left: number } | null) {
+		this.setViewState('default', { scrollPosition: val });
+	}
+
+	get pendingLineToScroll(): number | null {
+		return this.getViewState('default').pendingLineToScroll ?? null;
+	}
+
+	set pendingLineToScroll(val: number | null) {
+		this.setViewState('default', { pendingLineToScroll: val });
+	}
 
 	private savedBaseline = $state('');
 	private baselinePending = $state(false);
