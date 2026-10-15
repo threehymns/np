@@ -62,6 +62,20 @@ export const defaultKeymap: KeymapBinding[] = [
 		}
 	},
 	{
+		context: "editor && vim_mode == insert",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"ctrl+y": "edit.acceptCompletion"
+		}
+	},
+	{
+		context: "editor && !vim_mode",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"enter": "edit.acceptCompletion"
+		}
+	},
+	{
 		context: "editor",
 		bindings: {
 			"cmd+z": "edit.undo",
@@ -244,7 +258,9 @@ export class KeymapRegistry {
 		
 		// Load user keymap asynchronously on startup
 		this.readUserKeymap().then(content => {
-			this.reloadUserKeymap(content);
+			if (this.userKeymap.length === 0) {
+				this.reloadUserKeymap(content);
+			}
 		}).catch(err => {
 			console.error('Failed to load user keymap on startup:', err);
 		});
@@ -447,10 +463,24 @@ export class KeymapRegistry {
 		}
 
 		if (fullMatch && !hasPartial) {
+			if (!fullMatch.commandId || fullMatch.commandId === 'none' || fullMatch.commandId === 'noop' || fullMatch.commandId === 'unbound') {
+				this.keyBuffer = [];
+				return false;
+			}
+			if (typeof this.appState?.commands?.get === 'function') {
+				const command = this.appState.commands.get(fullMatch.commandId);
+				if (!command || (command.isEnabled && !command.isEnabled())) {
+					this.keyBuffer = [];
+					return false;
+				}
+			}
+			this.keyBuffer = [];
+			const result = this.appState.commands.execute(fullMatch.commandId);
+			if (result === false) {
+				return false;
+			}
 			e.preventDefault();
 			e.stopPropagation();
-			this.keyBuffer = [];
-			this.appState.commands.execute(fullMatch.commandId);
 			return true;
 		}
 
