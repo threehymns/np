@@ -31,10 +31,10 @@ describe("closeTab is fire-and-forget but never silent", () => {
 		const errorSpy = spyOn(console, "error").mockImplementation(() => {});
 		const ws = makeWorkspace();
 		const only = await ws.newFile();
-		// Closing the last tab leaves only its replacement to await, and
-		// closeTab returns before that settles.
-		(ws as any).newFile = async () => {
-			throw new Error("replacement tab unavailable");
+		const origFinalize = ws.finalizeClose.bind(ws);
+		ws.finalizeClose = async (id: string, saveFirst = false, paneId?: string) => {
+			await origFinalize(id, saveFirst, paneId);
+			throw new Error("close error");
 		};
 
 		ws.closeTab(only.id);

@@ -299,6 +299,7 @@ export class PluginHost implements PluginHostInterface {
 	private editorContributionTransforms: EditorContributionTransformEntry[] = [];
 	private editorContributions: EditorContributionEntry[] = [];
 	private attachedEditors = new SvelteMap<string, AttachedEditor>();
+	private attachedEditorsByView = new Map<string, Map<string, AttachedEditor>>();
 	private documentSessions = new SvelteMap<string, DocumentSession>();
 	private documentResolver?: (docId: string) => DocumentSession | undefined;
 
@@ -2350,12 +2351,32 @@ export class PluginHost implements PluginHostInterface {
 	 * Internal host shell hook to bind an active editor view to a document session.
 	 * NEVER exposed to plugin manifests or public plugin APIs.
 	 */
-	attachEditorInternal(docId: string, editor: AttachedEditor, language?: string): void {
+	attachEditorInternal(docId: string, editor: AttachedEditor, language?: string, viewId = 'default'): void {
+		let views = this.attachedEditorsByView.get(docId);
+		if (!views) {
+			views = new Map();
+			this.attachedEditorsByView.set(docId, views);
+		}
+		views.set(viewId, editor);
 		this.attachedEditors.set(docId, editor);
 	}
 
-	detachEditorInternal(docId: string): void {
-		this.attachedEditors.delete(docId);
+	detachEditorInternal(docId: string, viewId = 'default'): void {
+		const views = this.attachedEditorsByView.get(docId);
+		if (views) {
+			views.delete(viewId);
+			if (views.size === 0) {
+				this.attachedEditorsByView.delete(docId);
+				this.attachedEditors.delete(docId);
+			} else {
+				const remaining = views.values().next().value;
+				if (remaining) {
+					this.attachedEditors.set(docId, remaining);
+				}
+			}
+		} else {
+			this.attachedEditors.delete(docId);
+		}
 	}
 
 	getAttachedEditorInternal(docId: string): AttachedEditor | undefined {

@@ -4,6 +4,7 @@ export interface SerializedDocument {
 	id: string;
 	origin: FileOrigin | null;
 	untitledTitle?: string;
+	version?: number;
 	/**
 	 * Unsaved editor content, present only for modified or untitled documents
 	 * so a draft can be restored without the file on disk having been touched.
