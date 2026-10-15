@@ -22,6 +22,13 @@ export const SVELTE_SNIPPETS: readonly SnippetRecord[] = [
 		description: 'Reactive declaration ($:)'
 	},
 	{
+		id: 'svelte-props',
+		language: 'svelte',
+		trigger: 'props',
+		body: 'let { data } = $props();',
+		description: 'Component props ($props)'
+	},
+	{
 		id: 'svelte-if',
 		language: 'svelte',
 		trigger: 'if',
