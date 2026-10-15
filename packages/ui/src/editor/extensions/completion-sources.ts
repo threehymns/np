@@ -1,6 +1,6 @@
 import { Prec, type Extension } from "@codemirror/state";
 import type { Language } from "@codemirror/language";
-import { acceptCompletion, autocompletion, completionKeymap } from "@codemirror/autocomplete";
+import { acceptCompletion, autocompletion, completionKeymap, startCompletion } from "@codemirror/autocomplete";
 import { keymap, type KeyBinding } from "@codemirror/view";
 import type { RegisteredSnippet } from "@np/core";
 import {
@@ -18,24 +18,16 @@ import {
 } from "./server-completions";
 
 /**
- * The completion bindings minus Enter, plus vim's own accept key.
+ * The completion popup navigation bindings minus the trigger and acceptance keys.
  *
- * `completionKeymap` is installed at `Prec.highest` by `autocompletion()`
- * itself and binds Enter to `acceptCompletion`, which in a code file the user
- * is reading as a newline. Under vim that is a completion eating a keystroke
- * the mode owns — exactly "completions fighting the mode" — so Enter is
- * dropped and `Ctrl-y` (vim's canonical insert-mode completion accept) takes
- * its place. Every other binding is kept verbatim, so the explicit trigger and
- * the selection keys stay where they were.
- *
- * This only works as a *replacement*: exactly one `autocompletion()` may exist
- * per editor state (see {@link completionCompartmentExtensions}), so the whole
- * keymap is re-declared here rather than added alongside the bundled one.
+ * Trigger (`edit.complete`) and acceptance (`edit.acceptCompletion`) are contributed
+ * through `KeymapRegistry` so they can be rebound in user keymaps. The popup selection
+ * and navigation keys (`ArrowDown`, `ArrowUp`, `PageDown`, `PageUp`, `Escape`) remain
+ * installed at `Prec.highest` so the open popup can be navigated and dismissed.
  */
-const VIM_COMPLETION_KEYMAP: readonly KeyBinding[] = [
-	...completionKeymap.filter((binding) => binding.key !== "Enter"),
-	{ key: "Ctrl-y", run: acceptCompletion },
-];
+const POPUP_NAVIGATION_KEYMAP: readonly KeyBinding[] = completionKeymap.filter(
+	(binding) => binding.run !== startCompletion && binding.run !== acceptCompletion
+);
 
 export interface CompletionChainOptions {
 	/** Active language, or null when the document has none (plain text). */
@@ -176,13 +168,12 @@ export interface CompletionCompartmentOptions extends CompletionChainOptions {
 export function completionCompartmentExtensions(
 	options: CompletionCompartmentOptions,
 ): Extension[] {
-	const vimEnabled = options.vimEnabled ?? false;
 	return [
 		autocompletion({
 			activateOnTyping: options.automaticCompletions,
-			defaultKeymap: !vimEnabled,
+			defaultKeymap: false,
 		}),
-		...(vimEnabled ? [Prec.highest(keymap.of(VIM_COMPLETION_KEYMAP))] : []),
+		Prec.highest(keymap.of(POPUP_NAVIGATION_KEYMAP)),
 		...hostCompletionChain(options),
 	];
 }

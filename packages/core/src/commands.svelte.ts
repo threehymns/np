@@ -1,4 +1,5 @@
 import { undo, redo, selectAll } from "@codemirror/commands";
+import { startCompletion, acceptCompletion } from "@codemirror/autocomplete";
 import { openSearchPanel } from "@codemirror/search";
 import { Text } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
@@ -679,6 +680,45 @@ export function registerCoreCommands(appState: AppState) {
 				selectAll(appState.activeEditorView);
 				appState.activeEditorView.focus();
 			}
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	coreCommands.push({
+		id: 'edit.complete',
+		label: 'Trigger Completion',
+		category: 'Edit',
+		action: () => {
+			if (appState.activeEditorView) {
+				return startCompletion(appState.activeEditorView);
+			}
+			return false;
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	coreCommands.push({
+		id: 'edit.startCompletion',
+		label: 'Trigger Completion',
+		category: 'Edit',
+		action: () => {
+			if (appState.activeEditorView) {
+				return startCompletion(appState.activeEditorView);
+			}
+			return false;
+		},
+		isEnabled: () => !!appState.activeEditorView
+	});
+
+	coreCommands.push({
+		id: 'edit.acceptCompletion',
+		label: 'Accept Completion',
+		category: 'Edit',
+		action: () => {
+			if (appState.activeEditorView) {
+				return acceptCompletion(appState.activeEditorView);
+			}
+			return false;
 		},
 		isEnabled: () => !!appState.activeEditorView
 	});

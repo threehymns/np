@@ -19,6 +19,7 @@
 		"./transformer": "./src/transformer/index.ts"
 	},
 	"dependencies": {
+		"@codemirror/autocomplete": "^6.20.3",
 		"@codemirror/commands": "^6.10.4",
 		"@codemirror/language": "^6.12.3",
 		"@codemirror/language-data": "^6.5.2",
