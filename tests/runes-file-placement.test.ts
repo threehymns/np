@@ -18,6 +18,11 @@ import ts from "typescript";
 
 const ROOTS = [join(import.meta.dir, "..", "packages"), join(import.meta.dir, "..", "apps")];
 export const RUNE_RE = /\$(state|derived|effect|props|bindable|inspect|host)([^a-zA-Z0-9_]|$)/;
+// Exact rune names for the AST check. RUNE_RE above stays as the loose
+// fast path that decides whether a file is worth parsing at all.
+const RUNE_NAMES = new Set([
+	"$state", "$derived", "$effect", "$props", "$bindable", "$inspect", "$host",
+]);
 // Build output, generated clients and vendored code never ship as source.
 const SKIP_DIRS = new Set(["node_modules", ".svelte-kit", "dist", "build", "coverage"]);
 // Test doubles run under bun with stubbed runes and are never bundled.
@@ -65,7 +70,7 @@ export function scanSourceForRunes(code: string, fileName = "source.ts"): RuneHi
 	const lines = code.split("\n");
 
 	function visit(node: ts.Node) {
-		if (ts.isIdentifier(node) && RUNE_RE.test(node.text)) {
+		if (ts.isIdentifier(node) && RUNE_NAMES.has(node.text)) {
 			const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
 			const lineText = lines[line]?.trim() ?? "";
 			hits.push({
@@ -181,6 +186,11 @@ describe("Svelte runes only appear in compiler-processed files", () => {
 			].join("\n");
 
 			expect(scanSourceForRunes(snippetModuleSource)).toEqual([]);
+		});
+
+		it("tolerates identifiers that merely contain a rune name", () => {
+			expect(scanSourceForRunes("const my$state = 1;")).toEqual([]);
+			expect(scanSourceForRunes("const data$derived = 2;")).toEqual([]);
 		});
 	});
 });
