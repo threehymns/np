@@ -77,6 +77,96 @@ export class SearchResultStream implements ISearchResultStream {
 }
 
 /**
+ * Compiles a SearchQuery into a RegExp with lookaround support,
+ * case-sensitivity flag, and whole-word boundaries.
+ * Throws SyntaxError on invalid regex.
+ */
+export function buildSearchRegex(query: SearchQuery): RegExp {
+	const pattern = query.pattern;
+	const isRegex = Boolean(query.isRegex ?? false);
+	const caseSensitive = Boolean(query.caseSensitive ?? false);
+	const wholeWord = Boolean(query.wholeWord ?? false);
+
+	let flags = 'g';
+	if (!caseSensitive) {
+		flags += 'i';
+	}
+
+	let source = pattern;
+	if (!isRegex) {
+		source = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	if (wholeWord) {
+		source = `(?<!\\w)(?:${source})(?!\\w)`;
+	}
+
+	return new RegExp(source, flags);
+}
+
+/**
+ * Converts a glob pattern string (e.g. "*.ts", "src/**", "tests/*.test.ts") into a RegExp.
+ */
+export function globToRegex(glob: string): RegExp {
+	let p = glob.trim();
+	if (!p) return /(?:)/;
+
+	// Normalize slashes
+	p = p.replace(/\\/g, '/');
+	// Strip leading ./ or /
+	p = p.replace(/^(\.\/|\/)/, '');
+
+	const hasSlash = p.includes('/');
+
+	let regexStr = '';
+	let i = 0;
+	while (i < p.length) {
+		const c = p[i];
+		if (c === '*' && p[i + 1] === '*') {
+			if (p[i + 2] === '/') {
+				regexStr += '(?:.+/)?';
+				i += 3;
+			} else {
+				regexStr += '.*';
+				i += 2;
+			}
+		} else if (c === '*') {
+			regexStr += '[^/]*';
+			i++;
+		} else if (c === '?') {
+			regexStr += '[^/]';
+			i++;
+		} else if ('./+()[]{}|^$'.includes(c)) {
+			regexStr += '\\' + c;
+			i++;
+		} else {
+			regexStr += c;
+			i++;
+		}
+	}
+
+	if (!hasSlash) {
+		return new RegExp(`(?:^|/)${regexStr}$`, 'i');
+	} else {
+		return new RegExp(`^${regexStr}$`, 'i');
+	}
+}
+
+/**
+ * Parses comma-separated or array glob inputs into RegExp array.
+ */
+export function parseGlobs(input?: string[] | string): RegExp[] {
+	if (!input) return [];
+	const rawList = Array.isArray(input)
+		? input.flatMap((s) => s.split(','))
+		: input.split(',');
+	return rawList
+		.map((g) => g.trim())
+		.filter((g) => g.length > 0)
+		.map((g) => globToRegex(g));
+}
+
+/**
  * Hand-rolled Zed-style TypeScript search engine behind the SearchBackend seam (ADR 0026).
  *
  * Characteristics:
@@ -85,7 +175,7 @@ export class SearchResultStream implements ISearchResultStream {
  * - Zed-style two-phase scan: cheap 8 KB sniff per file (binary check + substring check), full match only on hits.
  * - Respects .gitignore and skips node_modules/build output by default.
  * - Caps at 5,000 files / 10,000 matches with truncation notice.
- * - Literal matching only (v1).
+ * - Query options: regex (lookaround support), case-sensitive, whole-word, include/exclude globs.
  * - Streaming results out via AsyncIterable.
  */
 export class TypeScriptSearchEngine implements SearchBackend {
@@ -179,9 +269,21 @@ export class TypeScriptSearchEngine implements SearchBackend {
 		const maxMatches = options?.maxMatches ?? DEFAULT_MAX_MATCHES;
 		const contextLines = options?.contextLines ?? 1;
 
+		let searchRegex: RegExp | null = null;
+		if (pattern) {
+			try {
+				searchRegex = buildSearchRegex(query);
+			} catch {
+				searchRegex = null;
+			}
+		}
+
+		const includeRegexes = parseGlobs(query?.includeGlobs);
+		const excludeRegexes = parseGlobs(query?.excludeGlobs);
+
 		return new SearchResultStream(
 			async function* (this: TypeScriptSearchEngine, signal: AbortSignal, progress: SearchProgress) {
-				if (!pattern || !this.worktree) {
+				if (!pattern || !searchRegex || !this.worktree) {
 					return;
 				}
 
@@ -192,6 +294,14 @@ export class TypeScriptSearchEngine implements SearchBackend {
 				for (const file of files) {
 					if (signal.aborted) {
 						break;
+					}
+
+					// Globs filter the searched file set
+					if (includeRegexes.length > 0 && !includeRegexes.some((r) => r.test(file.relativePath))) {
+						continue;
+					}
+					if (excludeRegexes.length > 0 && excludeRegexes.some((r) => r.test(file.relativePath))) {
+						continue;
 					}
 
 					// Cap at 5,000 files
@@ -234,7 +344,8 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					}
 
 					// Cheap check: does file contain pattern?
-					if (!content.includes(pattern)) {
+					searchRegex.lastIndex = 0;
+					if (!searchRegex.test(content)) {
 						continue;
 					}
 
@@ -247,9 +358,17 @@ export class TypeScriptSearchEngine implements SearchBackend {
 						if (signal.aborted) break;
 
 						const lineText = lines[lineIdx];
-						let colIdx = 0;
+						searchRegex.lastIndex = 0;
+						let match: RegExpExecArray | null;
 
-						while ((colIdx = lineText.indexOf(pattern, colIdx)) !== -1) {
+						while ((match = searchRegex.exec(lineText)) !== null) {
+							if (match[0].length === 0) {
+								if (searchRegex.lastIndex <= match.index) {
+									searchRegex.lastIndex = match.index + 1;
+								}
+								continue;
+							}
+
 							// Check if matches cap would be reached
 							if (progress.totalMatches + fileMatches.length >= maxMatches) {
 								progress.truncated = true;
@@ -270,15 +389,17 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 							fileMatches.push({
 								line: lineIdx + 1,
-								column: colIdx + 1,
-								offset: charOffset + colIdx,
-								matchLength: pattern.length,
+								column: match.index + 1,
+								offset: charOffset + match.index,
+								matchLength: match[0].length,
 								lineText,
 								contextBefore,
 								contextAfter
 							});
 
-							colIdx += pattern.length;
+							if (progress.truncated) {
+								break;
+							}
 						}
 
 						charOffset += lineText.length + 1;

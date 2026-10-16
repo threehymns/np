@@ -6,9 +6,16 @@
 	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
-	const appState = useAppState();
+	interface Props {
+		tabId?: string;
+	}
 
-	let queryText = $state('');
+	let { tabId }: Props = $props();
+
+	const appState = useAppState();
+	const activeId = $derived(tabId ?? appState.workspace.activeTabId);
+	const session = $derived(appState.workspace.getSearchSession(activeId));
+
 	let fileResults = $state<FileSearchResult[]>([]);
 	let isSearching = $state(false);
 	let isTruncated = $state(false);
@@ -43,14 +50,37 @@
 		}, 150);
 	}
 
+	function toggleCaseSensitive() {
+		session.toggleCaseSensitive();
+		runSearch();
+	}
+
+	function toggleWholeWord() {
+		session.toggleWholeWord();
+		runSearch();
+	}
+
+	function toggleRegex() {
+		session.toggleRegex();
+		runSearch();
+	}
+
 	async function runSearch() {
 		if (currentAbortController) {
 			currentAbortController.abort();
 			currentAbortController = null;
 		}
 
-		const trimmed = queryText;
-		if (!trimmed) {
+		if (session.regexError) {
+			fileResults = [];
+			isSearching = false;
+			isTruncated = false;
+			truncationReason = undefined;
+			return;
+		}
+
+		const query = session.toQuery();
+		if (!query.pattern) {
 			fileResults = [];
 			isSearching = false;
 			isTruncated = false;
@@ -68,7 +98,7 @@
 
 		try {
 			const backend = appState.workspace.project.searchBackend;
-			const stream = backend.search({ pattern: trimmed }, { signal });
+			const stream = backend.search(query, { signal });
 
 			for await (const result of stream) {
 				if (signal.aborted) break;
@@ -112,11 +142,69 @@
 			<MagnifyingGlassIcon class="absolute left-2.5 size-4 text-muted-foreground pointer-events-none" />
 			<input
 				type="text"
-				bind:value={queryText}
+				bind:value={session.query}
 				oninput={handleInput}
 				placeholder="Search project (literal)..."
-				class="w-full bg-background border border-input rounded-md pl-9 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				class="w-full bg-background border border-input rounded-md pl-9 pr-24 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Search query"
+			/>
+			<div class="absolute right-1.5 flex items-center gap-0.5">
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.caseSensitive ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Match Case"
+					aria-pressed={session.caseSensitive}
+					title="Match Case"
+					onclick={toggleCaseSensitive}
+				>
+					Aa
+				</button>
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.wholeWord ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Match Whole Word"
+					aria-pressed={session.wholeWord}
+					title="Match Whole Word"
+					onclick={toggleWholeWord}
+				>
+					\b
+				</button>
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.isRegex ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Use Regular Expression"
+					aria-pressed={session.isRegex}
+					title="Use Regular Expression"
+					onclick={toggleRegex}
+				>
+					.*
+				</button>
+			</div>
+		</div>
+
+		{#if session.regexError}
+			<div class="text-xs text-destructive font-medium px-0.5 flex items-center gap-1" role="alert">
+				<span>{session.regexError}</span>
+			</div>
+		{/if}
+
+		<!-- File include and exclude globs -->
+		<div class="grid grid-cols-2 gap-2">
+			<input
+				type="text"
+				bind:value={session.includePattern}
+				oninput={handleInput}
+				placeholder="files to include (e.g. *.ts, src/**)"
+				aria-label="Files to include"
+				class="w-full bg-background border border-input rounded-md px-2.5 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			/>
+			<input
+				type="text"
+				bind:value={session.excludePattern}
+				oninput={handleInput}
+				placeholder="files to exclude (e.g. *.test.ts, build/**)"
+				aria-label="Files to exclude"
+				class="w-full bg-background border border-input rounded-md px-2.5 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 			/>
 		</div>
 
@@ -125,7 +213,7 @@
 			<div class="flex items-center gap-2">
 				{#if isSearching}
 					<span class="text-muted-foreground animate-pulse">Searching...</span>
-				{:else if !queryText}
+				{:else if !session.query}
 					<span class="text-muted-foreground">Type a query to search</span>
 				{:else if fileResults.length === 0}
 					<span class="text-muted-foreground">No results found</span>
@@ -248,8 +336,8 @@
 
 			{#snippet emptyState()}
 				<div class="flex-1 flex flex-col items-center justify-center p-8 text-muted-foreground text-sm">
-					{#if queryText.trim()}
-						<p>No results found for &ldquo;{queryText}&rdquo;</p>
+					{#if session.query.trim()}
+						<p>No results found for &ldquo;{session.query}&rdquo;</p>
 					{:else}
 						<p>Type a literal query above to search the project.</p>
 					{/if}

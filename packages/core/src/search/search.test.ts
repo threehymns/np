@@ -9,6 +9,10 @@ let WorktreeClass: typeof import("../project/worktree.svelte").Worktree;
 let TypeScriptSearchEngineClass: typeof import("./engine").TypeScriptSearchEngine;
 let WorkspaceClass: typeof import("../workspace.svelte").Workspace;
 let ProjectClass: typeof import("../project/project.svelte").Project;
+let SearchTabSessionClass: typeof import("./session.svelte").SearchTabSession;
+let buildSearchRegexFn: typeof import("./engine").buildSearchRegex;
+let globToRegexFn: typeof import("./engine").globToRegex;
+let parseGlobsFn: typeof import("./engine").parseGlobs;
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({
@@ -21,6 +25,12 @@ beforeAll(async () => {
 
 	const searchMod = await import("./engine");
 	TypeScriptSearchEngineClass = searchMod.TypeScriptSearchEngine;
+	buildSearchRegexFn = searchMod.buildSearchRegex;
+	globToRegexFn = searchMod.globToRegex;
+	parseGlobsFn = searchMod.parseGlobs;
+
+	const sessionMod = await import("./session.svelte");
+	SearchTabSessionClass = sessionMod.SearchTabSession;
 
 	const wsMod = await import("../workspace.svelte");
 	WorkspaceClass = wsMod.Workspace;
@@ -368,5 +378,280 @@ describe("Workspace and Project search tab integration", () => {
 		expect(serialized.length).toBe(1);
 		expect(serialized[0].virtualTabType).toBe("search");
 		expect(serialized[0].id).toBe("__project_search__");
+	});
+});
+
+describe("Query options: regex, case-sensitivity, whole-word, and globs (Issue #335)", () => {
+	it("regex toggle enables pattern search with lookaround support", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/calc.ts": "const width = 100px;\nconst height = 200px;\nconst name = 'test';",
+			"/test-project/src/lookaround.ts": "function calculateTotal() {}\nconst total = calculateTotal();\nconst subtotal = 10;\ncolor:#fff;\ncolor:red;\nmargin-padding: 0;\npadding: 10em;"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// Basic regex matching digits followed by px
+		const digitResults = await engine.search({ pattern: "\\d+px", isRegex: true }).all();
+		expect(digitResults.length).toBe(1);
+		expect(digitResults[0].filepath).toBe("src/calc.ts");
+		expect(digitResults[0].matches.length).toBe(2);
+		expect(digitResults[0].matches[0].lineText).toBe("const width = 100px;");
+		expect(digitResults[0].matches[0].matchLength).toBe(5); // "100px"
+		expect(digitResults[0].matches[1].lineText).toBe("const height = 200px;");
+		expect(digitResults[0].matches[1].matchLength).toBe(5); // "200px"
+
+		// Positive lookbehind: match identifier following function keyword
+		const lookbehindResults = await engine.search({
+			pattern: "(?<=function\\s+)[a-zA-Z0-9_]+",
+			isRegex: true
+		}).all();
+		expect(lookbehindResults.length).toBe(1);
+		expect(lookbehindResults[0].matches.length).toBe(1);
+		const lbMatch = lookbehindResults[0].matches[0];
+		expect(lbMatch.line).toBe(1);
+		expect(lbMatch.lineText.slice(lbMatch.column - 1, lbMatch.column - 1 + lbMatch.matchLength)).toBe("calculateTotal");
+
+		// Positive lookahead: match identifier immediately followed by opening parenthesis
+		const lookaheadResults = await engine.search({
+			pattern: "[a-zA-Z0-9_]+(?=\\s*\\(\\))",
+			isRegex: true
+		}).all();
+		expect(lookaheadResults.length).toBe(1);
+		expect(lookaheadResults[0].matches.length).toBe(2);
+		expect(lookaheadResults[0].matches[0].lineText.slice(
+			lookaheadResults[0].matches[0].column - 1,
+			lookaheadResults[0].matches[0].column - 1 + lookaheadResults[0].matches[0].matchLength
+		)).toBe("calculateTotal");
+
+		// Negative lookahead: match color: not followed by #
+		const negLookaheadResults = await engine.search({
+			pattern: "color:(?!#)",
+			isRegex: true
+		}).all();
+		expect(negLookaheadResults.length).toBe(1);
+		expect(negLookaheadResults[0].matches.length).toBe(1);
+		expect(negLookaheadResults[0].matches[0].lineText).toBe("color:red;");
+
+		// Negative lookbehind: match padding not preceded by hyphen
+		const negLookbehindResults = await engine.search({
+			pattern: "(?<!-)padding",
+			isRegex: true
+		}).all();
+		expect(negLookbehindResults.length).toBe(1);
+		expect(negLookbehindResults[0].matches.length).toBe(1);
+		expect(negLookbehindResults[0].matches[0].lineText).toBe("padding: 10em;");
+	});
+
+	it("invalid regex does not crash engine and yields 0 results", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/index.ts": "const foo = 'bar';"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// Invalid regex pattern: unclosed bracket
+		const stream = engine.search({ pattern: "[a-z", isRegex: true });
+		const results = await stream.all();
+		expect(results.length).toBe(0);
+
+		// buildSearchRegex throws SyntaxError for callers that validate regex
+		expect(() => buildSearchRegexFn({ pattern: "[a-z", isRegex: true })).toThrow();
+	});
+
+	it("case-sensitive toggle filters results correctly", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/case.ts": "const FooBar = 1;\nconst foobar = 2;\nconst FOOBAR = 3;"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// Case-insensitive (default): finds all 3
+		const insensResults = await engine.search({ pattern: "FooBar", caseSensitive: false }).all();
+		expect(insensResults.length).toBe(1);
+		expect(insensResults[0].matches.length).toBe(3);
+
+		// Case-sensitive: finds only FooBar
+		const sensResults = await engine.search({ pattern: "FooBar", caseSensitive: true }).all();
+		expect(sensResults.length).toBe(1);
+		expect(sensResults[0].matches.length).toBe(1);
+		expect(sensResults[0].matches[0].lineText).toBe("const FooBar = 1;");
+	});
+
+	it("whole-word toggle filters results correctly", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/word.ts": "const target = 1;\nconst subtarget = 2;\nconst targetWord = 3;\nfn(target);"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// Whole word OFF: matches all 4 lines
+		const partialResults = await engine.search({ pattern: "target", wholeWord: false }).all();
+		expect(partialResults.length).toBe(1);
+		expect(partialResults[0].matches.length).toBe(4);
+
+		// Whole word ON: matches only "const target = 1;" and "fn(target);"
+		const wholeResults = await engine.search({ pattern: "target", wholeWord: true }).all();
+		expect(wholeResults.length).toBe(1);
+		expect(wholeResults[0].matches.length).toBe(2);
+		expect(wholeResults[0].matches[0].line).toBe(1);
+		expect(wholeResults[0].matches[1].line).toBe(4);
+	});
+
+	it("include/exclude globs narrow the searched file set", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/app.ts": "const token = 'xyz';",
+			"/test-project/src/app.test.ts": "const token = 'xyz';",
+			"/test-project/src/utils.ts": "const token = 'xyz';",
+			"/test-project/docs/readme.md": "token documentation",
+			"/test-project/package.json": '{"token": "xyz"}'
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// No globs: matches all 5 files
+		const allResults = await engine.search({ pattern: "token" }).all();
+		expect(allResults.length).toBe(5);
+
+		// Include *.ts only: matches 3 ts files
+		const tsOnly = await engine.search({
+			pattern: "token",
+			includeGlobs: ["*.ts"]
+		}).all();
+		const tsPaths = tsOnly.map((r) => r.filepath);
+		expect(tsPaths.sort()).toEqual(["src/app.test.ts", "src/app.ts", "src/utils.ts"].sort());
+
+		// Include *.ts but exclude *.test.ts: matches only app.ts and utils.ts
+		const noTests = await engine.search({
+			pattern: "token",
+			includeGlobs: ["*.ts"],
+			excludeGlobs: ["*.test.ts"]
+		}).all();
+		const noTestPaths = noTests.map((r) => r.filepath);
+		expect(noTestPaths.sort()).toEqual(["src/app.ts", "src/utils.ts"].sort());
+
+		// Comma-separated globs in includeGlobs string
+		const multiInclude = await engine.search({
+			pattern: "token",
+			includeGlobs: "*.md, *.json"
+		}).all();
+		const multiPaths = multiInclude.map((r) => r.filepath);
+		expect(multiPaths.sort()).toEqual(["docs/readme.md", "package.json"].sort());
+	});
+});
+
+describe("Search tab session and toggle persistence (Issue #335)", () => {
+	it("SearchTabSession stores toggle state and exposes regex validation error", () => {
+		const session = new SearchTabSessionClass();
+		expect(session.query).toBe("");
+		expect(session.isRegex).toBe(false);
+		expect(session.caseSensitive).toBe(false);
+		expect(session.wholeWord).toBe(false);
+		expect(session.includePattern).toBe("");
+		expect(session.excludePattern).toBe("");
+		expect(session.regexError).toBeNull();
+
+		// Invalid regex returns error message when isRegex is true
+		session.query = "[invalid";
+		expect(session.regexError).toBeNull(); // isRegex is false, so no error
+		session.toggleRegex();
+		expect(session.isRegex).toBe(true);
+		expect(session.regexError).not.toBeNull();
+		expect(typeof session.regexError).toBe("string");
+
+		// Valid regex clears error
+		session.query = "[a-z]+";
+		expect(session.regexError).toBeNull();
+
+		// Toggles work
+		session.toggleCaseSensitive();
+		expect(session.caseSensitive).toBe(true);
+		session.toggleWholeWord();
+		expect(session.wholeWord).toBe(true);
+
+		const query = session.toQuery();
+		expect(query.pattern).toBe("[a-z]+");
+		expect(query.isRegex).toBe(true);
+		expect(query.caseSensitive).toBe(true);
+		expect(query.wholeWord).toBe(true);
+	});
+
+	it("toggle state persists per search tab while open", async () => {
+		const storage = createMockStorage();
+		const ws = new WorkspaceClass(storage as any, () => ({} as any), {
+			loadOpenFiles: mock(async () => []),
+			saveOpenFiles: mock(async () => {}),
+			loadActiveDocumentId: mock(async () => null),
+			saveActiveDocumentId: mock(async () => {})
+		} as any);
+
+		const searchTabId = ws.openSearchTab("initial query");
+		const session = ws.getSearchSession(searchTabId);
+		expect(session.query).toBe("initial query");
+		expect(session.isRegex).toBe(false);
+
+		// Change toggle options on this tab
+		session.isRegex = true;
+		session.caseSensitive = true;
+		session.wholeWord = true;
+		session.includePattern = "*.ts";
+		session.excludePattern = "*.test.ts";
+
+		// Open a document tab and verify activeTabId switches away
+		const doc = await ws.newFile();
+		expect(doc).toBeDefined();
+		expect(ws.activeTabId).toBe(doc!.id);
+
+		// Switch back to search tab: state must persist
+		ws.activeTabId = searchTabId;
+		const restoredSession = ws.getSearchSession(searchTabId);
+		expect(restoredSession.query).toBe("initial query");
+		expect(restoredSession.isRegex).toBe(true);
+		expect(restoredSession.caseSensitive).toBe(true);
+		expect(restoredSession.wholeWord).toBe(true);
+		expect(restoredSession.includePattern).toBe("*.ts");
+		expect(restoredSession.excludePattern).toBe("*.test.ts");
+
+		// Closing the tab deletes its session
+		ws.closeTab(searchTabId);
+		const newSessionAfterClose = ws.getSearchSession(searchTabId);
+		expect(newSessionAfterClose.isRegex).toBe(false); // Clean new state
+	});
+
+	it("preserves search toggle state in session serialization", () => {
+		const storage = createMockStorage();
+		const ws = new WorkspaceClass(storage as any, () => ({} as any), {
+			loadOpenFiles: mock(async () => []),
+			saveOpenFiles: mock(async () => {}),
+			loadActiveDocumentId: mock(async () => null),
+			saveActiveDocumentId: mock(async () => {})
+		} as any);
+
+		const tabId = ws.openSearchTab("findSomething");
+		const session = ws.getSearchSession(tabId);
+		session.isRegex = true;
+		session.caseSensitive = true;
+		session.wholeWord = true;
+		session.includePattern = "src/**";
+		session.excludePattern = "dist/**";
+
+		const serialized = (ws as any).serializeTabs();
+		expect(serialized.length).toBe(1);
+		expect(serialized[0].virtualTabType).toBe("search");
+		expect(serialized[0].searchQuery).toBe("findSomething");
+		expect(serialized[0].searchIsRegex).toBe(true);
+		expect(serialized[0].searchCaseSensitive).toBe(true);
+		expect(serialized[0].searchWholeWord).toBe(true);
+		expect(serialized[0].searchIncludePattern).toBe("src/**");
+		expect(serialized[0].searchExcludePattern).toBe("dist/**");
 	});
 });

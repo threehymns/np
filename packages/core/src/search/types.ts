@@ -1,8 +1,18 @@
 import type { FileOrigin } from '../storage';
 
 export interface SearchQuery {
-	/** Literal query string to search for */
+	/** Query pattern to search for */
 	pattern: string;
+	/** Whether the pattern is a regular expression */
+	isRegex?: boolean;
+	/** Whether the search is case-sensitive */
+	caseSensitive?: boolean;
+	/** Match whole words only */
+	wholeWord?: boolean;
+	/** File include globs */
+	includeGlobs?: string[] | string;
+	/** File exclude globs */
+	excludeGlobs?: string[] | string;
 }
 
 export interface SearchMatchContextLine {

@@ -29,6 +29,15 @@ export interface SerializedDocument {
 	 * Whether the file was deleted on disk while the tab remained open.
 	 */
 	deletedOnDisk?: boolean;
+	/**
+	 * For search tabs: persisted query and toggle options.
+	 */
+	searchQuery?: string;
+	searchIsRegex?: boolean;
+	searchCaseSensitive?: boolean;
+	searchWholeWord?: boolean;
+	searchIncludePattern?: string;
+	searchExcludePattern?: string;
 }
 
 /**

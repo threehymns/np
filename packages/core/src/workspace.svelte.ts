@@ -9,11 +9,13 @@ import { Project } from './project/project.svelte';
 import type { RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
+import { SearchTabSession } from './search';
 
 export interface WorkspaceTab {
 	id: string;
 	type: 'document' | 'diff' | 'search';
 	pluginId?: string;
+	searchSession?: SearchTabSession;
 }
 
 export class Workspace {
@@ -203,10 +205,21 @@ export class Workspace {
 				return serialized;
 			}
 			if (tab.type === 'search') {
+				const session = tab.searchSession ?? this.searchSessions.get(tab.id);
 				return {
 					id: tab.id,
 					origin: null,
-					virtualTabType: 'search'
+					virtualTabType: 'search',
+					...(session
+						? {
+								searchQuery: session.query,
+								searchIsRegex: session.isRegex,
+								searchCaseSensitive: session.caseSensitive,
+								searchWholeWord: session.wholeWord,
+								searchIncludePattern: session.includePattern,
+								searchExcludePattern: session.excludePattern
+							}
+						: {})
 				};
 			}
 			const doc = this.documents.find(d => d.id === tab.id);
@@ -445,14 +458,39 @@ export class Workspace {
 		return newDoc;
 	}
 
-	openSearchTab(_query?: string): string {
+	private searchSessions = new Map<string, SearchTabSession>();
+
+	getSearchSession(tabId: string): SearchTabSession {
+		let session = this.searchSessions.get(tabId);
+		if (!session) {
+			const tab = this.tabs.find(t => t.id === tabId);
+			if (tab?.searchSession) {
+				session = tab.searchSession;
+			} else {
+				session = new SearchTabSession();
+			}
+			this.searchSessions.set(tabId, session);
+			if (tab) {
+				tab.searchSession = session;
+			}
+		}
+		return session;
+	}
+
+	openSearchTab(query?: string): string {
 		const SEARCH_TAB_ID = '__project_search__';
 		const existing = this.tabs.find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
 		if (existing) {
 			this.activeTabId = existing.id;
+			if (query !== undefined) {
+				const session = this.getSearchSession(existing.id);
+				session.query = query;
+			}
 			return existing.id;
 		}
-		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search' });
+		const session = new SearchTabSession({ query: query ?? '' });
+		this.searchSessions.set(SEARCH_TAB_ID, session);
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search', searchSession: session });
 		this.activeTabId = SEARCH_TAB_ID;
 		return SEARCH_TAB_ID;
 	}
@@ -615,6 +653,8 @@ export class Workspace {
 			if (docIndex !== -1) {
 				this.documents.splice(docIndex, 1);
 			}
+		} else if (tab.type === 'search') {
+			this.searchSessions.delete(id);
 		}
 
 		this.tabs.splice(tabIndex, 1);
@@ -795,9 +835,19 @@ export class Workspace {
 							continue;
 						}
 						if (serialized.virtualTabType === 'search') {
+							const session = new SearchTabSession({
+								query: serialized.searchQuery ?? '',
+								isRegex: serialized.searchIsRegex ?? false,
+								caseSensitive: serialized.searchCaseSensitive ?? false,
+								wholeWord: serialized.searchWholeWord ?? false,
+								includePattern: serialized.searchIncludePattern ?? '',
+								excludePattern: serialized.searchExcludePattern ?? ''
+							});
+							this.searchSessions.set(serialized.id, session);
 							restoredTabs.push({
 								id: serialized.id,
-								type: 'search'
+								type: 'search',
+								searchSession: session
 							});
 							continue;
 						}

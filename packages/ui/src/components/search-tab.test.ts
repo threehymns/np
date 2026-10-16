@@ -53,3 +53,32 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 		expect(globalBlock!.bindings["cmd+shift+f"]).toBe("edit.findInFiles");
 	});
 });
+
+describe("Search tab full query bar contract and template audit (Issue #335)", () => {
+	it("renders case-sensitive, whole-word, and regex toggle buttons with accessible aria labels", () => {
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Match Case"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Match Whole Word"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Use Regular Expression"');
+		expect(SEARCH_TAB_SRC).toContain("toggleCaseSensitive");
+		expect(SEARCH_TAB_SRC).toContain("toggleWholeWord");
+		expect(SEARCH_TAB_SRC).toContain("toggleRegex");
+	});
+
+	it("renders file include and exclude glob inputs", () => {
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Files to include"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Files to exclude"');
+		expect(SEARCH_TAB_SRC).toContain("session.includePattern");
+		expect(SEARCH_TAB_SRC).toContain("session.excludePattern");
+	});
+
+	it("renders inline error on invalid regex with role=alert", () => {
+		expect(SEARCH_TAB_SRC).toContain("session.regexError");
+		expect(SEARCH_TAB_SRC).toContain('role="alert"');
+	});
+
+	it("wires search tab state to workspace session for tab-open persistence", () => {
+		expect(SEARCH_TAB_SRC).toContain("appState.workspace.getSearchSession");
+		expect(SEARCH_TAB_SRC).toContain("session.query");
+	});
+});
+
