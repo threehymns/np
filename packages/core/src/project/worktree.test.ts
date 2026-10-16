@@ -116,6 +116,25 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(names).not.toContain("temp");
 	});
 
+	it("does not publish a snapshot when scanning a different root", async () => {
+		const storage = createMockStorage({
+			"/other-project/app.ts": "code"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		const nodes = await wt.scan({
+			scheme: "file",
+			path: "/other-project",
+			name: "other-project"
+		});
+
+		// Scan still returns the built nodes, but they are not published
+		// under this worktree's root label.
+		expect(nodes.length).toBe(1);
+		expect(wt.version).toBe(0);
+		expect(wt.entries).toEqual([]);
+	});
+
 	it("filters node_modules, .git, and hidden files (except .gitignore)", async () => {
 		const storage = createMockStorage({
 			"/test-project/node_modules/pkg/index.js": "",
