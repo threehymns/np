@@ -118,9 +118,17 @@ function sentMessages(process: { written(): string[] }): Record<string, unknown>
  * not leak a pending waiter — and asserts on the request rather than on anything
  * internal, because what the server receives is the whole of the claim.
  */
-async function handshakeParams(process: ReturnType<typeof fakeProcess>): Promise<Record<string, unknown>> {
+async function handshakeParams(
+	process: ReturnType<typeof fakeProcess>,
+	options?: Partial<import('./client').LspClientOptions>
+): Promise<Record<string, unknown>> {
 	const { LspClient } = await import('./client');
-	const client = new LspClient({ process, server: 'typescript@/repo', logs: new LspLogStore() });
+	const client = new LspClient({
+		process,
+		server: 'typescript@/repo',
+		logs: new LspLogStore(),
+		...options
+	});
 	const settled = client.initialize({ rootUri: 'file:///repo', capabilities: {} });
 	const sent = () => sentMessages(process).find((m) => m.method === 'initialize');
 	// Polled rather than a fixed number of microtasks: a transport that names its
@@ -274,5 +282,39 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		// rather than an omission — and a missing field is not. A known server pid
 		// must not stand in for an unknown parent.
 		expect((await handshakeParams(fakeProcess({ pid: 4242, parentPid: undefined }))).processId).toBeNull();
+	});
+
+	it('advertises descriptor-configured capabilities in initialize', async () => {
+		const fixtureDescriptor: import('../lsp-descriptors').LspDescriptorContribution = {
+			id: 'fixture-server',
+			command: 'fixture-server',
+			args: ['--stdio'],
+			rootMarkers: ['fixture.json'],
+			languages: ['Fixture'],
+			capabilities: {
+				textDocument: {
+					synchronization: {
+						dynamicRegistration: true,
+						willSave: true
+					}
+				},
+				textDocumentSync: 2
+			}
+		};
+
+		const params = await handshakeParams(fakeProcess(), {
+			server: 'fixture-server@/repo',
+			capabilities: fixtureDescriptor.capabilities
+		});
+
+		const capabilities = params.capabilities as Record<string, unknown>;
+		expect(capabilities.textDocumentSync).toBe(2);
+
+		const textDocument = capabilities.textDocument as Record<string, unknown>;
+		const synchronization = textDocument.synchronization as Record<string, unknown>;
+		expect(synchronization.dynamicRegistration).toBe(true);
+		expect(synchronization.willSave).toBe(true);
+		expect(synchronization.didSave).toBe(false);
+		expect(textDocument.completion).toBeDefined();
 	});
 });

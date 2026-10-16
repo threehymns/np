@@ -80,6 +80,7 @@ describe('LSP descriptor interface (#264)', () => {
 			package: '@vtsls/language-server',
 			binary: 'bin/vtsls.js'
 		});
+		expect(descriptor.capabilities).toEqual(LSP_DESCRIPTORS[0].capabilities);
 
 		await host.deactivate(lspRegistration.manifest.id);
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
