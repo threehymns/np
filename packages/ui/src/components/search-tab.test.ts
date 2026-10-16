@@ -253,6 +253,11 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		expect(SEARCH_TAB_SRC).toContain("Refine your query");
 	});
 
+	it("Enter does not run search during IME composition", () => {
+		expect(SEARCH_TAB_SRC).toContain("e.key === 'Enter'");
+		expect(SEARCH_TAB_SRC).toContain("!e.isComposing");
+	});
+
 	it("keybinding cmd+shift+f is registered without duplication and maps to edit.findInFiles", () => {
 		const editorBindings = defaultKeymap.find((b) => b.context === "editor")?.bindings ?? {};
 		const globalBindings = defaultKeymap.find((b) => !b.context)?.bindings ?? {};
