@@ -29,6 +29,7 @@ export class Workspace {
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
+	searchTabFocusNonce = $state<number>(0);
 
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
@@ -447,6 +448,7 @@ export class Workspace {
 
 	openSearchTab(_query?: string): string {
 		const SEARCH_TAB_ID = '__project_search__';
+		this.searchTabFocusNonce++;
 		const existing = this.tabs.find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
 		if (existing) {
 			this.activeTabId = existing.id;
