@@ -84,17 +84,13 @@ export class Project {
 			this.worktrees[0]?.dispose();
 			this.worktrees = [];
 			this.projectTree.attachToWorktree(null);
-			if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
-				(this._searchBackend as any).attachToWorktree(null);
-			}
 			return;
 		}
 		const current = this.worktrees[0];
 		if (current && current.root.scheme === origin.scheme && current.root.path === origin.path) {
 			return;
 		}
-		current?.dispose();
-		const strategy: WorktreeSnapshotStrategy = this.snapshotStrategyFactory
+		const strategy = this.snapshotStrategyFactory
 			? this.snapshotStrategyFactory(origin, this.storage)
 			: new PolledSnapshotStrategy();
 		const wt = new Worktree(origin, {
@@ -103,10 +99,6 @@ export class Project {
 		});
 		this.worktrees = [wt];
 		this.projectTree.attachToWorktree(wt);
-		void strategy.start?.(wt);
-		if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
-			(this._searchBackend as any).attachToWorktree(wt);
-		}
 	}
 
 	get worktree(): Worktree | null {
