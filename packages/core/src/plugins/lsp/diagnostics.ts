@@ -57,6 +57,14 @@ export interface LspPublishDiagnostics {
 	readonly diagnostics: readonly LspDiagnostic[];
 }
 
+export type LspDiagnosticSource = 'push' | 'pull';
+
+export interface LspPulledDiagnostics {
+	readonly uri: string;
+	readonly server: string;
+	readonly diagnostics: readonly LspDiagnostic[];
+}
+
 /** Protocol severity codes. Anything outside this is left to the client. */
 const SEVERITY_BY_CODE: Record<number, LspDiagnosticSeverity> = {
 	1: 'error',
@@ -103,7 +111,11 @@ export function parsePublishDiagnostics(
 	return { uri: payload.uri, server, diagnostics };
 }
 
-function parseDiagnostic(server: string, entry: unknown): LspDiagnostic | null {
+/**
+ * Reads a single diagnostic object from a protocol payload.
+ * Drops malformed entries with invalid ranges or non-finite positions.
+ */
+export function parseDiagnostic(server: string, entry: unknown): LspDiagnostic | null {
 	const raw = entry as
 		| {
 				range?: unknown;
@@ -153,8 +165,13 @@ function codeText(value: unknown): string | null {
 	return null;
 }
 
+interface StoreDiagnosticSlice {
+	readonly diagnostics: readonly LspDiagnostic[];
+	readonly source: LspDiagnosticSource;
+}
+
 export class LspDiagnosticsStore {
-	private readonly byUri = new Map<string, Map<string, readonly LspDiagnostic[]>>();
+	private readonly byUri = new Map<string, Map<string, StoreDiagnosticSlice>>();
 	private readonly listeners = new Set<() => void>();
 	private sequence = 0;
 
@@ -165,6 +182,8 @@ export class LspDiagnosticsStore {
 	 */
 	publish(report: LspPublishDiagnostics): void {
 		const existing = this.byUri.get(report.uri);
+		const current = existing?.get(report.server);
+		if (current?.source === 'pull') return;
 		if (report.diagnostics.length === 0) {
 			// Nothing filed and nothing to clear: not a change, so a view that
 			// re-reads on every notification is not woken for a file no server has
@@ -174,8 +193,27 @@ export class LspDiagnosticsStore {
 			this.changed();
 			return;
 		}
-		const servers = existing ?? new Map<string, readonly LspDiagnostic[]>();
-		servers.set(report.server, report.diagnostics);
+		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
+		servers.set(report.server, { diagnostics: report.diagnostics, source: 'push' });
+		this.byUri.set(report.uri, servers);
+		this.changed();
+	}
+
+	/**
+	 * Files diagnostics obtained via document pull (textDocument/diagnostic).
+	 * Fresh pull reports overwrite existing push or pull entries outright.
+	 * An empty diagnostics list clears that server's slice with clean-file semantics.
+	 */
+	pull(report: LspPulledDiagnostics): void {
+		const existing = this.byUri.get(report.uri);
+		if (report.diagnostics.length === 0) {
+			if (!existing?.delete(report.server)) return;
+			if (existing.size === 0) this.byUri.delete(report.uri);
+			this.changed();
+			return;
+		}
+		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
+		servers.set(report.server, { diagnostics: report.diagnostics, source: 'pull' });
 		this.byUri.set(report.uri, servers);
 		this.changed();
 	}
@@ -189,7 +227,7 @@ export class LspDiagnosticsStore {
 		const servers = this.byUri.get(uri);
 		if (!servers) return [];
 		const all: LspDiagnostic[] = [];
-		for (const diagnostics of servers.values()) all.push(...diagnostics);
+		for (const slice of servers.values()) all.push(...slice.diagnostics);
 		return all;
 	}
 
