@@ -179,22 +179,34 @@ export class FileExcerptMap {
 	}
 
 	/**
-	 * Maps an offset in the excerpt buffer to the 0-based character offset in the source file.
-	 * Returns null if the offset falls into a separator between excerpts or out of bounds.
+	 * Finds the excerpt segment containing a buffer offset, or null when the
+	 * offset falls into a separator between excerpts or out of bounds.
 	 */
-	excerptOffsetToFileOffset(bufferOffset: number): number | null {
+	private segmentAtBufferOffset(bufferOffset: number): ExcerptSegment | null {
 		if (bufferOffset < 0 || bufferOffset > this.bufferText.length) {
 			return null;
 		}
 
 		for (const segment of this.excerpts) {
 			if (bufferOffset >= segment.bufferStart && bufferOffset <= segment.bufferEnd) {
-				const delta = bufferOffset - segment.bufferStart;
-				return segment.fileStart + delta;
+				return segment;
 			}
 		}
 
 		return null;
+	}
+
+	/**
+	 * Maps an offset in the excerpt buffer to the 0-based character offset in the source file.
+	 * Returns null if the offset falls into a separator between excerpts or out of bounds.
+	 */
+	excerptOffsetToFileOffset(bufferOffset: number): number | null {
+		const segment = this.segmentAtBufferOffset(bufferOffset);
+		if (!segment) {
+			return null;
+		}
+		const delta = bufferOffset - segment.bufferStart;
+		return segment.fileStart + delta;
 	}
 
 	/**
@@ -218,14 +230,24 @@ export class FileExcerptMap {
 
 	/**
 	 * Maps a single edit { from, to, insert } from excerpt buffer coordinates to file coordinates.
+	 * Returns null when either endpoint falls in a separator between excerpts or when the
+	 * edit spans more than one segment: mapping the endpoints independently would silently
+	 * delete file text that is hidden between the excerpts.
 	 */
 	mapExcerptEditToFileEdit(edit: SingleEdit): SingleEdit | null {
-		const fileFrom = this.excerptOffsetToFileOffset(edit.from);
-		const fileTo = this.excerptOffsetToFileOffset(edit.to);
-		if (fileFrom === null || fileTo === null) {
+		const segment = this.segmentAtBufferOffset(edit.from);
+		if (
+			!segment ||
+			edit.to < segment.bufferStart ||
+			edit.to > segment.bufferEnd
+		) {
 			return null;
 		}
-		return { from: fileFrom, to: fileTo, insert: edit.insert };
+		return {
+			from: segment.fileStart + (edit.from - segment.bufferStart),
+			to: segment.fileStart + (edit.to - segment.bufferStart),
+			insert: edit.insert
+		};
 	}
 
 	/**
@@ -383,6 +405,17 @@ export function applyEditsToDocumentSession(
 			});
 		}
 	} else {
+		baseState = EditorState.create({
+			doc: doc.content,
+			extensions: [history()]
+		});
+	}
+
+	// The document content is the source of truth. A stale editorState — for
+	// example the main editor's state from before an external content update —
+	// would misalign every edit offset, so rebuild from the current content.
+	// The history extension is kept so per-file undo still works.
+	if (baseState.doc.toString() !== doc.content) {
 		baseState = EditorState.create({
 			doc: doc.content,
 			extensions: [history()]
