@@ -355,6 +355,7 @@ export class ProjectTree {
 			const wt = this.worktree;
 			if (wt) {
 				await wt.scan(rootOrigin, {
+					recursive: true,
 					isExpanded: (path) => this.expandedPaths.has(path)
 				});
 				if (
