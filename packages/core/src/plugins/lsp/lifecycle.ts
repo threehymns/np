@@ -30,6 +30,8 @@ import { describeError } from './describe-error';
 import { lspServerKey, LspTargetResolver, type LspTargetInput } from './targets';
 import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
 import { resolveLspPlatform } from './platform';
+import { Effect, Exit, Scope } from 'effect';
+import { DiagnosticPullCoordinator, parseDiagnosticPullSupport } from './diagnostic-pull';
 
 export { lspServerKey };
 export type { LspServerState, LspServerStatus };
@@ -170,6 +172,11 @@ interface RunningServer {
 	 * completionProvider.triggerCharacters. Empty until the handshake.
 	 */
 	triggerCharacters: readonly string[];
+	/**
+	 * Read from the handshake, like triggerCharacters: the server names its own
+	 * diagnosticProvider. False until the handshake.
+	 */
+	pullSupported: boolean;
 }
 
 /**
@@ -285,6 +292,8 @@ export class LspRuntime
 	 * restart re-resolves rather than serving stale docs.
 	 */
 	private readonly resolvedItems = new Map<string, unknown>();
+	private readonly pullScope: Scope.Closeable | null;
+	private readonly pullCoordinator: DiagnosticPullCoordinator | null;
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -293,6 +302,30 @@ export class LspRuntime
 			platform: () => this.resolvePlatform()
 		});
 		this.ensureSettingsSubscription();
+		if (options.diagnostics) {
+			this.pullScope = Effect.runSync(Scope.make());
+			const store = options.diagnostics;
+			this.pullCoordinator = new DiagnosticPullCoordinator({
+				store,
+				request: (server, uri, previousResultId) =>
+					Effect.tryPromise({
+						try: () => {
+							const client = this.servers.get(server)?.client;
+							if (!client) throw new Error(`Server "${server}" is not running, so its diagnostics cannot be pulled.`);
+							return client.request('textDocument/diagnostic', {
+								textDocument: { uri },
+								// identifier is omitted: it comes from dynamic registration
+								// tracking, which this ticket does not build.
+								...(previousResultId !== undefined ? { previousResultId } : {})
+							});
+						},
+						catch: (error) => error
+					})
+			});
+		} else {
+			this.pullScope = null;
+			this.pullCoordinator = null;
+		}
 	}
 
 	/**
@@ -742,6 +775,7 @@ export class LspRuntime
 				textDocument: { uri, version: existing.version },
 				contentChanges: [{ text: input.content }]
 			});
+			this.pullAfterEdit(uri, entry.server);
 			return;
 		}
 		const document: OpenDocument = {
@@ -881,6 +915,9 @@ export class LspRuntime
 		// Set first: a document event that lands mid-teardown must not start a
 		// server the disable is in the middle of stopping.
 		this.disposed = true;
+		// Closed first: arming a pull after this point would fork into a dead scope,
+		// and in-flight pulls must not outlive the runtime that owns their client.
+		if (this.pullScope) await Effect.runPromise(Scope.close(this.pullScope, Exit.void));
 		// Released before the slow part, and released at all: a settings change that
 		// arrives after a disable has nothing left to act on, and holding the
 		// subscription would keep a disposed runtime reachable for the rest of the
@@ -896,6 +933,23 @@ export class LspRuntime
 		this.resolvedItems.clear();
 		this.targets.clear();
 		this.statusChanged();
+	}
+
+	/**
+	 * Arms the debounced pull for an edited document on the runtime's own scope.
+	 * Guarded three ways: no coordinator without a diagnostics store, no pull
+	 * for a server that did not advertise diagnosticProvider, and no pull for a
+	 * server that is not running (its restart re-arms through a later edit).
+	 * Disposing the runtime closes the scope, which interrupts any pending or
+	 * in-flight pull.
+	 */
+	private pullAfterEdit(uri: string, server: string): void {
+		const coordinator = this.pullCoordinator;
+		const scope = this.pullScope;
+		if (!coordinator || !scope) return;
+		const entry = this.servers.get(server);
+		if (!entry || entry.state !== 'running' || !entry.pullSupported) return;
+		Effect.runFork(coordinator.notifyEdit(uri, server).pipe(Effect.provideService(Scope.Scope, scope)));
 	}
 
 	private resolvePlatform(): LspPlatform | undefined {
@@ -929,7 +983,8 @@ export class LspRuntime
 			marker,
 			state: 'starting',
 			stoppedByUser: false,
-			triggerCharacters: []
+			triggerCharacters: [],
+			pullSupported: false
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -984,6 +1039,9 @@ export class LspRuntime
 			// Live from the handshake, never descriptor data: the server names
 			// its own trigger characters and the coordinator channel carries them.
 			entry.triggerCharacters = parseTriggerCharacters(initResult);
+			// Live from the handshake, like triggerCharacters: the server names
+			// its own diagnosticProvider.
+			entry.pullSupported = parseDiagnosticPullSupport(initResult);
 			entry.state = 'running';
 			this.statusChanged();
 			this.log(
