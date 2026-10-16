@@ -273,17 +273,23 @@
 					EditorView.updateListener.of((update) => {
 						if (update.docChanged) {
 							update.transactions.forEach((tr) => {
+								// iterChanges reports pre-transaction coordinates, so
+								// handle the latest change first: each edit then still
+								// refers to the map's current coordinate space.
+								const changes: { from: number; to: number; insert: string }[] = [];
 								tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-									const excerptEdit = {
-										from: fromA,
-										to: toA,
-										insert: inserted.toString()
-									};
+									changes.push({ from: fromA, to: toA, insert: inserted.toString() });
+								});
+								changes.sort((a, b) => b.from - a.from);
+								for (const excerptEdit of changes) {
 									const fileEdit = excerptMap.mapExcerptEditToFileEdit(excerptEdit);
 									if (fileEdit) {
 										void applyUserEditToFile(fileResult, fileEdit);
 									}
-								});
+									// Keep segment bounds in sync so later edits map
+									// through current bounds, not search-time ones.
+									excerptMap.applyExcerptEdit(excerptEdit, fileEdit);
+								}
 							});
 						}
 					})

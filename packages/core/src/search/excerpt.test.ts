@@ -524,3 +524,184 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		}
 	});
 });
+
+describe("Excerpt map stays in sync after direct edits (Issue #336)", () => {
+	const twoExcerptOrigin: FileOrigin = {
+		scheme: "file",
+		path: "/test-project/src/two.ts",
+		name: "two.ts"
+	};
+
+	function makeTwoExcerptMap() {
+		const fileContent = [
+			"const alpha = 'findme';",
+			"filler one",
+			"filler two",
+			"filler three",
+			"filler four",
+			"filler five",
+			"filler six",
+			"const beta = 'findme';",
+			"filler eight"
+		].join("\n");
+		const offset1 = fileContent.indexOf("findme");
+		const offset2 = fileContent.indexOf("findme", offset1 + 1);
+		const match1: SearchMatch = {
+			line: 1,
+			column: 16,
+			offset: offset1,
+			matchLength: 6,
+			lineText: "const alpha = 'findme';",
+			contextBefore: [],
+			contextAfter: [{ line: 2, text: "filler one" }]
+		};
+		const match2: SearchMatch = {
+			line: 8,
+			column: 15,
+			offset: offset2,
+			matchLength: 6,
+			lineText: "const beta = 'findme';",
+			contextBefore: [{ line: 7, text: "filler six" }],
+			contextAfter: [{ line: 9, text: "filler eight" }]
+		};
+		const map = new FileExcerptMap("src/two.ts", twoExcerptOrigin, fileContent, [match1, match2], {
+			contextLines: 1
+		});
+		// The two matches are far enough apart to form separate excerpts.
+		expect(map.excerpts.length).toBe(2);
+		return { map, fileContent, match1, match2, offset1, offset2 };
+	}
+
+	it("maps later excerpts through shifted bounds after an insertion", () => {
+		const { map, fileContent, match1, match2, offset1, offset2 } = makeTwoExcerptMap();
+
+		// First edit: insert "XYZ" right before "findme" in the first excerpt.
+		const buf1 = map.fileOffsetToExcerptOffset(offset1);
+		expect(buf1).not.toBeNull();
+		const excerptEdit1 = { from: buf1!, to: buf1!, insert: "XYZ" };
+		const fileEdit1 = map.mapExcerptEditToFileEdit(excerptEdit1);
+		expect(fileEdit1).toEqual({ from: offset1, to: offset1, insert: "XYZ" });
+		map.applyExcerptEdit(excerptEdit1, fileEdit1);
+
+		// The second match moved +3 in both buffer and file.
+		const shiftedOffset2 = offset2 + 3;
+		const buf2 = map.fileOffsetToExcerptOffset(shiftedOffset2);
+		expect(buf2).not.toBeNull();
+		expect(map.bufferText.slice(buf2!, buf2! + 6)).toBe("findme");
+		const fileEdit2 = map.mapExcerptEditToFileEdit({
+			from: buf2!,
+			to: buf2! + 6,
+			insert: "REPLACED"
+		});
+		expect(fileEdit2).toEqual({ from: shiftedOffset2, to: shiftedOffset2 + 6, insert: "REPLACED" });
+
+		// A freshly built map over the post-edit file content agrees with the synced map.
+		const newFileContent = fileContent.slice(0, offset1) + "XYZ" + fileContent.slice(offset1);
+		const fresh = new FileExcerptMap(
+			"src/two.ts",
+			twoExcerptOrigin,
+			newFileContent,
+			[
+				{ ...match1, offset: offset1 + 3, lineText: "const alpha = 'XYZfindme';" },
+				{ ...match2, offset: offset2 + 3 }
+			],
+			{ contextLines: 1 }
+		);
+		expect(map.bufferText).toBe(fresh.bufferText);
+		expect(map.excerpts[1].fileStart).toBe(fresh.excerpts[1].fileStart);
+		expect(map.excerpts[1].bufferStart).toBe(fresh.excerpts[1].bufferStart);
+	});
+
+	it("shrinks later segment bounds after a deletion", () => {
+		const { map, offset1, offset2 } = makeTwoExcerptMap();
+
+		// Delete the first 3 chars of "findme" in the first excerpt.
+		const buf1 = map.fileOffsetToExcerptOffset(offset1)!;
+		const excerptEdit = { from: buf1, to: buf1 + 3, insert: "" };
+		const fileEdit = map.mapExcerptEditToFileEdit(excerptEdit);
+		expect(fileEdit).toEqual({ from: offset1, to: offset1 + 3, insert: "" });
+		map.applyExcerptEdit(excerptEdit, fileEdit);
+
+		// The second match moved -3; mapping a later edit must follow it.
+		const shiftedOffset2 = offset2 - 3;
+		const buf2 = map.fileOffsetToExcerptOffset(shiftedOffset2)!;
+		expect(map.bufferText.slice(buf2, buf2 + 3)).toBe("fin");
+		expect(map.mapExcerptEditToFileEdit({ from: buf2, to: buf2 + 3, insert: "XY" })).toEqual({
+			from: shiftedOffset2,
+			to: shiftedOffset2 + 3,
+			insert: "XY"
+		});
+	});
+
+	it("leaves file bounds untouched when the edit lands in a separator", () => {
+		const { map, offset2 } = makeTwoExcerptMap();
+		const origBufferStart2 = map.excerpts[1].bufferStart;
+		const origFileStart2 = map.excerpts[1].fileStart;
+
+		// Edit strictly inside the separator: it maps to no file edit.
+		const sepFrom = map.excerpts[0].bufferEnd;
+		const sepTo = map.excerpts[1].bufferStart;
+		expect(sepTo - sepFrom).toBe("\n---\n".length);
+		const edit = { from: sepFrom + 1, to: sepTo - 1, insert: "" };
+		const fileEdit = map.mapExcerptEditToFileEdit(edit);
+		expect(fileEdit).toBeNull();
+		map.applyExcerptEdit(edit, fileEdit);
+
+		// Buffer bounds shifted by -3, file bounds unchanged.
+		expect(map.excerpts[1].bufferStart).toBe(origBufferStart2 - 3);
+		expect(map.excerpts[1].fileStart).toBe(origFileStart2);
+
+		// A later edit in the second excerpt still targets the original file offset.
+		const buf2 = map.fileOffsetToExcerptOffset(offset2)!;
+		expect(map.mapExcerptEditToFileEdit({ from: buf2, to: buf2 + 6, insert: "X" })).toEqual({
+			from: offset2,
+			to: offset2 + 6,
+			insert: "X"
+		});
+	});
+
+	it("keeps mappings stable for same-length replacements", () => {
+		const { map, offset1, offset2 } = makeTwoExcerptMap();
+		const origBufferStart2 = map.excerpts[1].bufferStart;
+		const origFileStart2 = map.excerpts[1].fileStart;
+
+		const buf1 = map.fileOffsetToExcerptOffset(offset1)!;
+		const excerptEdit = { from: buf1, to: buf1 + 6, insert: "replac" };
+		const fileEdit = map.mapExcerptEditToFileEdit(excerptEdit)!;
+		map.applyExcerptEdit(excerptEdit, fileEdit);
+
+		expect(map.excerpts[1].bufferStart).toBe(origBufferStart2);
+		expect(map.excerpts[1].fileStart).toBe(origFileStart2);
+		const buf2 = map.fileOffsetToExcerptOffset(offset2)!;
+		expect(map.mapExcerptEditToFileEdit({ from: buf2, to: buf2 + 6, insert: "Y" })).toEqual({
+			from: offset2,
+			to: offset2 + 6,
+			insert: "Y"
+		});
+	});
+
+	it("stays consistent across several sequential edits like repeated keystrokes", () => {
+		const { map, offset1, offset2 } = makeTwoExcerptMap();
+
+		// Three single-character insertions at the start of the first excerpt,
+		// mapping and applying each in turn like the update listener does.
+		let shift = 0;
+		for (const ch of ["a", "b", "c"]) {
+			const buf = map.fileOffsetToExcerptOffset(offset1 + shift)!;
+			const excerptEdit = { from: buf, to: buf, insert: ch };
+			const fileEdit = map.mapExcerptEditToFileEdit(excerptEdit);
+			expect(fileEdit).not.toBeNull();
+			map.applyExcerptEdit(excerptEdit, fileEdit);
+			shift += 1;
+		}
+
+		const shiftedOffset2 = offset2 + 3;
+		const buf2 = map.fileOffsetToExcerptOffset(shiftedOffset2)!;
+		expect(map.bufferText.slice(buf2, buf2 + 6)).toBe("findme");
+		expect(map.mapExcerptEditToFileEdit({ from: buf2, to: buf2 + 6, insert: "Z" })).toEqual({
+			from: shiftedOffset2,
+			to: shiftedOffset2 + 6,
+			insert: "Z"
+		});
+	});
+});
