@@ -145,8 +145,8 @@ export interface CompletionCompartmentOptions extends CompletionChainOptions {
 	 */
 	readonly automaticCompletions: boolean;
 	/**
-	 * Whether vim modal editing is on. Swaps the bundled completion keymap for
-	 * {@link VIM_COMPLETION_KEYMAP} so Enter stays the mode's.
+	 * @deprecated This option has no effect. Completion trigger and acceptance
+	 * keys are contributed through the keymap registry.
 	 */
 	readonly vimEnabled?: boolean;
 }
