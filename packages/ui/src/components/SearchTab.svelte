@@ -53,7 +53,9 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') {
+		// Enter during IME composition confirms the composition candidate,
+		// not the query: don't fire a search on the partial text.
+		if (e.key === 'Enter' && !e.isComposing) {
 			if (searchTimeout) {
 				clearTimeout(searchTimeout);
 				searchTimeout = null;
