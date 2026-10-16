@@ -386,7 +386,6 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		const res = await applyReplaceAll({
 			workspace,
 			fileResults,
-			query: "target",
 			replacement: "REPLACED"
 		});
 
@@ -427,7 +426,6 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		await applyReplaceAll({
 			workspace,
 			fileResults,
-			query: "target",
 			replacement: "replacement"
 		});
 
@@ -482,7 +480,6 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		await applyReplaceAll({
 			workspace,
 			fileResults,
-			query: "target",
 			replacement: "REPLACED"
 		});
 
@@ -517,7 +514,6 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 			await applyReplaceAll({
 				workspace,
 				fileResults: [],
-				query: "test",
 				replacement: "new"
 			});
 
