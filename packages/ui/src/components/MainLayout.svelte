@@ -5,12 +5,13 @@
   import * as Tabs from "../components/ui/tabs/index";
   import Icon from "./Icon.svelte";
   
-  import { XIcon } from 'phosphor-svelte';
+  import { XIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
   import { flip } from 'svelte/animate';
   import type { EditorView } from '@codemirror/view';
 
   import type EditorComponent from './Editor.svelte';
   import type FileExplorerComponent from './FileExplorer.svelte';
+  import SearchTab from './SearchTab.svelte';
   import * as Tooltip from './ui/tooltip';
   import { cn } from '@np/core';
   import type { UIContributionIcon } from '@np/core';
@@ -148,13 +149,13 @@
   </aside>
 
   <Tabs.Root bind:value={appState.activeTabId} class="flex flex-1 flex-col min-w-0">
-    {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.pluginId)}
+    {#if appState.workspace.tabs.length > 1 || appState.workspace.tabs.some(t => t.pluginId || t.type === 'search')}
       <Tabs.List class="bg-accent/50 justify-start rounded-none items-end gap-0 pb-0 w-full overflow-x-auto overflow-y-hidden no-scrollbar">
         <Tooltip.Provider delayDuration={400}>
           {#each appState.workspace.tabs as tab (tab.id)}
             {@const tabDocument = appState.documents.find(d => d.id === tab.id)}
             {@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
-            {@const title = tabContent?.title ?? tabDocument?.fileName ?? 'Untitled'}
+            {@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? 'Untitled')}
             {@const isModified = tabDocument?.isModified}
             {@const deletedOnDisk = tabDocument?.deletedOnDisk}
             <div 
@@ -174,7 +175,9 @@
                     value={tab.id}
                     class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
                   >
-                    {#if tabContent?.icon}
+                    {#if tab.type === 'search'}
+                      <MagnifyingGlassIcon class="size-3.5 opacity-90 text-primary shrink-0" />
+                    {:else if tabContent?.icon}
                       {@const TabIcon = toPhosphorIcon(tabContent.icon)}
                       <TabIcon class="size-3.5 opacity-90 text-primary shrink-0" />
                     {:else}
@@ -188,7 +191,7 @@
                   </Tabs.Trigger>
                 </Tooltip.Trigger>
                 <Tooltip.Content side="bottom">
-                  {deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path}
+                  {tab.type === 'search' ? 'Project Search' : (deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path)}
                 </Tooltip.Content>
               </Tooltip.Root>
   
@@ -230,7 +233,9 @@
         {@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
         <Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full">
           {#if appState.activeTabId === tab.id}
-            {#if tab.pluginId && tabContent}
+            {#if tab.type === 'search'}
+              <SearchTab />
+            {:else if tab.pluginId && tabContent}
               {@const TabComponent = tabContent.component}
               <TabComponent {...(tabContent.props ?? {})} />
             {:else if Editor}

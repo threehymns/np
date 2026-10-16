@@ -15,6 +15,8 @@ export class DocumentSession {
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
 	pendingLineToScroll = $state<number | null>(null);
+	pendingColumn = $state<number | null>(null);
+	pendingMatchLength = $state<number | null>(null);
 	editorState = $state.raw<any>(null);
 	scrollPosition = $state.raw<{ top: number; left: number } | null>(null);
 

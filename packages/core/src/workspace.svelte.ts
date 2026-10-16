@@ -12,7 +12,7 @@ import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export interface WorkspaceTab {
 	id: string;
-	type: 'document' | 'diff';
+	type: 'document' | 'diff' | 'search';
 	pluginId?: string;
 }
 
@@ -201,6 +201,13 @@ export class Workspace {
 					}
 				}
 				return serialized;
+			}
+			if (tab.type === 'search') {
+				return {
+					id: tab.id,
+					origin: null,
+					virtualTabType: 'search'
+				};
 			}
 			const doc = this.documents.find(d => d.id === tab.id);
 			if (!doc) return null;
@@ -436,6 +443,18 @@ export class Workspace {
 		// is on disk rather than as an empty shell it has to wait on.
 		this.pluginHost?.emit('document:opened', { document: newDoc, origin: newDoc.origin });
 		return newDoc;
+	}
+
+	openSearchTab(_query?: string): string {
+		const SEARCH_TAB_ID = '__project_search__';
+		const existing = this.tabs.find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
+		if (existing) {
+			this.activeTabId = existing.id;
+			return existing.id;
+		}
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search' });
+		this.activeTabId = SEARCH_TAB_ID;
+		return SEARCH_TAB_ID;
 	}
 
 	async openDirectory(specificOrigin?: FileOrigin) {
@@ -773,6 +792,13 @@ export class Workspace {
 									staged: serialized.diffStaged
 								});
 							}
+							continue;
+						}
+						if (serialized.virtualTabType === 'search') {
+							restoredTabs.push({
+								id: serialized.id,
+								type: 'search'
+							});
 							continue;
 						}
 						doc = new DocumentSession(
