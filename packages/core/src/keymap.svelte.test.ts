@@ -305,3 +305,92 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 		expect(reg.keyBuffer[0]!.key).toBe("k");
 	});
 });
+
+describe("Project search keybinding and remapping (Issue #337)", () => {
+	function newRegistry() {
+		const executed: string[] = [];
+		const appState: any = {
+			commands: {
+				execute: (id: string) => {
+					executed.push(id);
+					return true;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		return { reg, executed };
+	}
+
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented };
+	}
+
+	it("Cmd+Shift+F triggers edit.findInFiles on macOS", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+		reg.setContext("editor", "true");
+
+		const k = keyEvent("f", { meta: true, shift: true });
+		expect(reg.handleKeydown(k.e)).toBe(true);
+		expect(executed).toEqual(["edit.findInFiles"]);
+		expect(k.prevented()).toBe(1);
+	});
+
+	it("Ctrl+Shift+F triggers edit.findInFiles on Linux/Windows", () => {
+		withPlatform('Linux x86_64');
+		const { reg, executed } = newRegistry();
+		reg.setContext("editor", "true");
+
+		const k = keyEvent("f", { ctrl: true, shift: true });
+		expect(reg.handleKeydown(k.e)).toBe(true);
+		expect(executed).toEqual(["edit.findInFiles"]);
+		expect(k.prevented()).toBe(1);
+	});
+
+	it("Cmd/Ctrl+Shift+F triggers edit.findInFiles globally outside editor", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		const k = keyEvent("f", { meta: true, shift: true });
+		expect(reg.handleKeydown(k.e)).toBe(true);
+		expect(executed).toEqual(["edit.findInFiles"]);
+	});
+
+	it("edit.findInFiles is remappable through the existing keymap registry", () => {
+		withPlatform('MacIntel');
+		const { reg, executed } = newRegistry();
+
+		// Remap edit.findInFiles to ctrl+alt+s via user keymap
+		reg.reloadUserKeymap(
+			JSON.stringify([
+				{
+					bindings: {
+						"ctrl+alt+s": "edit.findInFiles"
+					}
+				}
+			])
+		);
+
+		// New binding triggers command
+		const k = keyEvent("s", { ctrl: true, alt: true });
+		expect(reg.handleKeydown(k.e)).toBe(true);
+		expect(executed).toEqual(["edit.findInFiles"]);
+
+		// Shortcut lookup reflects remapped keybinding
+		expect(reg.getShortcutForCommand("edit.findInFiles")).toBe("⌃⌥S");
+	});
+});

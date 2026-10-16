@@ -269,7 +269,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 });
 
 describe("Workspace and Project search tab integration", () => {
-	it("Workspace opens search tab with type 'search'", () => {
+	it("Workspace opens search tab with type 'search' and focuses on subsequent opens", async () => {
 		const storage = createMockStorage();
 		const project = new ProjectClass(storage as any, () => ({} as any), {
 			loadOpenFiles: mock(async () => []),
@@ -290,11 +290,23 @@ describe("Workspace and Project search tab integration", () => {
 		expect(ws.tabs.length).toBe(1);
 		expect(ws.tabs[0].type).toBe("search");
 		expect(ws.activeTabId).toBe("__project_search__");
+		expect(ws.searchTabFocusNonce).toBe(1);
 
-		// Calling again is idempotent and activates existing tab
+		// Switch active tab to another document
+		await ws.newFile();
+		expect(ws.tabs.length).toBe(2);
+		expect(ws.activeTabId).not.toBe("__project_search__");
+
+		// Calling openSearchTab again focuses the existing search tab without duplicating it
 		const tabId2 = ws.openSearchTab();
 		expect(tabId2).toBe("__project_search__");
-		expect(ws.tabs.length).toBe(1);
+		expect(ws.tabs.length).toBe(2);
+		expect(ws.activeTabId).toBe("__project_search__");
+		expect(ws.searchTabFocusNonce).toBe(2);
+
+		// Calling while already focused still increments focus nonce to refocus input
+		ws.openSearchTab();
+		expect(ws.searchTabFocusNonce).toBe(3);
 	});
 
 	it("Project exposes searchBackend wired to worktree", async () => {
