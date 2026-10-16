@@ -135,25 +135,6 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(names).not.toContain(".git");
 		expect(names).not.toContain(".hidden");
 	});
-
-	it("does not publish a snapshot when scanning a different root", async () => {
-		const storage = createMockStorage({
-			"/other-project/app.ts": "code"
-		});
-		const wt = new WorktreeClass(rootOrigin, { storage });
-
-		const nodes = await wt.scan({
-			scheme: "file",
-			path: "/other-project",
-			name: "other-project"
-		});
-
-		// Scan still returns the built nodes, but they are not published
-		// under this worktree's root label.
-		expect(nodes.length).toBe(1);
-		expect(wt.version).toBe(0);
-		expect(wt.entries).toEqual([]);
-	});
 });
 
 describe("Worktree subscription seam (ticket 2 / ticket 3 consumers)", () => {

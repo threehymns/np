@@ -88,8 +88,7 @@ export class Project {
 		if (current && current.root.scheme === origin.scheme && current.root.path === origin.path) {
 			return;
 		}
-		current?.dispose();
-		const strategy: WorktreeSnapshotStrategy = this.snapshotStrategyFactory
+		const strategy = this.snapshotStrategyFactory
 			? this.snapshotStrategyFactory(origin, this.storage)
 			: new PolledSnapshotStrategy();
 		const wt = new Worktree(origin, {
@@ -98,7 +97,6 @@ export class Project {
 		});
 		this.worktrees = [wt];
 		this.projectTree.attachToWorktree(wt);
-		void strategy.start?.(wt);
 	}
 
 	get worktree(): Worktree | null {
