@@ -398,6 +398,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 		languages: {
 			type: 'object',
 			default: {},
+			mergeRule: 'deep',
 			title: 'Per-Language Overrides',
 			description: 'Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here'
 		}
