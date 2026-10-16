@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
+import { DesktopWatcher } from './DesktopWatcher.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
 import {
 	isValidBundledCommand,
@@ -68,6 +69,19 @@ function killLspProcess(processId: string): void {
 /** Quitting with a server still running would leave an orphan nobody can stop. */
 function killAllLspProcesses(): void {
 	for (const processId of [...lspProcesses.keys()]) killLspProcess(processId);
+}
+
+const activeWatchers = new Map<string, DesktopWatcher>();
+
+async function killAllWatchers(): Promise<void> {
+	for (const [id, watcher] of [...activeWatchers.entries()]) {
+		activeWatchers.delete(id);
+		try {
+			await watcher.close();
+		} catch (e) {
+			console.error(`[main] Failed to close watcher ${id}:`, e);
+		}
+	}
 }
 
 // Helpers to get AppData persistence path
@@ -183,6 +197,7 @@ app.on('before-quit', (e) => {
 		} finally {
 			sessionPersistence.flushSync();
 			killAllLspProcesses();
+			await killAllWatchers();
 			if (configWatcher) {
 				configWatcher.close();
 				configWatcher = null;
@@ -576,6 +591,32 @@ function registerIpcHandlers() {
 		if (mainWindow) {
 			mainWindow.webContents.toggleDevTools();
 		}
+	});
+
+	ipcMain.handle('watcher:start', async (_, watchId: string, dirPath: string) => {
+		const existing = activeWatchers.get(watchId);
+		if (existing) {
+			await existing.close();
+			activeWatchers.delete(watchId);
+		}
+		const watcher = new DesktopWatcher({
+			dirPath,
+			onEvents: (events) => {
+				sendToRenderer('watcher:events', { watchId, events });
+			}
+		});
+		await watcher.start();
+		activeWatchers.set(watchId, watcher);
+		return { success: true };
+	});
+
+	ipcMain.handle('watcher:stop', async (_, watchId: string) => {
+		const watcher = activeWatchers.get(watchId);
+		if (watcher) {
+			activeWatchers.delete(watchId);
+			await watcher.close();
+		}
+		return { success: true };
 	});
 }
 

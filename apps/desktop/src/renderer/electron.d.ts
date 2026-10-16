@@ -58,7 +58,16 @@ export interface ElectronAPI {
 	writeConfigFile(content: string): Promise<void>;
 	getConfigPath(): Promise<string>;
 	onConfigChanged(callback: (content: string) => void): () => void;
+	watchDirectory(
+		dirPath: string,
+		callback: (events: WatcherEvent[]) => void
+	): () => Promise<void>;
 	toggleDevTools(): Promise<void>;
+}
+
+export interface WatcherEvent {
+	path: string;
+	type: 'create' | 'update' | 'delete';
 }
 
 declare global {

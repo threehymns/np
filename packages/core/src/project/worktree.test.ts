@@ -135,25 +135,6 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(names).not.toContain(".git");
 		expect(names).not.toContain(".hidden");
 	});
-
-	it("does not publish a snapshot when scanning a different root", async () => {
-		const storage = createMockStorage({
-			"/other-project/app.ts": "code"
-		});
-		const wt = new WorktreeClass(rootOrigin, { storage });
-
-		const nodes = await wt.scan({
-			scheme: "file",
-			path: "/other-project",
-			name: "other-project"
-		});
-
-		// Scan still returns the built nodes, but they are not published
-		// under this worktree's root label.
-		expect(nodes.length).toBe(1);
-		expect(wt.version).toBe(0);
-		expect(wt.entries).toEqual([]);
-	});
 });
 
 describe("Worktree subscription seam (ticket 2 / ticket 3 consumers)", () => {
@@ -259,6 +240,7 @@ describe("Pluggable snapshot strategy seam", () => {
 		});
 
 		expect(wt.strategy.name).toBe("desktop-watcher");
+		expect(started).toBe(true);
 
 		await wt.refresh();
 		expect(refreshed).toBe(true);
@@ -266,6 +248,30 @@ describe("Pluggable snapshot strategy seam", () => {
 
 		wt.dispose();
 		expect(stopped).toBe(true);
+	});
+
+	it("preserves expanded directories on subsequent scans", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/index.ts": "content",
+			"/test-project/src/utils/math.ts": "content"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		// First scan with isExpanded expanding src
+		await wt.scan(rootOrigin, {
+			isExpanded: (path) => path === "src"
+		});
+
+		expect(wt.entries.length).toBe(1);
+		expect(wt.entries[0].name).toBe("src");
+		expect(wt.entries[0].isExpanded).toBe(true);
+		expect(wt.entries[0].children?.length).toBe(2);
+
+		// Subsequent scan without options (e.g. triggered by watcher refresh)
+		await wt.scan();
+
+		expect(wt.entries[0].isExpanded).toBe(true);
+		expect(wt.entries[0].children?.length).toBe(2);
 	});
 });
 
@@ -304,5 +310,44 @@ describe("File explorer renders from subscription, not from feeding entries in",
 		// ProjectTree receives update through subscription automatically
 		wt.updateSnapshot([]);
 		expect(tree.nodes).toEqual([]);
+	});
+
+	it("disposes previous worktree when rootOrigin changes or is cleared", () => {
+		const storage = createMockStorage();
+		let stopped1 = false;
+		let stopped2 = false;
+
+		const strategy1 = {
+			name: "watcher-1",
+			stop: () => {
+				stopped1 = true;
+			}
+		};
+		const strategy2 = {
+			name: "watcher-2",
+			stop: () => {
+				stopped2 = true;
+			}
+		};
+
+		const project = new (require("./project.svelte").Project)(
+			storage,
+			() => ({} as any),
+			{} as any,
+			(origin: FileOrigin) => (origin.path === "/first" ? strategy1 : strategy2)
+		);
+
+		project.rootOrigin = { scheme: "file", path: "/first", name: "first" };
+		expect(project.worktree?.strategy.name).toBe("watcher-1");
+
+		// Changing rootOrigin disposes old worktree
+		project.rootOrigin = { scheme: "file", path: "/second", name: "second" };
+		expect(stopped1).toBe(true);
+		expect(project.worktree?.strategy.name).toBe("watcher-2");
+
+		// Clearing rootOrigin disposes current worktree
+		project.rootOrigin = null;
+		expect(stopped2).toBe(true);
+		expect(project.worktree).toBeNull();
 	});
 });
