@@ -9,7 +9,8 @@ const MAIN_LAYOUT_SRC = fs.readFileSync(path.join(__dirname, "MainLayout.svelte"
 
 describe("Search tab UI contract and template audit (Issue #334)", () => {
 	it("SearchTab contains query bar on top and MultiBuffer grouped results below", () => {
-		expect(SEARCH_TAB_SRC).toContain('placeholder="Search project (literal)..."');
+		expect(SEARCH_TAB_SRC).toContain('placeholder="Search project..."');
+		expect(SEARCH_TAB_SRC).not.toContain("(literal)");
 		expect(SEARCH_TAB_SRC).toContain("<MultiBuffer");
 		expect(SEARCH_TAB_SRC).toContain("jumpToMatch");
 		expect(SEARCH_TAB_SRC).toContain("openFile");
@@ -53,3 +54,32 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 		expect(globalBlock!.bindings["cmd+shift+f"]).toBe("edit.findInFiles");
 	});
 });
+
+describe("Search tab full query bar contract and template audit (Issue #335)", () => {
+	it("renders case-sensitive, whole-word, and regex toggle buttons with accessible aria labels", () => {
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Match Case"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Match Whole Word"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Use Regular Expression"');
+		expect(SEARCH_TAB_SRC).toContain("toggleCaseSensitive");
+		expect(SEARCH_TAB_SRC).toContain("toggleWholeWord");
+		expect(SEARCH_TAB_SRC).toContain("toggleRegex");
+	});
+
+	it("renders file include and exclude glob inputs", () => {
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Files to include"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Files to exclude"');
+		expect(SEARCH_TAB_SRC).toContain("session.includePattern");
+		expect(SEARCH_TAB_SRC).toContain("session.excludePattern");
+	});
+
+	it("renders inline error on invalid regex with role=alert", () => {
+		expect(SEARCH_TAB_SRC).toContain("session.regexError");
+		expect(SEARCH_TAB_SRC).toContain('role="alert"');
+	});
+
+	it("wires search tab state to workspace session for tab-open persistence", () => {
+		expect(SEARCH_TAB_SRC).toContain("appState.workspace.getSearchSession");
+		expect(SEARCH_TAB_SRC).toContain("session.query");
+	});
+});
+

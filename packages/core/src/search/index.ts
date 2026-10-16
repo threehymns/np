@@ -15,5 +15,13 @@ export {
 	SNIFF_SIZE,
 	type FlattenedFile,
 	SearchResultStream as EngineSearchResultStream,
-	TypeScriptSearchEngine
+	TypeScriptSearchEngine,
+	buildSearchRegex,
+	globToRegex,
+	parseGlobs
 } from './engine';
+
+export {
+	SearchTabSession,
+	type SearchTabSessionOptions
+} from './session.svelte';
