@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { scopeForLanguage } from './language-scope';
+import { scopeForLanguage, editorSettingsForLanguage } from './language-scope';
+import type { SettingsRead } from './services';
 
 const editorLevel = { words: 'enabled', minWordLength: 3 };
 
@@ -128,5 +129,43 @@ describe('scopeForLanguage', () => {
 		expect(
 			scopeForLanguage(editorLevel, { Markdown: { words: 'disabled' } }, null).keys
 		).toEqual([]);
+	});
+});
+
+describe('editorSettingsForLanguage', () => {
+	// Simulates what the resolver produces after #286: the user and workspace
+	// `languages` maps already deep-merged per language, with the workspace
+	// winning per key.
+	const mergedRead: SettingsRead = (namespace: string, key: string) => {
+		if (namespace !== 'editor') return undefined;
+		switch (key) {
+			case 'words':
+				return 'enabled';
+			case 'min_word_length':
+				return 3;
+			case 'languages':
+				return { Markdown: { words: 'disabled' }, TypeScript: { min_word_length: 2 } };
+			default:
+				return undefined;
+		}
+	};
+
+	it('applies the pre-merged map per language, matching case-insensitively', () => {
+		expect(
+			editorSettingsForLanguage(mergedRead, 'Markdown', ['words', 'min_word_length'])
+		).toEqual({
+			value: { words: 'disabled', min_word_length: 3 },
+			keys: ['words']
+		});
+		// Case-insensitive both ways: the map's 'Markdown' answers 'mArKdOwN'.
+		expect(
+			editorSettingsForLanguage(mergedRead, 'mArKdOwN', ['words', 'min_word_length']).value
+		).toEqual({ words: 'disabled', min_word_length: 3 });
+	});
+
+	it('leaves languages without an entry on the editor-level values', () => {
+		expect(
+			editorSettingsForLanguage(mergedRead, 'Python', ['words', 'min_word_length'])
+		).toEqual({ value: { words: 'enabled', min_word_length: 3 }, keys: [] });
 	});
 });

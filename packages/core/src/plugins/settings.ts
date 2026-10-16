@@ -398,6 +398,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 		languages: {
 			type: 'object',
 			default: {},
+			mergeRule: mergeLanguageOverrides,
 			title: 'Per-Language Overrides',
 			description: 'Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here'
 		}
@@ -709,6 +710,49 @@ function deepMergeObjects(base: any, override: any): any {
 			result[key] = deepMergeObjects(base[key], override[key]);
 		} else {
 			result[key] = override[key];
+		}
+	}
+	return result;
+}
+
+/**
+ * Merge function for `editor.languages`: language names match
+ * case-insensitively (the same rule `scopeForLanguage` uses when it folds a
+ * language's overrides), so `Markdown` in one scope and `markdown` in another
+ * must merge into a single entry instead of two. Without this, the deep merge
+ * keeps both keys and the fold returns whichever entry comes first — letting
+ * the user value win when the workspace value should.
+ *
+ * The first-seen key casing is kept; values merge per the deep-merge rules
+ * with the incoming scope winning per key.
+ */
+export function mergeLanguageOverrides(
+	current: Record<string, unknown>,
+	incoming: Record<string, unknown>
+): Record<string, unknown> {
+	if (
+		Array.isArray(current) ||
+		Array.isArray(incoming) ||
+		typeof current !== 'object' ||
+		typeof incoming !== 'object' ||
+		!current ||
+		!incoming
+	) {
+		return incoming;
+	}
+	const result: Record<string, unknown> = { ...current };
+	const lowerToKey = new Map<string, string>();
+	for (const key of Object.keys(result)) {
+		const lower = key.toLowerCase();
+		if (!lowerToKey.has(lower)) lowerToKey.set(lower, key);
+	}
+	for (const [inKey, inValue] of Object.entries(incoming)) {
+		const existingKey = lowerToKey.get(inKey.toLowerCase());
+		if (existingKey !== undefined) {
+			result[existingKey] = deepMergeObjects(result[existingKey], inValue);
+		} else {
+			result[inKey] = inValue;
+			lowerToKey.set(inKey.toLowerCase(), inKey);
 		}
 	}
 	return result;
