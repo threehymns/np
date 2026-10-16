@@ -92,3 +92,26 @@ describe("Search tab full query bar contract and template audit (Issue #335)", (
 	});
 });
 
+describe("Editable multibuffer and replace-all contract audit (Issue #336)", () => {
+	it("contains replace input and Replace All button in query bar", () => {
+		expect(SEARCH_TAB_SRC).toContain('placeholder="Replace with..."');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Replace query"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Replace all"');
+		expect(SEARCH_TAB_SRC).toContain("Replace All");
+	});
+
+	it("wires editable multibuffer via setupExcerptEditor and FileExcerptMap", () => {
+		expect(SEARCH_TAB_SRC).toContain("use:setupExcerptEditor");
+		expect(SEARCH_TAB_SRC).toContain("new FileExcerptMap");
+		expect(SEARCH_TAB_SRC).toContain("mapExcerptEditToFileEdit");
+		expect(SEARCH_TAB_SRC).toContain("applyUserEditToFile");
+	});
+
+	it("wires replaceAll calling applyReplaceAll across results without modals or summary", () => {
+		expect(SEARCH_TAB_SRC).toContain("applyReplaceAll");
+		expect(SEARCH_TAB_SRC).toContain("replaceAll");
+		// Ensure no confirmation modal or summary report is triggered
+		expect(SEARCH_TAB_SRC).not.toContain("window.confirm");
+		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
+	});
+});

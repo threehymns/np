@@ -25,3 +25,14 @@ export {
 	SearchTabSession,
 	type SearchTabSessionOptions
 } from './session.svelte';
+
+export {
+	type SingleEdit,
+	type ExcerptSegment,
+	type ExcerptMapOptions,
+	computeLineStarts,
+	FileExcerptMap,
+	buildReplaceAllEditsForFile,
+	applyEditsToDocumentSession,
+	applyReplaceAll
+} from './excerpt';
