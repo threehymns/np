@@ -83,7 +83,7 @@ describe("Document draft and keystroke decoupling", () => {
 		});
 
 		// Save draft state in persistence
-		await persistence.saveOpenFiles([
+		await persistence.saveLegacyOpenFiles([
 			{
 				id: "untitled-1",
 				origin: null,

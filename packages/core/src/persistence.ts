@@ -126,6 +126,11 @@ export class MemorySessionPersistence implements SessionPersistence {
 		this.getOrCreateState(folderUri).openFiles = workspace;
 	}
 
+	/** Test-only: seed a bare-array payload to simulate pre-versioning state. */
+	async saveLegacyOpenFiles(docs: SerializedDocument[], folderUri = ''): Promise<void> {
+		this.getOrCreateState(folderUri).openFiles = docs;
+	}
+
 	async loadOpenFiles(folderUri = ''): Promise<SerializedWorkspace | SerializedDocument[]> {
 		return this.getOrCreateState(folderUri).openFiles;
 	}
