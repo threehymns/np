@@ -106,7 +106,6 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools",
-			"ctrl+\\": "pane.splitRight",
 			"cmd+k right": "pane.splitRight",
 			"cmd+k left": "pane.splitLeft",
 			"cmd+k up": "pane.splitUp",

@@ -2,6 +2,7 @@ import { DirectEditorViewAccessError, RawTransactionDispatchError } from "./plug
 import { type Storage, type FileOrigin, toURI } from './storage';
 import { isNotFoundError } from './utils';
 import { LanguageSupport, getActiveLanguages } from './editor/language.svelte';
+import { SvelteMap } from 'svelte/reactivity';
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
@@ -21,15 +22,20 @@ export class DocumentSession {
 	deletedOnDisk = $state(false);
 	isLoaded = $state(false);
 
-	private _viewStates = new Map<string, DocumentViewState>();
+	private _viewStates = new SvelteMap<string, DocumentViewState>();
 
 	getViewState(viewId: string): DocumentViewState {
 		let vs = this._viewStates.get(viewId);
 		if (!vs) {
-			vs = {};
+			vs = $state({});
 			this._viewStates.set(viewId, vs);
 		}
 		return vs;
+	}
+
+	/** Read-only access for reactive contexts; never creates an entry. */
+	peekViewState(viewId: string): DocumentViewState | undefined {
+		return this._viewStates.get(viewId);
 	}
 
 	setViewState(viewId: string, state: Partial<DocumentViewState>): void {

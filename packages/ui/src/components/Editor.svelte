@@ -453,10 +453,10 @@
 		}
 	});
 
-	// Sync content from outside (e.g. file open or disk reload)
+	// Sync content from outside (e.g. file open or disk reload).
+	// Runs for inactive panes too so cloned views stay live.
 	$effect(() => {
 		const c = doc.content; // Track content
-		if (!active) return;
 
 		untrack(() => {
 			if (view) {
@@ -485,7 +485,7 @@
 
 	// Handle pending line scroll
 	$effect(() => {
-		const lineNum = (paneId ? doc.getViewState(paneId).pendingLineToScroll : null) ?? doc.pendingLineToScroll;
+		const lineNum = (paneId ? doc.peekViewState(paneId)?.pendingLineToScroll : null) ?? doc.pendingLineToScroll;
 		if (view && active && lineNum !== null) {
 			const targetView = view;
 			untrack(() => {

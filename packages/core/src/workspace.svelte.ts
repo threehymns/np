@@ -7,7 +7,7 @@ import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './sto
 import { isNotFoundError } from './utils';
 import { Project } from './project/project.svelte';
 import type { RepositorySafetyReport } from './project/repository.svelte';
-import { type SessionPersistence, type SerializedDocument } from './persistence';
+import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 import {
@@ -191,7 +191,7 @@ export class Workspace {
 		}, 500);
 	}
 
-	private serializeTabs(): SerializedDocument[] {
+	private serializeTabs(): SerializedWorkspace {
 		const serializedMap = new Map<string, SerializedDocument>();
 		for (const pane of this.getAllPanes()) {
 			for (const tab of pane.tabs) {
@@ -236,8 +236,7 @@ export class Workspace {
 			}
 		}
 		const docs = Array.from(serializedMap.values());
-		(docs as any).version = WORKSPACE_PERSISTENCE_VERSION;
-		return docs;
+		return { version: WORKSPACE_PERSISTENCE_VERSION, docs };
 	}
 
   async flushSaveOpenFiles(): Promise<void> {
@@ -917,20 +916,23 @@ export class Workspace {
 			const activeId = await this.project.loadActiveDocumentId(folderUri);
 
 			// Version-key check: on version mismatch, start fresh (empty). No migration code.
-			if (origins && typeof origins === 'object' && ('version' in (origins as any))) {
-				if ((origins as any).version !== WORKSPACE_PERSISTENCE_VERSION) {
-					this.documents = [];
-					const freshPane = new Pane();
-					this.layout = freshPane;
-					this.activePaneId = freshPane.id;
-					return;
-				}
+			// Old state was a bare array with no version; it loads as before.
+			const workspace: SerializedWorkspace = ('docs' in (origins as any) && Array.isArray((origins as SerializedWorkspace).docs))
+				? (origins as SerializedWorkspace)
+				: { version: WORKSPACE_PERSISTENCE_VERSION, docs: origins as SerializedDocument[] };
+			if (workspace.version !== WORKSPACE_PERSISTENCE_VERSION) {
+				this.documents = [];
+				const freshPane = new Pane();
+				this.layout = freshPane;
+				this.activePaneId = freshPane.id;
+				return;
 			}
 
-			if (origins && origins.length > 0) {
+			const docs = workspace.docs;
+			if (docs && docs.length > 0) {
 				const restoredDocs: DocumentSession[] = [];
 				const restoredTabs: WorkspaceTab[] = [];
-				for (const serialized of origins) {
+				for (const serialized of docs) {
 					const isNewSchema = serialized && typeof serialized === 'object' && ('id' in serialized);
 					if (!isNewSchema) {
 						// Stale / old shape mismatch: skip (no migration code)

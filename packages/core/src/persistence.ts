@@ -1,5 +1,14 @@
 import type { FileOrigin } from './storage';
 
+/** Versioned wrapper for the persisted open-files list. The version survives
+ *  serialization (unlike an expando property on the array) so a future shape
+ *  change can be detected and the workspace can start fresh instead of
+ *  choking on stale state. */
+export interface SerializedWorkspace {
+	version: number;
+	docs: SerializedDocument[];
+}
+
 export interface SerializedDocument {
 	id: string;
 	origin: FileOrigin | null;
@@ -48,8 +57,8 @@ export interface SerializedDocument {
  * logic reads back (see each implementation for the exact keys).
  */
 export interface SessionPersistence {
-	saveOpenFiles(origins: SerializedDocument[], folderUri?: string): Promise<void>;
-	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]>;
+	saveOpenFiles(workspace: SerializedWorkspace, folderUri?: string): Promise<void>;
+	loadOpenFiles(folderUri?: string): Promise<SerializedWorkspace | SerializedDocument[]>;
 	saveRootFolder(origin: FileOrigin | null): Promise<void>;
 	loadRootFolder(): Promise<FileOrigin | null>;
 	saveRecentFolders(origins: FileOrigin[]): Promise<void>;
@@ -64,7 +73,7 @@ export interface SessionPersistence {
 export type WorkspacePersistence = SessionPersistence;
 export class MemorySessionPersistence implements SessionPersistence {
 	private states = new Map<string, {
-		openFiles: SerializedDocument[];
+		openFiles: SerializedWorkspace | SerializedDocument[];
 		activeDocumentId: string | null;
 		expandedPaths: string[];
 	}>();
@@ -113,11 +122,11 @@ export class MemorySessionPersistence implements SessionPersistence {
 		return map;
 	}
 
-	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
-		this.getOrCreateState(folderUri).openFiles = origins;
+	async saveOpenFiles(workspace: SerializedWorkspace, folderUri = ''): Promise<void> {
+		this.getOrCreateState(folderUri).openFiles = workspace;
 	}
 
-	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+	async loadOpenFiles(folderUri = ''): Promise<SerializedWorkspace | SerializedDocument[]> {
 		return this.getOrCreateState(folderUri).openFiles;
 	}
 

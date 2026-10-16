@@ -2,7 +2,7 @@ import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
 import type { FileOrigin } from "./storage";
 import { createMockStorage } from "../../../tests/mock-storage";
-import { MemorySessionPersistence } from "./persistence";
+import { MemorySessionPersistence, SerializedWorkspace } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
 import type { DocumentSession } from "./document.svelte";
@@ -60,7 +60,7 @@ describe("Document draft and keystroke decoupling", () => {
 
 		// Disk content is unchanged, so initial draftContent is undefined
 		await ws.flushSaveOpenFiles();
-		let saved = await persistence.loadOpenFiles("");
+		let saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		expect(saved[saved.length - 1].draftContent).toBeUndefined();
 
 		// Keystroke edit: modify doc.content via the Workspace path
@@ -69,7 +69,7 @@ describe("Document draft and keystroke decoupling", () => {
 
 		// Flush persistence and verify draftContent is persisted
 		await ws.flushSaveOpenFiles();
-		saved = await persistence.loadOpenFiles("");
+		saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		const savedDoc = saved.find(d => d.id === doc!.id);
 		expect(savedDoc?.draftContent).toBe("Modified draft text");
 	});
@@ -126,7 +126,7 @@ describe("Document draft and keystroke decoupling", () => {
 		ws.activeTabId = doc2.id;
 		await ws.flushSaveOpenFiles();
 
-		const saved = await persistence.loadOpenFiles("");
+		const saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		const savedDoc1 = saved.find(d => d.id === doc1.id);
 		expect(savedDoc1?.draftContent).toBe("Keystroke edit in doc 1");
 	});
@@ -152,7 +152,7 @@ describe("Document draft and keystroke decoupling", () => {
 		ws.updateDocumentContent(doc!, "Brand new unsaved edits");
 		await ws.flushSaveOpenFiles();
 
-		let saved = await persistence.loadOpenFiles("");
+		let saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBe("Brand new unsaved edits");
 
 		// Save the document via the Workspace path (covers post-save flush)
@@ -161,7 +161,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc!.isModified).toBe(false);
 
 		await ws.flushSaveOpenFiles();
-		saved = await persistence.loadOpenFiles("");
+		saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		expect(saved.find(d => d.id === doc!.id)?.draftContent).toBeUndefined();
 	});
 
@@ -254,7 +254,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.isModified).toBe(true);
 
 		await ws.flushSaveOpenFiles();
-		let saved = await persistence.loadOpenFiles("");
+		let saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
 
 		// Disk still holds the old content; draft stays dirty after baseline.
@@ -264,7 +264,7 @@ describe("Document draft and keystroke decoupling", () => {
 		expect(doc.isModified).toBe(true);
 
 		await ws.flushSaveOpenFiles();
-		saved = await persistence.loadOpenFiles("");
+		saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		expect(saved.find((d) => d.id === doc.id)?.draftContent).toBe("");
 	});
 
