@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
-	import type { FileSearchResult, SearchMatch, SingleEdit } from '@np/core';
+	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
 	import { FileExcerptMap, applyReplaceAll, applyEditsToDocumentSession, toURI } from '@np/core';
 	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
 	import Icon from './Icon.svelte';
@@ -115,7 +115,7 @@
 		}
 	}
 
-	async function applyUserEditToFile(fileResult: FileSearchResult, edit: SingleEdit) {
+	async function applyUserEditToFile(fileResult: FileSearchResult, edit: SingleEdit): Promise<DocumentSession | null> {
 		// Match by exact URI only: a path-suffix fallback can resolve to a
 		// different file that happens to share the same filename.
 		let doc = appState.workspace.documents.find(
@@ -126,7 +126,9 @@
 		}
 		if (doc) {
 			applyEditsToDocumentSession(doc, [edit], appState.workspace);
+			return doc;
 		}
+		return null;
 	}
 
 	async function replaceAll() {
@@ -181,6 +183,38 @@
 				fileResult.matches,
 				{ contextLines: 1 }
 			);
+
+			// The map snapshots the document at init() time. Track the document
+			// revision it reflects so an edit made anywhere else (main editor,
+			// another view) is detected before a stale offset can write to the
+			// wrong place in the file.
+			let mapRevision = doc?.revision ?? -1;
+
+			// Document writes are serialized per view: each edit is checked
+			// against the revision only after earlier edits have landed, so an
+			// in-flight edit of our own never looks like an external change.
+			let applyChain: Promise<void> = Promise.resolve();
+
+			// Separator text between excerpts has no file counterpart. Reject
+			// edits touching it at the editor level: mapping them would drop
+			// the file edit while the buffer still changes, leaving the two
+			// permanently out of sync. Separator bounds are read live from the
+			// map because applyExcerptEdit shifts them after every edit; a
+			// snapshot taken here would go stale after the first keystroke.
+			const rejectSeparatorEdits = EditorState.changeFilter.of((tr) => {
+				if (!tr.docChanged) return true;
+				let allowed = true;
+				tr.changes.iterChangedRanges((fromA, toA) => {
+					for (let i = 0; i < excerptMap.excerpts.length - 1; i++) {
+						const sepFrom = excerptMap.excerpts[i].bufferEnd;
+						const sepTo = excerptMap.excerpts[i + 1].bufferStart;
+						if (fromA < sepTo && toA > sepFrom) {
+							allowed = false;
+						}
+					}
+				});
+				return allowed;
+			});
 
 			const highlightDecorations = () => {
 				const builder = new RangeSetBuilder<Decoration>();
@@ -238,6 +272,7 @@
 					EditorView.lineWrapping,
 					customLineNumbers,
 					matchField,
+					rejectSeparatorEdits,
 					...langExtensions,
 					editorTheme,
 					EditorView.updateListener.of((update) => {
@@ -254,7 +289,35 @@
 								for (const excerptEdit of changes) {
 									const fileEdit = excerptMap.mapExcerptEditToFileEdit(excerptEdit);
 									if (fileEdit) {
-										void applyUserEditToFile(fileResult, fileEdit);
+										applyChain = applyChain
+											.then(async () => {
+												const liveDoc =
+													doc ??
+													appState.workspace.documents.find(
+														(d) => d.origin && toURI(d.origin) === uri
+													);
+												if (liveDoc && liveDoc.revision !== mapRevision) {
+													// The document moved on outside this view since
+													// init(): these offsets describe stale content.
+													// Drop the edit and rebuild from the current
+													// document instead of writing to the wrong place.
+													queueMicrotask(() => {
+														if (!alive()) return;
+														view?.destroy();
+														view = undefined;
+														void init();
+													});
+													return;
+												}
+												const appliedDoc = await applyUserEditToFile(fileResult, fileEdit);
+												if (appliedDoc) {
+													doc = appliedDoc;
+													mapRevision = appliedDoc.revision;
+												}
+											})
+											.catch(() => {
+												// A failed write must not break serialization for later edits.
+											});
 									}
 									// Keep segment bounds in sync so later edits map
 									// through current bounds, not search-time ones.

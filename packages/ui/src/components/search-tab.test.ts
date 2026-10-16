@@ -84,3 +84,21 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).toContain("changes.sort((a, b) => b.from - a.from)");
 	});
 });
+
+describe("Editable results safety guards contract audit (Issue #336)", () => {
+	it("rejects edits touching excerpt separators via a change filter", () => {
+		expect(SEARCH_TAB_SRC).toContain("changeFilter");
+		expect(SEARCH_TAB_SRC).toContain("rejectSeparatorEdits");
+		// Separator bounds must be read live from the map, not snapshotted:
+		// applyExcerptEdit shifts them after every edit.
+		expect(SEARCH_TAB_SRC).toContain("excerptMap.excerpts[i].bufferEnd");
+	});
+
+	it("detects external document changes via revision tracking and rebuilds the view", () => {
+		expect(SEARCH_TAB_SRC).toContain("mapRevision");
+		expect(SEARCH_TAB_SRC).toContain("liveDoc.revision !== mapRevision");
+		// Document writes are serialized per view so an in-flight edit of our
+		// own never looks like an external change.
+		expect(SEARCH_TAB_SRC).toContain("applyChain");
+	});
+});
