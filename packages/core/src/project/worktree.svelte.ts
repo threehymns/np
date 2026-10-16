@@ -220,7 +220,7 @@ export class Worktree {
 				}
 			}
 
-			const recursive = options?.recursive ?? (options?.isExpanded === undefined);
+			const recursive = options?.recursive ?? false;
 			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, recursive);
 			if (generation === this.scanGeneration) {
 				this.updateSnapshot(builtNodes);
