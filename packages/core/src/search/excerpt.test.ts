@@ -523,6 +523,28 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 			(globalThis as any).confirm = originalConfirm;
 		}
 	});
+
+	it("rebuilds a stale editor state from the current document content before applying edits", async () => {
+		const storage = createMockStorage({
+			"/test-project/stale.ts": "aaa target bbb"
+		});
+		const workspace = createTestWorkspace(storage);
+
+		const origin: FileOrigin = { scheme: "file", path: "/test-project/stale.ts", name: "stale.ts" };
+		const doc = new DocumentSession(storage, "aaa target bbb", origin);
+		workspace.documents.push(doc);
+
+		// Simulate the main editor holding a live EditorState, then the document
+		// content moving on without it (an external content update that only
+		// touched doc.content). Edit offsets below are computed against the
+		// current content, not the stale state.
+		doc.editorState = EditorState.create({ doc: "aaa target bbb" });
+		doc.content = "aaa TARGET bbb (edited elsewhere)";
+
+		applyEditsToDocumentSession(doc, [{ from: 4, to: 10, insert: "REPLACED" }], workspace);
+
+		expect(doc.content).toBe("aaa REPLACED bbb (edited elsewhere)");
+	});
 });
 
 describe("Excerpt map stays in sync after direct edits (Issue #336)", () => {
@@ -631,6 +653,59 @@ describe("Excerpt map stays in sync after direct edits (Issue #336)", () => {
 			to: shiftedOffset2 + 3,
 			insert: "XY"
 		});
+	});
+
+	it("returns null for an edit spanning two segments", () => {
+		const { map } = makeTwoExcerptMap();
+
+		// Select-and-delete from inside the first excerpt to inside the second:
+		// mapping the endpoints independently would delete the hidden file text
+		// between the excerpts, so the whole edit is dropped.
+		const edit = {
+			from: map.excerpts[0].bufferEnd - 2,
+			to: map.excerpts[1].bufferStart + 2,
+			insert: ""
+		};
+		expect(map.mapExcerptEditToFileEdit(edit)).toBeNull();
+	});
+
+	it("returns null for an edit starting in a separator and ending in a segment", () => {
+		const { map } = makeTwoExcerptMap();
+
+		const edit = {
+			from: map.excerpts[0].bufferEnd + 1,
+			to: map.excerpts[1].bufferStart + 2,
+			insert: "x"
+		};
+		expect(map.mapExcerptEditToFileEdit(edit)).toBeNull();
+	});
+
+	it("still maps edits fully inside one segment, including at its edges", () => {
+		const { map, offset1 } = makeTwoExcerptMap();
+
+		const seg = map.excerpts[0];
+		// Insertion exactly at the segment end boundary stays in the segment.
+		const fileEdit = map.mapExcerptEditToFileEdit({
+			from: seg.bufferEnd,
+			to: seg.bufferEnd,
+			insert: "!"
+		});
+		expect(fileEdit).not.toBeNull();
+		expect(fileEdit!.from).toBe(seg.fileEnd);
+		expect(fileEdit!.to).toBe(seg.fileEnd);
+
+		// A replacement covering the whole segment still maps.
+		const whole = map.mapExcerptEditToFileEdit({
+			from: seg.bufferStart,
+			to: seg.bufferEnd,
+			insert: "replaced"
+		});
+		expect(whole).toEqual({
+			from: seg.fileStart,
+			to: seg.fileEnd,
+			insert: "replaced"
+		});
+		expect(offset1).toBeGreaterThanOrEqual(seg.fileStart);
 	});
 
 	it("leaves file bounds untouched when the edit lands in a separator", () => {
