@@ -32,7 +32,6 @@
 	interface ExcerptViewEntry {
 		view: EditorView;
 		getMap: () => FileExcerptMap;
-		updateContent: (newBufferText: string) => void;
 	}
 	const activeExcerptViews = new SvelteMap<string, ExcerptViewEntry>();
 
@@ -147,11 +146,10 @@
 	}
 
 	async function applyUserEditToFile(fileResult: FileSearchResult, edit: SingleEdit) {
+		// Match by exact URI only: a path-suffix fallback can resolve to a
+		// different file that happens to share the same filename.
 		let doc = appState.workspace.documents.find(
-			(d) =>
-				d.origin &&
-				(toURI(d.origin) === toURI(fileResult.origin) ||
-					d.origin.path.endsWith(fileResult.filepath))
+			(d) => d.origin && toURI(d.origin) === toURI(fileResult.origin)
 		);
 		if (!doc) {
 			doc = await appState.workspace.openFile(fileResult.origin);
@@ -173,38 +171,28 @@
 			replacement: replaceText
 		});
 
-		// Update all active excerpt views in one transaction per view
-		for (const [filepath, entry] of activeExcerptViews.entries()) {
-			const fileResult = fileResults.find((r) => r.filepath === filepath);
-			if (fileResult) {
-				const doc = appState.workspace.documents.find(
-					(d) =>
-						d.origin &&
-						(toURI(d.origin) === toURI(fileResult.origin) || d.origin.path.endsWith(filepath))
-				);
-				if (doc) {
-					const newMap = new FileExcerptMap(
-						filepath,
-						fileResult.origin,
-						doc.content,
-						fileResult.matches,
-						{ contextLines: 1 }
-					);
-					entry.updateContent(newMap.bufferText);
-				}
-			}
-		}
+		// Re-run the search so every excerpt view rebuilds from fresh matches
+		// computed against the post-replacement content. Reusing the old match
+		// offsets would misalign excerpts whenever the replacement length
+		// differs from the match length.
+		await runSearch();
 	}
 
 	function setupExcerptEditor(node: HTMLDivElement, fileResult: FileSearchResult) {
 		let view: EditorView | undefined;
 		let disposed = false;
-		let isApplyingExternalChange = false;
+		let initSeq = 0;
 
 		async function init() {
+			// Invalidate any earlier in-flight init: the newest result wins.
+			const seq = ++initSeq;
+			const alive = () => !disposed && seq === initSeq;
+
 			const uri = toURI(fileResult.origin);
+			// Match by exact URI only: a path-suffix fallback can resolve to a
+			// different file that happens to share the same filename.
 			let doc = appState.workspace.documents.find(
-				(d) => d.origin && (toURI(d.origin) === uri || d.origin.path.endsWith(fileResult.filepath))
+				(d) => d.origin && toURI(d.origin) === uri
 			);
 			let content = doc?.content;
 			if (content === undefined) {
@@ -214,7 +202,7 @@
 					content = '';
 				}
 			}
-			if (disposed) return;
+			if (!alive()) return;
 
 			let excerptMap = new FileExcerptMap(
 				fileResult.filepath,
@@ -272,7 +260,7 @@
 
 			const langDesc = LanguageSupport.getLanguageForFile(fileResult.filepath);
 			const langExtensions = await getLanguageExtensions(langDesc);
-			if (disposed) return;
+			if (!alive()) return;
 
 			const startState = EditorState.create({
 				doc: excerptMap.bufferText,
@@ -283,7 +271,7 @@
 					...langExtensions,
 					editorTheme,
 					EditorView.updateListener.of((update) => {
-						if (update.docChanged && !isApplyingExternalChange) {
+						if (update.docChanged) {
 							update.transactions.forEach((tr) => {
 								tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
 									const excerptEdit = {
@@ -309,15 +297,7 @@
 
 			activeExcerptViews.set(fileResult.filepath, {
 				view,
-				getMap: () => excerptMap,
-				updateContent: (newBufferText) => {
-					if (!view) return;
-					isApplyingExternalChange = true;
-					view.dispatch({
-						changes: { from: 0, to: view.state.doc.length, insert: newBufferText }
-					});
-					isApplyingExternalChange = false;
-				}
+				getMap: () => excerptMap
 			});
 		}
 
@@ -325,7 +305,15 @@
 
 		return {
 			update(newResult: FileSearchResult) {
+				// A fresh result object means a new search run (e.g. the
+				// re-search after Replace All). Rebuild the editor from the
+				// fresh content and match offsets: keeping the old excerptMap
+				// would map edits through stale segment bounds.
+				if (newResult === fileResult) return;
 				fileResult = newResult;
+				view?.destroy();
+				view = undefined;
+				void init();
 			},
 			destroy() {
 				disposed = true;

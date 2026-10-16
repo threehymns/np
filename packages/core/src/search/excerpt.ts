@@ -271,6 +271,21 @@ export function buildReplaceAllEditsForFile(
 	let lastEnd = -1;
 
 	for (const m of sorted) {
+		// Skip matches whose text no longer sits at the recorded offset: the
+		// document may have changed since the search ran (e.g. unsaved edits).
+		// The original matched text is recovered from the match's own
+		// line/column, so this holds for literal, case-insensitive, and regex
+		// matches alike. When the original text can't be recovered (e.g. a
+		// multi-line regex match), fall back to the previous behavior.
+		const originalText = m.lineText.slice(m.column - 1, m.column - 1 + m.matchLength);
+		if (
+			fileContent !== undefined &&
+			originalText.length === m.matchLength &&
+			fileContent.slice(m.offset, m.offset + m.matchLength) !== originalText
+		) {
+			continue;
+		}
+
 		// If match starts at or after the end of the previous match, it is non-overlapping (adjacent is valid!)
 		if (m.offset >= lastEnd) {
 			edits.push({
@@ -350,12 +365,10 @@ export async function applyReplaceAll(options: {
 	for (const result of fileResults) {
 		if (result.matches.length === 0) continue;
 
-		// 1. Find or load DocumentSession
-		let doc = workspace.documents.find(
-			(d) =>
-				d.origin &&
-				(toURI(d.origin) === toURI(result.origin) || d.origin.path.endsWith(result.filepath))
-		);
+		// 1. Find or load DocumentSession. Match by exact URI only: a
+		// path-suffix fallback can resolve to a different file that happens
+		// to share the same filename.
+		let doc = workspace.documents.find((d) => d.origin && toURI(d.origin) === toURI(result.origin));
 
 		if (!doc) {
 			const content = await workspace.project.storage.readFile(result.origin);
