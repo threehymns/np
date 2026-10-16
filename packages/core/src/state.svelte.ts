@@ -2,8 +2,7 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
-import type { SplitDirection, SplitMode, Rect } from './split-tree.svelte';
-import type { DocumentSession } from './document.svelte';
+import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
@@ -101,6 +100,7 @@ export interface AppStateOptions {
 	iconRegistry?: IconRegistryInterface;
 	pluginHost?: PluginHost;
 	platform?: PluginPlatform;
+	snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy;
 }
 
 export class AppState {
@@ -211,7 +211,13 @@ export class AppState {
 		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
-		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		this.workspace = new Workspace(
+			this.storage,
+			options.vcsFactory,
+			persistence,
+			this.plugins,
+			options.snapshotStrategyFactory
+		);
 		// Generic collaborator services for feature plugins (#202, ADR 0008):
 		// dialog capability and the mounted diff view's hunk navigator. The
 		// workspace publishes itself. Keys are generic; values are consumed
@@ -432,6 +438,7 @@ export class AppState {
 		return closed;
 	}
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
+	dispose(): void { this.workspace.dispose(); }
 }
 
 export function useAppState(): AppState {

@@ -6,8 +6,9 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { Project } from './project/project.svelte';
-import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
-import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
+import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
+import type { RepositorySafetyReport } from './project/repository.svelte';
+import { type SessionPersistence, type SerializedDocument } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
 export interface WorkspaceTab {
@@ -369,10 +370,10 @@ export class Workspace {
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
 		persistence: SessionPersistence,
-		pluginHost?: PluginHostInterface
+		pluginHost?: PluginHostInterface,
+		snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy
 	) {
-		this.project = new Project(storage, vcsFactory, persistence);
-		this.activePaneId = (this.layout as Pane).id;
+		this.project = new Project(storage, vcsFactory, persistence, snapshotStrategyFactory);
 		this.project.projectTree.setWindowHooks({
 			markDocumentsDeleted: (origin) => this.markDocumentsDeleted(origin),
 			reconcileExternalDeletions: () => this.reconcileExternalDeletions(),
@@ -1365,5 +1366,9 @@ export class Workspace {
 
 		this.restorePromise = currentPromise;
 		return currentPromise;
+	}
+
+	dispose(): void {
+		this.project.dispose();
 	}
 }
