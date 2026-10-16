@@ -17,3 +17,14 @@ export {
 	SearchResultStream as EngineSearchResultStream,
 	TypeScriptSearchEngine
 } from './engine';
+
+export {
+	type SingleEdit,
+	type ExcerptSegment,
+	type ExcerptMapOptions,
+	computeLineStarts,
+	FileExcerptMap,
+	buildReplaceAllEditsForFile,
+	applyEditsToDocumentSession,
+	applyReplaceAll
+} from './excerpt';

@@ -53,3 +53,52 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 		expect(globalBlock!.bindings["cmd+shift+f"]).toBe("edit.findInFiles");
 	});
 });
+
+describe("Editable multibuffer and replace-all contract audit (Issue #336)", () => {
+	it("contains replace input and Replace All button in query bar", () => {
+		expect(SEARCH_TAB_SRC).toContain('placeholder="Replace with..."');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Replace query"');
+		expect(SEARCH_TAB_SRC).toContain('aria-label="Replace all"');
+		expect(SEARCH_TAB_SRC).toContain("Replace All");
+	});
+
+	it("wires editable multibuffer via setupExcerptEditor and FileExcerptMap", () => {
+		expect(SEARCH_TAB_SRC).toContain("use:setupExcerptEditor");
+		expect(SEARCH_TAB_SRC).toContain("new FileExcerptMap");
+		expect(SEARCH_TAB_SRC).toContain("mapExcerptEditToFileEdit");
+		expect(SEARCH_TAB_SRC).toContain("applyUserEditToFile");
+	});
+
+	it("wires replaceAll calling applyReplaceAll across results without modals or summary", () => {
+		expect(SEARCH_TAB_SRC).toContain("applyReplaceAll");
+		expect(SEARCH_TAB_SRC).toContain("replaceAll");
+		// Ensure no confirmation modal or summary report is triggered
+		expect(SEARCH_TAB_SRC).not.toContain("window.confirm");
+		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
+	});
+
+	it("keeps the excerpt map in sync after direct user edits", () => {
+		expect(SEARCH_TAB_SRC).toContain("excerptMap.applyExcerptEdit(excerptEdit, fileEdit)");
+		// Pre-transaction coordinates are handled latest-first so each edit
+		// still refers to the map's current coordinate space.
+		expect(SEARCH_TAB_SRC).toContain("changes.sort((a, b) => b.from - a.from)");
+	});
+});
+
+describe("Editable results safety guards contract audit (Issue #336)", () => {
+	it("rejects edits touching excerpt separators via a change filter", () => {
+		expect(SEARCH_TAB_SRC).toContain("changeFilter");
+		expect(SEARCH_TAB_SRC).toContain("rejectSeparatorEdits");
+		// Separator bounds must be read live from the map, not snapshotted:
+		// applyExcerptEdit shifts them after every edit.
+		expect(SEARCH_TAB_SRC).toContain("excerptMap.excerpts[i].bufferEnd");
+	});
+
+	it("detects external document changes via revision tracking and rebuilds the view", () => {
+		expect(SEARCH_TAB_SRC).toContain("mapRevision");
+		expect(SEARCH_TAB_SRC).toContain("liveDoc.revision !== mapRevision");
+		// Document writes are serialized per view so an in-flight edit of our
+		// own never looks like an external change.
+		expect(SEARCH_TAB_SRC).toContain("applyChain");
+	});
+});
