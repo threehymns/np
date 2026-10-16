@@ -244,6 +244,19 @@ describe('editor.languages layering (#286)', () => {
 		expect(resolved.provenance).toBe('workspace');
 	});
 
+	it('language names differing only by case merge into one entry, workspace wins', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: { markdown: { words: 'enabled', min_word_length: 5 } } } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({
+			Markdown: { words: 'enabled', min_word_length: 5 }
+		});
+		expect(resolved.provenance).toBe('workspace');
+	});
+
 	it('malformed user map (array) is skipped, workspace value stands, no throw', () => {
 		const resolver = makeResolver(
 			{ editor: { languages: ['not', 'a', 'map'] } },
