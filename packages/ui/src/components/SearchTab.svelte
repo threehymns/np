@@ -144,7 +144,7 @@
 				type="text"
 				bind:value={session.query}
 				oninput={handleInput}
-				placeholder="Search project (literal)..."
+				placeholder="Search project..."
 				class="w-full bg-background border border-input rounded-md pl-9 pr-24 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Search query"
 			/>
@@ -339,7 +339,7 @@
 					{#if session.query.trim()}
 						<p>No results found for &ldquo;{session.query}&rdquo;</p>
 					{:else}
-						<p>Type a literal query above to search the project.</p>
+						<p>Type a query above to search the project.</p>
 					{/if}
 				</div>
 			{/snippet}

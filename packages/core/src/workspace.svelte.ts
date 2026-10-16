@@ -453,6 +453,18 @@ export class Workspace {
 				const _folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 				const _tabs = this.getAllTabs().map(t => t.id).join(',');
 				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
+				// Read the search-session fields (query + five options) for every
+				// search tab so option changes schedule a persistence flush.
+				// Mirrors serializeTabs(): read-only lookup, no session creation.
+				const _search = this.tabs
+					.filter(t => t.type === 'search')
+					.map(t => {
+						const session = t.searchSession ?? this.searchSessions.get(t.id);
+						return session
+							? [session.query, session.isRegex, session.caseSensitive, session.wholeWord, session.includePattern, session.excludePattern].join('|')
+							: '';
+					})
+					.join(',');
 				
 				this.debouncedSaveOpenFiles();
 			});

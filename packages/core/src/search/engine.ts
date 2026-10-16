@@ -88,7 +88,7 @@ export function buildSearchRegex(query: SearchQuery): RegExp {
 	const caseSensitive = Boolean(query.caseSensitive ?? false);
 	const wholeWord = Boolean(query.wholeWord ?? false);
 
-	let flags = 'g';
+	let flags = 'gm';
 	if (!caseSensitive) {
 		flags += 'i';
 	}

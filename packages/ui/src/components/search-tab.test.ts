@@ -10,7 +10,8 @@ const MAIN_LAYOUT_SRC = fs.readFileSync(path.join(__dirname, "MainLayout.svelte"
 
 describe("Search tab UI contract and template audit (Issue #334)", () => {
 	it("SearchTab contains query bar on top and MultiBuffer grouped results below", () => {
-		expect(SEARCH_TAB_SRC).toContain('placeholder="Search project (literal)..."');
+		expect(SEARCH_TAB_SRC).toContain('placeholder="Search project..."');
+		expect(SEARCH_TAB_SRC).not.toContain("(literal)");
 		expect(SEARCH_TAB_SRC).toContain("<MultiBuffer");
 		expect(SEARCH_TAB_SRC).toContain("jumpToMatch");
 		expect(SEARCH_TAB_SRC).toContain("openFile");

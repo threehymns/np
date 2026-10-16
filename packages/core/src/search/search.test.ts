@@ -515,6 +515,22 @@ describe("Query options: regex, case-sensitivity, whole-word, and globs (Issue #
 		expect(negLookbehindResults[0].matches[0].lineText).toBe("padding: 10em;");
 	});
 
+	it("anchored regexes pass the whole-file prefilter on non-first lines", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/anchor.ts": "const unrelated = 1;\ntarget = 2;"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		const results = await engine.search({ pattern: "^target", isRegex: true }).all();
+		expect(results.length).toBe(1);
+		expect(results[0].filepath).toBe("src/anchor.ts");
+		expect(results[0].matches.length).toBe(1);
+		expect(results[0].matches[0].line).toBe(2);
+	});
+
 	it("invalid regex does not crash engine and yields 0 results", async () => {
 		const storage = createMockStorage({
 			"/test-project/src/index.ts": "const foo = 'bar';"
