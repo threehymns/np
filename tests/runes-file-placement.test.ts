@@ -17,9 +17,10 @@ import ts from "typescript";
  */
 
 const ROOTS = [join(import.meta.dir, "..", "packages"), join(import.meta.dir, "..", "apps")];
-export const RUNE_RE = /\$(state|derived|effect|props|bindable|inspect|host)([^a-zA-Z0-9_]|$)/;
+export const RUNE_RE = /(?:\$|\\u0024|\\u\{24\})(state|derived|effect|props|bindable|inspect|host)([^a-zA-Z0-9_]|$)/;
 // Exact rune names for the AST check. RUNE_RE above stays as the loose
 // fast path that decides whether a file is worth parsing at all.
+// It also matches \u0024 / \u{24} escapes so an escaped "$" can't slip past.
 const RUNE_NAMES = new Set([
 	"$state", "$derived", "$effect", "$props", "$bindable", "$inspect", "$host",
 ]);
@@ -163,6 +164,8 @@ describe("Svelte runes only appear in compiler-processed files", () => {
 				{ code: "const msg = `count: ${$state(0)}`;", rune: "$state" },
 				{ code: "const a = \"$state in string\"; const b = $state(0);", rune: "$state" },
 				{ code: "const x = $state(0); // $state in comment", rune: "$state" },
+				{ code: "let count = \\u0024state(0);", rune: "$state" },
+				{ code: "let count = \\u{24}state(0);", rune: "$state" },
 			];
 
 			for (const { code, rune } of rejectedCases) {
