@@ -9,6 +9,7 @@
   import { ElectronConfigStorage } from "./ElectronConfigStorage";
   import { SpawnGitAdapter } from "./SpawnGitAdapter";
   import { provideLspPlatform } from "./LspPlatformAdapter";
+  import { DesktopWatcherSnapshotStrategy } from "./DesktopWatcherSnapshotStrategy";
 
   import AppShell from "@np/ui/AppShell.svelte";
   import { MainLayout } from "@np/ui";
@@ -45,7 +46,8 @@
     prefsStorage,
     vcsFactory,
     iconRegistry,
-    exportService
+    exportService,
+    snapshotStrategyFactory: () => new DesktopWatcherSnapshotStrategy()
   });
   storage.registerProvider("keymap", new KeymapStorageProvider(appState.keymaps));
   // Published before the shell mounts and activates bundled plugins: the LSP

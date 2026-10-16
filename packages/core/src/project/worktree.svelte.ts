@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { toURI, type FileOrigin, type Storage } from '../storage';
 import { isNotFoundError } from '../utils';
 import type { TreeNode } from './tree.svelte';
@@ -113,7 +114,7 @@ export class Worktree {
 
 	private _entries = $state<TreeNode[]>([]);
 	private _version = $state(0);
-	private listeners = new Set<SnapshotListener>();
+	private listeners = new SvelteSet<SnapshotListener>();
 	private scanGeneration = 0;
 	private isScanning = $state(false);
 	/**

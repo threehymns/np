@@ -75,6 +75,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			ipcRenderer.removeListener('config:changed', listener);
 		};
 	},
+	watchDirectory: (
+		dirPath: string,
+		callback: (events: Array<{ path: string; type: 'create' | 'update' | 'delete' }>) => void
+	) => {
+		const watchId = crypto.randomUUID();
+		const listener = (
+			_event: unknown,
+			payload: { watchId: string; events: Array<{ path: string; type: 'create' | 'update' | 'delete' }> }
+		) => {
+			if (payload.watchId === watchId) {
+				callback(payload.events);
+			}
+		};
+		ipcRenderer.on('watcher:events', listener);
+		const startPromise = ipcRenderer.invoke('watcher:start', watchId, dirPath);
+		return async () => {
+			ipcRenderer.removeListener('watcher:events', listener);
+			await startPromise;
+			await ipcRenderer.invoke('watcher:stop', watchId);
+		};
+	},
 	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools')
 });
 

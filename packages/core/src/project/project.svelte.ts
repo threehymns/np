@@ -134,6 +134,14 @@ export class Project {
 		}
 	}
 
+	dispose(): void {
+		for (const wt of this.worktrees) {
+			wt.dispose();
+		}
+		this.worktrees = [];
+		this.projectTree.attachToWorktree(null);
+	}
+
 	/**
 	 * Is this origin covered by the granted project root? Synchronous and
 	 * side-effect free: the Project owns the root, so Documents never check
