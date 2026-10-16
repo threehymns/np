@@ -208,7 +208,7 @@ describe("ADR 0024: Pane Splits", () => {
 			expect(ws.getAllPanes().length).toBe(2);
 
 			// Close doc2 in pane2 (its only tab)
-			await ws.performClose(doc2.id, false, pane2.id);
+			await ws.performClose(doc2.id, pane2.id);
 
 			expect(ws.getAllPanes().length).toBe(1);
 			expect(ws.activePaneId).toBe(pane1.id);
@@ -220,7 +220,7 @@ describe("ADR 0024: Pane Splits", () => {
 			const doc = await ws.newFile();
 			expect(ws.getAllPanes().length).toBe(1);
 
-			await ws.performClose(doc.id, false, ws.activePaneId);
+			await ws.performClose(doc.id, ws.activePaneId);
 
 			expect(ws.getAllPanes().length).toBe(1);
 			expect(ws.activePane.tabs.length).toBe(0);
@@ -291,7 +291,7 @@ describe("ADR 0024: Pane Splits", () => {
 
 		it("registers default keybindings for split and focus", () => {
 			const globalBindings = defaultKeymap.find((b) => !b.context)?.bindings ?? {};
-			expect(globalBindings["ctrl+\\"]).toBe("pane.splitRight");
+			// Note: ctrl+\ is intentionally not bound (it would shadow view.toggleSidebar on Linux/Windows)
 			expect(globalBindings["cmd+k right"]).toBe("pane.splitRight");
 			expect(globalBindings["cmd+k left"]).toBe("pane.splitLeft");
 			expect(globalBindings["cmd+k up"]).toBe("pane.splitUp");
