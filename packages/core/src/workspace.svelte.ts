@@ -51,6 +51,7 @@ export class Workspace {
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
+	searchTabFocusNonce = $state<number>(0);
 
 	/**
 	 * A Root switch is in flight. Workspace-level, not Project-level: the
@@ -821,6 +822,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 */
 	openSearchTab(query?: string): string {
 		const SEARCH_TAB_ID = '__project_search__';
+		this.searchTabFocusNonce++;
 		const existing = this.getAllTabs().find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
 		if (existing) {
 			// The tab may live in another pane, so focus that pane rather than

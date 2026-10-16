@@ -219,3 +219,50 @@ describe("Editable results safety guards contract audit (Issue #336)", () => {
 		expect(SEARCH_TAB_SRC).toContain("session.toQuery()");
 	});
 });
+
+describe("Project search 6: keybinding, streaming, counts, and truncation polish (Issue #337)", () => {
+	it("focuses search input when opened or activated", () => {
+		expect(SEARCH_TAB_SRC).toContain("inputRef");
+		expect(SEARCH_TAB_SRC).toContain("bind:this={inputRef}");
+		expect(SEARCH_TAB_SRC).toContain("appState.workspace.searchTabFocusNonce");
+		expect(SEARCH_TAB_SRC).toContain("inputRef.focus();");
+		expect(SEARCH_TAB_SRC).toContain("inputRef.select();");
+	});
+
+	it("in-progress searches show streaming state and live match/file counts", () => {
+		expect(SEARCH_TAB_SRC).toContain("isSearching");
+		expect(SEARCH_TAB_SRC).toContain("CircleNotchIcon");
+		expect(SEARCH_TAB_SRC).toContain("animate-spin");
+		expect(SEARCH_TAB_SRC).toContain("role=\"progressbar\"");
+		expect(SEARCH_TAB_SRC).toContain("Searching... {totalMatches}");
+	});
+
+	it("completed searches display final match and file counts", () => {
+		expect(SEARCH_TAB_SRC).toContain("{totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {fileResults.length}");
+		expect(SEARCH_TAB_SRC).toContain("No results found");
+		expect(SEARCH_TAB_SRC).toContain("Type a query to search");
+	});
+
+	it("truncation notice is unmissable when caps are hit", () => {
+		expect(SEARCH_TAB_SRC).toContain('role="alert"');
+		expect(SEARCH_TAB_SRC).toContain('aria-live="assertive"');
+		expect(SEARCH_TAB_SRC).toContain("WarningIcon");
+		expect(SEARCH_TAB_SRC).toContain("<strong>Results truncated:</strong> capped at");
+		expect(SEARCH_TAB_SRC).toContain("5,000 files");
+		expect(SEARCH_TAB_SRC).toContain("10,000 matches");
+		expect(SEARCH_TAB_SRC).toContain("Refine your query");
+	});
+
+	it("keybinding cmd+shift+f is registered without duplication and maps to edit.findInFiles", () => {
+		const editorBindings = defaultKeymap.find((b) => b.context === "editor")?.bindings ?? {};
+		const globalBindings = defaultKeymap.find((b) => !b.context)?.bindings ?? {};
+
+		expect(editorBindings["cmd+shift+f"]).toBe("edit.findInFiles");
+		expect(globalBindings["cmd+shift+f"]).toBe("edit.findInFiles");
+
+		// Ensure no accidental duplicate or conflicting find-in-files commands
+		const allFindInFiles = Object.entries(globalBindings).filter(([_, cmd]) => cmd === "edit.findInFiles");
+		expect(allFindInFiles.length).toBe(1);
+		expect(allFindInFiles[0][0]).toBe("cmd+shift+f");
+	});
+});
