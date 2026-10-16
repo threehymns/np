@@ -10,30 +10,10 @@ import type { Repository, RepositorySafetyReport } from './project/repository.sv
 import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
-import {
-	Pane,
-	Axis,
-	type LayoutNode,
-	type SplitDirection,
-	type SplitMode,
-	type WorkspaceTab,
-	getAllPanes,
-	findPane,
-	findPaneWithTab,
-	splitPane,
-	removePane,
-	findPaneInDirection,
-	canSplitTab,
-	type Rect,
-	WORKSPACE_PERSISTENCE_VERSION
-} from './split-tree.svelte';
-
-export type { WorkspaceTab } from './split-tree.svelte';
-
-export interface ProjectIdentity {
-	uri: string;
-	repository: Repository | null;
-	generation: number;
+export interface WorkspaceTab {
+	id: string;
+	type: 'document' | 'diff' | 'search';
+	pluginId?: string;
 }
 
 export class Workspace {
@@ -340,27 +320,16 @@ export class Workspace {
 					serializedMap.set(tab.id, serialized);
 				}
 			}
-		}
-
-		// Tab-less bound Documents (Diff Viewer Working-copy pane bindings for
-		// files with no open tab, issue #272) hold user text no tab serializes.
-		// Persist dirty ones as tab-less entries under the same draft rules so
-		// pane edits survive a restart; clean ones are re-derivable from the
-		// next loaded diff snapshot and need no entry.
-		//
-		// A document can be open in more than one pane, so "has a tab" means
-		// "has a tab in some pane".
-		const tabbedDocIds = new Set<string>();
-		for (const pane of this.getAllPanes()) {
-			for (const tab of pane.tabs) {
-				if (tab.type === 'document') tabbedDocIds.add(tab.docId ?? tab.id);
+			if (tab.type === 'search') {
+				return {
+					id: tab.id,
+					origin: null,
+					virtualTabType: 'search'
+				};
 			}
-		}
-		const tablessDocs: SerializedDocument[] = [];
-		for (const doc of this.documents) {
-			if (tabbedDocIds.has(doc.id)) continue;
-			if (!doc.isModified && doc.origin && !doc.deletedOnDisk) continue;
-			tablessDocs.push({
+			const doc = this.documents.find(d => d.id === tab.id);
+			if (!doc) return null;
+			const serialized: SerializedDocument = {
 				id: doc.id,
 				origin: doc.origin ? $state.snapshot(doc.origin) : null,
 				untitledTitle: doc.untitledTitle,
@@ -710,33 +679,25 @@ export class Workspace {
 		return newDoc;
 	}
 
-	/**
-	 * Open a Root as the current project.
-	 *
-	 * Returns whether the project changed. A cancelled picker, a denied
-	 * permission and a failed destination load all leave the current project
-	 * exactly as it was and report false; the failure reason, when there is
-	 * one, lands in `projectError`.
-	 *
-	 * "Exactly as it was" covers the state that names the project: the
-	 * settings attachment follows the Root, and the recent folders list
-	 * names the Roots that were opened, so a failed open puts both back
-	 * rather than leaving either pointing at a project that was never
-	 * opened.
-	 *
-	 * Only one project mutation runs at a time: a second request while one
-	 * is in flight is refused rather than interleaved.
-	 */
-	async openDirectory(specificOrigin?: FileOrigin): Promise<boolean> {
-		if (this.projectMutationBusy) return false;
-		this.projectOpening = true;
-		this.projectError = null;
-		if (this.restorePromise) {
-			try {
-				await this.restorePromise;
-			} catch {
-				// A failed session restore must not block opening a folder.
-			}
+	openSearchTab(_query?: string): string {
+		const SEARCH_TAB_ID = '__project_search__';
+		const existing = this.tabs.find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
+		if (existing) {
+			this.activeTabId = existing.id;
+			return existing.id;
+		}
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search' });
+		this.activeTabId = SEARCH_TAB_ID;
+		return SEARCH_TAB_ID;
+	}
+
+	async openDirectory(specificOrigin?: FileOrigin) {
+		let origin: FileOrigin | null = null;
+
+		if (specificOrigin) {
+			origin = specificOrigin;
+		} else {
+			origin = await this.project.storage.pickDirectory();
 		}
 		const previous = {
 			root: this.project.rootOrigin,
@@ -1203,17 +1164,26 @@ export class Workspace {
 						if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
 							continue;
 						}
-						restoredTabs.push({
-							id: serialized.id,
-							type: 'diff',
-							canSplit: false,
-							...(serialized.pluginId ? { pluginId: serialized.pluginId } : {})
-						});
-						if (serialized.diffFilepath) {
-							this.pendingDiffRestore.set(serialized.id, {
-								filepath: serialized.diffFilepath,
-								staged: serialized.diffStaged
+						if (serialized.virtualTabType === 'search') {
+							restoredTabs.push({
+								id: serialized.id,
+								type: 'search'
 							});
+							continue;
+						}
+						doc = new DocumentSession(
+							this.project.storage,
+							'',
+							serialized.origin,
+							serialized.untitledTitle || 'Untitled'
+						);
+						doc.id = serialized.id as any;
+						if (serialized.deletedOnDisk) {
+							// Restores a previously persisted flag verbatim; this is
+							// not a fresh delete, so no baseline seq bump. A
+							// restoreDraft read that follows re-checks the disk and
+							// clears it if the file is back.
+							doc.deletedOnDisk = true;
 						}
 						continue;
 					}
