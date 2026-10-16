@@ -4,7 +4,7 @@ import {
 	type LspDiagnostic,
 	type LspDiagnosticsStore
 } from './diagnostics';
-import { pullWithBackoff } from './pull-schedules';
+import { boundedPullRetrySchedule } from './pull-schedules';
 
 export interface LspPullReport {
 	readonly uri: string;
@@ -135,9 +135,16 @@ export class DiagnosticPullCoordinator {
 	}
 
 	private debouncedPull(uri: string, server: string): Effect.Effect<void, never> {
+		// Retries are bounded: a server that fails every attempt terminates
+		// instead of hammering it forever, and Effect.ignore handles that
+		// terminal failure explicitly, so the error channel needs no cast.
+		// The next edit re-arms a pull.
 		return Effect.sleep(DIAGNOSTIC_PULL_DEBOUNCE).pipe(
-			Effect.flatMap(() => pullWithBackoff(this.pullOnce(uri, server)))
-		) as Effect.Effect<void, never>;
+			Effect.flatMap(() =>
+				this.pullOnce(uri, server).pipe(Effect.retry(boundedPullRetrySchedule))
+			),
+			Effect.ignore
+		);
 	}
 
 	private pullOnce(uri: string, server: string): Effect.Effect<void, unknown> {
@@ -165,6 +172,27 @@ export class DiagnosticPullCoordinator {
 				server: report.server,
 				diagnostics: report.diagnostics
 			});
+		});
+	}
+
+	/**
+	 * Drops all pull state for a stopped server: the result-id cache and any
+	 * pending debounced pull. A restart must not send a `previousResultId`
+	 * from the dead process, and an in-flight pull against the old process
+	 * must not write after the stop. Called from `LspRuntime.stopEntry`
+	 * alongside the store's `dropServer`, which clears the store side.
+	 */
+	forgetServer(server: string): Effect.Effect<void> {
+		const self = this;
+		return Effect.gen(function* () {
+			const serverPulls = self.pending.get(server);
+			if (serverPulls) {
+				for (const fiber of serverPulls.values()) {
+					yield* Fiber.interrupt(fiber);
+				}
+				self.pending.delete(server);
+			}
+			self.resultIds.delete(server);
 		});
 	}
 }

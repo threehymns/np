@@ -10,6 +10,7 @@ import {
 	LspDiagnosticsStore,
 	parsePublishDiagnostics
 } from './diagnostics';
+import { PULL_RETRY_LIMIT } from './pull-schedules';
 
 /** Runs a TestClock program: time only moves via `TestClock.adjust`, never real sleeps. */
 function runTestClock<A, E>(program: Effect.Effect<A, E>): Promise<A> {
@@ -203,6 +204,68 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(store.read(uri).map((d) => d.message)).toEqual(['pulledA', 'pushB']);
 		expect(store.revision).toBe(revAfterPull + 1);
 		expect(listenerCalls).toBe(1);
+	});
+
+	it('retries are bounded: a permanently failing server gives up instead of retrying forever', async () => {
+		const calls: RecordedCall[] = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: () => {
+				calls.push({ server, uri, previousResultId: undefined });
+				return Effect.fail(new Error('boom'));
+			}
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('30 seconds');
+					// One initial attempt plus PULL_RETRY_LIMIT retries, then silence.
+					expect(calls).toHaveLength(PULL_RETRY_LIMIT + 1);
+					// Advancing time further issues nothing more.
+					yield* TestClock.adjust('30 seconds');
+					expect(calls).toHaveLength(PULL_RETRY_LIMIT + 1);
+				})
+			)
+		);
+	});
+
+	it('forgetServer drops the result-id cache and interrupts a pending pull', async () => {
+		const calls: RecordedCall[] = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: (srv, u, previousResultId) => {
+				calls.push({ server: srv, uri: u, previousResultId });
+				return Effect.succeed({ kind: 'full', resultId: 'r1', items: [] });
+			}
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+					expect(calls).toHaveLength(1);
+					expect(calls[0].previousResultId).toBeUndefined();
+
+					// A pull still waiting out the debounce never requests after the forget.
+					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.forgetServer(server);
+					yield* TestClock.adjust('1 second');
+					expect(calls).toHaveLength(1);
+
+					// The next pull starts clean: no previousResultId from the dead run.
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		expect(calls).toHaveLength(2);
+		expect(calls[1].previousResultId).toBeUndefined();
 	});
 
 	it('backoff then stop: failures retry per the backoff schedule, and interrupting mid-backoff issues zero further requests', async () => {
