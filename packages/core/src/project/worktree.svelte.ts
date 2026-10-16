@@ -1,5 +1,6 @@
-import { isNotFoundError } from '../utils';
+import { SvelteSet } from 'svelte/reactivity';
 import { toURI, type FileOrigin, type Storage } from '../storage';
+import { isNotFoundError } from '../utils';
 import type { TreeNode } from './tree.svelte';
 
 export interface FileSnapshot {
@@ -103,9 +104,10 @@ export class Worktree {
 
 	private _entries = $state<TreeNode[]>([]);
 	private _version = $state(0);
-	private listeners = new Set<SnapshotListener>();
+	private listeners = new SvelteSet<SnapshotListener>();
 	private scanGeneration = 0;
 	private isScanning = $state(false);
+	private lastScanOptions?: WorktreeScanOptions;
 
 	constructor(
 		root: FileOrigin,
@@ -133,6 +135,7 @@ export class Worktree {
 			this._entries = initialEntries;
 			this.strategy = new PolledSnapshotStrategy();
 		}
+		this.strategy.start?.(this);
 	}
 
 	get entries(): TreeNode[] {
@@ -219,7 +222,16 @@ export class Worktree {
 				}
 			}
 
-			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, scanGitignore);
+			if (options) {
+				this.lastScanOptions = options;
+			}
+			const existingExpanded = this.collectExpandedPaths(this._entries);
+			const isExpanded =
+				options?.isExpanded ??
+				this.lastScanOptions?.isExpanded ??
+				((path: string) => existingExpanded.has(path));
+
+			const builtNodes = await this.buildLevel(targetRoot, '', isExpanded, scanGitignore);
 			if (generation === this.scanGeneration && toURI(targetRoot) === toURI(this.root)) {
 				this.gitignore = scanGitignore;
 				this.updateSnapshot(builtNodes);
@@ -281,6 +293,22 @@ export class Worktree {
 			if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
 			return a.name.localeCompare(b.name);
 		});
+	}
+
+	private collectExpandedPaths(nodes: TreeNode[], parentPath = ''): SvelteSet<string> {
+		const expanded = new SvelteSet<string>();
+		for (const node of nodes) {
+			const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
+			if (node.isExpanded) {
+				expanded.add(currentPath);
+				if (node.children) {
+					for (const p of this.collectExpandedPaths(node.children, currentPath)) {
+						expanded.add(p);
+					}
+				}
+			}
+		}
+		return expanded;
 	}
 
 	dispose(): void {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
+import type { WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -8,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
+import { DesktopWatcher } from './DesktopWatcher.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
 import {
 	isValidBundledCommand,
@@ -68,6 +70,64 @@ function killLspProcess(processId: string): void {
 /** Quitting with a server still running would leave an orphan nobody can stop. */
 function killAllLspProcesses(): void {
 	for (const processId of [...lspProcesses.keys()]) killLspProcess(processId);
+}
+
+const activeWatchers = new Map<string, DesktopWatcher>();
+// Owning webContents id per watchId, so watchers left behind by a renderer
+// reload (where the preload stop callback never runs) can be cleaned up.
+const watcherOwners = new Map<string, number>();
+const ownerWatchIds = new Map<number, Set<string>>();
+
+async function closeWatcher(id: string): Promise<void> {
+	const watcher = activeWatchers.get(id);
+	if (!watcher) return;
+	activeWatchers.delete(id);
+	const senderId = watcherOwners.get(id);
+	watcherOwners.delete(id);
+	if (senderId !== undefined) {
+		const ids = ownerWatchIds.get(senderId);
+		if (ids) {
+			ids.delete(id);
+			if (ids.size === 0) ownerWatchIds.delete(senderId);
+		}
+	}
+	try {
+		await watcher.close();
+	} catch (e) {
+		console.error(`[main] Failed to close watcher ${id}:`, e);
+	}
+}
+
+async function closeWatchersForSender(senderId: number): Promise<void> {
+	const ids = ownerWatchIds.get(senderId);
+	if (!ids) return;
+	for (const id of [...ids]) {
+		await closeWatcher(id);
+	}
+}
+
+function trackWatcherOwner(id: string, sender: WebContents): void {
+	const senderId = sender.id;
+	watcherOwners.set(id, senderId);
+	let ids = ownerWatchIds.get(senderId);
+	if (!ids) {
+		ids = new Set();
+		ownerWatchIds.set(senderId, ids);
+		sender.once('destroyed', () => void closeWatchersForSender(senderId));
+		sender.on('did-start-navigation', () => void closeWatchersForSender(senderId));
+	}
+	ids.add(id);
+}
+
+async function killAllWatchers(): Promise<void> {
+	for (const [id, watcher] of [...activeWatchers.entries()]) {
+		activeWatchers.delete(id);
+		try {
+			await watcher.close();
+		} catch (e) {
+			console.error(`[main] Failed to close watcher ${id}:`, e);
+		}
+	}
 }
 
 // Helpers to get AppData persistence path
@@ -183,6 +243,7 @@ app.on('before-quit', (e) => {
 		} finally {
 			sessionPersistence.flushSync();
 			killAllLspProcesses();
+			await killAllWatchers();
 			if (configWatcher) {
 				configWatcher.close();
 				configWatcher = null;
@@ -576,6 +637,25 @@ function registerIpcHandlers() {
 		if (mainWindow) {
 			mainWindow.webContents.toggleDevTools();
 		}
+	});
+
+	ipcMain.handle('watcher:start', async (event, watchId: string, dirPath: string) => {
+		await closeWatcher(watchId);
+		const watcher = new DesktopWatcher({
+			dirPath,
+			onEvents: (events) => {
+				sendToRenderer('watcher:events', { watchId, events });
+			}
+		});
+		await watcher.start();
+		activeWatchers.set(watchId, watcher);
+		trackWatcherOwner(watchId, event.sender);
+		return { success: true };
+	});
+
+	ipcMain.handle('watcher:stop', async (_, watchId: string) => {
+		await closeWatcher(watchId);
+		return { success: true };
 	});
 }
 
