@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
-	import type { FileSearchResult, SearchMatch } from '@np/core';
+	import type { FileSearchResult, SearchMatch, SingleEdit } from '@np/core';
+	import { FileExcerptMap, applyReplaceAll, applyEditsToDocumentSession, toURI } from '@np/core';
 	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
 	import Icon from './Icon.svelte';
 	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteSet, SvelteMap } from 'svelte/reactivity';
+	import { EditorView, lineNumbers, Decoration, type DecorationSet } from '@codemirror/view';
+	import { EditorState, StateField, RangeSetBuilder } from '@codemirror/state';
+	import { getLanguageExtensions, editorTheme, LanguageSupport } from '../editor/index';
 
 	const appState = useAppState();
 
 	let queryText = $state('');
+	let replaceText = $state('');
 	let fileResults = $state<FileSearchResult[]>([]);
 	let isSearching = $state(false);
 	let isTruncated = $state(false);
@@ -16,6 +21,13 @@
 	let searchTimeout: any = null;
 	let currentAbortController: AbortController | null = null;
 	const collapsedPaths = new SvelteSet<string>();
+
+	interface ExcerptViewEntry {
+		view: EditorView;
+		getMap: () => FileExcerptMap;
+		updateContent: (newBufferText: string) => void;
+	}
+	const activeExcerptViews = new SvelteMap<string, ExcerptViewEntry>();
 
 	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
 
@@ -103,11 +115,202 @@
 			doc.pendingMatchLength = match.matchLength;
 		}
 	}
+
+	async function applyUserEditToFile(fileResult: FileSearchResult, edit: SingleEdit) {
+		let doc = appState.workspace.documents.find(
+			(d) =>
+				d.origin &&
+				(toURI(d.origin) === toURI(fileResult.origin) ||
+					d.origin.path.endsWith(fileResult.filepath))
+		);
+		if (!doc) {
+			doc = await appState.workspace.openFile(fileResult.origin);
+		}
+		if (doc) {
+			applyEditsToDocumentSession(doc, [edit], appState.workspace);
+		}
+	}
+
+	async function replaceAll() {
+		if (fileResults.length === 0 || !queryText) return;
+
+		// Replace-all applies across all results in one action (per-file undo)
+		// No confirmation modal, no summary report.
+		// Dirty files accept replace edits without warnings.
+		await applyReplaceAll({
+			workspace: appState.workspace,
+			fileResults,
+			replacement: replaceText
+		});
+
+		// Update all active excerpt views in one transaction per view
+		for (const [filepath, entry] of activeExcerptViews.entries()) {
+			const fileResult = fileResults.find((r) => r.filepath === filepath);
+			if (fileResult) {
+				const doc = appState.workspace.documents.find(
+					(d) =>
+						d.origin &&
+						(toURI(d.origin) === toURI(fileResult.origin) || d.origin.path.endsWith(filepath))
+				);
+				if (doc) {
+					const newMap = new FileExcerptMap(
+						filepath,
+						fileResult.origin,
+						doc.content,
+						fileResult.matches,
+						{ contextLines: 1 }
+					);
+					entry.updateContent(newMap.bufferText);
+				}
+			}
+		}
+	}
+
+	function setupExcerptEditor(node: HTMLDivElement, fileResult: FileSearchResult) {
+		let view: EditorView | undefined;
+		let disposed = false;
+		let isApplyingExternalChange = false;
+
+		async function init() {
+			const uri = toURI(fileResult.origin);
+			let doc = appState.workspace.documents.find(
+				(d) => d.origin && (toURI(d.origin) === uri || d.origin.path.endsWith(fileResult.filepath))
+			);
+			let content = doc?.content;
+			if (content === undefined) {
+				try {
+					content = await appState.workspace.project.storage.readFile(fileResult.origin);
+				} catch {
+					content = '';
+				}
+			}
+			if (disposed) return;
+
+			let excerptMap = new FileExcerptMap(
+				fileResult.filepath,
+				fileResult.origin,
+				content,
+				fileResult.matches,
+				{ contextLines: 1 }
+			);
+
+			const highlightDecorations = () => {
+				const builder = new RangeSetBuilder<Decoration>();
+				for (const match of fileResult.matches) {
+					const bufFrom = excerptMap.fileOffsetToExcerptOffset(match.offset);
+					if (bufFrom !== null) {
+						const bufTo = Math.min(bufFrom + match.matchLength, excerptMap.bufferText.length);
+						if (bufFrom < bufTo) {
+							builder.add(
+								bufFrom,
+								bufTo,
+								Decoration.mark({
+									class: 'cm-search-match bg-primary/30 text-primary font-bold rounded-xs px-0.5'
+								})
+							);
+						}
+					}
+				}
+				return builder.finish();
+			};
+
+			const matchField = StateField.define<DecorationSet>({
+				create() {
+					return highlightDecorations();
+				},
+				update(decorations, tr) {
+					if (tr.docChanged) {
+						return decorations.map(tr.changes);
+					}
+					return decorations;
+				},
+				provide: (f) => EditorView.decorations.from(f)
+			});
+
+			const customLineNumbers = lineNumbers({
+				formatNumber(lineNo, state) {
+					const line = state.doc.line(lineNo);
+					const fileOffset = excerptMap.excerptOffsetToFileOffset(line.from);
+					if (fileOffset !== null) {
+						const prefix = content.slice(0, fileOffset);
+						const fileLine = prefix.split('\n').length;
+						return String(fileLine);
+					}
+					return String(lineNo);
+				}
+			});
+
+			const langDesc = LanguageSupport.getLanguageForFile(fileResult.filepath);
+			const langExtensions = await getLanguageExtensions(langDesc);
+			if (disposed) return;
+
+			const startState = EditorState.create({
+				doc: excerptMap.bufferText,
+				extensions: [
+					EditorView.lineWrapping,
+					customLineNumbers,
+					matchField,
+					...langExtensions,
+					editorTheme,
+					EditorView.updateListener.of((update) => {
+						if (update.docChanged && !isApplyingExternalChange) {
+							update.transactions.forEach((tr) => {
+								tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+									const excerptEdit = {
+										from: fromA,
+										to: toA,
+										insert: inserted.toString()
+									};
+									const fileEdit = excerptMap.mapExcerptEditToFileEdit(excerptEdit);
+									if (fileEdit) {
+										void applyUserEditToFile(fileResult, fileEdit);
+									}
+								});
+							});
+						}
+					})
+				]
+			});
+
+			view = new EditorView({
+				state: startState,
+				parent: node
+			});
+
+			activeExcerptViews.set(fileResult.filepath, {
+				view,
+				getMap: () => excerptMap,
+				updateContent: (newBufferText) => {
+					if (!view) return;
+					isApplyingExternalChange = true;
+					view.dispatch({
+						changes: { from: 0, to: view.state.doc.length, insert: newBufferText }
+					});
+					isApplyingExternalChange = false;
+				}
+			});
+		}
+
+		void init();
+
+		return {
+			update(newResult: FileSearchResult) {
+				fileResult = newResult;
+			},
+			destroy() {
+				disposed = true;
+				activeExcerptViews.delete(fileResult.filepath);
+				view?.destroy();
+				view = undefined;
+			}
+		};
+	}
 </script>
 
 <div class="flex flex-col h-full w-full bg-background text-foreground overflow-hidden">
 	<!-- Query bar on top -->
 	<div class="border-b border-border/40 p-3 bg-muted/20 flex flex-col gap-2 shrink-0">
+		<!-- Search row -->
 		<div class="relative flex items-center">
 			<MagnifyingGlassIcon class="absolute left-2.5 size-4 text-muted-foreground pointer-events-none" />
 			<input
@@ -118,6 +321,32 @@
 				class="w-full bg-background border border-input rounded-md pl-9 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Search query"
 			/>
+		</div>
+
+		<!-- Replace row -->
+		<div class="flex items-center gap-2">
+			<input
+				type="text"
+				bind:value={replaceText}
+				placeholder="Replace with..."
+				class="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				aria-label="Replace query"
+				onkeydown={(e) => {
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						replaceAll();
+					}
+				}}
+			/>
+			<button
+				type="button"
+				onclick={replaceAll}
+				disabled={fileResults.length === 0 || !queryText}
+				class="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+				aria-label="Replace all"
+			>
+				Replace All
+			</button>
 		</div>
 
 		<!-- Status and truncation bar -->
@@ -203,45 +432,22 @@
 			{#snippet content(filepath: string)}
 				{@const fileResult = fileResults.find((r) => r.filepath === filepath)}
 				{#if fileResult}
-					<div class="flex flex-col py-1">
-						{#each fileResult.matches as match (match.offset)}
-							<div
-								role="button"
-								tabindex="0"
-								class="group hover:bg-accent/40 px-3 py-1 cursor-pointer transition-colors border-l-2 border-transparent hover:border-primary font-mono text-xs"
-								onclick={() => jumpToMatch(fileResult, match)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault();
-										jumpToMatch(fileResult, match);
-									}
-								}}
-							>
-								<!-- Context lines before -->
+					<!-- Editable excerpt multibuffer for this file -->
+					<div class="search-excerpt-editor flex flex-col py-1 border-t border-border/20">
+						<div use:setupExcerptEditor={fileResult}></div>
+
+						<!-- Hidden snippet preserving accessible match context for tests/screen readers -->
+						<div class="sr-only" aria-hidden="true">
+							{#each fileResult.matches as match (match.offset)}
 								{#each match.contextBefore as ctx (ctx.line)}
-									<div class="text-muted-foreground/50 flex gap-2">
-										<span class="w-10 text-right select-none opacity-60 shrink-0">{ctx.line}</span>
-										<span class="whitespace-pre overflow-x-hidden text-ellipsis">{ctx.text}</span>
-									</div>
+									<span>{ctx.text}</span>
 								{/each}
-
-								<!-- Match line -->
-								<div class="flex gap-2 font-medium text-foreground">
-									<span class="w-10 text-right select-none text-primary/80 font-bold shrink-0">{match.line}</span>
-									<span class="whitespace-pre overflow-x-hidden text-ellipsis">
-										{match.lineText.slice(0, match.column - 1)}<mark class="bg-primary/30 text-primary font-bold rounded-xs px-0.5">{match.lineText.slice(match.column - 1, match.column - 1 + match.matchLength)}</mark>{match.lineText.slice(match.column - 1 + match.matchLength)}
-									</span>
-								</div>
-
-								<!-- Context lines after -->
+								<mark>{match.lineText.slice(match.column - 1, match.column - 1 + match.matchLength)}</mark>
 								{#each match.contextAfter as ctx (ctx.line)}
-									<div class="text-muted-foreground/50 flex gap-2">
-										<span class="w-10 text-right select-none opacity-60 shrink-0">{ctx.line}</span>
-										<span class="whitespace-pre overflow-x-hidden text-ellipsis">{ctx.text}</span>
-									</div>
+									<span>{ctx.text}</span>
 								{/each}
-							</div>
-						{/each}
+							{/each}
+						</div>
 					</div>
 				{/if}
 			{/snippet}
