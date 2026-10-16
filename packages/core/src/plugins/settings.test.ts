@@ -197,6 +197,102 @@ describe('Layered Settings Resolver & Provenance (#198)', () => {
 	});
 });
 
+describe('editor.languages layering (#286)', () => {
+	const makeResolver = (userData: Record<string, any>, wsData?: Record<string, any>) =>
+		new SettingsResolver(
+			(ns) => (ns === 'editor' ? EDITOR_SCHEMA : undefined),
+			() => userData,
+			() => wsData
+		);
+
+	it('user-scope override for one language survives a workspace-scope override for a different language', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: { TypeScript: { min_word_length: 2 } } } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({
+			Markdown: { words: 'disabled' },
+			TypeScript: { min_word_length: 2 }
+		});
+		expect(resolved.provenance).toBe('workspace');
+	});
+
+	it('same language, different keys merge across scopes', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: { Markdown: { min_word_length: 5 } } } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({
+			Markdown: { words: 'disabled', min_word_length: 5 }
+		});
+	});
+
+	it('same language, same key: workspace wins', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: { Markdown: { words: 'enabled' } } } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({
+			Markdown: { words: 'enabled' }
+		});
+		expect(resolved.provenance).toBe('workspace');
+	});
+
+	it('malformed user map (array) is skipped, workspace value stands, no throw', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: ['not', 'a', 'map'] } },
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({ Markdown: { words: 'disabled' } });
+		expect(resolved.provenance).toBe('workspace');
+	});
+
+	it('malformed workspace map (string) is skipped, user value stands', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: 'not-a-map' } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({ Markdown: { words: 'disabled' } });
+		expect(resolved.provenance).toBe('user');
+	});
+
+	it('no overrides: falls back to the {} default', () => {
+		const resolver = makeResolver({}, undefined);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({});
+		expect(resolved.provenance).toBe('default');
+	});
+
+	it('reflects mutated user data on the next read, with no reconfiguration step', () => {
+		const userData: Record<string, any> = {
+			editor: { languages: { Markdown: { words: 'disabled' } } }
+		};
+		const resolver = makeResolver(userData, undefined);
+
+		expect(resolver.resolve('editor', 'languages').value).toEqual({
+			Markdown: { words: 'disabled' }
+		});
+
+		userData.editor.languages.TypeScript = { min_word_length: 2 };
+
+		expect(resolver.resolve('editor', 'languages').value).toEqual({
+			Markdown: { words: 'disabled' },
+			TypeScript: { min_word_length: 2 }
+		});
+	});
+});
+
 describe('Invalid Stored Values & Diagnostics (#198)', () => {
 	const validationSchema: SettingNamespaceSchema = {
 		namespace: 'demo',

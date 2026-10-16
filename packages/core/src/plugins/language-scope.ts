@@ -16,14 +16,12 @@
  * settings UI. One pure fold over the override map keeps the scoping in a
  * function that can be read and tested on its own.
  *
- * Known limitation, deliberately not fixed in this slice: because the fold
- * bypasses the resolver, a language override cannot itself be layered per
- * user/workspace scope — the last editor value the resolver produced for a
- * key is the one the override replaces, whichever scope that value came from.
- * Layering the language axis properly means giving the resolver a per-language
- * query and re-reporting provenance for it (ADR 0014); until then the two
- * axes compose by fold, and a user-scope `languages` map is overwritten by a
- * workspace-scope one rather than merged into it.
+ * The language map itself now layers through the resolver's deep merge
+ * (default < user < workspace): the `languages` maps from the user and
+ * workspace scopes merge per language, with the workspace winning per key.
+ * The fold still applies whichever map the resolver produced, and per-key
+ * provenance still cannot report a language axis (ADR 0014) — but a
+ * workspace-scope `languages` map no longer silently discards the user's.
  */
 
 import {
