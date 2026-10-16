@@ -20,12 +20,14 @@
 		style = "",
 		wrap = true,
 		view = $bindable(),
+		paneId,
 	} = $props<{
 		doc: DocumentSession;
 		active?: boolean;
 		style?: string;
 		wrap?: boolean;
 		view?: EditorView;
+		paneId?: string;
 	}>();
 
 	const appState = useAppState();
@@ -116,7 +118,7 @@
 			];
 
 			let startState: EditorState | undefined;
-			const savedState = untrack(() => doc.editorState);
+			const savedState = untrack(() => (paneId ? doc.getViewState(paneId).editorState : doc.editorState));
 			const currentContent = untrack(() => doc.content);
 			if (savedState) {
 				try {
@@ -150,15 +152,16 @@
 			appState.plugins?.attachEditorInternal(doc.id, {
 				getState: () => view!.state,
 				dispatch: (spec) => view!.dispatch(spec as any)
-			}, untrack(() => doc.language?.name));
+			}, untrack(() => doc.language?.name), paneId);
 
-			if (doc.scrollPosition) {
-				view.scrollDOM.scrollTop = doc.scrollPosition.top;
-				view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+			const initialScroll = paneId ? doc.getViewState(paneId).scrollPosition : doc.scrollPosition;
+			if (initialScroll) {
+				view.scrollDOM.scrollTop = initialScroll.top;
+				view.scrollDOM.scrollLeft = initialScroll.left;
 				requestAnimationFrame(() => {
-					if (view && doc.scrollPosition) {
-						view.scrollDOM.scrollTop = doc.scrollPosition.top;
-						view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+					if (view && initialScroll) {
+						view.scrollDOM.scrollTop = initialScroll.top;
+						view.scrollDOM.scrollLeft = initialScroll.left;
 					}
 				});
 			}
@@ -166,13 +169,22 @@
 
 		return () => {
 			isDestroyed = true;
-			appState.plugins?.detachEditorInternal(doc.id);
+			appState.plugins?.detachEditorInternal(doc.id, paneId);
 			if (view) {
-				doc.editorState = view.state.toJSON({ history: historyField });
-				doc.scrollPosition = {
+				const serialized = view.state.toJSON({ history: historyField });
+				const scroll = {
 					top: view.scrollDOM.scrollTop,
 					left: view.scrollDOM.scrollLeft,
 				};
+				if (paneId) {
+					doc.setViewState(paneId, {
+						editorState: serialized,
+						scrollPosition: scroll,
+					});
+				} else {
+					doc.editorState = serialized;
+					doc.scrollPosition = scroll;
+				}
 				view.destroy();
 				view = undefined;
 			}
@@ -384,10 +396,10 @@
 		}
 	});
 
-	// Sync content from outside (e.g. file open or disk reload)
+	// Sync content from outside (e.g. file open or disk reload).
+	// Runs for inactive panes too so cloned views stay live.
 	$effect(() => {
 		const c = doc.content; // Track content
-		if (!active) return;
 
 		untrack(() => {
 			if (view) {
@@ -416,10 +428,13 @@
 
 	// Handle pending line scroll
 	$effect(() => {
-		const lineNum = doc.pendingLineToScroll;
+		const lineNum = (paneId ? doc.peekViewState(paneId)?.pendingLineToScroll : null) ?? doc.pendingLineToScroll;
 		if (view && active && lineNum !== null) {
 			const targetView = view;
 			untrack(() => {
+				if (paneId) {
+					doc.setViewState(paneId, { pendingLineToScroll: null });
+				}
 				doc.pendingLineToScroll = null;
 			});
 			const gen = ++pendingScrollGen;

@@ -1,4 +1,4 @@
-import type { SessionPersistence, FileOrigin, SerializedDocument } from '@np/core';
+import type { SessionPersistence, FileOrigin, SerializedDocument, SerializedWorkspace } from '@np/core';
 
 /**
  * Desktop session storage backed by the Electron preload IPC bridge
@@ -6,12 +6,12 @@ import type { SessionPersistence, FileOrigin, SerializedDocument } from '@np/cor
  * the Electron renderer; web and tests use other implementations.
  */
 export class ElectronSessionPersistence implements SessionPersistence {
-	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
+	async saveOpenFiles(workspace: SerializedWorkspace, folderUri = ''): Promise<void> {
 		const key = folderUri ? `openFiles:${folderUri}` : 'openFiles';
-		await window.electronAPI.persistenceSave(key, origins);
+		await window.electronAPI.persistenceSave(key, workspace);
 	}
 
-	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+	async loadOpenFiles(folderUri = ''): Promise<SerializedWorkspace | SerializedDocument[]> {
 		const key = folderUri ? `openFiles:${folderUri}` : 'openFiles';
 		return (await window.electronAPI.persistenceLoad(key)) || [];
 	}

@@ -5,6 +5,7 @@ export * from './persistence';
 export * from './preferences.svelte';
 export * from './document.svelte';
 export * from './workspace.svelte';
+export * from './split-tree.svelte';
 export * from './commands.svelte';
 export * from './state.svelte';
 export * from './context.svelte';

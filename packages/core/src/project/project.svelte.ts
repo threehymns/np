@@ -1,5 +1,5 @@
 import type { FileOrigin, Storage } from '../storage';
-import type { SerializedDocument, SessionPersistence } from '../persistence';
+import type { SerializedDocument, SerializedWorkspace, SessionPersistence } from '../persistence';
 import type { VCSAdapter } from './vcs';
 import { Worktree } from './worktree.svelte';
 import { ProjectTree } from './tree.svelte';
@@ -54,11 +54,11 @@ export class Project {
 	 * unchanged. Expanded paths need no duplicate here — the tree already
 	 * calls them through the Project (`project.persistence`, same folder URI).
 	 */
-	saveOpenFiles(docs: SerializedDocument[], folderUri?: string): Promise<void> {
-		return this.persistence.saveOpenFiles(docs, folderUri);
+	saveOpenFiles(workspace: SerializedWorkspace, folderUri?: string): Promise<void> {
+		return this.persistence.saveOpenFiles(workspace, folderUri);
 	}
 
-	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]> {
+	loadOpenFiles(folderUri?: string): Promise<SerializedWorkspace | SerializedDocument[]> {
 		return this.persistence.loadOpenFiles(folderUri);
 	}
 

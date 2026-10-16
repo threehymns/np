@@ -2,6 +2,7 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
+import type { SplitDirection, SplitMode, Rect } from './split-tree.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
@@ -348,6 +349,17 @@ export class AppState {
 	set activeDocumentId(value: string) { this.workspace.activeDocumentId = value; }
 	get activeTabId() { return this.workspace.activeTabId; }
 	set activeTabId(value: string) { this.workspace.activeTabId = value; }
+	get activePane() { return this.workspace.activePane; }
+	get activePaneId() { return this.workspace.activePaneId; }
+	set activePaneId(value: string) { this.workspace.activePaneId = value; }
+
+	splitActivePane(direction: SplitDirection, mode?: SplitMode) {
+		return this.workspace.splitActivePane(direction, mode);
+	}
+
+	focusPaneInDirection(direction: SplitDirection, rectsMap?: Map<string, Rect>) {
+		return this.workspace.focusPaneInDirection(direction, rectsMap);
+	}
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
@@ -379,9 +391,9 @@ export class AppState {
 	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
-	closeTab(id: string) { this.workspace.closeTab(id); }
-	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
-		const closed = await this.workspace.finalizeClose(id, saveFirst);
+	closeTab(id: string, paneId?: string) { this.workspace.closeTab(id, paneId); }
+	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId);
 		if (!closed && this.workspace.lastSaveCancellationReason) {
 			if (this.dialogService?.alert) {
 				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
