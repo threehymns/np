@@ -643,6 +643,7 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 				server,
 				logs: this.options.logs,
 				initializeTimeoutMs: this.options.initializeTimeoutMs,
+				capabilities: descriptor.capabilities,
 				onNotification: (method, params) => this.onNotification(server, method, params)
 			});
 			entry.client = client;

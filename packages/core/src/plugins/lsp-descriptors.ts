@@ -53,6 +53,15 @@ export interface LspDescriptorContribution {
 	 * resolve the command against PATH".
 	 */
 	readonly bundled?: LspBundledCommand;
+	/**
+	 * Client capabilities advertised to this server during the initialize
+	 * handshake.
+	 *
+	 * When omitted, the client uses its default table (full-document sync and
+	 * completion with context support). When specified, entries declared here
+	 * override or extend the client defaults.
+	 */
+	readonly capabilities?: Readonly<Record<string, unknown>>;
 }
 
 /** Which package a bundled server lives in, and which script inside it runs. */
@@ -79,6 +88,7 @@ export interface RegisteredLspDescriptor {
 	/** Empty rather than absent when the contribution declared none. */
 	readonly languageIds: Readonly<Record<string, string>>;
 	readonly bundled?: LspBundledCommand;
+	readonly capabilities?: Readonly<Record<string, unknown>>;
 	readonly owner: string;
 }
 
@@ -115,6 +125,7 @@ export function createAddLspDescriptorsTransform(
 				// lookup and an empty one mean the same thing.
 				languageIds: { ...(contribution.languageIds ?? {}) },
 				...(contribution.bundled ? { bundled: { ...contribution.bundled } } : {}),
+				...(contribution.capabilities ? { capabilities: { ...contribution.capabilities } } : {}),
 				owner: ''
 			});
 		}

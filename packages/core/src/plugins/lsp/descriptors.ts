@@ -44,6 +44,21 @@ export const LSP_DESCRIPTORS: readonly LspDescriptorContribution[] = [
 			JavaScript: 'javascript',
 			JSX: 'javascriptreact'
 		},
-		bundled: { package: '@vtsls/language-server', binary: 'bin/vtsls.js' }
+		bundled: { package: '@vtsls/language-server', binary: 'bin/vtsls.js' },
+		capabilities: {
+			textDocument: {
+				synchronization: {
+					dynamicRegistration: false,
+					willSave: false,
+					willSaveWaitUntil: false,
+					didSave: false
+				},
+				completion: {
+					dynamicRegistration: false,
+					contextSupport: true,
+					completionItem: {}
+				}
+			}
+		}
 	}
 ];

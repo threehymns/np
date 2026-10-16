@@ -109,6 +109,11 @@ export interface LspClientOptions {
 	readonly server: string;
 	readonly logs: LspLogStore;
 	/**
+	 * Client capabilities advertised to this server during initialize.
+	 * When omitted, the client falls back to its default table.
+	 */
+	readonly capabilities?: Readonly<Record<string, unknown>>;
+	/**
 	 * Bound on how long `shutdown` may wait for a reply before the process is
 	 * killed. A server that ignores `shutdown` must still die: leaving it behind
 	 * is the orphan a disable has to prevent (ADR 0009).
@@ -165,6 +170,56 @@ interface PendingRequest {
 	reject(error: unknown): void;
 }
 
+/**
+ * Default ClientCapabilities per LSP 3.17 advertised during initialize when a
+ * descriptor does not supply an override.
+ */
+export const DEFAULT_CLIENT_CAPABILITIES: Readonly<Record<string, unknown>> = {
+	textDocument: {
+		synchronization: {
+			dynamicRegistration: false,
+			willSave: false,
+			willSaveWaitUntil: false,
+			didSave: false
+		},
+		completion: {
+			// The client issues textDocument/completion and must say so. Declaring
+			// nothing while asking for completions is a protocol error. A server may
+			// answer with no completions for a client that never advertised interest.
+			dynamicRegistration: false,
+			// Fetch sends params.context (triggerKind and triggerCharacter) with
+			// each request, so the client declares support for that field.
+			contextSupport: true,
+			completionItem: {}
+		}
+	}
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Merges capability declarations recursively so descriptor fields override
+ * specific leaves while keeping unspecified default capabilities intact.
+ */
+export function mergeCapabilities(
+	...objects: readonly (Readonly<Record<string, unknown>> | undefined)[]
+): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const obj of objects) {
+		if (!obj) continue;
+		for (const [key, value] of Object.entries(obj)) {
+			if (isPlainObject(value) && isPlainObject(result[key])) {
+				result[key] = mergeCapabilities(result[key] as Record<string, unknown>, value);
+			} else {
+				result[key] = value;
+			}
+		}
+	}
+	return result;
+}
+
 export class LspClient {
 	private readonly parser = createFrameParser();
 	private readonly pending = new Map<number, PendingRequest>();
@@ -219,68 +274,23 @@ export class LspClient {
 	 * `initialize` then `initialized`, the handshake every server requires
 	 * before it will answer anything else.
 	 *
-	 * Full-document sync is what is sent: every change carries the whole text.
-	 * Incremental sync is the recorded later optimisation (ADR 0020), held back
-	 * until large-file behaviour is actually measured rather than assumed. The
-	 * sync kind itself is the server's `change` to announce, so the client's
-	 * declaration is only which sync notifications it supports — and it sends
-	 * none of the save-time ones.
+	 * Full-document sync is the default sent when unconfigured: every change
+	 * carries the whole text. Incremental sync is the recorded later optimisation
+	 * (ADR 0020). Descriptors may override capabilities per server.
 	 */
 	async initialize(params: Record<string, unknown>): Promise<unknown> {
+		const capabilities = mergeCapabilities(
+			DEFAULT_CLIENT_CAPABILITIES,
+			this.options.capabilities,
+			params.capabilities as Record<string, unknown> | undefined
+		);
 		const result = await this.request(
 			'initialize',
 			{
 				processId: await this.resolveProcessId(),
 				clientInfo: { name: 'np' },
 				...params,
-				capabilities: {
-					// ClientCapabilities per LSP 3.17: what this client does, not
-					// what a server offers. The previous table used
-					// server-capability names (`textDocumentSync`,
-					// `completionProvider`) here, which spec-correct servers
-					// ignore — so one answered as if no completion support had
-					// been declared at all.
-					textDocument: {
-						synchronization: {
-							dynamicRegistration: false,
-							willSave: false,
-							willSaveWaitUntil: false,
-							didSave: false
-						},
-						completion: {
-							// The client issues `textDocument/completion` (see
-							// `LspRuntime.fetch`) and must say so. Declaring nothing while
-							// asking for the answers anyway is a protocol error: a server is
-							// entitled to answer "no completions here" for a client that never
-							// advertised that it wanted any, and vtsls does exactly that.
-							dynamicRegistration: false,
-							// Fetch sends `params.context` (triggerKind / triggerCharacter)
-							// with every request (see lifecycle.ts), so the client must
-							// declare that it understands that field.
-							contextSupport: true,
-							completionItem: {
-								// No `resolveSupport`, deliberately, and the reasoning is the
-								// same as the declaration above. Nothing in the client
-								// implements `completionItem/resolve` (ADR 0021 records why:
-								// CodeMirror has no "this option is now selected" hook, so
-								// the round trip has nowhere to hang), and advertising
-								// properties to resolve would be a claim the client cannot
-								// keep — at the cost of a request per keystroke.
-								//
-								// No trigger-character declaration either, for the same
-								// reason from the other side: trigger characters arrive in
-								// the *server's* `completionProvider`, and there is no
-								// client-capability field for them. This client has no
-								// per-character trigger to declare: CodeMirror decides when
-								// to ask, the trigger policy filters it (`min_word_length`,
-								// prose silence, the global popup toggle), and the field
-								// stays descriptor data out of the client's table by the
-								// same ADR 0020 boundary as before.
-							}
-						}
-					},
-					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
-				}
+				capabilities
 			},
 			this.options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS
 		);
