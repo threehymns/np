@@ -61,3 +61,50 @@ describe("Project coverage single ownership (#251)", () => {
 		expect((ws as any).relativePath).toBeUndefined();
 	});
 });
+
+/**
+ * #338 review: switching or clearing the project root must dispose the old
+ * worktree (stopping its snapshot strategy) and start the new one.
+ */
+describe("Project worktree lifecycle on root switch", () => {
+	it("disposes the replaced worktree and starts the new strategy", () => {
+		const started: string[] = [];
+		const stopped: string[] = [];
+		const factory = (root: FileOrigin) => ({
+			name: "test",
+			start: mock(() => {
+				started.push(root.path);
+			}),
+			stop: mock(() => {
+				stopped.push(root.path);
+			})
+		});
+		const project = new ProjectClass(
+			createMockStorage(),
+			makeVcsFactory(),
+			new MemorySessionPersistence(),
+			factory
+		);
+
+		const rootA: FileOrigin = { scheme: "file", path: "/a", name: "a" };
+		const rootB: FileOrigin = { scheme: "file", path: "/b", name: "b" };
+
+		project.rootOrigin = rootA;
+		expect(started).toEqual(["/a"]);
+		expect(stopped).toEqual([]);
+
+		// Setting the same root again is a no-op: no dispose, no restart.
+		project.rootOrigin = rootA;
+		expect(started).toEqual(["/a"]);
+		expect(stopped).toEqual([]);
+
+		// Switching roots disposes the old worktree before starting the new one.
+		project.rootOrigin = rootB;
+		expect(stopped).toEqual(["/a"]);
+		expect(started).toEqual(["/a", "/b"]);
+
+		// Clearing the root disposes the last worktree.
+		project.rootOrigin = null;
+		expect(stopped).toEqual(["/a", "/b"]);
+	});
+});
