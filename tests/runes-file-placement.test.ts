@@ -20,6 +20,19 @@ const ROOTS = [join(import.meta.dir, "..", "packages"), join(import.meta.dir, ".
 export const RUNE_RE = /\$(state|derived|effect|props|bindable|inspect|host)([^a-zA-Z0-9_]|$)/;
 // Exact rune names for the AST check. RUNE_RE above stays as the loose
 // fast path that decides whether a file is worth parsing at all.
+// Identifier escapes (e.g. $st\u0061te) only decode to a rune name once the
+// TypeScript scanner runs, so the raw-text fast path would miss them. Test a
+// copy with \uXXXX / \u{...} escapes decoded as well; the AST walk below
+// stays authoritative, so decoding inside strings or comments here can only
+// cost an extra parse, never a false hit.
+const UNICODE_ESCAPE_RE = /\\u([0-9a-fA-F]{4})|\\u\{([0-9a-fA-F]+)\}/g;
+function decodeIdentifierEscapes(code: string): string {
+	return code.replace(UNICODE_ESCAPE_RE, (_, hex4, hexBraced) =>
+		String.fromCodePoint(parseInt(hex4 ?? hexBraced, 16)),
+	);
+}
+// Exact rune names for the AST check. RUNE_RE above stays as the loose
+// fast path that decides whether a file is worth parsing at all.
 const RUNE_NAMES = new Set([
 	"$state", "$derived", "$effect", "$props", "$bindable", "$inspect", "$host",
 ]);
@@ -55,7 +68,7 @@ export interface RuneHit {
  * template literal text, or regular expression literals.
  */
 export function scanSourceForRunes(code: string, fileName = "source.ts"): RuneHit[] {
-	if (!RUNE_RE.test(code)) return [];
+	if (!RUNE_RE.test(code) && !RUNE_RE.test(decodeIdentifierEscapes(code))) return [];
 
 	const kind = fileName.endsWith(".tsx")
 		? ts.ScriptKind.TSX
@@ -163,6 +176,10 @@ describe("Svelte runes only appear in compiler-processed files", () => {
 				{ code: "const msg = `count: ${$state(0)}`;", rune: "$state" },
 				{ code: "const a = \"$state in string\"; const b = $state(0);", rune: "$state" },
 				{ code: "const x = $state(0); // $state in comment", rune: "$state" },
+				// Escaped identifiers decode in the TS scanner: the raw-text fast
+				// path alone would miss this real rune.
+				{ code: "const value = $st\\u0061te(0);", rune: "$state" },
+				{ code: "const value = $st\\u{61}te(0);", rune: "$state" },
 			];
 
 			for (const { code, rune } of rejectedCases) {
