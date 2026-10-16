@@ -769,6 +769,11 @@ export class LspRuntime implements LspServerStatusApi, CompletionCoordinator {
 		// Whatever this server reported describes a process that is no longer
 		// watching, and a restart that kept them would look like it did nothing.
 		this.options.diagnostics?.dropServer(entry.server);
+		// The pull side is forgotten with it: a restarted server must not get
+		// a previousResultId from the dead process, and a pending pull against
+		// the old process must not write after the stop.
+		const coordinator = this.pullCoordinator;
+		if (coordinator) await Effect.runPromise(coordinator.forgetServer(entry.server));
 		this.statusChanged();
 		if (!client) return;
 		// The handshake is best-effort; a server that ignores `shutdown` is still
