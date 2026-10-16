@@ -351,6 +351,7 @@ export class AppState {
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
+	openSearchTab(query?: string) { return this.workspace.openSearchTab(query); }
 	async saveFile() {
 		if (this.activeDocument) {
 			const ok = await this.workspace.saveDocument(this.activeDocument);

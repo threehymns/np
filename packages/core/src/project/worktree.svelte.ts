@@ -1,5 +1,5 @@
+import type { FileOrigin, Storage } from '../storage';
 import { isNotFoundError } from '../utils';
-import { toURI, type FileOrigin, type Storage } from '../storage';
 import type { TreeNode } from './tree.svelte';
 
 export interface FileSnapshot {
@@ -35,6 +35,7 @@ export interface WorktreeOptions {
 
 export interface WorktreeScanOptions {
 	isExpanded?: (path: string) => boolean;
+	recursive?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -204,7 +205,6 @@ export class Worktree {
 		const generation = ++this.scanGeneration;
 		this.isScanning = true;
 		try {
-			let scanGitignore: GitIgnoreMatcher | null = null;
 			try {
 				const gitignoreOrigin: FileOrigin = {
 					scheme: targetRoot.scheme,
@@ -212,16 +212,17 @@ export class Worktree {
 					name: '.gitignore'
 				};
 				const content = await this.storage.readFile(gitignoreOrigin);
-				scanGitignore = new GitIgnoreMatcher(content);
+				this.gitignore = new GitIgnoreMatcher(content);
 			} catch (e: any) {
+				this.gitignore = null;
 				if (!isNotFoundError(e)) {
 					console.warn('[Worktree] Error reading .gitignore:', e);
 				}
 			}
 
-			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, scanGitignore);
-			if (generation === this.scanGeneration && toURI(targetRoot) === toURI(this.root)) {
-				this.gitignore = scanGitignore;
+			const recursive = options?.recursive ?? false;
+			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, recursive);
+			if (generation === this.scanGeneration) {
 				this.updateSnapshot(builtNodes);
 			}
 			return builtNodes;
@@ -239,7 +240,7 @@ export class Worktree {
 		origin: FileOrigin,
 		path = '',
 		isExpanded?: (path: string) => boolean,
-		matcher: GitIgnoreMatcher | null = this.gitignore
+		recursive = false
 	): Promise<TreeNode[]> {
 		if (!this.storage) return [];
 		const nodes: TreeNode[] = [];
@@ -255,20 +256,20 @@ export class Worktree {
 
 				if (entry.name === 'node_modules' || entry.name === '.svelte-kit' || entry.name === '.git') continue;
 				if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
-				if (matcher?.ignores(entryPath)) continue;
+				if (this.gitignore?.ignores(entryPath)) continue;
 
-				const expanded = isExpanded ? isExpanded(entryPath) : false;
+				const shouldRecurse = recursive || (isExpanded ? isExpanded(entryPath) : false);
 				const node: TreeNode = {
 					name: entry.name,
 					kind: entry.kind,
 					origin: entry.origin,
 					parentOrigin: origin,
-					isExpanded: expanded,
+					isExpanded: isExpanded ? isExpanded(entryPath) : false,
 					children: entry.kind === 'directory' ? [] : undefined
 				};
 
-				if (expanded && node.kind === 'directory') {
-					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded, matcher);
+				if (shouldRecurse && node.kind === 'directory') {
+					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded, recursive);
 				}
 
 				nodes.push(node);
