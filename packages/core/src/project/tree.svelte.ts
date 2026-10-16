@@ -1,7 +1,9 @@
 import type { Project } from './project.svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { toURI, type FileOrigin } from '../storage';
-import { isNotFoundError } from '../utils';
+import { Worktree, GitIgnoreMatcher } from './worktree.svelte';
+
+export { GitIgnoreMatcher };
 
 export interface TreeNode {
 	name: string;
@@ -48,63 +50,12 @@ function singleDirChild(node: TreeNode): TreeNode | undefined {
 	return undefined;
 }
 
-class GitIgnoreMatcher {
-	private patterns: { regex: RegExp; negative: boolean }[] = [];
-
-	constructor(content: string) {
-		const lines = content.split(/\r?\n/);
-		for (let line of lines) {
-			line = line.trim();
-			if (!line || line.startsWith('#')) continue;
-
-			let negative = false;
-			if (line.startsWith('!')) {
-				negative = true;
-				line = line.substring(1);
-			}
-
-			// Simple glob to regex conversion
-			let pattern = line
-				.replace(/\./g, '\\.')
-				.replace(/\*\*/g, '(.+)')
-				.replace(/\*/g, '([^/]+)')
-				.replace(/\?/g, '(.)')
-				.replace(/\/$/, '');
-			
-			if (pattern.startsWith('/')) {
-				pattern = '^' + pattern.substring(1);
-			} else {
-				pattern = '(^|/)' + pattern;
-			}
-
-			try {
-				this.patterns.push({
-					regex: new RegExp(pattern),
-					negative
-				});
-			} catch (e) {
-				console.warn('Invalid gitignore pattern:', line);
-			}
-		}
-	}
-
-	ignores(path: string): boolean {
-		let ignored = false;
-		for (const { regex, negative } of this.patterns) {
-			if (regex.test(path)) {
-				ignored = !negative;
-			}
-		}
-		return ignored;
-	}
-}
 export class ProjectTree {
 	nodes = $state<TreeNode[]>([]);
 	isScanning = $state(false);
 	isSearching = $state(false);
 	searchQuery = $state("");
 	private scanGeneration = 0;
-	private gitignore: GitIgnoreMatcher | null = null;
 	private searchResults = $state<TreeNode[]>([]);
 	private searchAbortController: AbortController | null = null;
 	private expandedPaths = new SvelteSet<string>();
@@ -112,10 +63,16 @@ export class ProjectTree {
 	private isRestoring = $state(true);
 	private project: Project;
 	private windowHooks: TreeWindowHooks = {};
+	private worktreeUnsubscribe: (() => void) | null = null;
+	private subscribedWorktree: Worktree | null = null;
+	private _fallbackWorktree: Worktree | null = null;
 
 	constructor(project: Project, windowHooks: TreeWindowHooks = {}) {
 		this.project = project;
 		this.windowHooks = windowHooks;
+		if (project.worktree) {
+			this.attachToWorktree(project.worktree);
+		}
 		if (typeof window !== 'undefined') {
 			$effect.root(() => {
 				$effect(() => {
@@ -135,6 +92,52 @@ export class ProjectTree {
 				});
 			});
 		}
+	}
+
+	get worktree(): Worktree | null {
+		const projWt = this.project.worktree;
+		if (projWt) {
+			if (this.subscribedWorktree !== projWt) {
+				this.attachToWorktree(projWt);
+			}
+			return projWt;
+		}
+		if (this.project.rootOrigin) {
+			if (!this._fallbackWorktree || toURI(this._fallbackWorktree.root) !== toURI(this.project.rootOrigin)) {
+				this._fallbackWorktree = new Worktree(this.project.rootOrigin, { storage: this.project.storage });
+				this.attachToWorktree(this._fallbackWorktree);
+			}
+			return this._fallbackWorktree;
+		}
+		if (this.subscribedWorktree) {
+			this.attachToWorktree(null);
+		}
+		return null;
+	}
+
+	attachToWorktree(wt: Worktree | null) {
+		if (this.subscribedWorktree === wt) return;
+		if (this.worktreeUnsubscribe) {
+			this.worktreeUnsubscribe();
+			this.worktreeUnsubscribe = null;
+		}
+		this.subscribedWorktree = wt;
+		if (wt) {
+			this.worktreeUnsubscribe = wt.subscribe((snapshot) => {
+				if (
+					!this.project.rootOrigin ||
+					toURI(this.project.rootOrigin) === toURI(snapshot.root)
+				) {
+					this.nodes = snapshot.entries;
+				}
+			});
+		} else {
+			this.nodes = [];
+		}
+	}
+
+	get gitignore(): GitIgnoreMatcher | null {
+		return this.worktree?.gitignore ?? null;
 	}
 
 	/**
@@ -349,39 +352,24 @@ export class ProjectTree {
 		const generation = ++this.scanGeneration;
 		this.isScanning = true;
 		try {
-			// Load .gitignore if it exists
-			try {
-				const gitignoreOrigin: FileOrigin = {
-					scheme: rootOrigin.scheme,
-					path: rootOrigin.path ? `${rootOrigin.path}/.gitignore` : '.gitignore',
-					name: '.gitignore'
-				};
-				const content = await this.project.storage.readFile(gitignoreOrigin);
-				this.gitignore = new GitIgnoreMatcher(content);
-			} catch (e: any) {
-				// Handle missing gitignore silently
-				this.gitignore = null;
-				if (!isNotFoundError(e)) {
-					console.warn('[Tree] Error reading .gitignore:', e);
-				}
-			}
-
-			const builtNodes = await this.buildLevel(rootOrigin);
-			if (
-				generation === this.scanGeneration &&
-				this.project.rootOrigin &&
-				toURI(this.project.rootOrigin) === toURI(rootOrigin)
-			) {
-				this.nodes = builtNodes;
-				const wt = this.project.worktree;
-				if (wt) wt.entries = builtNodes;
-				// Surface externally deleted open files (#175) on the next
-				// scan/refresh: same deleted-on-disk tab state as in-app
-				// deletes, edits preserved. Guarded for test doubles without
-				// window hooks (pure-Project usage skips).
-				const reconcile = this.windowHooks.reconcileExternalDeletions;
-				if (typeof reconcile === 'function') {
-					await reconcile();
+			const wt = this.worktree;
+			if (wt) {
+				await wt.scan(rootOrigin, {
+					isExpanded: (path) => this.expandedPaths.has(path)
+				});
+				if (
+					generation === this.scanGeneration &&
+					this.project.rootOrigin &&
+					toURI(this.project.rootOrigin) === toURI(rootOrigin)
+				) {
+					// Surface externally deleted open files (#175) on the next
+					// scan/refresh: same deleted-on-disk tab state as in-app
+					// deletes, edits preserved. Guarded for test doubles without
+					// window hooks (pure-Project usage skips).
+					const reconcile = this.windowHooks.reconcileExternalDeletions;
+					if (typeof reconcile === 'function') {
+						await reconcile();
+					}
 				}
 			}
 		} catch (e) {
@@ -393,48 +381,11 @@ export class ProjectTree {
 		}
 	}
 
-	private async buildLevel(origin: FileOrigin, path = ""): Promise<TreeNode[]> {
-		const nodes: TreeNode[] = [];
-		try {
-			let i = 0;
-			const entries = await this.project.storage.readDirectory(origin);
-			for (const entry of entries) {
-				// Yield every 50 items to keep UI responsive
-				if (++i % 50 === 0) {
-					await new Promise(resolve => setTimeout(resolve, 0));
-				}
-
-				const entryPath = path ? `${path}/${entry.name}` : entry.name;
-				
-				// Hard ignores for heavy folders
-				if (entry.name === 'node_modules' || entry.name === '.svelte-kit' || entry.name === '.git') continue;
-				if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
-				if (this.gitignore?.ignores(entryPath)) continue;
-
-				const isExpanded = this.expandedPaths.has(entryPath);
-				const node: TreeNode = {
-					name: entry.name,
-					kind: entry.kind,
-					origin: entry.origin,
-					parentOrigin: origin,
-					isExpanded,
-					children: entry.kind === 'directory' ? [] : undefined
-				};
-
-				if (isExpanded && node.kind === 'directory') {
-					node.children = await this.buildLevel(entry.origin, entryPath);
-				}
-
-				nodes.push(node);
-			}
-		} catch (e) {
-			console.warn(`[Tree] Failed to build level for ${path || 'root'}`, e);
+	async buildLevel(origin: FileOrigin, path = ""): Promise<TreeNode[]> {
+		if (this.worktree) {
+			return this.worktree.buildLevel(origin, path, (p) => this.expandedPaths.has(p));
 		}
-
-		return nodes.sort((a, b) => {
-			if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-			return a.name.localeCompare(b.name);
-		});
+		return [];
 	}
 
 	async toggleExpand(node: TreeNode) {
@@ -526,6 +477,7 @@ export class ProjectTree {
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
+			this.worktree?.notify();
 		} else {
 			await this.scan(this.project.rootOrigin!);
 		}
@@ -536,6 +488,7 @@ export class ProjectTree {
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
+			this.worktree?.notify();
 		} else {
 			await this.scan(this.project.rootOrigin!);
 		}
