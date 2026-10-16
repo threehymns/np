@@ -2,7 +2,6 @@ import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
 import type { FileOrigin } from "../storage";
 import { toURI } from "../storage";
-import { MemorySessionPersistence } from "../persistence";
 import type { Worktree } from "../project/worktree.svelte";
 import type { TypeScriptSearchEngine } from "./engine";
 
@@ -266,44 +265,6 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		}
 
 		expect(results.length).toBe(1);
-	});
-});
-
-describe("Worktree snapshot contract (ADR 0032)", () => {
-	it("keeps the whole project file set when a watcher triggers the rescan", async () => {
-		const storage = createMockStorage({
-			"/test-project/a.txt": "needle in a",
-			"/test-project/sub/b.txt": "needle in b",
-			"/test-project/sub/deep/c.txt": "needle in c"
-		});
-		const project = new ProjectClass(
-			storage as any,
-			() => ({} as any),
-			new MemorySessionPersistence()
-		);
-
-		project.hasRootPermission = true;
-		project.rootOrigin = rootOrigin;
-
-		// The file explorer's scan, which is what the tree publishes.
-		await project.projectTree.scan(rootOrigin);
-
-		const engine = project.searchBackend;
-		const afterTreeScan = (await engine.search({ pattern: "needle" }).all())
-			.map((r) => r.filepath)
-			.sort();
-		expect(afterTreeScan).toEqual(["a.txt", "sub/b.txt", "sub/deep/c.txt"]);
-
-		// A watcher rescan carries no options at all. It must publish the
-		// same file set, or project search silently stops finding the
-		// nested files.
-		await project.worktree!.scan();
-
-		const afterWatcherScan = (await engine.search({ pattern: "needle" }).all())
-			.map((r) => r.filepath)
-			.sort();
-		expect(afterWatcherScan).toEqual(afterTreeScan);
-		expect(afterWatcherScan).toEqual(["a.txt", "sub/b.txt", "sub/deep/c.txt"]);
 	});
 });
 

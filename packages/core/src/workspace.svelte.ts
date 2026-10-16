@@ -327,6 +327,13 @@ export class Workspace {
 					virtualTabType: 'search'
 				};
 			}
+			if (tab.type === 'search') {
+				return {
+					id: tab.id,
+					origin: null,
+					virtualTabType: 'search'
+				};
+			}
 			const doc = this.documents.find(d => d.id === tab.id);
 			if (!doc) return null;
 			const serialized: SerializedDocument = {
@@ -1162,6 +1169,13 @@ export class Workspace {
 					let doc: DocumentSession | null = null;
 					if (serialized.virtualTabType === 'diff') {
 						if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
+							continue;
+						}
+						if (serialized.virtualTabType === 'search') {
+							restoredTabs.push({
+								id: serialized.id,
+								type: 'search'
+							});
 							continue;
 						}
 						if (serialized.virtualTabType === 'search') {

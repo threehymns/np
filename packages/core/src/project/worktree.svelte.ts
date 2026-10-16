@@ -35,6 +35,7 @@ export interface WorktreeOptions {
 
 export interface WorktreeScanOptions {
 	isExpanded?: (path: string) => boolean;
+	recursive?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -219,7 +220,8 @@ export class Worktree {
 				}
 			}
 
-			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded);
+			const recursive = options?.recursive ?? (options?.isExpanded === undefined);
+			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, recursive);
 			if (generation === this.scanGeneration) {
 				this.updateSnapshot(builtNodes);
 			}
@@ -237,7 +239,8 @@ export class Worktree {
 	async buildLevel(
 		origin: FileOrigin,
 		path = '',
-		isExpanded?: (path: string) => boolean
+		isExpanded?: (path: string) => boolean,
+		recursive = false
 	): Promise<TreeNode[]> {
 		if (!this.storage) return [];
 		const nodes: TreeNode[] = [];
@@ -255,18 +258,18 @@ export class Worktree {
 				if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
 				if (this.gitignore?.ignores(entryPath)) continue;
 
-				const expanded = isExpanded ? isExpanded(entryPath) : false;
+				const shouldRecurse = recursive || (isExpanded ? isExpanded(entryPath) : false);
 				const node: TreeNode = {
 					name: entry.name,
 					kind: entry.kind,
 					origin: entry.origin,
 					parentOrigin: origin,
-					isExpanded: expanded,
+					isExpanded: isExpanded ? isExpanded(entryPath) : false,
 					children: entry.kind === 'directory' ? [] : undefined
 				};
 
-				if (expanded && node.kind === 'directory') {
-					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded);
+				if (shouldRecurse && node.kind === 'directory') {
+					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded, recursive);
 				}
 
 				nodes.push(node);
