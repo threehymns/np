@@ -10,6 +10,7 @@ import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
 import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
+import { SearchTabSession } from './search';
 
 import {
 	Pane,
@@ -304,10 +305,23 @@ export class Workspace {
 			for (const tab of pane.tabs) {
 				if (serializedMap.has(tab.id)) continue;
 				if (tab.type === 'search') {
+					// The query and its options live in the tab's session, so
+					// they are persisted with the tab and restored with it.
+					const session = tab.searchSession ?? this.searchSessions.get(tab.id);
 					serializedMap.set(tab.id, {
 						id: tab.id,
 						origin: null,
-						virtualTabType: 'search'
+						virtualTabType: 'search',
+						...(session
+							? {
+									searchQuery: session.query,
+									searchIsRegex: session.isRegex,
+									searchCaseSensitive: session.caseSensitive,
+									searchWholeWord: session.wholeWord,
+									searchIncludePattern: session.includePattern,
+									searchExcludePattern: session.excludePattern
+								}
+							: {})
 					});
 				} else if (tab.type === 'diff') {
 					const serialized: SerializedDocument = {
@@ -347,7 +361,7 @@ export class Workspace {
 					serializedMap.set(tab.id, serialized);
 				}
 			}
-		}
+}
 
 		// Tab-less bound Documents (Diff Viewer Working-copy pane bindings for
 		// files with no open tab, issue #272) hold user text no tab serializes.
@@ -718,6 +732,33 @@ export class Workspace {
 		return newDoc;
 	}
 
+private searchSessions = new Map<string, SearchTabSession>();
+
+	/**
+	 * The query session of a search tab.
+	 *
+	 * The query and its options live in the session rather than in the
+	 * component, so they survive a tab switch, a tab close and reopen, and
+	 * a restart. A tab that already carries a session keeps it.
+	 */
+	getSearchSession(tabId: string): SearchTabSession {
+		let session = this.searchSessions.get(tabId);
+		if (!session) {
+			// The tab may live in another pane, so every pane is searched.
+			const tab = this.getAllTabs().find(t => t.id === tabId);
+			if (tab?.searchSession) {
+				session = tab.searchSession;
+			} else {
+				session = new SearchTabSession();
+			}
+			this.searchSessions.set(tabId, session);
+			if (tab) {
+				tab.searchSession = session;
+			}
+		}
+		return session;
+	}
+
 	/**
 	 * Open the project-wide search tab.
 	 *
@@ -725,8 +766,11 @@ export class Workspace {
 	 * asking for it again focuses the existing tab instead of stacking a
 	 * second one. It is a virtual tab, so it lives in a pane like any other
 	 * tab but carries no document behind it.
+	 *
+	 * A query seeds the tab's session, so opening the search tab with a
+	 * query shows that query.
 	 */
-	openSearchTab(_query?: string): string {
+	openSearchTab(query?: string): string {
 		const SEARCH_TAB_ID = '__project_search__';
 		const existing = this.getAllTabs().find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
 		if (existing) {
@@ -737,9 +781,15 @@ export class Workspace {
 				this.activePaneId = pane.id;
 				pane.activeTabId = existing.id;
 			}
+			if (query !== undefined) {
+				const session = this.getSearchSession(existing.id);
+				session.query = query;
+			}
 			return existing.id;
 		}
-		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search' });
+		const session = new SearchTabSession({ query: query ?? '' });
+		this.searchSessions.set(SEARCH_TAB_ID, session);
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search', searchSession: session });
 		this.activeTabId = SEARCH_TAB_ID;
 		return SEARCH_TAB_ID;
 	}
@@ -1025,6 +1075,8 @@ export class Workspace {
 			if (docIndex !== -1) {
 				this.documents.splice(docIndex, 1);
 			}
+		} else if (tab.type === 'search') {
+			this.searchSessions.delete(id);
 		}
 
 		if (targetPane.tabs.length > 0) {
@@ -1248,9 +1300,21 @@ export class Workspace {
 
 					let doc: DocumentSession | null = null;
 					if (serialized.virtualTabType === 'search') {
+						// The query and its options are restored with the tab, so a
+						// restart brings back the search the user left.
+						const session = new SearchTabSession({
+							query: serialized.searchQuery ?? '',
+							isRegex: serialized.searchIsRegex ?? false,
+							caseSensitive: serialized.searchCaseSensitive ?? false,
+							wholeWord: serialized.searchWholeWord ?? false,
+							includePattern: serialized.searchIncludePattern ?? '',
+							excludePattern: serialized.searchExcludePattern ?? ''
+						});
+						this.searchSessions.set(serialized.id, session);
 						restoredTabs.push({
 							id: serialized.id,
-							type: 'search'
+							type: 'search',
+							searchSession: session
 						});
 						continue;
 					}

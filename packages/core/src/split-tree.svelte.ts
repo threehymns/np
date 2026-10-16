@@ -1,3 +1,5 @@
+import type { SearchTabSession } from './search/session.svelte';
+
 export type PaneAxis = 'horizontal' | 'vertical';
 export type SplitDirection = 'left' | 'right' | 'up' | 'down';
 export type SplitMode = 'empty' | 'move' | 'clone';
@@ -10,6 +12,10 @@ export interface WorkspaceTab {
 	pluginId?: string;
 	canSplit?: boolean;
 	docId?: string;
+	/**
+	 * For search tabs: the per-tab query session the tab reads and writes.
+	 */
+	searchSession?: SearchTabSession;
 }
 
 export class Pane {

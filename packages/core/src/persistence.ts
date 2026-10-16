@@ -46,6 +46,15 @@ export interface SerializedDocument {
 	 * survive a restart exactly as tab drafts do.
 	 */
 	tabless?: boolean;
+	/**
+	 * For search tabs: persisted query and toggle options.
+	 */
+	searchQuery?: string;
+	searchIsRegex?: boolean;
+	searchCaseSensitive?: boolean;
+	searchWholeWord?: boolean;
+	searchIncludePattern?: string;
+	searchExcludePattern?: string;
 }
 
 /**
