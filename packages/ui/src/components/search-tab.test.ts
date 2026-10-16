@@ -76,4 +76,11 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).not.toContain("window.confirm");
 		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
 	});
+
+	it("keeps the excerpt map in sync after direct user edits", () => {
+		expect(SEARCH_TAB_SRC).toContain("excerptMap.applyExcerptEdit(excerptEdit, fileEdit)");
+		// Pre-transaction coordinates are handled latest-first so each edit
+		// still refers to the map's current coordinate space.
+		expect(SEARCH_TAB_SRC).toContain("changes.sort((a, b) => b.from - a.from)");
+	});
 });

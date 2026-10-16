@@ -55,7 +55,8 @@ export class FileExcerptMap {
 	readonly filepath: string;
 	readonly origin: FileOrigin;
 	readonly excerpts: ExcerptSegment[] = [];
-	readonly bufferText: string = '';
+	/** Current excerpt buffer text; updated by applyExcerptEdit after direct edits */
+	bufferText: string = '';
 	readonly separator: string;
 	private fileContent: string;
 
@@ -249,6 +250,56 @@ export class FileExcerptMap {
 			if (mapped) result.push(mapped);
 		}
 		return result;
+	}
+
+	/**
+	 * Keeps segment bounds in sync after a direct edit to the excerpt buffer.
+	 * `edit` is in pre-edit buffer coordinates (as CodeMirror's iterChanges
+	 * reports fromA/toA). Pass the file edit produced by
+	 * `mapExcerptEditToFileEdit` for the same change, or null when the edit
+	 * did not reach the file (e.g. it landed in a separator), so the
+	 * file-side bounds shift only when the file actually changed.
+	 * Without this, a length-changing edit leaves later segment bounds stale
+	 * and subsequent edits map to wrong file offsets.
+	 */
+	applyExcerptEdit(edit: SingleEdit, fileEdit: SingleEdit | null): void {
+		const bufferDelta = edit.insert.length - (edit.to - edit.from);
+		this.bufferText =
+			this.bufferText.slice(0, edit.from) + edit.insert + this.bufferText.slice(edit.to);
+		if (bufferDelta !== 0) {
+			for (const segment of this.excerpts) {
+				if (segment.bufferStart >= edit.to) {
+					segment.bufferStart += bufferDelta;
+					segment.bufferEnd += bufferDelta;
+				} else if (segment.bufferEnd > edit.from) {
+					segment.bufferEnd = Math.max(
+						segment.bufferStart,
+						segment.bufferEnd + bufferDelta
+					);
+				}
+			}
+		}
+
+		if (fileEdit) {
+			const fileDelta = fileEdit.insert.length - (fileEdit.to - fileEdit.from);
+			this.fileContent =
+				this.fileContent.slice(0, fileEdit.from) +
+				fileEdit.insert +
+				this.fileContent.slice(fileEdit.to);
+			if (fileDelta !== 0) {
+				for (const segment of this.excerpts) {
+					if (segment.fileStart >= fileEdit.to) {
+						segment.fileStart += fileDelta;
+						segment.fileEnd += fileDelta;
+					} else if (segment.fileEnd > fileEdit.from) {
+						segment.fileEnd = Math.max(
+							segment.fileStart,
+							segment.fileEnd + fileDelta
+						);
+					}
+				}
+			}
+		}
 	}
 }
 
