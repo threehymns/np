@@ -305,3 +305,194 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 		expect(reg.keyBuffer[0]!.key).toBe("k");
 	});
 });
+
+describe("completion trigger and acceptance keybindings (Issue #287)", () => {
+	function newCompletionRegistry(initialCommands?: Record<string, { action?: () => any; isEnabled?: () => boolean }>) {
+		const executed: string[] = [];
+		const defaultCommands: Record<string, any> = {
+			"edit.complete": { action: () => true },
+			"edit.acceptCompletion": { action: () => true },
+			"edit.find": { action: () => true },
+			...initialCommands,
+		};
+		const commandMap = new Map<string, any>(Object.entries(defaultCommands));
+		const appState: any = {
+			commands: {
+				get: (id: string) => commandMap.get(id),
+				execute: (id: string) => {
+					executed.push(id);
+					const cmd = commandMap.get(id);
+					if (cmd && typeof cmd.action === 'function') {
+						return cmd.action();
+					}
+					return true;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		return { reg, executed, commandMap, appState };
+	}
+
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		let stopped = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {
+				stopped++;
+			},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented, stopped: () => stopped };
+	}
+
+	it("binds ctrl+space to edit.complete and enter to edit.acceptCompletion when vim is off", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("editor", true);
+
+		// Trigger completion via ctrl+space
+		const triggerKey = keyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+		expect(triggerKey.prevented()).toBe(1);
+
+		// Accept completion via Enter
+		const acceptKey = keyEvent("Enter");
+		expect(reg.handleKeydown(acceptKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+		expect(acceptKey.prevented()).toBe(1);
+	});
+
+	it("binds ctrl+space to edit.complete and ctrl+y to edit.acceptCompletion in vim insert mode", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("editor", true);
+		reg.setContext("vim_mode", "insert");
+
+		// Trigger via ctrl+space
+		const triggerKey = keyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+
+		// Enter is NOT bound to accept in vim insert mode (belongs to mode as newline)
+		const enterKey = keyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		// Ctrl-y accepts completion in vim insert mode
+		const acceptKey = keyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(acceptKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+	});
+
+	it("does not bind completion trigger or accept keys in vim normal mode", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("editor", true);
+		reg.setContext("vim_mode", "normal");
+
+		const triggerKey = keyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const enterKey = keyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		const ctrlYKey = keyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(ctrlYKey.e)).toBe(false);
+		expect(ctrlYKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
+	});
+
+	it("allows user keymap to rebind trigger and acceptance keys", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("editor", true);
+
+		// User overrides: rebind trigger to alt+/ and accept to tab
+		reg.reloadUserKeymap(JSON.stringify([
+			{
+				context: "editor && !vim_mode",
+				bindings: {
+					"alt+/": "edit.complete",
+					"tab": "edit.acceptCompletion",
+					"ctrl+space": "",
+					"enter": ""
+				}
+			}
+		]));
+
+		// Old keys no longer execute completion commands
+		const oldTrigger = keyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(oldTrigger.e)).toBe(false);
+		expect(oldTrigger.prevented()).toBe(0);
+
+		const oldAccept = keyEvent("Enter");
+		expect(reg.handleKeydown(oldAccept.e)).toBe(false);
+		expect(oldAccept.prevented()).toBe(0);
+
+		// Rebound keys execute completion commands
+		const newTrigger = keyEvent("/", { alt: true });
+		expect(reg.handleKeydown(newTrigger.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+		expect(newTrigger.prevented()).toBe(1);
+
+		const newAccept = keyEvent("Tab");
+		expect(reg.handleKeydown(newAccept.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+		expect(newAccept.prevented()).toBe(1);
+	});
+
+	it("does not swallow keystrokes for unbindings or stale disabled-plugin bindings", () => {
+		const { reg } = newCompletionRegistry();
+		reg.setContext("editor", true);
+
+		// User unbinds enter and binds ctrl+e to a disabled plugin command
+		reg.reloadUserKeymap(JSON.stringify([
+			{
+				context: "editor && !vim_mode",
+				bindings: {
+					"enter": "",
+					"ctrl+e": "disabledPlugin.action",
+					"ctrl+w": "none"
+				}
+			}
+		]));
+
+		// Empty unbinding does not swallow Enter
+		const enterKey = keyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		// 'none' unbinding does not swallow Ctrl-W
+		const ctrlWKey = keyEvent("w", { ctrl: true });
+		expect(reg.handleKeydown(ctrlWKey.e)).toBe(false);
+		expect(ctrlWKey.prevented()).toBe(0);
+
+		// Stale command belonging to a disabled plugin does not swallow Ctrl-E
+		const ctrlEKey = keyEvent("e", { ctrl: true });
+		expect(reg.handleKeydown(ctrlEKey.e)).toBe(false);
+		expect(ctrlEKey.prevented()).toBe(0);
+	});
+
+	it("does not swallow accept key when no completion is active (action returns false)", () => {
+		const { reg, executed } = newCompletionRegistry({
+			// When no completion popup is open, acceptCompletion returns false
+			"edit.acceptCompletion": { action: () => false }
+		});
+		reg.setContext("editor", true);
+
+		const enterKey = keyEvent("Enter");
+		// Returns false and does not prevent default, so Enter creates a newline
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+		expect(executed).toEqual(["edit.acceptCompletion"]);
+	});
+});

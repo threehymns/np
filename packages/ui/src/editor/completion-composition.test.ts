@@ -5,6 +5,7 @@ import { EditorView, keymap, type KeyBinding } from "@codemirror/view";
 import { LanguageDescription, type Language } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
+	acceptCompletion,
 	CompletionContext,
 	completionStatus,
 	currentCompletions,
@@ -14,15 +15,19 @@ import {
 	type CompletionSource,
 } from "@codemirror/autocomplete";
 import { workspaceFacet, currentDocFacet } from "./extensions/wikilinks";
-import { completionCompartmentExtensions } from "./extensions/completion-sources";
+import { completionCompartmentExtensions, COMPLETION_RANK_TIERS } from "./extensions/completion-sources";
 import { readBufferWordSettings, type SettingReader } from "./extensions/completion-settings";
 import {
 	DEFAULT_BUFFER_WORD_SETTINGS,
 	type BufferWordSettings,
 } from "./extensions/buffer-words";
 import {
+	CommandRegistry,
+	defaultKeymap,
 	getSnippetsForLanguage,
+	KeymapRegistry,
 	PluginHost,
+	registerCoreCommands,
 	svelteLanguageRegistration,
 	type RegisteredSnippet,
 } from "@np/core";
@@ -912,9 +917,9 @@ describe("completion composition — snippet source", () => {
 describe("completion composition — modal editing", () => {
 	/**
 	 * The bindings CodeMirror will consult, read through the public `keymap`
-	 * facet with the compartment's content installed. `autocompletion()`
-	 * contributes its own keymap through `keymap.computeN`, so the bundled
-	 * Enter binding shows up here exactly as it would in a real editor.
+	 * facet with the compartment's content installed.
+	 * Trigger and acceptance keys now flow through KeymapRegistry, so CodeMirror's
+	 * facet only carries popup navigation keys.
 	 */
 	function bindingsFor(vimEnabled: boolean): readonly KeyBinding[] {
 		// `keymap.computeN` contributes its value as one array element, so the
@@ -930,31 +935,29 @@ describe("completion composition — modal editing", () => {
 		}).facet(keymap).flat();
 	}
 
-	it("binds Enter to acceptCompletion when vim is off", () => {
+	it("does not bind Enter, Ctrl-y, or Ctrl-Space in CodeMirror keymap when vim is off", () => {
 		const keys = bindingsFor(false).map((binding) => binding.key);
 
-		expect(keys).toContain("Enter");
+		expect(keys).not.toContain("Enter");
 		expect(keys).not.toContain("Ctrl-y");
-		// The explicit trigger stays where it was either way.
-		expect(keys).toContain("Ctrl-Space");
+		expect(keys).not.toContain("Ctrl-Space");
+		expect(keys).toContain("Escape");
+		expect(keys).toContain("ArrowDown");
+		expect(keys).toContain("ArrowUp");
 	});
 
-	it("unbinds Enter and binds Ctrl-y when vim is on", () => {
+	it("does not bind Enter, Ctrl-y, or Ctrl-Space in CodeMirror keymap when vim is on", () => {
 		const keys = bindingsFor(true).map((binding) => binding.key);
 
-		// Under vim, Enter belongs to the mode: a completion must never consume
-		// the keystroke a vim insert-mode user means as a newline. Ctrl-y is
-		// vim's canonical accept, and the trigger key is untouched.
 		expect(keys).not.toContain("Enter");
-		expect(keys).toContain("Ctrl-y");
-		expect(keys).toContain("Ctrl-Space");
-		// Everything else the bundled keymap had is kept, in order, so nothing
-		// else moves. The mac-only bindings carry no `key`, which is why this
-		// compares sequences rather than sets.
+		expect(keys).not.toContain("Ctrl-y");
+		expect(keys).not.toContain("Ctrl-Space");
+		expect(keys).toContain("Escape");
+		expect(keys).toContain("ArrowDown");
+		expect(keys).toContain("ArrowUp");
+
 		const withoutVim = bindingsFor(false).map((binding) => binding.key);
-		expect(keys.filter((key) => key !== "Ctrl-y")).toEqual(
-			withoutVim.filter((key) => key !== "Enter"),
-		);
+		expect(keys).toEqual(withoutVim);
 	});
 });
 
@@ -1007,5 +1010,148 @@ describe("completion composition — the global popup toggle", () => {
 		const state = await markdownState("Notes about widgets\n\nNot");
 
 		expect(completionStatus(afterTyping(state))).not.toBeNull();
+	});
+});
+
+describe("completion composition — rebound keys reach all tiers (Issue #287)", () => {
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		let stopped = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {
+				stopped++;
+			},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented, stopped: () => stopped };
+	}
+
+	it("reaches note completions, server items, snippets, and words via rebound keys", async () => {
+		const testSnippet: RegisteredSnippet = {
+			id: "test.snip",
+			language: "Markdown",
+			trigger: "NoteSnippet",
+			body: "expanded_body",
+			description: "test snippet",
+			owner: "test",
+		};
+		const serverItem: Completion = {
+			label: "NotepadServer",
+			detail: "server item",
+			boost: COMPLETION_RANK_TIERS.server,
+		};
+		const serverSource = (cx: CompletionContext): CompletionResult | null => {
+			return {
+				from: cx.pos - 3,
+				options: [serverItem],
+			};
+		};
+
+		const languageCompartment = new Compartment();
+		const completionCompartment = new Compartment();
+		const desc = description("Markdown");
+		const language: Language = await resolveActiveLanguage(desc);
+
+		const host = completionCompartmentExtensions({
+			language,
+			languageName: "Markdown",
+			snippets: [testSnippet],
+			automaticCompletions: false, // automatic off: only explicit trigger opens popover
+			readSettings: () => ({ ...DEFAULT_BUFFER_WORD_SETTINGS, words: "enabled" }),
+		});
+
+		const extensions = [
+			workspaceFacet.of(mockWorkspace),
+			currentDocFacet.of(mockCurrentDoc),
+			languageCompartment.of(await getLanguageExtensions(desc)),
+			completionCompartment.of([
+				...host,
+				language.data.of({ autocomplete: serverSource }),
+			]),
+		];
+
+		const doc = "Notebook notes\n\nSee [[Not";
+		const state = EditorState.create({
+			doc,
+			selection: { anchor: doc.length },
+			extensions,
+		});
+
+		const commands = new CommandRegistry();
+		const appState: any = {
+			commands,
+			activeEditorView: null,
+			workspace: {},
+		};
+		registerCoreCommands(appState);
+
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		reg.setContext("editor", true);
+
+		// Rebind trigger to alt+/ and accept to tab
+		reg.reloadUserKeymap(JSON.stringify([
+			{
+				context: "editor && !vim_mode",
+				bindings: {
+					"alt+/": "edit.complete",
+					"tab": "edit.acceptCompletion",
+					"ctrl+space": "",
+					"enter": ""
+				}
+			}
+		]));
+
+		const view = new EditorView({
+			state,
+			parent: (globalThis as any).document.createElement("div"),
+		});
+		appState.activeEditorView = view;
+
+		try {
+			// Pressing rebound trigger key (alt+/)
+			const triggerEvent = keyEvent("/", { alt: true });
+			expect(reg.handleKeydown(triggerEvent.e)).toBe(true);
+			expect(triggerEvent.prevented()).toBe(1);
+
+			// Wait for completion popover to populate
+			for (let waited = 0; waited < 2_000; waited += 20) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				if (completionStatus(view.state) !== "pending") break;
+			}
+
+			expect(completionStatus(view.state)).toBe("active");
+			const options = currentCompletions(view.state);
+			const labels = options.map((o) => o.label);
+
+			// Note completions from language facet are reachable
+			expect(labels).toContain("Note A");
+			// Server items are reachable
+			expect(labels).toContain("NotepadServer");
+			// Snippets are reachable
+			expect(labels).toContain("NoteSnippet");
+			// Buffer words are reachable
+			expect(labels).toContain("Notebook");
+
+			// Allow interactionDelay to elapse so CodeMirror allows completion acceptance
+			await new Promise((resolve) => setTimeout(resolve, 100));
+
+			// Pressing rebound accept key (Tab)
+			const acceptEvent = keyEvent("Tab");
+			expect(reg.handleKeydown(acceptEvent.e)).toBe(true);
+			expect(acceptEvent.prevented()).toBe(1);
+
+			// The active completion was accepted into the document
+			expect(completionStatus(view.state)).toBeNull();
+		} finally {
+			view.destroy();
+		}
 	});
 });
