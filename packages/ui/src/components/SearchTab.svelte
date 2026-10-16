@@ -177,7 +177,8 @@
 			</div>
 
 			{#if isTruncated}
-				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold" role="status">
+				<!-- Plain text: the alert banner below is the sole live-region cap announcement -->
+				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
 					<WarningIcon class="size-3.5 text-amber-500 shrink-0" />
 					<span>Results truncated: capped at {truncationReason === 'files' ? '5,000 files' : '10,000 matches'}</span>
 				</div>
