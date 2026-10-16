@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
+import type { WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -72,6 +73,51 @@ function killAllLspProcesses(): void {
 }
 
 const activeWatchers = new Map<string, DesktopWatcher>();
+// Owning webContents id per watchId, so watchers left behind by a renderer
+// reload (where the preload stop callback never runs) can be cleaned up.
+const watcherOwners = new Map<string, number>();
+const ownerWatchIds = new Map<number, Set<string>>();
+
+async function closeWatcher(id: string): Promise<void> {
+	const watcher = activeWatchers.get(id);
+	if (!watcher) return;
+	activeWatchers.delete(id);
+	const senderId = watcherOwners.get(id);
+	watcherOwners.delete(id);
+	if (senderId !== undefined) {
+		const ids = ownerWatchIds.get(senderId);
+		if (ids) {
+			ids.delete(id);
+			if (ids.size === 0) ownerWatchIds.delete(senderId);
+		}
+	}
+	try {
+		await watcher.close();
+	} catch (e) {
+		console.error(`[main] Failed to close watcher ${id}:`, e);
+	}
+}
+
+async function closeWatchersForSender(senderId: number): Promise<void> {
+	const ids = ownerWatchIds.get(senderId);
+	if (!ids) return;
+	for (const id of [...ids]) {
+		await closeWatcher(id);
+	}
+}
+
+function trackWatcherOwner(id: string, sender: WebContents): void {
+	const senderId = sender.id;
+	watcherOwners.set(id, senderId);
+	let ids = ownerWatchIds.get(senderId);
+	if (!ids) {
+		ids = new Set();
+		ownerWatchIds.set(senderId, ids);
+		sender.once('destroyed', () => void closeWatchersForSender(senderId));
+		sender.on('did-start-navigation', () => void closeWatchersForSender(senderId));
+	}
+	ids.add(id);
+}
 
 async function killAllWatchers(): Promise<void> {
 	for (const [id, watcher] of [...activeWatchers.entries()]) {
@@ -593,12 +639,8 @@ function registerIpcHandlers() {
 		}
 	});
 
-	ipcMain.handle('watcher:start', async (_, watchId: string, dirPath: string) => {
-		const existing = activeWatchers.get(watchId);
-		if (existing) {
-			await existing.close();
-			activeWatchers.delete(watchId);
-		}
+	ipcMain.handle('watcher:start', async (event, watchId: string, dirPath: string) => {
+		await closeWatcher(watchId);
 		const watcher = new DesktopWatcher({
 			dirPath,
 			onEvents: (events) => {
@@ -607,15 +649,12 @@ function registerIpcHandlers() {
 		});
 		await watcher.start();
 		activeWatchers.set(watchId, watcher);
+		trackWatcherOwner(watchId, event.sender);
 		return { success: true };
 	});
 
 	ipcMain.handle('watcher:stop', async (_, watchId: string) => {
-		const watcher = activeWatchers.get(watchId);
-		if (watcher) {
-			activeWatchers.delete(watchId);
-			await watcher.close();
-		}
+		await closeWatcher(watchId);
 		return { success: true };
 	});
 }
