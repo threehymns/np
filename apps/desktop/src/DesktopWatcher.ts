@@ -26,7 +26,7 @@ export class DesktopWatcher {
 		this.dirPath = options.dirPath;
 		this.onEvents = options.onEvents;
 		this.debounceMs = options.debounceMs ?? 50;
-		this.ignore = options.ignore ?? ['node_modules', '.git', '.svelte-kit'];
+		this.ignore = options.ignore ?? ['**/node_modules', '**/.git', '**/.svelte-kit'];
 	}
 
 	async start(): Promise<void> {

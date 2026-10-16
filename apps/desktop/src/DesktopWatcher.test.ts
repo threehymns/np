@@ -184,6 +184,34 @@ describe('DesktopWatcher', () => {
 		expect(kept).toBeDefined();
 	});
 
+	it('ignores nested node_modules directories at any depth', async () => {
+		const nestedModulesDir = path.join(testDir, 'packages', 'app', 'node_modules');
+		await fs.mkdir(nestedModulesDir, { recursive: true });
+
+		const received: WatcherEvent[][] = [];
+		const watcher = new DesktopWatcher({
+			dirPath: testDir,
+			debounceMs: 20,
+			onEvents: (events) => {
+				received.push(events);
+			}
+		});
+
+		await watcher.start();
+
+		await fs.writeFile(path.join(nestedModulesDir, 'ignored.txt'), 'ignore me');
+		await fs.writeFile(path.join(testDir, 'kept.txt'), 'keep me');
+		await new Promise((r) => setTimeout(r, 100));
+
+		await watcher.close();
+
+		const allEvents = received.flat();
+		const ignored = allEvents.find((e) => e.path.includes('node_modules'));
+		const kept = allEvents.find((e) => path.basename(e.path) === 'kept.txt');
+		expect(ignored).toBeUndefined();
+		expect(kept).toBeDefined();
+	});
+
 	it('stops watching cleanly and does not deliver events after close()', async () => {
 		const received: WatcherEvent[][] = [];
 		const watcher = new DesktopWatcher({
