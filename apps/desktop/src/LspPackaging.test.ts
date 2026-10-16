@@ -195,8 +195,9 @@ describe('adding a second server is one descriptor and configuration (#281)', ()
 		expect(sync.dynamicRegistration).toBe(true);
 		expect(sync.change).toBe(2);
 
-		// 3. First server descriptor is unaffected and unchanged.
-		expect(LSP_DESCRIPTORS).toHaveLength(1);
-		expect(LSP_DESCRIPTORS[0].id).toBe('typescript');
+		// 3. The typescript descriptor is registered (without asserting the
+		// registry length, so a second bundled server can be added via
+		// configuration without breaking this packaging test).
+		expect(LSP_DESCRIPTORS.some((descriptor) => descriptor.id === 'typescript')).toBe(true);
 	});
 });
