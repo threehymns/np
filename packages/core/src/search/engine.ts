@@ -15,6 +15,7 @@ import type {
 export const DEFAULT_MAX_FILES = 5000;
 export const DEFAULT_MAX_MATCHES = 10000;
 export const SNIFF_SIZE = 8192; // 8 KB cheap sniff
+const MAX_CACHE_BYTES = 50 * 1024 * 1024; // 50 MB total file-content cache
 
 const DEFAULT_IGNORED_DIRS = new Set([
 	'node_modules',
@@ -91,6 +92,7 @@ export class SearchResultStream implements ISearchResultStream {
 export class TypeScriptSearchEngine implements SearchBackend {
 	private worktree: Worktree | null = null;
 	private fileCache = new Map<string, { content: string; version: number }>();
+	private cacheBytes = 0;
 	private worktreeUnsubscribe: (() => void) | null = null;
 
 	constructor(worktree?: Worktree | null) {
@@ -107,6 +109,7 @@ export class TypeScriptSearchEngine implements SearchBackend {
 		}
 		this.worktree = worktree;
 		this.fileCache.clear();
+		this.cacheBytes = 0;
 
 		if (worktree) {
 			this.worktreeUnsubscribe = worktree.subscribe((snapshot) => {
@@ -119,9 +122,34 @@ export class TypeScriptSearchEngine implements SearchBackend {
 	private pruneCache(currentVersion: number): void {
 		for (const [key, value] of this.fileCache.entries()) {
 			if (value.version < currentVersion) {
+				this.cacheBytes -= value.content.length;
 				this.fileCache.delete(key);
 			}
 		}
+	}
+
+	/**
+	 * Store content in the cache, evicting oldest entries if the total
+	 * cached size would exceed MAX_CACHE_BYTES. Keeps memory bounded
+	 * on large projects.
+	 */
+	private cacheFileContent(key: string, content: string, version: number): void {
+		const existing = this.fileCache.get(key);
+		if (existing) {
+			this.cacheBytes -= existing.content.length;
+			this.fileCache.delete(key);
+		}
+		while (this.cacheBytes + content.length > MAX_CACHE_BYTES && this.fileCache.size > 0) {
+			const oldest = this.fileCache.keys().next();
+			if (oldest.done) break;
+			const evicted = this.fileCache.get(oldest.value)!;
+			this.cacheBytes -= evicted.content.length;
+			this.fileCache.delete(oldest.value);
+		}
+		// Skip files larger than the entire cache budget
+		if (content.length > MAX_CACHE_BYTES) return;
+		this.fileCache.set(key, { content, version });
+		this.cacheBytes += content.length;
 	}
 
 	dispose(): void {
@@ -130,6 +158,7 @@ export class TypeScriptSearchEngine implements SearchBackend {
 			this.worktreeUnsubscribe = null;
 		}
 		this.fileCache.clear();
+		this.cacheBytes = 0;
 		this.worktree = null;
 	}
 
@@ -211,10 +240,7 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					} else if (this.worktree.storage) {
 						try {
 							content = await this.worktree.storage.readFile(file.origin);
-							this.fileCache.set(file.relativePath, {
-								content,
-								version: snapshot.version
-							});
+							this.cacheFileContent(file.relativePath, content, snapshot.version);
 						} catch {
 							// If file read fails (missing / permission), skip it
 							continue;
