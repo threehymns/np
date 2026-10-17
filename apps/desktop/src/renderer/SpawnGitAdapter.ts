@@ -749,6 +749,25 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return commits;
 	}
 
+	private async getAheadCommitShas(branch?: string | null): Promise<Set<string>> {
+		const revRange = branch ? `${branch}@{u}..${branch}` : '@{u}..HEAD';
+		const res = await this.runGit(['rev-list', revRange]);
+		if (res.code !== 0) {
+			// No upstream configured, detached HEAD, or revRange not found -- this is normal, not an error.
+			return new Set();
+		}
+		const lines = res.stdout
+			.split('\n')
+			.map(s => s.trim())
+			.filter(s => s.length > 0);
+		return new Set(lines);
+	}
+
+	async getAheadCount(branch?: string | null): Promise<number> {
+		const shas = await this.getAheadCommitShas(branch);
+		return shas.size;
+	}
+
 	async getHistory(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]> {
 		const args = ['log', '-z', '--format=%s%x00%an%x00%at%x00%h%x00%H%x00%D'];
 		if (options?.maxCount !== undefined) {
@@ -758,7 +777,11 @@ export class SpawnGitAdapter implements VCSAdapter {
 			args.push(options.branch);
 		}
 
-		const res = await this.runGit(args);
+		const [res, aheadShas] = await Promise.all([
+			this.runGit(args),
+			this.getAheadCommitShas(options?.branch)
+		]);
+
 		if (res.code !== 0) {
 			if (
 				res.stderr.includes('does not have any commits yet') ||
@@ -790,7 +813,8 @@ export class SpawnGitAdapter implements VCSAdapter {
 					author,
 					authorName: author,
 					timestamp: parseInt(timestampStr, 10) || 0,
-					refDecoration: refDecoration || undefined
+					refDecoration: refDecoration || undefined,
+					isAhead: aheadShas.has(sha) ? true : undefined
 				});
 			}
 			i += 6;

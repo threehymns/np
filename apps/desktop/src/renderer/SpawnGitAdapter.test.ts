@@ -957,16 +957,48 @@ describe('SpawnGitAdapter', () => {
 		});
 
 		it('passes -n flag when maxCount is supplied', async () => {
-			let passedArgs: string[] = [];
+			const calls: string[][] = [];
 			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
-				passedArgs = args;
+				calls.push(args);
 				return { code: 0, stdout: '', stderr: '' };
 			});
 
 			await new SpawnGitAdapter(rootOrigin).getHistory({ maxCount: 10, branch: 'feat/abc' });
-			expect(passedArgs).toContain('-n');
-			expect(passedArgs).toContain('10');
-			expect(passedArgs).toContain('feat/abc');
+			const logCall = calls.find(c => c[0] === 'log');
+			expect(logCall).toBeDefined();
+			expect(logCall).toContain('-n');
+			expect(logCall).toContain('10');
+			expect(logCall).toContain('feat/abc');
+		});
+
+		it('queries rev-list for ahead commits and marks isAhead (Ticket #346)', async () => {
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'log') {
+					return {
+						code: 0,
+						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x001111111111111111111111111111111111111111\x00tag: v1.0\x00',
+						stderr: ''
+					};
+				}
+				if (args[0] === 'rev-list') {
+					return {
+						code: 0,
+						stdout: '1111111111111111111111111111111111111111\n',
+						stderr: ''
+					};
+				}
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			const history = await adapter.getHistory();
+			expect(history).toHaveLength(1);
+			expect(history[0].isAhead).toBe(true);
+			expect(history[0].refDecoration).toBe('tag: v1.0');
+
+			const aheadCount = await adapter.getAheadCount();
+			expect(aheadCount).toBe(1);
 		});
 	});
+
 });
