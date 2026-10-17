@@ -11,15 +11,18 @@
 		defaultClipboardService,
 		type HistoryAction
 	} from './history-actions';
+	import VirtualList from './VirtualList.svelte';
 
 	let {
 		commits = [],
 		isLoading = false,
-		clipboardService
+		clipboardService,
+		scrollElement = $bindable(null)
 	}: {
 		commits?: GitHistoryCommit[];
 		isLoading?: boolean;
 		clipboardService?: ClipboardService;
+		scrollElement?: HTMLElement | null;
 	} = $props();
 
 	const appState = getContext<AppState | undefined>('appState');
@@ -53,6 +56,8 @@
 	function handleKeyDown(event: KeyboardEvent) {
 		handleHistoryKeyDown(event);
 	}
+
+	const ROW_HEIGHT = 48;
 </script>
 
 {#if commits.length === 0}
@@ -62,14 +67,22 @@
 		<p class="text-[11px] opacity-75 mt-1 max-w-[200px]">There are no commits on this branch yet.</p>
 	</div>
 {:else}
-	<div class="flex-1 overflow-y-auto p-1.5 space-y-0.5 select-none" data-slot="history-list">
-		{#each commits as commit (commit.sha)}
+	<VirtualList
+		items={commits}
+		rowHeight={ROW_HEIGHT}
+		bind:containerEl={scrollElement}
+		class="flex-1 overflow-y-auto p-1.5 select-none"
+		data-slot="history-list"
+		getKey={(commit) => commit.sha}
+	>
+		{#snippet children(commit)}
 			<ContextMenu.Root>
 				<ContextMenu.Trigger>
 					<div
 						role="button"
 						tabindex="0"
-						class="group flex flex-col px-2 py-1.5 rounded hover:bg-muted/30 transition-colors cursor-pointer select-none text-left"
+						class="group flex flex-col justify-center px-2 py-1.5 rounded hover:bg-muted/30 transition-colors cursor-pointer select-none text-left"
+						style="height: {ROW_HEIGHT}px; box-sizing: border-box;"
 						data-sha={commit.sha}
 						title={copiedSha === commit.sha ? 'Copied short SHA to clipboard' : 'Click to copy short SHA'}
 						onclick={() => handleRowClick(commit)}
@@ -113,6 +126,6 @@
 					</ContextMenu.Item>
 				</ContextMenu.Content>
 			</ContextMenu.Root>
-		{/each}
-	</div>
+		{/snippet}
+	</VirtualList>
 {/if}

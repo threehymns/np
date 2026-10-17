@@ -102,4 +102,115 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(source).toMatch(/copied|Copied/);
 		});
 	});
+
+	describe("5. Virtualized list & windowing behavior (Ticket #348)", () => {
+		const virtualListSource = () => {
+			const filePath = resolve(__dirname, "./VirtualList.svelte");
+			return readFileSync(filePath, "utf-8");
+		};
+
+		it("HistoryTab.svelte delegates rendering to VirtualList rather than an unbounded each", () => {
+			const source = historyTabSource();
+			expect(source).toContain("VirtualList");
+			expect(source).not.toContain("{#each commits as commit (commit.sha)}");
+			expect(source).toContain('data-slot="history-list"');
+			expect(source).toContain('role="button"');
+		});
+
+		it("VirtualList renders only visible rows plus overscan for 10k items", async () => {
+			const { VirtualListController } = await import("./virtual-list.svelte");
+			const controller = new VirtualListController({
+				itemCount: 10000,
+				rowHeight: 48,
+				viewportHeight: 600,
+				overscan: 5
+			});
+
+			expect(controller.totalHeight).toBe(480000);
+			// At scrollTop = 0: 0 to ceil(600/48) = 13 + 5 overscan = 18 items
+			expect(controller.startIndex).toBe(0);
+			expect(controller.endIndex).toBe(18);
+			expect(controller.visibleCount).toBe(18);
+			expect(controller.topPadding).toBe(0);
+			expect(controller.bottomPadding).toBe((10000 - 18) * 48);
+			expect(controller.topPadding + controller.visibleCount * 48 + controller.bottomPadding).toBe(480000);
+		});
+
+		it("slides visible window and updates spacers when scrolled", async () => {
+			const { VirtualListController } = await import("./virtual-list.svelte");
+			const controller = new VirtualListController({
+				itemCount: 10000,
+				rowHeight: 48,
+				viewportHeight: 600,
+				overscan: 5
+			});
+
+			// Scroll down to 2400px (item index 50)
+			controller.handleScroll(2400);
+
+			expect(controller.scrollTop).toBe(2400);
+			expect(controller.startIndex).toBe(45); // 50 - 5 overscan
+			expect(controller.endIndex).toBe(68); // ceil((2400+600)/48) + 5 = 63 + 5
+			expect(controller.visibleCount).toBe(23);
+			expect(controller.topPadding).toBe(45 * 48);
+			expect(controller.bottomPadding).toBe((10000 - 68) * 48);
+			expect(controller.topPadding + controller.visibleCount * 48 + controller.bottomPadding).toBe(480000);
+		});
+
+		it("adjusts visible range dynamically upon container resize", async () => {
+			const { VirtualListController } = await import("./virtual-list.svelte");
+			const controller = new VirtualListController({
+				itemCount: 10000,
+				rowHeight: 48,
+				viewportHeight: 600,
+				overscan: 5
+			});
+
+			controller.handleScroll(2400);
+			expect(controller.endIndex).toBe(68);
+
+			// Viewport grows from 600px to 1000px
+			controller.handleResize(1000);
+			expect(controller.viewportHeight).toBe(1000);
+			// ceil((2400 + 1000) / 48) + 5 = ceil(70.83) + 5 = 71 + 5 = 76
+			expect(controller.endIndex).toBe(76);
+			expect(controller.visibleCount).toBe(31);
+		});
+
+		it("preserves scroll position across re-renders and item count changes", async () => {
+			const { VirtualListController } = await import("./virtual-list.svelte");
+			const controller = new VirtualListController({
+				itemCount: 10000,
+				rowHeight: 48,
+				viewportHeight: 600,
+				overscan: 5
+			});
+
+			controller.handleScroll(2400);
+			expect(controller.lastScrollTop).toBe(2400);
+
+			// New commits arrive, updating item count
+			controller.updateItemCount(10005);
+			expect(controller.lastScrollTop).toBe(2400);
+			expect(controller.scrollTop).toBe(2400);
+			expect(controller.totalHeight).toBe(10005 * 48);
+		});
+
+		it("handles zero items without errors or negative heights", async () => {
+			const { VirtualListController } = await import("./virtual-list.svelte");
+			const controller = new VirtualListController({
+				itemCount: 0,
+				rowHeight: 48,
+				viewportHeight: 600,
+				overscan: 5
+			});
+
+			expect(controller.totalHeight).toBe(0);
+			expect(controller.startIndex).toBe(0);
+			expect(controller.endIndex).toBe(0);
+			expect(controller.visibleCount).toBe(0);
+			expect(controller.topPadding).toBe(0);
+			expect(controller.bottomPadding).toBe(0);
+		});
+	});
 });
