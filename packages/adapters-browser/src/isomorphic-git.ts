@@ -1,7 +1,7 @@
 import git from 'isomorphic-git';
 import type { StatusRow } from 'isomorphic-git';
 import { Buffer } from 'buffer';
-import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, FileDiffDetail } from '@np/core';
+import type { VCSAdapter, VCSStatus, SwitchResult, FileOrigin, GitChange, GitCommit, GitHistoryCommit, FileDiffDetail } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { mapBounded, isDirectoryError } from '@np/core/utils';
 import { toURI } from '@np/core/storage';
@@ -1064,6 +1064,29 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				});
 			}
 			return result;
+		} catch (e) {
+			return [];
+		}
+	}
+
+	async getHistory(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]> {
+		if (!await this.ensureInitialized()) return [];
+		try {
+			const commits = await git.log({
+				fs: this.fs!,
+				dir: this.dir,
+				ref: options?.branch || undefined,
+				depth: options?.maxCount
+			});
+			return commits.map((c) => ({
+				sha: c.oid,
+				shortSha: c.oid.substring(0, 7),
+				subject: (c.commit.message || '').split('\n')[0] || '',
+				author: c.commit.author.name,
+				authorName: c.commit.author.name,
+				timestamp: c.commit.author.timestamp,
+				refDecoration: undefined
+			}));
 		} catch (e) {
 			return [];
 		}

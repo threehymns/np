@@ -915,4 +915,58 @@ describe('SpawnGitAdapter', () => {
 			expect(await new SpawnGitAdapter(rootOrigin).getCommits()).toEqual([]);
 		});
 	});
+
+	describe('getHistory', () => {
+		const logReturning = (stdout: string, code = 0, stderr = '') => {
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'log') return { code, stdout, stderr };
+				return { code: 0, stdout: '', stderr: '' };
+			});
+		};
+
+		it('parses NUL-delimited records into GitHistoryCommit entries', async () => {
+			const record = 'feat: hello\x00Alice\x001700000000\x00abcdef1\x00abcdef1234567890abcdef1234567890abcdef12\x00tag: v1.0\x00';
+			logReturning(record);
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+			expect(history).toEqual([
+				{
+					sha: 'abcdef1234567890abcdef1234567890abcdef12',
+					shortSha: 'abcdef1',
+					subject: 'feat: hello',
+					author: 'Alice',
+					authorName: 'Alice',
+					timestamp: 1700000000,
+					refDecoration: 'tag: v1.0'
+				}
+			]);
+		});
+
+		it('handles truncated stream gracefully', async () => {
+			logReturning('feat: hello\x00Alice\x001700000000');
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+			expect(history).toEqual([]);
+		});
+
+		it('returns empty array when git log reports no commits yet', async () => {
+			logReturning('', 128, 'fatal: your current branch master does not have any commits yet');
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+			expect(history).toEqual([]);
+		});
+
+		it('passes -n flag when maxCount is supplied', async () => {
+			let passedArgs: string[] = [];
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				passedArgs = args;
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			await new SpawnGitAdapter(rootOrigin).getHistory({ maxCount: 10, branch: 'feat/abc' });
+			expect(passedArgs).toContain('-n');
+			expect(passedArgs).toContain('10');
+			expect(passedArgs).toContain('feat/abc');
+		});
+	});
 });
