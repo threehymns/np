@@ -971,6 +971,23 @@ describe('SpawnGitAdapter', () => {
 			expect(logCall).toContain('feat/abc');
 		});
 
+		it('terminates the revision list with -- after the branch argument', async () => {
+			const calls: string[][] = [];
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				calls.push(args);
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			await new SpawnGitAdapter(rootOrigin).getHistory({ branch: 'feat/abc' });
+			const logCall = calls.find(c => c[0] === 'log');
+			expect(logCall).toBeDefined();
+			const branchIdx = logCall!.indexOf('feat/abc');
+			expect(branchIdx).toBeGreaterThan(-1);
+			// -- must immediately follow the branch so git parses it as a
+			// revision even when a path with the same name exists.
+			expect(logCall![branchIdx + 1]).toBe('--');
+		});
+
 		it('queries rev-list for ahead commits and marks isAhead (Ticket #346)', async () => {
 			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
 				if (args[0] === 'log') {
