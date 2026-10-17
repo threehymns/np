@@ -53,7 +53,6 @@ export interface GitHistoryCommit {
 	shortSha: string;
 	subject: string;
 	author: string;
-	authorName: string;
 	timestamp: number;
 	refDecoration?: string;
 	isAhead?: boolean;

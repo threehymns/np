@@ -935,7 +935,6 @@ describe('SpawnGitAdapter', () => {
 					shortSha: 'abcdef1',
 					subject: 'feat: hello',
 					author: 'Alice',
-					authorName: 'Alice',
 					timestamp: 1700000000,
 					refDecoration: 'tag: v1.0'
 				}

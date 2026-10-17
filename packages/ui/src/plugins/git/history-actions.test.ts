@@ -10,7 +10,6 @@ describe("History Actions (Ticket #347)", () => {
 		shortSha: "0123456",
 		subject: "feat: initial commit",
 		author: "Alice <alice@example.com>",
-		authorName: "Alice",
 		timestamp: 1700000000
 	};
 
