@@ -10,6 +10,7 @@
 	import Icon from '../../components/Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
+	import HistoryTab from './HistoryTab.svelte';
 	import * as Tooltip from '../../components/ui/tooltip/index';
 	import * as ContextMenu from '../../components/ui/context-menu';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
@@ -59,6 +60,30 @@
 	let stagedExpanded = $state(true);
 	let changesExpanded = $state(true);
 	let untrackedExpanded = $state(true);
+
+	// Peer tabs: Changes or History
+	let activeTab = $state<'changes' | 'history'>('changes');
+	let changesScrollEl = $state<HTMLElement | null>(null);
+	let historyScrollEl = $state<HTMLElement | null>(null);
+	let changesScrollTop = 0;
+	let historyScrollTop = 0;
+
+	function switchTab(newTab: 'changes' | 'history') {
+		if (activeTab === newTab) return;
+		if (activeTab === 'changes' && changesScrollEl) {
+			changesScrollTop = changesScrollEl.scrollTop;
+		} else if (activeTab === 'history' && historyScrollEl) {
+			historyScrollTop = historyScrollEl.scrollTop;
+		}
+		activeTab = newTab;
+		queueMicrotask(() => {
+			if (newTab === 'changes' && changesScrollEl) {
+				changesScrollEl.scrollTop = changesScrollTop;
+			} else if (newTab === 'history' && historyScrollEl) {
+				historyScrollEl.scrollTop = historyScrollTop;
+			}
+		});
+	}
 
 	// View mode: list or tree
 	let viewMode = $state<'list' | 'tree'>('list');
@@ -371,9 +396,39 @@
 	</div>
 {:else}
 	<div class="flex flex-col h-full bg-sidebar border-r border-border select-none relative font-sans text-xs">
-		<!-- File List / Main Area -->
-		<Tooltip.Provider delayDuration={400}>
-		<div class="flex-1 overflow-y-auto p-2 space-y-4">
+		<!-- Peer Tabs Header: Changes / History -->
+		<div class="flex items-center border-b border-border px-2 py-1.5 shrink-0 bg-sidebar" role="tablist">
+			<div class="inline-flex items-center bg-muted/60 p-0.5 rounded-md text-xs font-medium text-muted-foreground w-full">
+				<button
+					type="button"
+					role="tab"
+					aria-selected={activeTab === 'changes'}
+					onclick={() => switchTab('changes')}
+					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'changes' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
+				>
+					Changes
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={activeTab === 'history'}
+					onclick={() => switchTab('history')}
+					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'history' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
+				>
+					History
+				</button>
+			</div>
+		</div>
+
+		<!-- CHANGES TAB BODY -->
+		<div
+			class="flex-1 flex flex-col min-h-0 {activeTab === 'changes' ? '' : 'hidden'}"
+			aria-hidden={activeTab !== 'changes'}
+			data-slot="changes-tab-body"
+		>
+			<!-- File List / Main Area -->
+			<Tooltip.Provider delayDuration={400}>
+			<div bind:this={changesScrollEl} class="flex-1 overflow-y-auto p-2 space-y-4">
 			<!-- Commit View Actions -->
 			<div class="flex items-center justify-between px-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
 			<button
@@ -686,6 +741,21 @@
  			<div class="p-1 flex items-center justify-end gap-1.5">
 				{@render commitButton()}
  			</div>
+		</div>
+		</div>
+
+		<!-- HISTORY TAB BODY -->
+		<div
+			class="flex-1 flex flex-col min-h-0 {activeTab === 'history' ? '' : 'hidden'}"
+			aria-hidden={activeTab !== 'history'}
+			data-slot="history-tab-body"
+		>
+			<div bind:this={historyScrollEl} class="flex-1 overflow-y-auto flex flex-col min-h-0">
+				<HistoryTab commits={repo.historyCommits} />
+			</div>
+			<div class="p-2 border-t border-border shrink-0">
+				<BranchSelectButton />
+			</div>
 		</div>
 	</div>
 {/if}
