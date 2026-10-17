@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { GitHistoryCommit } from '@np/core';
-	import { formatRelativeTime } from '@np/core/utils';
-	import { GitCommitIcon, CopyIcon } from 'phosphor-svelte';
+	import { formatRelativeTime, parseRefTags } from '@np/core/utils';
+	import { GitCommitIcon, TagSimpleIcon, ArrowUpIcon, CopyIcon } from 'phosphor-svelte';
 	import * as ContextMenu from '../../components/ui/context-menu';
 	import { getContext } from 'svelte';
 	import type { AppState, ClipboardService } from '@np/core/state.svelte';
@@ -15,11 +15,13 @@
 
 	let {
 		commits = [],
+		aheadCount = 0,
 		isLoading = false,
 		clipboardService,
 		scrollElement = $bindable(null)
 	}: {
 		commits?: GitHistoryCommit[];
+		aheadCount?: number;
 		isLoading?: boolean;
 		clipboardService?: ClipboardService;
 		scrollElement?: HTMLElement | null;
@@ -75,7 +77,9 @@
 		data-slot="history-list"
 		getKey={(commit) => commit.sha}
 	>
-		{#snippet children(commit)}
+		{#snippet children(commit, index)}
+			{@const tags = parseRefTags(commit.refDecoration)}
+			{@const isAhead = commit.isAhead ?? (aheadCount > 0 && index < aheadCount)}
 			<ContextMenu.Root>
 				<ContextMenu.Trigger>
 					<div
@@ -89,11 +93,46 @@
 						ondblclick={(e) => { e.preventDefault(); }}
 						onkeydown={handleKeyDown}
 					>
-						<!-- Line 1: Subject (truncated) -->
-						<div class="flex items-center justify-between min-w-0">
-							<span class="truncate font-medium text-foreground text-xs" title={commit.subject || '(no commit message)'}>
+						<!-- Line 1: Subject (truncated) + tag chips + unpushed arrow icon -->
+						<div class="flex items-center justify-between min-w-0 gap-1.5">
+							<span class="truncate font-medium text-foreground text-xs min-w-0 flex-1" title={commit.subject || '(no commit message)'}>
 								{commit.subject || '(no commit message)'}
 							</span>
+
+							<div class="flex items-center gap-1 shrink-0">
+								{#if tags.length > 0}
+									{#each tags.slice(0, 3) as tag (tag)}
+										<span
+											class="inline-flex items-center gap-1 px-1.5 py-0.25 text-[10px] leading-tight rounded bg-muted text-muted-foreground font-medium shrink-0 border border-border/40 max-w-[90px]"
+											title={tag}
+											data-slot="history-tag-chip"
+										>
+											<TagSimpleIcon size={10} class="opacity-60 shrink-0" />
+											<span class="truncate">{tag}</span>
+										</span>
+									{/each}
+									{#if tags.length > 3}
+										<span
+											class="inline-flex items-center px-1.5 py-0.25 text-[10px] leading-tight rounded bg-muted text-muted-foreground font-medium shrink-0 border border-border/40"
+											title={tags.slice(3).join(', ')}
+											data-slot="history-tag-overflow"
+										>
+											+{tags.length - 3}
+										</span>
+									{/if}
+								{/if}
+
+								{#if isAhead}
+									<span
+										class="inline-flex items-center justify-center text-primary shrink-0"
+										title="Unpushed (ahead of upstream)"
+										aria-label="Unpushed"
+										data-slot="history-unpushed-indicator"
+									>
+										<ArrowUpIcon size={12} class="stroke-2" />
+									</span>
+								{/if}
+							</div>
 						</div>
 
 						<!-- Line 2: Author, relative timestamp, short SHA (muted) -->
