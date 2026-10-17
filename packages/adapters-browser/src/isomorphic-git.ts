@@ -1125,7 +1125,6 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 					shortSha: c.oid.substring(0, 7),
 					subject: (c.commit.message || '').split('\n')[0] || '',
 					author: c.commit.author.name,
-					authorName: c.commit.author.name,
 					timestamp: c.commit.author.timestamp,
 					refDecoration
 				};
