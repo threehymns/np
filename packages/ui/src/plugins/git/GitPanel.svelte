@@ -762,9 +762,7 @@
 			aria-hidden={activeTab !== 'history'}
 			data-slot="history-tab-body"
 		>
-			<div bind:this={historyScrollEl} class="flex-1 overflow-y-auto flex flex-col min-h-0">
-				<HistoryTab commits={repo.historyCommits} />
-			</div>
+			<HistoryTab commits={repo.historyCommits} bind:scrollElement={historyScrollEl} />
 			<div class="p-2 border-t border-border shrink-0">
 				<BranchSelectButton />
 			</div>
