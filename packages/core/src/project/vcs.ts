@@ -56,6 +56,7 @@ export interface GitHistoryCommit {
 	authorName: string;
 	timestamp: number;
 	refDecoration?: string;
+	isAhead?: boolean;
 }
 export type GitHistoryEntry = GitHistoryCommit;
 
@@ -228,6 +229,7 @@ export interface VCSAdapter {
 	getChanges?(): Promise<GitChange[]>;
 	getCommits?(): Promise<GitCommit[]>;
 	getHistory?(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]>;
+	getAheadCount?(branch?: string | null): Promise<number>;
 	getFileDiff?(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail>;
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
