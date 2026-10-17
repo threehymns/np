@@ -1,6 +1,7 @@
 import { Repository } from '../../project/repository.svelte';
 import { toURI, type FileOrigin } from '../../storage';
 import type { WorkspaceLike } from '../services';
+import { startWorkspaceGitWatcher, stopWorkspaceGitWatcher } from './watch';
 
 /**
  * Per-workspace repository ownership for the Git Core Plugin (#202).
@@ -25,7 +26,10 @@ export interface WorkspaceGitState {
 	/** Token identifying the most recently initiated folder-open operation. */
 	currentOpenId: number;
 	isActive(): boolean;
+	/** Active git directory watcher cleanup for the currently published repository. */
+	watcherStop?: (() => Promise<void> | void) | null;
 }
+
 
 export function createWorkspaceGitState(
 	workspace: WorkspaceLike,
@@ -62,6 +66,7 @@ function track<T>(state: WorkspaceGitState, promise: Promise<T>): Promise<T> {
  * repository another owner published after us.
  */
 export function disposePublishedRepository(state: WorkspaceGitState): void {
+	stopWorkspaceGitWatcher(state);
 	const workspace = state.workspace;
 	if (workspace.project.repository === null || workspace.project.repository === state.repository) {
 		workspace.project.repository = null;
@@ -80,6 +85,9 @@ export function disposePublishedRepository(state: WorkspaceGitState): void {
  * newer publication by clearing its owner.
  */
 function disposeSpecificRepository(state: WorkspaceGitState, repo: Repository): void {
+	if (state.repository === repo) {
+		stopWorkspaceGitWatcher(state);
+	}
 	const workspace = state.workspace;
 	if (workspace.project.repository === repo) {
 		workspace.project.repository = null;
@@ -91,6 +99,7 @@ function disposeSpecificRepository(state: WorkspaceGitState, repo: Repository): 
 		state.repository = null;
 	}
 }
+
 
 /**
  * Folder-open lifecycle: detect + refresh for one workspace, previously
@@ -144,8 +153,11 @@ export async function openFolderRepository(
 			disposeSpecificRepository(state, repo);
 			return;
 		}
+
+		await startWorkspaceGitWatcher(state, origin, repo);
 	}
 }
+
 
 /**
  * Repository initialization (`git init` flow), previously
@@ -227,8 +239,10 @@ export async function initializeWorkspaceRepository(state: WorkspaceGitState): P
 		disposeSpecificRepository(state, repo);
 		return false;
 	}
+	await startWorkspaceGitWatcher(state, targetOrigin, repo);
 	return true;
 }
+
 
 /**
  * Save-triggered refresh for one workspace: refreshes whatever repository
