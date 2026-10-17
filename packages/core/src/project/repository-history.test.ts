@@ -3,6 +3,7 @@ import { describe, it, expect, mock } from "bun:test";
 import { Repository } from "./repository.svelte";
 import type { VCSAdapter, GitHistoryCommit } from "./vcs";
 import type { FileOrigin } from "../storage";
+import { startWorkspaceGitWatcher, stopWorkspaceGitWatcher } from "../plugins/git/watch";
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/test/repo", name: "repo" };
 
@@ -171,4 +172,248 @@ describe("Repository history log integration (Ticket #345)", () => {
 		expect(repo.historyCommits).toEqual(freshCommits);
 	});
 });
+
+describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
+	it("updates historyCommits when a commit is made in the terminal while app is open", async () => {
+		let eventCallback: any = null;
+		let commits = [
+			{
+				sha: "1111111111111111111111111111111111111111",
+				shortSha: "1111111",
+				subject: "initial commit",
+				author: "Dev",
+				authorName: "Dev",
+				timestamp: 1700000000
+			}
+		];
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => commits)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		await repo.refresh();
+		expect(repo.historyCommits).toEqual(commits);
+
+		const state: any = {
+			workspace: {},
+			ownerId: "git",
+			repository: repo,
+			disposed: false,
+			pending: new Set(),
+			disposables: [],
+			currentOpenId: 1,
+			isActive: () => true
+		};
+
+		await startWorkspaceGitWatcher(state, rootOrigin, repo, {
+			gitRun: async () => ({ code: 0, stdout: ".git\n", stderr: "" }),
+			watchDirectory: (dirPath: string, cb: any) => {
+				eventCallback = cb;
+				return () => {};
+			},
+			debounceMs: 20
+		});
+
+		// External commit made in terminal on branch main
+		const newCommit = {
+			sha: "2222222222222222222222222222222222222222",
+			shortSha: "2222222",
+			subject: "terminal commit",
+			author: "Dev",
+			authorName: "Dev",
+			timestamp: 1700000050
+		};
+		commits = [newCommit, ...commits];
+
+		eventCallback([{ path: "/test/repo/.git/refs/heads/main", type: "update" }]);
+
+		// Wait for debounce to settle
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Verified: commit appears in historyCommits without any polling
+		expect(repo.historyCommits).toEqual(commits);
+
+		stopWorkspaceGitWatcher(state);
+	});
+
+	it("updates the commit list when switching branches in the terminal", async () => {
+		let eventCallback: any = null;
+		let featureCommits = [
+			{
+				sha: "3333333333333333333333333333333333333333",
+				shortSha: "3333333",
+				subject: "feature branch commit",
+				author: "Dev",
+				authorName: "Dev",
+				timestamp: 1700000100
+			}
+		];
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main", "feature"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => featureCommits)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const state: any = {
+			workspace: {},
+			ownerId: "git",
+			repository: repo,
+			disposed: false,
+			pending: new Set(),
+			disposables: [],
+			currentOpenId: 1,
+			isActive: () => true
+		};
+
+		await startWorkspaceGitWatcher(state, rootOrigin, repo, {
+			gitRun: async () => ({ code: 0, stdout: ".git\n", stderr: "" }),
+			watchDirectory: (dirPath: string, cb: any) => {
+				eventCallback = cb;
+				return () => {};
+			},
+			debounceMs: 20
+		});
+
+		// External branch switch in terminal modifies HEAD
+		eventCallback([{ path: "/test/repo/.git/HEAD", type: "update" }]);
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(repo.historyCommits).toEqual(featureCommits);
+
+		stopWorkspaceGitWatcher(state);
+	});
+
+	it("keeps staging churn (index writes) from triggering history refetch", async () => {
+		let eventCallback: any = null;
+		let getHistoryCalls = 0;
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => {
+				getHistoryCalls++;
+				return [];
+			})
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const state: any = {
+			workspace: {},
+			ownerId: "git",
+			repository: repo,
+			disposed: false,
+			pending: new Set(),
+			disposables: [],
+			currentOpenId: 1,
+			isActive: () => true
+		};
+
+		await startWorkspaceGitWatcher(state, rootOrigin, repo, {
+			gitRun: async () => ({ code: 0, stdout: ".git\n", stderr: "" }),
+			watchDirectory: (dirPath: string, cb: any) => {
+				eventCallback = cb;
+				return () => {};
+			},
+			debounceMs: 20
+		});
+
+		// Staging file in terminal modifies index
+		eventCallback([{ path: "/test/repo/.git/index", type: "update" }]);
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(getHistoryCalls).toBe(0);
+
+		stopWorkspaceGitWatcher(state);
+	});
+
+	it("resolves the real git dir via git rev-parse --git-dir for linked worktrees", async () => {
+		let watchedDirPath = "";
+		let eventCallback: any = null;
+		const worktreeCommits = [
+			{
+				sha: "4444444444444444444444444444444444444444",
+				shortSha: "4444444",
+				subject: "worktree commit",
+				author: "Dev",
+				authorName: "Dev",
+				timestamp: 1700000200
+			}
+		];
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "feature-wt",
+			getBranches: async () => ["feature-wt"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => worktreeCommits)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const state: any = {
+			workspace: {},
+			ownerId: "git",
+			repository: repo,
+			disposed: false,
+			pending: new Set(),
+			disposables: [],
+			currentOpenId: 1,
+			isActive: () => true
+		};
+
+		// Linked worktree: .git is a pointer file, real git dir is under main repo worktrees
+		const worktreeGitDir = "/workspace/main-repo/.git/worktrees/linked-wt";
+
+		await startWorkspaceGitWatcher(state, rootOrigin, repo, {
+			gitRun: async (_workingDir, args) => {
+				if (args[0] === "rev-parse" && args[1] === "--git-dir") {
+					return { code: 0, stdout: `${worktreeGitDir}\n`, stderr: "" };
+				}
+				return { code: 0, stdout: "", stderr: "" };
+			},
+			watchDirectory: (dirPath: string, cb: any) => {
+				watchedDirPath = dirPath;
+				eventCallback = cb;
+				return () => {};
+			},
+			debounceMs: 20
+		});
+
+		// Verified: watches the real git dir, not the pointer file
+		expect(watchedDirPath).toBe(worktreeGitDir);
+
+		// Event in the linked worktree HEAD fires refresh
+		eventCallback([{ path: `${worktreeGitDir}/HEAD`, type: "update" }]);
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(repo.historyCommits).toEqual(worktreeCommits);
+
+		stopWorkspaceGitWatcher(state);
+	});
+});
+
 
