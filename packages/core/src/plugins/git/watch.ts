@@ -6,6 +6,10 @@
  * commits on change. Commits made in the terminal appear with no polling.
  */
 
+import type { FileOrigin } from '../../storage';
+import type { Repository } from '../../project/repository.svelte';
+import type { WorkspaceGitState } from './lifecycle';
+
 /**
  * Checks whether a watcher event path corresponds to one of the git refs or
  * metadata files that indicate a history change:
@@ -178,10 +182,6 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
 	}
 }
 
-import type { FileOrigin } from '../../storage';
-import type { Repository } from '../../project/repository.svelte';
-import type { WorkspaceGitState } from './lifecycle';
-
 /**
  * Stops any active git directory watcher attached to the workspace state.
  */
@@ -244,6 +244,3 @@ export async function startWorkspaceGitWatcher(
 		console.error('[GitPlugin] Failed to start repository git watcher:', e);
 	}
 }
-
-
-

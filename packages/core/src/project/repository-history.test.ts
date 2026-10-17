@@ -15,7 +15,6 @@ describe("Repository history log integration (Ticket #345)", () => {
 				shortSha: "1111111",
 				subject: "feat: add history tab",
 				author: "Hatch",
-				authorName: "Hatch",
 				timestamp: 1700000000
 			}
 		];
@@ -126,7 +125,6 @@ describe("Repository history log integration (Ticket #345)", () => {
 				shortSha: "aaaaaaa",
 				subject: "stale",
 				author: "Hatch",
-				authorName: "Hatch",
 				timestamp: 1700000000
 			}
 		];
@@ -136,7 +134,6 @@ describe("Repository history log integration (Ticket #345)", () => {
 				shortSha: "bbbbbbb",
 				subject: "fresh",
 				author: "Hatch",
-				authorName: "Hatch",
 				timestamp: 1700000001
 			}
 		];
@@ -182,7 +179,6 @@ describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
 				shortSha: "1111111",
 				subject: "initial commit",
 				author: "Dev",
-				authorName: "Dev",
 				timestamp: 1700000000
 			}
 		];
@@ -228,7 +224,6 @@ describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
 			shortSha: "2222222",
 			subject: "terminal commit",
 			author: "Dev",
-			authorName: "Dev",
 			timestamp: 1700000050
 		};
 		commits = [newCommit, ...commits];
@@ -252,7 +247,6 @@ describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
 				shortSha: "3333333",
 				subject: "feature branch commit",
 				author: "Dev",
-				authorName: "Dev",
 				timestamp: 1700000100
 			}
 		];
@@ -357,7 +351,6 @@ describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
 				shortSha: "4444444",
 				subject: "worktree commit",
 				author: "Dev",
-				authorName: "Dev",
 				timestamp: 1700000200
 			}
 		];

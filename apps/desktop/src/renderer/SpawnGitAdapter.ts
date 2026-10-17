@@ -814,7 +814,6 @@ export class SpawnGitAdapter implements VCSAdapter {
 					shortSha,
 					subject,
 					author,
-					authorName: author,
 					timestamp: parseInt(timestampStr, 10) || 0,
 					refDecoration: refDecoration || undefined,
 					isAhead: aheadShas.has(sha) ? true : undefined
