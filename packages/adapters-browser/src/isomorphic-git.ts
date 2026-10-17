@@ -1069,6 +1069,11 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 		}
 	}
 
+	async getAheadCount(_branch?: string | null): Promise<number> {
+		// Browser workspaces do not configure tracking upstreams; ahead count is 0.
+		return 0;
+	}
+
 	async getHistory(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]> {
 		if (!await this.ensureInitialized()) return [];
 		try {
@@ -1078,19 +1083,58 @@ export class IsomorphicGitAdapter implements VCSAdapter {
 				ref: options?.branch || undefined,
 				depth: options?.maxCount
 			});
-			return commits.map((c) => ({
-				sha: c.oid,
-				shortSha: c.oid.substring(0, 7),
-				subject: (c.commit.message || '').split('\n')[0] || '',
-				author: c.commit.author.name,
-				authorName: c.commit.author.name,
-				timestamp: c.commit.author.timestamp,
-				refDecoration: undefined
-			}));
+
+			// Isomorphic-git provides no native `--decorate` formatting API.
+			// To support tag chips on the web, resolve tags via git.listTags and git.resolveRef
+			// (peeling annotated tags down to their target commits) to populate `refDecoration`.
+			// Branch decorations and upstream tracking are omitted in browser context (no upstream
+			// configured), so `isAhead` remains undefined and no unpushed arrow is shown.
+			const tagMap = new Map<string, string[]>();
+			try {
+				const tags = await git.listTags({ fs: this.fs!, dir: this.dir });
+				for (const tag of tags) {
+					try {
+						let targetSha = await git.resolveRef({ fs: this.fs!, dir: this.dir, ref: tag });
+						try {
+							const tagObj = await git.readTag({ fs: this.fs!, dir: this.dir, oid: targetSha });
+							if (tagObj?.tag?.object) {
+								targetSha = tagObj.tag.object;
+							}
+						} catch {
+							// Lightweight tag: targetSha is already the commit SHA
+						}
+						const existing = tagMap.get(targetSha) || [];
+						existing.push(tag);
+						tagMap.set(targetSha, existing);
+					} catch {
+						// Ignore unresolvable tag
+					}
+				}
+			} catch {
+				// No tags or tags directory unreadable
+			}
+
+			return commits.map((c) => {
+				const commitTags = tagMap.get(c.oid);
+				const refDecoration = commitTags && commitTags.length > 0
+					? commitTags.map((t) => `tag: ${t}`).join(', ')
+					: undefined;
+
+				return {
+					sha: c.oid,
+					shortSha: c.oid.substring(0, 7),
+					subject: (c.commit.message || '').split('\n')[0] || '',
+					author: c.commit.author.name,
+					authorName: c.commit.author.name,
+					timestamp: c.commit.author.timestamp,
+					refDecoration
+				};
+			});
 		} catch (e) {
 			return [];
 		}
 	}
+
 
 	/**
 	 * File names changed by a commit, matching `git log --name-only --no-renames`:

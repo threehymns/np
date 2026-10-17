@@ -18,7 +18,9 @@ import {
 
 interface HistoryReads {
 	getHistory?(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]>;
+	getAheadCount?(branch?: string | null): Promise<number>;
 }
+
 
 interface Engine {
 	name: string;
@@ -132,8 +134,83 @@ for (const engine of [spawnEngine, isomorphicEngine]) {
 			expect(history.map(c => c.sha)).toEqual([sha2, sha1]);
 			expect(history.some(c => c.subject === 'Commit 3')).toBe(false);
 		});
+
+		it('captures refDecoration for tagged commits (Ticket #346)', async () => {
+			const r = await createTrackedRepo();
+			const sha1 = await commit(r, 'Commit 1', '2024-01-01T12:00:00Z');
+			const sha2 = await commit(r, 'Commit 2', '2024-01-02T12:00:00Z');
+
+			await checkedGit(r, ['tag', 'v1.0.0', sha1]);
+			await checkedGit(r, ['tag', 'v2.0.0', sha2]);
+			await checkedGit(r, ['tag', 'v2.0.1', sha2]);
+
+			const adapter = engine.adapter(r);
+			const history = await adapter.getHistory!();
+
+			expect(history).toHaveLength(2);
+			expect(history[0].sha).toBe(sha2);
+			expect(history[0].refDecoration).toBeDefined();
+			expect(history[0].refDecoration).toContain('tag: v2.0.0');
+			expect(history[0].refDecoration).toContain('tag: v2.0.1');
+
+			expect(history[1].sha).toBe(sha1);
+			expect(history[1].refDecoration).toBeDefined();
+			expect(history[1].refDecoration).toContain('tag: v1.0.0');
+		});
 	});
 }
+
+describe('SpawnGitAdapter — upstream ahead indicator and getAheadCount (Ticket #346)', () => {
+	it('identifies unpushed commits ahead of upstream', async () => {
+		const r = await createTrackedRepo();
+		const remote = await createTrackedRepo();
+
+		const sha1 = await commit(r, 'Synced commit 1');
+		await checkedGit(remote, ['config', 'receive.denyCurrentBranch', 'ignore']);
+		await checkedGit(r, ['remote', 'add', 'origin', remote.path]);
+		await checkedGit(r, ['push', '-q', '-u', 'origin', 'main']);
+
+		const sha2 = await commit(r, 'Unpushed commit 2');
+		const sha3 = await commit(r, 'Unpushed commit 3');
+
+		const adapter = spawnEngine.adapter(r);
+		const history = await adapter.getHistory!();
+
+		expect(history).toHaveLength(3);
+		// Newest-first: sha3, sha2 are ahead; sha1 is synced
+		expect(history[0].sha).toBe(sha3);
+		expect(history[0].isAhead).toBe(true);
+
+		expect(history[1].sha).toBe(sha2);
+		expect(history[1].isAhead).toBe(true);
+
+		expect(history[2].sha).toBe(sha1);
+		expect(history[2].isAhead).toBeFalsy();
+
+		if (adapter.getAheadCount) {
+			const aheadCount = await adapter.getAheadCount();
+			expect(aheadCount).toBe(2);
+		}
+	});
+
+	it('returns no ahead commits and aheadCount 0 when no upstream is configured', async () => {
+		const r = await createTrackedRepo();
+		await commit(r, 'Local commit 1');
+		await commit(r, 'Local commit 2');
+
+		const adapter = spawnEngine.adapter(r);
+		const history = await adapter.getHistory!();
+
+		expect(history).toHaveLength(2);
+		expect(history[0].isAhead).toBeFalsy();
+		expect(history[1].isAhead).toBeFalsy();
+
+		if (adapter.getAheadCount) {
+			const count = await adapter.getAheadCount();
+			expect(count).toBe(0);
+		}
+	});
+});
 
 describe('SpawnGitAdapter — linked worktree and defensive parsing', () => {
 	it('linked worktree shows that worktree\'s history', async () => {
@@ -174,3 +251,4 @@ describe('SpawnGitAdapter — linked worktree and defensive parsing', () => {
 		expect(history[0].author).toBe('Author | With | Pipes');
 	});
 });
+
