@@ -129,6 +129,14 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(source).toMatch(/handleHistoryKeyDown|handleKeyDown/);
 		});
 
+		it("activates the row on Space so keyboard users can copy the short SHA", () => {
+			const source = historyTabSource();
+			// role="button" rows must be keyboard-activatable; Enter is
+			// reserved, so Space takes the click action.
+			expect(source).toMatch(/event\.key\s*===\s*['"] ['"]/);
+			expect(source).toMatch(/handleRowClick/);
+		});
+
 		it("provides visual confirmation or title feedback upon copying", () => {
 			const source = historyTabSource();
 			expect(source).toMatch(/copied|Copied/);
