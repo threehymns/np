@@ -70,4 +70,36 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(formatRelativeTime(now - 86400 * 3, now * 1000)).toBe("3 days ago");
 		});
 	});
+
+	describe("4. HistoryTab click-to-copy & context menu contract (Ticket #347)", () => {
+		it("wires row click to copy short SHA to clipboard", () => {
+			const source = historyTabSource();
+			expect(source).toContain("onclick=");
+			expect(source).toMatch(/copyShortSha|handleRowClick/);
+		});
+
+		it("wraps commit rows in ContextMenu with Copy SHA and Copy subject items", () => {
+			const source = historyTabSource();
+			expect(source).toContain("ContextMenu.Root");
+			expect(source).toContain("ContextMenu.Trigger");
+			expect(source).toContain("ContextMenu.Content");
+			expect(source).toContain("ContextMenu.Item");
+			expect(source).toContain("Copy SHA");
+			expect(source).toContain("Copy subject");
+			expect(source).toMatch(/copySha/);
+			expect(source).toMatch(/copySubject/);
+		});
+
+		it("reserves double-click and Enter as no-ops for v2 detail view", () => {
+			const source = historyTabSource();
+			expect(source).toContain("ondblclick=");
+			expect(source).toContain("onkeydown=");
+			expect(source).toMatch(/handleHistoryKeyDown|handleKeyDown/);
+		});
+
+		it("provides visual confirmation or title feedback upon copying", () => {
+			const source = historyTabSource();
+			expect(source).toMatch(/copied|Copied/);
+		});
+	});
 });
