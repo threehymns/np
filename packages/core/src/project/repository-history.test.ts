@@ -80,4 +80,42 @@ describe("Repository history log integration (Ticket #345)", () => {
 		expect(repo.historyCommits).toEqual([]);
 		expect(repo.historyLoaded).toBe(true);
 	});
+
+	it("updates aheadCount on refresh() when adapter provides getAheadCount (Ticket #346)", async () => {
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getAheadCount: mock(async () => 3)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		expect(repo.aheadCount).toBe(0);
+
+		await repo.refresh();
+
+		expect(mockAdapter.getAheadCount).toHaveBeenCalled();
+		expect(repo.aheadCount).toBe(3);
+	});
+
+	it("defaults aheadCount to 0 when adapter does not implement getAheadCount or fails", async () => {
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getAheadCount: mock(async () => {
+				throw new Error("rev-list error");
+			})
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		await repo.refresh();
+
+		expect(repo.aheadCount).toBe(0);
+	});
 });
+

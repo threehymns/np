@@ -20,6 +20,7 @@ export class Repository {
 	commits = $state<GitCommit[]>([]);
 	historyCommits = $state<GitHistoryCommit[]>([]);
 	historyLoaded = $state(false);
+	aheadCount = $state<number>(0);
 	activeDiffFile = $state<GitChange | null>(null);
 	selectedPaths = $state<string[]>([]);
 
@@ -60,12 +61,13 @@ export class Repository {
 		const generation = ++this.refreshGeneration;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
-			const [branchRes, branchesRes, changesRes, commitsRes, historyRes] = await Promise.allSettled([
+			const [branchRes, branchesRes, changesRes, commitsRes, historyRes, aheadRes] = await Promise.allSettled([
 				this.adapter.getCurrentBranch(),
 				this.adapter.getBranches(),
 				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
 				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([]),
-				this.adapter.getHistory ? this.adapter.getHistory() : Promise.resolve([])
+				this.adapter.getHistory ? this.adapter.getHistory() : Promise.resolve([]),
+				this.adapter.getAheadCount ? this.adapter.getAheadCount() : Promise.resolve(0)
 			]);
 
 			if (generation !== this.refreshGeneration) return false;
@@ -109,6 +111,12 @@ export class Repository {
 				this.historyCommits = [];
 			}
 
+			if (aheadRes.status === 'fulfilled' && typeof aheadRes.value === 'number') {
+				this.aheadCount = aheadRes.value;
+			} else {
+				this.aheadCount = 0;
+			}
+
 			// Ensure activeDiffFile points to a valid entry or reset it
 			if (this.activeDiffFile) {
 				let stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath && c.staged === this.activeDiffFile!.staged);
@@ -133,6 +141,7 @@ export class Repository {
 			this.changes = [];
 			this.commits = [];
 			this.historyCommits = [];
+			this.aheadCount = 0;
 			this.uncommittedFiles = [];
 			this.isDirty = false;
 			this.activeDiffFile = null;
