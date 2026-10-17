@@ -114,3 +114,31 @@ export function formatRelativeTime(timestampSeconds: number, nowMs: number = Dat
 	if (years <= 1) return '1 year ago';
 	return `${years} years ago`;
 }
+
+/**
+ * Parse git ref decoration string (from `git log --decorate` or `%D`) into tag names.
+ * Only `tag: ` prefixed entries are extracted. Branch names, remote branches, and
+ * HEAD pointers are excluded.
+ */
+export function parseRefTags(refDecoration?: string): string[] {
+	if (!refDecoration) return [];
+	let cleaned = refDecoration.trim();
+	if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+		cleaned = cleaned.slice(1, -1).trim();
+	}
+	if (!cleaned) return [];
+
+	const entries = cleaned.split(',');
+	const tags: string[] = [];
+	for (const raw of entries) {
+		const entry = raw.trim();
+		if (entry.startsWith('tag: ')) {
+			const tagName = entry.slice(5).trim();
+			if (tagName.length > 0) {
+				tags.push(tagName);
+			}
+		}
+	}
+	return tags;
+}
+

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { isNotFoundError, isDirectoryError, mapBounded, formatRelativeTime } from './utils';
+import { isNotFoundError, isDirectoryError, mapBounded, formatRelativeTime, parseRefTags } from './utils';
 
 describe('isNotFoundError', () => {
 	it('keeps the Electron main message fallback identical to core', async () => {
@@ -184,3 +184,40 @@ describe('formatRelativeTime', () => {
 		expect(formatRelativeTime(0, nowMs)).toBe('');
 	});
 });
+
+describe('parseRefTags (Ticket #346)', () => {
+	it('returns empty array when refDecoration is undefined or empty', () => {
+		expect(parseRefTags(undefined)).toEqual([]);
+		expect(parseRefTags('')).toEqual([]);
+		expect(parseRefTags('   ')).toEqual([]);
+	});
+
+	it('returns empty array when decoration contains only branches, HEAD, or remotes', () => {
+		expect(parseRefTags('HEAD -> feat/history-tag-chips, origin/feat/git-history-tab, master')).toEqual([]);
+		expect(parseRefTags('main, origin/main, origin/HEAD')).toEqual([]);
+	});
+
+	it('extracts a single tag from ref decoration', () => {
+		expect(parseRefTags('HEAD -> main, tag: v1.0.0')).toEqual(['v1.0.0']);
+		expect(parseRefTags('tag: release-2024')).toEqual(['release-2024']);
+	});
+
+	it('extracts multiple tags in order and ignores non-tag decorations', () => {
+		expect(
+			parseRefTags('HEAD -> main, tag: v1.0.0, origin/main, tag: v1.0.1, feat/branch')
+		).toEqual(['v1.0.0', 'v1.0.1']);
+	});
+
+	it('handles decoration with surrounding parentheses', () => {
+		expect(parseRefTags('(HEAD -> main, tag: v2.0-rc1, origin/main)')).toEqual(['v2.0-rc1']);
+	});
+
+	it('handles whitespace around tags and entries cleanly', () => {
+		expect(parseRefTags(' tag: v3.0 ,  tag: v3.1  ')).toEqual(['v3.0', 'v3.1']);
+	});
+
+	it('ignores empty tag names', () => {
+		expect(parseRefTags('tag: , tag:  ')).toEqual([]);
+	});
+});
+
