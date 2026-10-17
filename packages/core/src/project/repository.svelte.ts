@@ -1,6 +1,6 @@
 import type { FileOrigin } from '../storage';
 import { fileDiffFromChange } from './vcs';
-import type { VCSAdapter, SwitchResult, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from './vcs';
+import type { VCSAdapter, SwitchResult, GitChange, GitCommit, GitHistoryCommit, FileDiffDetail, GetFileDiffOptions } from './vcs';
 
 export interface RepositorySafetyReport {
 	canSwitch: boolean;
@@ -18,6 +18,8 @@ export class Repository {
 	/** True once at least one refresh has resolved the change list, successful or not. */
 	changesLoaded = $state(false);
 	commits = $state<GitCommit[]>([]);
+	historyCommits = $state<GitHistoryCommit[]>([]);
+	historyLoaded = $state(false);
 	activeDiffFile = $state<GitChange | null>(null);
 	selectedPaths = $state<string[]>([]);
 
@@ -58,11 +60,12 @@ export class Repository {
 		const generation = ++this.refreshGeneration;
 		try {
 			// We use Promise.allSettled to avoid one failing call blocking the other
-			const [branchRes, branchesRes, changesRes, commitsRes] = await Promise.allSettled([
+			const [branchRes, branchesRes, changesRes, commitsRes, historyRes] = await Promise.allSettled([
 				this.adapter.getCurrentBranch(),
 				this.adapter.getBranches(),
 				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
-				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([])
+				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([]),
+				this.adapter.getHistory ? this.adapter.getHistory() : Promise.resolve([])
 			]);
 
 			if (generation !== this.refreshGeneration) return false;
@@ -100,6 +103,12 @@ export class Repository {
 				this.commits = [];
 			}
 
+			if (historyRes.status === 'fulfilled') {
+				this.historyCommits = historyRes.value;
+			} else {
+				this.historyCommits = [];
+			}
+
 			// Ensure activeDiffFile points to a valid entry or reset it
 			if (this.activeDiffFile) {
 				let stillExists = this.changes.find(c => c.filepath === this.activeDiffFile!.filepath && c.staged === this.activeDiffFile!.staged);
@@ -123,6 +132,7 @@ export class Repository {
 			this.branches = [];
 			this.changes = [];
 			this.commits = [];
+			this.historyCommits = [];
 			this.uncommittedFiles = [];
 			this.isDirty = false;
 			this.activeDiffFile = null;
@@ -130,7 +140,26 @@ export class Repository {
 		} finally {
 			if (generation === this.refreshGeneration) {
 				this.changesLoaded = true;
+				this.historyLoaded = true;
 			}
+		}
+	}
+
+	async refreshHistory(options?: { branch?: string | null; maxCount?: number }): Promise<boolean> {
+		if (!this.adapter.getHistory) {
+			this.historyCommits = [];
+			this.historyLoaded = true;
+			return true;
+		}
+		try {
+			this.historyCommits = await this.adapter.getHistory(options);
+			return true;
+		} catch (e) {
+			console.error('Failed to refresh history commits', e);
+			this.historyCommits = [];
+			return false;
+		} finally {
+			this.historyLoaded = true;
 		}
 	}
 
