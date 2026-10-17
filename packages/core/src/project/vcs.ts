@@ -48,6 +48,17 @@ export interface GitCommit {
 	files: string[];
 }
 
+export interface GitHistoryCommit {
+	sha: string;
+	shortSha: string;
+	subject: string;
+	author: string;
+	authorName: string;
+	timestamp: number;
+	refDecoration?: string;
+}
+export type GitHistoryEntry = GitHistoryCommit;
+
 export interface GroupedChange {
 	filepath: string;
 	status: 'M' | 'A' | 'D' | 'U';
@@ -216,6 +227,7 @@ export interface VCSAdapter {
 	switchBranch(branchName: string, options?: { dryRun?: boolean }): Promise<SwitchResult>;
 	getChanges?(): Promise<GitChange[]>;
 	getCommits?(): Promise<GitCommit[]>;
+	getHistory?(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]>;
 	getFileDiff?(filepath: string, options?: GetFileDiffOptions): Promise<FileDiffDetail>;
 	stageFile?(filepath: string): Promise<void>;
 	unstageFile?(filepath: string): Promise<void>;
