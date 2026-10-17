@@ -774,7 +774,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 			args.push('-n', String(options.maxCount));
 		}
 		if (options?.branch) {
-			args.push(options.branch);
+			// Terminate the revision list: a branch name that also matches a path
+			// would otherwise be interpreted as a path filter, silently returning
+			// the wrong history.
+			args.push(options.branch, '--');
 		}
 
 		const [res, aheadShas] = await Promise.all([
