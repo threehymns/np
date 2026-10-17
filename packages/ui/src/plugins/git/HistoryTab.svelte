@@ -55,8 +55,15 @@
 		}
 	}
 
-	function handleKeyDown(event: KeyboardEvent) {
-		handleHistoryKeyDown(event);
+	function handleKeyDown(event: KeyboardEvent, commit: GitHistoryCommit) {
+		if (handleHistoryKeyDown(event)) return;
+		// Rows carry role="button", so they must be keyboard-activatable:
+		// Space copies the short SHA like a click does. Enter stays a
+		// reserved no-op for the v2 commit detail page.
+		if (event.key === ' ') {
+			event.preventDefault();
+			handleRowClick(commit);
+		}
 	}
 
 	const ROW_HEIGHT = 48;
@@ -91,7 +98,7 @@
 						title={copiedSha === commit.sha ? 'Copied short SHA to clipboard' : 'Click to copy short SHA'}
 						onclick={() => handleRowClick(commit)}
 						ondblclick={(e) => { e.preventDefault(); }}
-						onkeydown={handleKeyDown}
+						onkeydown={(e) => handleKeyDown(e, commit)}
 					>
 						<!-- Line 1: Subject (truncated) + tag chips + unpushed arrow icon -->
 						<div class="flex items-center justify-between min-w-0 gap-1.5">
