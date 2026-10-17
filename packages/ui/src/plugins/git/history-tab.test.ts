@@ -71,7 +71,39 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 		});
 	});
 
-	describe("4. HistoryTab click-to-copy & context menu contract (Ticket #347)", () => {
+	describe("4. Ticket #346: Tag chips and unpushed indicator contract", () => {
+		it("uses parseRefTags to parse tags from refDecoration without showing branch names", () => {
+			const source = historyTabSource();
+			expect(source).toContain("parseRefTags");
+			expect(source).toContain("refDecoration");
+		});
+
+		it("renders up to 3 tag chips and an overflow chip when > 3 tags exist", () => {
+			const source = historyTabSource();
+			expect(source).toContain("slice(0, 3)");
+			expect(source).toMatch(/\+\s*\{\s*tags\.length\s*-\s*3\s*\}/);
+			expect(source).toContain("data-slot=\"history-tag-chip\"");
+			expect(source).toContain("data-slot=\"history-tag-overflow\"");
+		});
+
+		it("renders unpushed arrow icon only when commit is ahead of upstream", () => {
+			const source = historyTabSource();
+			expect(source).toContain("ArrowUp");
+			expect(source).toContain("isAhead");
+			expect(source).toContain("data-slot=\"history-unpushed-indicator\"");
+		});
+
+		it("maintains strictly newest-first commit ordering without grouping unpushed commits", () => {
+			const source = historyTabSource();
+			// Ordering comes from the commits array as passed to the virtual list (#348);
+			// the list must not partition or regroup unpushed commits.
+			expect(source).toContain("items={commits}");
+			expect(source).not.toContain("unpushedCommits");
+			expect(source).not.toContain("groupBy");
+		});
+	});
+
+	describe("5. HistoryTab click-to-copy & context menu contract (Ticket #347)", () => {
 		it("wires row click to copy short SHA to clipboard", () => {
 			const source = historyTabSource();
 			expect(source).toContain("onclick=");
@@ -214,3 +246,5 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 		});
 	});
 });
+
+
