@@ -117,5 +117,58 @@ describe("Repository history log integration (Ticket #345)", () => {
 
 		expect(repo.aheadCount).toBe(0);
 	});
+
+	it("discards a stale refreshHistory() result when a newer one lands first", async () => {
+		const staleCommits: GitHistoryCommit[] = [
+			{
+				sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				shortSha: "aaaaaaa",
+				subject: "stale",
+				author: "Hatch",
+				authorName: "Hatch",
+				timestamp: 1700000000
+			}
+		];
+		const freshCommits: GitHistoryCommit[] = [
+			{
+				sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				shortSha: "bbbbbbb",
+				subject: "fresh",
+				author: "Hatch",
+				authorName: "Hatch",
+				timestamp: 1700000001
+			}
+		];
+
+		const calls: Array<() => void> = [];
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(
+				() =>
+					new Promise<GitHistoryCommit[]>((resolve) => {
+						calls.push(() => resolve(calls.length === 1 ? staleCommits : freshCommits));
+					})
+			)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const first = repo.refreshHistory();
+		const second = repo.refreshHistory();
+
+		// Resolve out of order: the newer call lands first.
+		calls[1]();
+		await second;
+		calls[0]();
+		const firstResult = await first;
+
+		expect(firstResult).toBe(false);
+		expect(repo.historyCommits).toEqual(freshCommits);
+	});
 });
 
