@@ -1,6 +1,6 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, mock } from "bun:test";
-import { Repository } from "./repository.svelte";
+import { Repository, HISTORY_MAX_COUNT } from "./repository.svelte";
 import type { VCSAdapter, GitHistoryCommit } from "./vcs";
 import type { FileOrigin } from "../storage";
 import { startWorkspaceGitWatcher, stopWorkspaceGitWatcher } from "../plugins/git/watch";
@@ -138,6 +138,28 @@ describe("Repository history log integration (Ticket #345)", () => {
 
 		expect(mockAdapter.getAheadCount).toHaveBeenCalled();
 		expect(repo.aheadCount).toBe(2);
+	});
+
+	it("caps history reads at HISTORY_MAX_COUNT by default but honors explicit overrides", async () => {
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async (_options?: { branch?: string | null; maxCount?: number }) => {
+				return [];
+			})
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		await repo.refresh();
+		expect(mockAdapter.getHistory).toHaveBeenCalledWith({ maxCount: HISTORY_MAX_COUNT });
+
+		await repo.refreshHistory({ maxCount: 5 });
+		expect(mockAdapter.getHistory).toHaveBeenLastCalledWith({ maxCount: 5 });
 	});
 
 	it("discards a stale refreshHistory() result when a newer one lands first", async () => {

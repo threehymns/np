@@ -8,6 +8,13 @@ export interface RepositorySafetyReport {
 	uncommittedFiles: string[];
 }
 
+/**
+ * Default cap for history reads. The History tab virtualizes its rows, but an
+ * unbounded `git log` in a large repository would still read hundreds of
+ * thousands of commits into memory on every refresh.
+ */
+export const HISTORY_MAX_COUNT = 10_000;
+
 export class Repository {
 	currentBranch = $state<string | null>(null);
 	branches = $state<string[]>([]);
@@ -73,7 +80,7 @@ export class Repository {
 				this.adapter.getBranches(),
 				this.adapter.getChanges ? this.adapter.getChanges() : Promise.resolve(null),
 				this.adapter.getCommits ? this.adapter.getCommits() : Promise.resolve([]),
-				this.adapter.getHistory ? this.adapter.getHistory() : Promise.resolve([]),
+				this.adapter.getHistory ? this.adapter.getHistory({ maxCount: HISTORY_MAX_COUNT }) : Promise.resolve([]),
 				this.adapter.getAheadCount ? this.adapter.getAheadCount() : Promise.resolve(0)
 			]);
 
@@ -176,7 +183,7 @@ export class Repository {
 			// The ahead count rides along so watcher-triggered refreshes keep
 			// the unpushed indicator in sync (push/fetch only move refs/remotes).
 			const [commits, aheadCount] = await Promise.all([
-				this.adapter.getHistory(options),
+				this.adapter.getHistory({ maxCount: HISTORY_MAX_COUNT, ...options }),
 				this.adapter.getAheadCount ? this.adapter.getAheadCount() : Promise.resolve(0)
 			]);
 			// A newer history refresh (or a refresh() started after this call)
