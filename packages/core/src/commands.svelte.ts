@@ -684,8 +684,9 @@ export function registerCoreCommands(appState: AppState) {
 		isEnabled: () => !!appState.activeEditorView
 	});
 
-	coreCommands.push({
-		id: 'edit.complete',
+	// edit.complete is the historical id; edit.startCompletion is its alias.
+	// One shared definition so the two cannot drift apart.
+	const triggerCompletion: Omit<Command, 'id'> = {
 		label: 'Trigger Completion',
 		category: 'Edit',
 		action: () => {
@@ -695,20 +696,10 @@ export function registerCoreCommands(appState: AppState) {
 			return false;
 		},
 		isEnabled: () => !!appState.activeEditorView
-	});
+	};
 
-	coreCommands.push({
-		id: 'edit.startCompletion',
-		label: 'Trigger Completion',
-		category: 'Edit',
-		action: () => {
-			if (appState.activeEditorView) {
-				return startCompletion(appState.activeEditorView);
-			}
-			return false;
-		},
-		isEnabled: () => !!appState.activeEditorView
-	});
+	coreCommands.push({ ...triggerCompletion, id: 'edit.complete' });
+	coreCommands.push({ ...triggerCompletion, id: 'edit.startCompletion' });
 
 	coreCommands.push({
 		id: 'edit.acceptCompletion',
