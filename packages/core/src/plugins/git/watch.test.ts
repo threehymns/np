@@ -228,6 +228,87 @@ describe('startGitWatcher (Ticket #349 / ADR 0027)', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		expect(changeCalls).toBe(0);
 	});
+
+	it('subscribes to the git common dir as well as the per-worktree dir when they differ', async () => {
+		const worktreeGitDir = '/workspace/main-repo/.git/worktrees/linked-wt';
+		const commonGitDir = '/workspace/main-repo/.git';
+		const watchedDirs: string[] = [];
+		const callbacks = new Map<string, any>();
+		const stopped: string[] = [];
+		let changeCalls = 0;
+
+		const mockGitRun = async (_workingDir: string, args: string[]) => {
+			if (args[1] === '--git-common-dir') {
+				return { code: 0, stdout: `${commonGitDir}\n`, stderr: '' };
+			}
+			return { code: 0, stdout: `${worktreeGitDir}\n`, stderr: '' };
+		};
+		const mockWatch = (dirPath: string, cb: any) => {
+			watchedDirs.push(dirPath);
+			callbacks.set(dirPath, cb);
+			return () => {
+				stopped.push(dirPath);
+			};
+		};
+
+		const stop = await startGitWatcher({
+			workingDir: '/workspace/linked-wt',
+			onHistoryChange: () => {
+				changeCalls++;
+			},
+			gitRun: mockGitRun,
+			watchDirectory: mockWatch,
+			debounceMs: 20
+		});
+
+		expect(stop).toBeFunction();
+		expect(watchedDirs).toEqual([worktreeGitDir, commonGitDir]);
+
+		// A commit in the linked worktree updates the branch ref in the common dir
+		callbacks.get(commonGitDir)([{ path: `${commonGitDir}/refs/heads/feature`, type: 'update' }]);
+		await new Promise((r) => setTimeout(r, 40));
+		expect(changeCalls).toBe(1);
+
+		// The worktree dir holds HEAD but no branch refs: a refs/heads event
+		// there is not a real history change and must not trigger
+		callbacks.get(worktreeGitDir)([{ path: `${worktreeGitDir}/refs/heads/feature`, type: 'update' }]);
+		await new Promise((r) => setTimeout(r, 40));
+		expect(changeCalls).toBe(1);
+
+		// HEAD in the worktree dir still triggers (branch switch)
+		callbacks.get(worktreeGitDir)([{ path: `${worktreeGitDir}/HEAD`, type: 'update' }]);
+		await new Promise((r) => setTimeout(r, 40));
+		expect(changeCalls).toBe(2);
+
+		// Stop closes both subscriptions
+		if (stop) await stop();
+		expect(stopped).toEqual([worktreeGitDir, commonGitDir]);
+	});
+
+	it('watches only the git dir when --git-common-dir is unavailable', async () => {
+		const watchedDirs: string[] = [];
+		const mockGitRun = async (_workingDir: string, args: string[]) => {
+			if (args[1] === '--git-common-dir') {
+				return { code: 0, stdout: '', stderr: '' };
+			}
+			return { code: 0, stdout: '.git\n', stderr: '' };
+		};
+		const mockWatch = (dirPath: string, _cb: any) => {
+			watchedDirs.push(dirPath);
+			return () => {};
+		};
+
+		const stop = await startGitWatcher({
+			workingDir: '/workspace/project',
+			onHistoryChange: () => {},
+			gitRun: mockGitRun,
+			watchDirectory: mockWatch
+		});
+
+		expect(stop).toBeFunction();
+		expect(watchedDirs).toEqual(['/workspace/project/.git']);
+		if (stop) await stop();
+	});
 });
 
 describe('startWorkspaceGitWatcher & stopWorkspaceGitWatcher lifecycle (Ticket #349 / ADR 0027)', () => {

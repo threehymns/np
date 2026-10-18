@@ -23,22 +23,34 @@ import type { WorkspaceGitState } from './lifecycle';
  * Staging churn (`index`), commit message drafts (`COMMIT_EDITMSG`), tags,
  * and object store writes are deliberately ignored.
  */
-export function isGitHistoryWatchedPath(eventPath: string, gitDir?: string): boolean {
+function toRelativePath(eventPath: string, dir?: string): string {
 	const normEvent = eventPath.replace(/\\/g, '/').replace(/\/+$/, '');
-	let relPath = normEvent;
-
-	if (gitDir) {
-		const normGitDir = gitDir.replace(/\\/g, '/').replace(/\/+$/, '');
-		if (normEvent.startsWith(normGitDir + '/')) {
-			relPath = normEvent.slice(normGitDir.length + 1);
-		}
+	if (!dir) return normEvent;
+	const normDir = dir.replace(/\\/g, '/').replace(/\/+$/, '');
+	if (normEvent.startsWith(normDir + '/')) {
+		return normEvent.slice(normDir.length + 1);
 	}
+	return normEvent;
+}
 
-	if (relPath === 'HEAD') return true;
-	if (relPath === 'packed-refs') return true;
-	if (relPath === 'refs/heads' || relPath.startsWith('refs/heads/')) return true;
-	if (relPath.startsWith('refs/remotes/')) return true;
-	return false;
+/** Worktree-private history signal: the symbolic HEAD. */
+function isWorktreeHistoryPath(relPath: string): boolean {
+	return relPath === 'HEAD';
+}
+
+/** Shared-ref history signals: branch refs, packed refs, remote-tracking refs. */
+function isSharedRefHistoryPath(relPath: string): boolean {
+	return (
+		relPath === 'packed-refs' ||
+		relPath === 'refs/heads' ||
+		relPath.startsWith('refs/heads/') ||
+		relPath.startsWith('refs/remotes/')
+	);
+}
+
+export function isGitHistoryWatchedPath(eventPath: string, gitDir?: string): boolean {
+	const relPath = toRelativePath(eventPath, gitDir);
+	return isWorktreeHistoryPath(relPath) || isSharedRefHistoryPath(relPath);
 }
 
 function isAbsolutePath(p: string): boolean {
@@ -106,8 +118,11 @@ export interface StartGitWatcherOptions extends GitWatchClient {
  * Starts watching the git directory for commits, branch switches, and ref updates.
  *
  * Resolves the real git dir via `git rev-parse --git-dir` so linked worktrees
- * watch the right directory. Filters events to `HEAD`, `refs/heads/*`, and `packed-refs`,
- * coalescing bursts through debouncing and invoking `onHistoryChange`.
+ * watch the right directory, and additionally resolves `--git-common-dir`:
+ * in a linked worktree the branch refs live in the common dir, not the
+ * per-worktree dir, so both are subscribed when they differ. Filters events
+ * to `HEAD`, `refs/heads/*`, `packed-refs`, and `refs/remotes/*`, coalescing
+ * bursts through debouncing and invoking `onHistoryChange`.
  *
  * Guarded for desktop only: on web (where `window.electronAPI` is absent) this is
  * a safe no-op that returns null.
@@ -135,20 +150,41 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
 			return null;
 		}
 
-		const resolvedGitDir = resolveGitDir(options.workingDir, res.stdout);
-		if (!resolvedGitDir) {
+		const gitDir = resolveGitDir(options.workingDir, res.stdout);
+		if (!gitDir) {
 			return null;
 		}
+
+		// In a linked worktree, --git-dir points at the per-worktree directory
+		// (<main>/.git/worktrees/<name>), which holds HEAD but not the branch
+		// refs — those live in the common dir. Subscribe to both when they
+		// differ; otherwise a terminal commit in a linked worktree is missed.
+		let commonDir: string | null = null;
+		try {
+			const commonRes = await gitRun(options.workingDir, ['rev-parse', '--git-common-dir']);
+			if (commonRes.code === 0 && commonRes.stdout.trim()) {
+				const resolved = resolveGitDir(options.workingDir, commonRes.stdout);
+				if (resolved && resolved !== gitDir) {
+					commonDir = resolved;
+				}
+			}
+		} catch {
+			// Fall through to watching the git dir alone.
+		}
+
+		const targets: Array<{ dir: string; matches: (relPath: string) => boolean }> = commonDir
+			? [
+					{ dir: gitDir, matches: isWorktreeHistoryPath },
+					{ dir: commonDir, matches: isSharedRefHistoryPath }
+				]
+			: [{ dir: gitDir, matches: (rel) => isWorktreeHistoryPath(rel) || isSharedRefHistoryPath(rel) }];
 
 		const debounceMs = options.debounceMs ?? 100;
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 		let closed = false;
 
-		const handleEvents = (events: Array<{ path: string; type: 'create' | 'update' | 'delete' }>) => {
+		const triggerRefresh = () => {
 			if (closed) return;
-			const matching = events.some((e) => isGitHistoryWatchedPath(e.path, resolvedGitDir));
-			if (!matching) return;
-
 			if (debounceTimer) {
 				clearTimeout(debounceTimer);
 			}
@@ -164,7 +200,18 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
 			}, debounceMs);
 		};
 
-		const sub = await watchDirectory(resolvedGitDir, handleEvents);
+		const subs: Array<() => unknown> = [];
+		for (const target of targets) {
+			const sub = await watchDirectory(target.dir, (events) => {
+				if (closed) return;
+				const matching = events.some((e) => target.matches(toRelativePath(e.path, target.dir)));
+				if (!matching) return;
+				triggerRefresh();
+			});
+			if (typeof sub === 'function') {
+				subs.push(sub);
+			}
+		}
 
 		return async () => {
 			closed = true;
@@ -172,7 +219,7 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
 				clearTimeout(debounceTimer);
 				debounceTimer = null;
 			}
-			if (typeof sub === 'function') {
+			for (const sub of subs) {
 				try {
 					await sub();
 				} catch (e) {
