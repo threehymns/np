@@ -1150,6 +1150,9 @@ describe("completion composition — rebound keys reach all tiers (Issue #287)",
 
 			// The active completion was accepted into the document
 			expect(completionStatus(view.state)).toBeNull();
+			// The popup closing alone is not enough: the accepted
+			// completion must have inserted its text into the document.
+			expect(view.state.doc.toString()).not.toBe(doc);
 		} finally {
 			view.destroy();
 		}
