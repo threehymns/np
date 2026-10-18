@@ -77,7 +77,11 @@
 	const ROW_HEIGHT = 48;
 </script>
 
-{#if commits.length === 0}
+{#if commits.length === 0 && isLoading}
+	<div class="h-full flex items-center justify-center p-6 text-xs text-muted-foreground select-none" data-slot="history-loading">
+		Loading history…
+	</div>
+{:else if commits.length === 0}
 	<div class="h-full flex flex-col items-center justify-center p-6 text-center text-muted-foreground select-none" data-slot="history-empty">
 		<GitCommitIcon class="size-6 mb-2 opacity-40 text-muted-foreground" />
 		<p class="text-xs font-medium">No Commits</p>
