@@ -16,9 +16,12 @@ import type { WorkspaceGitState } from './lifecycle';
  * - `HEAD` (or `.git/HEAD`)
  * - `packed-refs` (or `.git/packed-refs`)
  * - `refs/heads` / `refs/heads/*` (or `.git/refs/heads/*`)
+ * - `refs/remotes/*` (or `.git/refs/remotes/*`)
  *
+ * Push and fetch only move remote-tracking refs, so those are watched too —
+ * otherwise the unpushed indicator would stay stale after a terminal push.
  * Staging churn (`index`), commit message drafts (`COMMIT_EDITMSG`), tags,
- * remote tracking refs, and object store writes are deliberately ignored.
+ * and object store writes are deliberately ignored.
  */
 export function isGitHistoryWatchedPath(eventPath: string, gitDir?: string): boolean {
 	const normEvent = eventPath.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -34,6 +37,7 @@ export function isGitHistoryWatchedPath(eventPath: string, gitDir?: string): boo
 	if (relPath === 'HEAD') return true;
 	if (relPath === 'packed-refs') return true;
 	if (relPath === 'refs/heads' || relPath.startsWith('refs/heads/')) return true;
+	if (relPath.startsWith('refs/remotes/')) return true;
 	return false;
 }
 

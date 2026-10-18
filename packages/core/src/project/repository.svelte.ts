@@ -173,12 +173,18 @@ export class Repository {
 		}
 		const historyGen = ++this.historyGeneration;
 		try {
-			const commits = await this.adapter.getHistory(options);
+			// The ahead count rides along so watcher-triggered refreshes keep
+			// the unpushed indicator in sync (push/fetch only move refs/remotes).
+			const [commits, aheadCount] = await Promise.all([
+				this.adapter.getHistory(options),
+				this.adapter.getAheadCount ? this.adapter.getAheadCount() : Promise.resolve(0)
+			]);
 			// A newer history refresh (or a refresh() started after this call)
 			// has already landed: discard the stale result instead of
 			// overwriting fresher commits.
 			if (historyGen !== this.historyGeneration) return false;
 			this.historyCommits = commits;
+			this.aheadCount = aheadCount;
 			return true;
 		} catch (e) {
 			if (historyGen !== this.historyGeneration) return false;
