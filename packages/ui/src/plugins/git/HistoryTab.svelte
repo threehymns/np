@@ -31,10 +31,18 @@
 	const clipboard = $derived(clipboardService ?? appState?.clipboardService ?? defaultClipboardService);
 
 	let copiedSha = $state<string | null>(null);
+	let copiedAction = $state<HistoryAction>('copyShortSha');
 	let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	function triggerVisualFeedback(sha: string) {
+	const copiedLabel: Record<HistoryAction, string> = {
+		copyShortSha: 'Copied short SHA to clipboard',
+		copySha: 'Copied full SHA to clipboard',
+		copySubject: 'Copied subject to clipboard'
+	};
+
+	function triggerVisualFeedback(sha: string, action: HistoryAction) {
 		copiedSha = sha;
+		copiedAction = action;
 		if (copiedTimeout) clearTimeout(copiedTimeout);
 		copiedTimeout = setTimeout(() => {
 			if (copiedSha === sha) copiedSha = null;
@@ -44,14 +52,14 @@
 	async function handleRowClick(commit: GitHistoryCommit) {
 		const success = await runHistoryAction('copyShortSha', commit, clipboard);
 		if (success) {
-			triggerVisualFeedback(commit.sha);
+			triggerVisualFeedback(commit.sha, 'copyShortSha');
 		}
 	}
 
 	async function handleAction(action: HistoryAction, commit: GitHistoryCommit) {
 		const success = await runHistoryAction(action, commit, clipboard);
 		if (success) {
-			triggerVisualFeedback(commit.sha);
+			triggerVisualFeedback(commit.sha, action);
 		}
 	}
 
@@ -95,7 +103,7 @@
 						class="group flex flex-col justify-center px-2 py-1.5 rounded hover:bg-muted/30 transition-colors cursor-pointer select-none text-left"
 						style="height: {ROW_HEIGHT}px; box-sizing: border-box;"
 						data-sha={commit.sha}
-						title={copiedSha === commit.sha ? 'Copied short SHA to clipboard' : 'Click to copy short SHA'}
+						title={copiedSha === commit.sha ? copiedLabel[copiedAction] : 'Click to copy short SHA'}
 						onclick={() => handleRowClick(commit)}
 						ondblclick={(e) => { e.preventDefault(); }}
 						onkeydown={(e) => handleKeyDown(e, commit)}
@@ -154,7 +162,7 @@
 							<span class="opacity-40">·</span>
 							<span
 								class="font-mono text-[9px] shrink-0 opacity-80"
-								title={copiedSha === commit.sha ? 'Copied short SHA' : 'Click to copy SHA'}
+								title={copiedSha === commit.sha ? copiedLabel[copiedAction] : 'Click to copy SHA'}
 							>
 								{copiedSha === commit.sha ? 'Copied!' : commit.shortSha}
 							</span>

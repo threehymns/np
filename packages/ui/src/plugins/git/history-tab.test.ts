@@ -141,6 +141,17 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			const source = historyTabSource();
 			expect(source).toMatch(/copied|Copied/);
 		});
+
+		it("names the copied field in feedback titles, not always the short SHA", () => {
+			const source = historyTabSource();
+			// triggerVisualFeedback stores the action alongside the SHA so the
+			// title reflects what was actually copied (short SHA, full SHA, subject)
+			expect(source).toMatch(/triggerVisualFeedback\(commit\.sha,\s*['"]copyShortSha['"]\)/);
+			expect(source).toMatch(/triggerVisualFeedback\(commit\.sha,\s*action\)/);
+			expect(source).toContain("copiedLabel[copiedAction]");
+			expect(source).toContain("Copied full SHA to clipboard");
+			expect(source).toContain("Copied subject to clipboard");
+		});
 	});
 
 	describe("5. Virtualized list & windowing behavior (Ticket #348)", () => {
