@@ -1,5 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
-import type { WebContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, webContents } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -10,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
 import { DesktopWatcher } from './DesktopWatcher.js';
+import { WatcherOwnership } from './watcher-ownership.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
 import {
 	isValidBundledCommand,
@@ -73,24 +73,22 @@ function killAllLspProcesses(): void {
 }
 
 const activeWatchers = new Map<string, DesktopWatcher>();
-// Owning webContents id per watchId, so watchers left behind by a renderer
-// reload (where the preload stop callback never runs) can be cleaned up.
-const watcherOwners = new Map<string, number>();
-const ownerWatchIds = new Map<number, Set<string>>();
+// Ownership bookkeeping for watcher cleanup on renderer reload/navigation.
+// The registry keeps one did-start-navigation listener per WebContents and
+// tracks in-flight starts so a renderer going away mid-start can't orphan a
+// native subscription.
+const watcherOwnership = new WatcherOwnership({
+	onOwnerGone: (senderId) => {
+		void closeWatchersForSender(senderId);
+	},
+	getOwner: (senderId) => webContents.fromId(senderId) ?? undefined,
+});
 
 async function closeWatcher(id: string): Promise<void> {
 	const watcher = activeWatchers.get(id);
 	if (!watcher) return;
 	activeWatchers.delete(id);
-	const senderId = watcherOwners.get(id);
-	watcherOwners.delete(id);
-	if (senderId !== undefined) {
-		const ids = ownerWatchIds.get(senderId);
-		if (ids) {
-			ids.delete(id);
-			if (ids.size === 0) ownerWatchIds.delete(senderId);
-		}
-	}
+	watcherOwnership.release(id);
 	try {
 		await watcher.close();
 	} catch (e) {
@@ -99,24 +97,10 @@ async function closeWatcher(id: string): Promise<void> {
 }
 
 async function closeWatchersForSender(senderId: number): Promise<void> {
-	const ids = ownerWatchIds.get(senderId);
-	if (!ids) return;
-	for (const id of [...ids]) {
+	for (const id of watcherOwnership.idsFor(senderId)) {
 		await closeWatcher(id);
 	}
-}
-
-function trackWatcherOwner(id: string, sender: WebContents): void {
-	const senderId = sender.id;
-	watcherOwners.set(id, senderId);
-	let ids = ownerWatchIds.get(senderId);
-	if (!ids) {
-		ids = new Set();
-		ownerWatchIds.set(senderId, ids);
-		sender.once('destroyed', () => void closeWatchersForSender(senderId));
-		sender.on('did-start-navigation', () => void closeWatchersForSender(senderId));
-	}
-	ids.add(id);
+	watcherOwnership.cancelStartsFor(senderId);
 }
 
 async function killAllWatchers(): Promise<void> {
@@ -647,14 +631,33 @@ function registerIpcHandlers() {
 				sendToRenderer('watcher:events', { watchId, events });
 			}
 		});
-		await watcher.start();
+		// Register ownership before the async subscribe so a renderer that
+		// navigates or is destroyed mid-start is observed.
+		const startToken = watcherOwnership.beginStart(watchId, event.sender);
+		try {
+			await watcher.start();
+		} catch (e) {
+			watcherOwnership.release(watchId);
+			throw e;
+		}
+		if (watcherOwnership.finishStart(watchId, startToken) || event.sender.isDestroyed()) {
+			// Owner went away mid-start (or a newer start superseded this
+			// one): shut the fresh subscription down without registering it.
+			watcherOwnership.release(watchId);
+			try {
+				await watcher.close();
+			} catch (e) {
+				console.error(`[main] Failed to close orphaned watcher ${watchId}:`, e);
+			}
+			return { success: true };
+		}
 		activeWatchers.set(watchId, watcher);
-		trackWatcherOwner(watchId, event.sender);
 		return { success: true };
 	});
 
 	ipcMain.handle('watcher:stop', async (_, watchId: string) => {
 		await closeWatcher(watchId);
+		watcherOwnership.cancelStart(watchId);
 		return { success: true };
 	});
 }
