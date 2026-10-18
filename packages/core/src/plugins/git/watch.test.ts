@@ -43,9 +43,13 @@ describe('isGitHistoryWatchedPath (Ticket #349 / ADR 0027)', () => {
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/FETCH_HEAD', gitDir)).toBe(false);
 	});
 
+	it('matches refs/remotes so push/fetch refresh the unpushed indicator', () => {
+		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/remotes/origin/main', gitDir)).toBe(true);
+		expect(isGitHistoryWatchedPath('refs/remotes/origin/feature-x', gitDir)).toBe(true);
+	});
+
 	it('ignores non-branch refs and object store writes', () => {
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/tags/v1.0.0', gitDir)).toBe(false);
-		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/remotes/origin/main', gitDir)).toBe(false);
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904', gitDir)).toBe(false);
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/logs/HEAD', gitDir)).toBe(false);
 	});

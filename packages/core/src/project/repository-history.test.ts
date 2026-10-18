@@ -118,6 +118,28 @@ describe("Repository history log integration (Ticket #345)", () => {
 		expect(repo.aheadCount).toBe(0);
 	});
 
+	it("updates aheadCount on refreshHistory() so watcher events refresh the unpushed indicator", async () => {
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => []),
+			getAheadCount: mock(async () => 2)
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		expect(repo.aheadCount).toBe(0);
+
+		await repo.refreshHistory();
+
+		expect(mockAdapter.getAheadCount).toHaveBeenCalled();
+		expect(repo.aheadCount).toBe(2);
+	});
+
 	it("discards a stale refreshHistory() result when a newer one lands first", async () => {
 		const staleCommits: GitHistoryCommit[] = [
 			{
