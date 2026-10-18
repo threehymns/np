@@ -142,6 +142,13 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(source).toMatch(/copied|Copied/);
 		});
 
+		it("shows a loading state instead of the empty state while history loads", () => {
+			const source = historyTabSource();
+			expect(source).toContain('data-slot="history-loading"');
+			expect(source).toMatch(/\{#if commits\.length === 0 && isLoading\}/);
+			expect(source).toMatch(/\{:else if commits\.length === 0\}/);
+		});
+
 		it("names the copied field in feedback titles, not always the short SHA", () => {
 			const source = historyTabSource();
 			// triggerVisualFeedback stores the action alongside the SHA so the
