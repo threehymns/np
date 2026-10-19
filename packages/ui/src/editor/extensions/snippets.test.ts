@@ -165,7 +165,7 @@ describe("the Svelte snippet pack", () => {
 		const snippets = await packForSvelte();
 		const byTrigger = new Map(snippets.map((s) => [s.trigger, s]));
 
-		for (const trigger of ["reactive", "each", "transition", "store"]) {
+		for (const trigger of ["props", "reactive", "each", "transition", "store"]) {
 			expect(byTrigger.has(trigger)).toBe(true);
 		}
 		// No placeholders and no snippet variables (explicitly out of scope):
@@ -173,6 +173,7 @@ describe("the Svelte snippet pack", () => {
 		for (const registered of snippets) {
 			expect(registered.body).not.toMatch(/\$(?:\d+|\{)/);
 		}
+		expect(byTrigger.get("props")!.body).toBe("let { data } = $props();");
 		expect(byTrigger.get("each")!.body).toBe("{#each items as item}\n\t\n{/each}");
 		expect(byTrigger.get("reactive")!.body).toBe("$: doubled = count * 2;");
 	});
