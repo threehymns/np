@@ -414,6 +414,12 @@ export interface HoverQuery {
 /** One hover answer: Markdown to render, or null when there is none. */
 export interface HoverResult {
 	readonly contents: string;
+	/**
+	 * The symbol's own range, when the provider named one. The hover source
+	 * covers this range so the tooltip survives the whole symbol rather than a
+	 * point; optional because a provider may report contents without a range.
+	 */
+	readonly range?: CompletionSuggestionRange | null;
 }
 
 /**
