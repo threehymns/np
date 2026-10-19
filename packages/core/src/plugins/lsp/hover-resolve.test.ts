@@ -186,6 +186,88 @@ describe('completionItem/resolve', () => {
 		expect(second.documentation).toContain('A thing with an id');
 	}, 30_000);
 
+	it('merges a cached reply onto the current item, keeping its range authoritative', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
+		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);
+		const document = docFor(root, 'a.ts', 'const w = wid');
+		const first = {
+			label: 'Widget',
+			insertText: 'Widget',
+			detail: null as string | null,
+			documentation: null as string | null,
+			kind: 7 as number | null,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+
+		const resolvedFirst = await runtime.resolveCompletion(document, first);
+		expect(resolvedFirst.documentation).toContain('A thing with an id');
+
+		// A later session reaches the same key at a different range. The range
+		// the second item names is the only one anchored to this document.
+		const laterRange = {
+			start: { line: 2, character: 4 },
+			end: { line: 2, character: 10 }
+		};
+		const second = { ...first, replaceRange: laterRange };
+		const resolvedSecond = await runtime.resolveCompletion(document, second);
+
+		expect(resolvedSecond.replaceRange).toEqual(laterRange);
+		expect(resolvedSecond.documentation).toContain('A thing with an id');
+	}, 30_000);
+
+	it('does not reuse cached additional edits for a later item that names none', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
+		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);
+		const document = docFor(root, 'a.ts', 'const w = wid');
+		const first = {
+			label: 'Widget',
+			insertText: 'Widget',
+			detail: null as string | null,
+			documentation: null as string | null,
+			kind: 7 as number | null,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+
+		const resolvedFirst = await runtime.resolveCompletion(document, first);
+		// The stub attaches the import edit to the resolve reply, so the first
+		// answer carries it.
+		expect(resolvedFirst.additionalTextEdits ?? []).toHaveLength(1);
+
+		// The second item carries no edits of its own, so the cached reply's
+		// edits — resolved against an earlier revision — must not ride along.
+		const resolvedSecond = await runtime.resolveCompletion(document, {
+			...first,
+			replaceRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }
+		});
+
+		expect(resolvedSecond.additionalTextEdits ?? null).toBeNull();
+		expect(resolvedSecond.documentation).toContain('A thing with an id');
+	}, 30_000);
+
+	it('keeps the current item’s own additional edits on a cache hit', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
+		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);
+		const document = docFor(root, 'a.ts', 'const w = wid');
+		const first = {
+			label: 'Widget',
+			insertText: 'Widget',
+			detail: null as string | null,
+			documentation: null as string | null,
+			kind: 7 as number | null,
+			replaceRange: null,
+			data: { id: 1 }
+		};
+
+		const resolvedFirst = await runtime.resolveCompletion(document, first);
+		// The popover re-resolves the same box after a first answer; the edits
+		// that answer carried are the current item's own and must survive.
+		const resolvedAgain = await runtime.resolveCompletion(document, resolvedFirst);
+
+		expect(resolvedAgain.additionalTextEdits ?? []).toEqual(resolvedFirst.additionalTextEdits ?? []);
+	}, 30_000);
+
 	it('resolves the visible window plus-minus four, skipping documented items except the selection', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
 		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);

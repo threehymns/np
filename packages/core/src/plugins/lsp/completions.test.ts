@@ -169,6 +169,34 @@ describe('mergeResolvedCompletion', () => {
 		expect(merged.documentation).toBe(original.documentation);
 	});
 
+	it('drops the reply’s edits when asked, keeping the item’s own', async () => {
+		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
+		const [original] = parseServerCompletions([{ label: 'Widget', data: 1 }]).items;
+
+		const replyEdits = [
+			{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } }, newText: 'cached' }
+		];
+		const merged = mergeResolvedCompletion(
+			original,
+			{ detail: '(class) Widget', additionalTextEdits: replyEdits },
+			{ keepResolvedAdditionalEdits: false }
+		);
+		// Docs still land; only the reply's revision-anchored edits are dropped.
+		expect(merged.detail).toBe('(class) Widget');
+		expect(merged.additionalTextEdits ?? null).toBeNull();
+
+		const own = [
+			{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }, newText: 'own' }
+		];
+		const kept = mergeResolvedCompletion(
+			{ ...original, additionalTextEdits: own },
+			{ additionalTextEdits: replyEdits },
+			{ keepResolvedAdditionalEdits: false }
+		);
+		// The current item's own edits are what survive a cache hit.
+		expect(kept.additionalTextEdits).toEqual(own);
+	});
+
 	it('leaves the item alone when the resolve cannot be read', async () => {
 		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
 		const [original] = parseServerCompletions([{ label: 'Widget' }]).items;

@@ -267,12 +267,16 @@ export class LspRuntime
 	/**
 	 * Once-only resolve guard per item (spec #280, #292).
 	 *
-	 * Keyed `${server}|${label}|${data-json}` to the merged suggestion: one
-	 * successful round trip fills docs/detail for good, and a second request
-	 * for the same item is a request the server already answered. Cleared
-	 * with the server, so a restart re-resolves rather than serving stale docs.
+	 * Keyed `${server}|${label}|${data-json}` to the *raw*
+	 * `completionItem/resolve` reply, not the merged suggestion. Holding the
+	 * reply is what lets a hit merge it onto the current item, so the item's own
+	 * range and primary edit stay authoritative when a later session reuses the
+	 * key. One successful round trip fills docs/detail for good, and a second
+	 * request for the same item is a request the server already answered.
+	 * Cleared with the server, so a restart re-resolves rather than serving
+	 * stale docs.
 	 */
-	private readonly resolvedItems = new Map<string, CompletionSuggestion>();
+	private readonly resolvedItems = new Map<string, unknown>();
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -575,8 +579,16 @@ export class LspRuntime
 			if (entry.state !== 'running' || !entry.client) return item;
 			if (!this.canResolve(server)) return item;
 			const key = this.resolveKey(server, item);
-			const cached = this.resolvedItems.get(key);
-			if (cached) return cached;
+			if (this.resolvedItems.has(key)) {
+				// A hit merges the raw reply onto the *current* item: its range and
+				// primary edit are the only ones anchored to this document. The
+				// cached reply's own additional edits are dropped for the same
+				// reason — they were resolved against an earlier revision — while
+				// edits the current item already carries survive.
+				return mergeResolvedCompletion(item, this.resolvedItems.get(key), {
+					keepResolvedAdditionalEdits: false
+				});
+			}
 			this.syncDocument(entry, { ...document, path });
 			this.flushPending(entry);
 			const result = await entry.client.request(
@@ -584,9 +596,8 @@ export class LspRuntime
 				toResolveParams(item),
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
-			const merged = mergeResolvedCompletion(item, result);
-			this.resolvedItems.set(key, merged);
-			return merged;
+			this.resolvedItems.set(key, result);
+			return mergeResolvedCompletion(item, result);
 		} catch (error) {
 			this.options.logs.appendServerNote(
 				server,

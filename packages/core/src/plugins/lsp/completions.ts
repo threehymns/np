@@ -141,6 +141,17 @@ export function parseServerCompletions(result: unknown): ServerCompletionList {
 	};
 }
 
+/** Options for {@link mergeResolvedCompletion}, all defaulted to the plain merge. */
+export interface MergeResolvedOptions {
+	/**
+	 * Whether the reply's own `additionalTextEdits` may be adopted. Defaults to
+	 * true. A cache hit passes false: those edits were anchored to whichever
+	 * revision produced the reply, and only the item being merged now can say
+	 * what is still valid for this document.
+	 */
+	readonly keepResolvedAdditionalEdits?: boolean;
+}
+
 /**
  * Merges one `completionItem/resolve` reply into the suggestion it resolves
  * (spec #280, Zed contract #292).
@@ -161,7 +172,8 @@ export function parseServerCompletions(result: unknown): ServerCompletionList {
  */
 export function mergeResolvedCompletion(
 	original: CompletionSuggestion,
-	resolved: unknown
+	resolved: unknown,
+	options: MergeResolvedOptions = {}
 ): CompletionSuggestion {
 	if (!isRecord(resolved)) return original;
 	const textEdit = isRecord(resolved.textEdit) ? resolved.textEdit : null;
@@ -176,6 +188,16 @@ export function mergeResolvedCompletion(
 			? resolved.detail
 			: original.detail;
 	const documentation = flattenMarkup(resolved.documentation) ?? original.documentation;
+	// A cached reply's edits are dropped rather than adopted (see
+	// {@link MergeResolvedOptions.keepResolvedAdditionalEdits}); the item's own
+	// edits are the only ones still anchored to this document. Otherwise the
+	// reply's edits win, as they do on a fresh round trip.
+	const edits =
+		options.keepResolvedAdditionalEdits === false
+			? original.additionalTextEdits !== undefined
+				? { additionalTextEdits: original.additionalTextEdits }
+				: {}
+			: readAdditionalEdits(resolved, original.additionalTextEdits);
 	return {
 		...original,
 		insertText: newText,
@@ -184,7 +206,7 @@ export function mergeResolvedCompletion(
 		// The range stays the original's: a resolved edit's range is against
 		// the revision the server answered for, not the document as it is now.
 		replaceRange: original.replaceRange,
-		...readAdditionalEdits(resolved, original.additionalTextEdits),
+		...edits,
 		...readCommand(resolved, original.command)
 	};
 }
