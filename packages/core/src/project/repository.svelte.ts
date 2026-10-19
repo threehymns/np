@@ -182,7 +182,9 @@ export class Repository {
 		try {
 			// The ahead count rides along so watcher-triggered refreshes keep
 			// the unpushed indicator in sync (push/fetch only move refs/remotes).
-			const [commits, aheadCount] = await Promise.all([
+			// Settled independently: a failed ahead-count read must not wipe
+			// history the getHistory call fetched successfully.
+			const [historyRes, aheadRes] = await Promise.allSettled([
 				this.adapter.getHistory({ maxCount: HISTORY_MAX_COUNT, ...options }),
 				this.adapter.getAheadCount ? this.adapter.getAheadCount() : Promise.resolve(0)
 			]);
@@ -190,8 +192,17 @@ export class Repository {
 			// has already landed: discard the stale result instead of
 			// overwriting fresher commits.
 			if (historyGen !== this.historyGeneration) return false;
-			this.historyCommits = commits;
-			this.aheadCount = aheadCount;
+			if (historyRes.status === 'fulfilled') {
+				this.historyCommits = historyRes.value;
+			} else {
+				console.error('Failed to refresh history commits', historyRes.reason);
+				this.historyCommits = [];
+			}
+			if (aheadRes.status === 'fulfilled' && typeof aheadRes.value === 'number') {
+				this.aheadCount = aheadRes.value;
+			} else {
+				this.aheadCount = 0;
+			}
 			return true;
 		} catch (e) {
 			if (historyGen !== this.historyGeneration) return false;
