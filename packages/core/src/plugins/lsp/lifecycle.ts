@@ -99,6 +99,18 @@ export type HoverAnswer =
 /** How far either side of the selection the visible-window resolve covers (#292). */
 export const RESOLVE_WINDOW_BEFORE_AFTER = 4;
 
+/**
+ * How many resolved items the once-only cache keeps before the oldest is
+ * evicted.
+ *
+ * A server that puts the file and position into `data` makes almost every
+ * completion session a new key, and each entry holds full documentation, so an
+ * unbounded cache grows for the life of the server. A few hundred covers the
+ * visible window and the popovers around it without keeping a session's whole
+ * history.
+ */
+export const RESOLVED_ITEMS_LIMIT = 200;
+
 export interface LspRuntimeOptions {
 	readonly host: PluginHostInterface;
 	/** Owning plugin, for attribution on a contained failure. */
@@ -273,8 +285,8 @@ export class LspRuntime
 	 * range and primary edit stay authoritative when a later session reuses the
 	 * key. One successful round trip fills docs/detail for good, and a second
 	 * request for the same item is a request the server already answered.
-	 * Cleared with the server, so a restart re-resolves rather than serving
-	 * stale docs.
+	 * Bounded by {@link RESOLVED_ITEMS_LIMIT} and cleared with the server, so a
+	 * restart re-resolves rather than serving stale docs.
 	 */
 	private readonly resolvedItems = new Map<string, unknown>();
 
@@ -597,6 +609,7 @@ export class LspRuntime
 				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
 			);
 			this.resolvedItems.set(key, result);
+			this.evictResolvedItems();
 			return mergeResolvedCompletion(item, result);
 		} catch (error) {
 			this.options.logs.appendServerNote(
@@ -824,6 +837,20 @@ export class LspRuntime
 		if (this.resolvedItems.size === 0) return;
 		for (const key of [...this.resolvedItems.keys()]) {
 			if (key.startsWith(server + '|')) this.resolvedItems.delete(key);
+		}
+	}
+
+	/**
+	 * Keeps the resolve cache at {@link RESOLVED_ITEMS_LIMIT}: `Map` iterates in
+	 * insertion order, so the first key is the oldest one this session has moved
+	 * past. Keys are only inserted on a miss, so a hit never refreshes a key's
+	 * position and the eviction order is genuinely first-in-first-out.
+	 */
+	private evictResolvedItems(): void {
+		while (this.resolvedItems.size > RESOLVED_ITEMS_LIMIT) {
+			const oldest = this.resolvedItems.keys().next();
+			if (oldest.done) return;
+			this.resolvedItems.delete(oldest.value);
 		}
 	}
 

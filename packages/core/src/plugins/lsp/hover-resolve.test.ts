@@ -6,7 +6,12 @@ import { basename, dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
-import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey } from './lifecycle';
+import {
+	LspRuntime,
+	LSP_RUNTIME_SERVICE_KEY,
+	lspServerKey,
+	RESOLVED_ITEMS_LIMIT
+} from './lifecycle';
 import { LspDiagnosticsStore } from './diagnostics';
 import { LSP_PLATFORM_SERVICE_KEY, SETTINGS_READER_SERVICE_KEY } from '../services';
 import {
@@ -267,6 +272,34 @@ describe('completionItem/resolve', () => {
 
 		expect(resolvedAgain.additionalTextEdits ?? []).toEqual(resolvedFirst.additionalTextEdits ?? []);
 	}, 30_000);
+
+	it('bounds the resolve cache, evicting the oldest entry past the cap', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
+		const { runtime, wireLog } = await startPlugin(['--mode', 'lazy-docs']);
+		const document = docFor(root, 'a.ts', 'const w = wid');
+		const itemAt = (id: number) => ({
+			label: 'Widget',
+			insertText: 'Widget',
+			detail: null as string | null,
+			documentation: null as string | null,
+			kind: 7 as number | null,
+			replaceRange: null,
+			data: { id }
+		});
+
+		// One more distinct key than the cap allows, so the oldest is evicted.
+		for (let id = 0; id <= RESOLVED_ITEMS_LIMIT; id++) {
+			await runtime.resolveCompletion(document, itemAt(id));
+		}
+		const before = received(wireLog).filter((line) => line.includes('completionItem/resolve')).length;
+
+		// Item 0 was the oldest and is gone; asking again is a round trip.
+		await runtime.resolveCompletion(document, itemAt(0));
+
+		expect(
+			received(wireLog).filter((line) => line.includes('completionItem/resolve')).length
+		).toBe(before + 1);
+	}, 60_000);
 
 	it('resolves the visible window plus-minus four, skipping documented items except the selection', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
