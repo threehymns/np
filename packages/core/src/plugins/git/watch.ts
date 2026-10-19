@@ -201,16 +201,29 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
 		};
 
 		const subs: Array<() => unknown> = [];
-		for (const target of targets) {
-			const sub = await watchDirectory(target.dir, (events) => {
-				if (closed) return;
-				const matching = events.some((e) => target.matches(toRelativePath(e.path, target.dir)));
-				if (!matching) return;
-				triggerRefresh();
-			});
-			if (typeof sub === 'function') {
-				subs.push(sub);
+		try {
+			for (const target of targets) {
+				const sub = await watchDirectory(target.dir, (events) => {
+					if (closed) return;
+					const matching = events.some((e) => target.matches(toRelativePath(e.path, target.dir)));
+					if (!matching) return;
+					triggerRefresh();
+				});
+				if (typeof sub === 'function') {
+					subs.push(sub);
+				}
 			}
+		} catch (e) {
+			// A later target failed after earlier ones subscribed: close the
+			// ones already started so the native watcher doesn't leak.
+			for (const sub of subs) {
+				try {
+					await sub();
+				} catch {
+					// Best effort; the original error is logged by the outer catch.
+				}
+			}
+			throw e;
 		}
 
 		return async () => {
