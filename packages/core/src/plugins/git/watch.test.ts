@@ -446,6 +446,65 @@ describe('startWorkspaceGitWatcher & stopWorkspaceGitWatcher lifecycle (Ticket #
 		expect(state.watcherStop).toBeUndefined();
 		expect(state.disposables).toHaveLength(0);
 	});
+
+	it('discards a superseded watcher start that installs after a newer one', async () => {
+		const stopped: string[] = [];
+		const gitDirResolvers: Array<(v: any) => void> = [];
+		const commonDirResolvers: Array<(v: any) => void> = [];
+		const mockGitRun = (_workingDir: string, args: string[]) =>
+			new Promise((resolve) => {
+				if (args[1] === '--git-common-dir') {
+					commonDirResolvers.push(resolve as (v: any) => void);
+				} else {
+					gitDirResolvers.push(resolve as (v: any) => void);
+				}
+			});
+		const mockWatch = (dirPath: string, _cb: any) => () => {
+			stopped.push(dirPath);
+		};
+		const gitDirResult = { code: 0, stdout: '.git\n', stderr: '' };
+		// Empty common dir: single subscription target per start
+		const commonDirResult = { code: 0, stdout: '', stderr: '' };
+
+		const repo: any = { refreshHistory: async () => true };
+		const state: any = {
+			workspace: {},
+			ownerId: 'git',
+			repository: repo,
+			disposed: false,
+			pending: new Set(),
+			disposables: [],
+			currentOpenId: 1,
+			watcherGeneration: 0,
+			isActive: () => true
+		};
+		const origin = { scheme: 'file', path: '/workspace/project', name: 'project' };
+		const clientOptions = { gitRun: mockGitRun, watchDirectory: mockWatch, debounceMs: 20 };
+
+		// Two overlapping starts; the first one will finish last
+		const first = startWorkspaceGitWatcher(state, origin as any, repo, clientOptions);
+		const second = startWorkspaceGitWatcher(state, origin as any, repo, clientOptions);
+		const flush = () => new Promise((r) => setTimeout(r, 0));
+
+		// Let the second start complete first
+		gitDirResolvers[1](gitDirResult);
+		await flush();
+		commonDirResolvers[0](commonDirResult);
+		await second;
+		const secondStop = state.watcherStop;
+		expect(secondStop).toBeFunction();
+
+		// Now the first start finishes: it must stop its own subscription
+		// and must not overwrite the installed watcher
+		gitDirResolvers[0](gitDirResult);
+		await flush();
+		commonDirResolvers[1](commonDirResult);
+		await first;
+
+		expect(stopped).toHaveLength(1);
+		expect(state.watcherStop).toBe(secondStop);
+		expect(state.disposables).toHaveLength(1);
+	});
 });
 
 

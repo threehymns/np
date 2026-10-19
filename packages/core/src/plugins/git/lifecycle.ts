@@ -28,6 +28,8 @@ export interface WorkspaceGitState {
 	isActive(): boolean;
 	/** Active git directory watcher cleanup for the currently published repository. */
 	watcherStop?: (() => Promise<void> | void) | null;
+	/** Invalidates watcher startups that were superseded before installation. */
+	watcherGeneration: number;
 }
 
 
@@ -44,6 +46,7 @@ export function createWorkspaceGitState(
 		pending: new Set(),
 		disposables: [],
 		currentOpenId: 0,
+		watcherGeneration: 0,
 		isActive
 	};
 }
