@@ -309,6 +309,39 @@ describe('startGitWatcher (Ticket #349 / ADR 0027)', () => {
 		expect(watchedDirs).toEqual(['/workspace/project/.git']);
 		if (stop) await stop();
 	});
+
+	it('closes already-started subscriptions when a later subscribe fails', async () => {
+		const worktreeGitDir = '/workspace/main-repo/.git/worktrees/linked-wt';
+		const commonGitDir = '/workspace/main-repo/.git';
+		const stopped: string[] = [];
+		let subscribeCalls = 0;
+
+		const mockGitRun = async (_workingDir: string, args: string[]) => {
+			if (args[1] === '--git-common-dir') {
+				return { code: 0, stdout: `${commonGitDir}\n`, stderr: '' };
+			}
+			return { code: 0, stdout: `${worktreeGitDir}\n`, stderr: '' };
+		};
+		const mockWatch = (dirPath: string, _cb: any) => {
+			subscribeCalls++;
+			if (subscribeCalls > 1) {
+				throw new Error('native watcher failed');
+			}
+			return () => {
+				stopped.push(dirPath);
+			};
+		};
+
+		const stop = await startGitWatcher({
+			workingDir: '/workspace/linked-wt',
+			onHistoryChange: () => {},
+			gitRun: mockGitRun,
+			watchDirectory: mockWatch
+		});
+
+		expect(stop).toBeNull();
+		expect(stopped).toEqual([worktreeGitDir]);
+	});
 });
 
 describe('startWorkspaceGitWatcher & stopWorkspaceGitWatcher lifecycle (Ticket #349 / ADR 0027)', () => {
