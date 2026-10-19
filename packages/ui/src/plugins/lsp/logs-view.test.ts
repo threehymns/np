@@ -273,6 +273,12 @@ describe('LSP log server picker labels', () => {
 		expect(serverLabel('typescript@/repo/@generated')).toBe('typescript (@generated)');
 	});
 
+	it('names a Windows root by its final folder', () => {
+		// A Windows root arrives with backslashes, and a label that showed the
+		// whole path would not tell two roots apart.
+		expect(serverLabel('typescript@C:\\Users\\me\\project')).toBe('typescript (project)');
+	});
+
 	it('leaves a key with no root whole rather than dropping it', () => {
 		expect(serverLabel('typescript')).toBe('typescript');
 	});

@@ -81,7 +81,10 @@ export function serverLabel(server: string): string {
 	const at = server.indexOf('@');
 	if (at === -1) return server;
 	const root = server.slice(at + 1);
-	const folder = root.split('/').filter(Boolean).pop() ?? root;
+	// Both separators, because a root is a path on the machine it came from:
+	// a Windows root is written with backslashes, and splitting only on
+	// slashes would leave the whole path in the label.
+	const folder = root.split(/[/\\]/).filter(Boolean).pop() ?? root;
 	return `${server.slice(0, at)} (${folder})`;
 }
 
