@@ -167,7 +167,13 @@ export class Repository {
 		} finally {
 			if (generation === this.refreshGeneration) {
 				this.changesLoaded = true;
-				this.historyLoaded = true;
+				// A watcher-triggered refreshHistory() may have started while
+				// this call was pending: only mark history loaded when this
+				// call's inline history fetch is still the newest one, or the
+				// tab would flash "No Commits" while the newer fetch lands.
+				if (historyGen === this.historyGeneration) {
+					this.historyLoaded = true;
+				}
 			}
 		}
 	}
