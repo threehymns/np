@@ -194,7 +194,11 @@ describe("Repository history log integration (Ticket #345)", () => {
 			getHistory: mock(
 				() =>
 					new Promise<GitHistoryCommit[]>((resolve) => {
-						calls.push(() => resolve(calls.length === 1 ? staleCommits : freshCommits));
+						// Capture the call index now: both resolvers run after
+						// both calls are queued, so reading calls.length inside
+						// the callback would resolve both with freshCommits.
+						const index = calls.length;
+						calls.push(() => resolve(index === 0 ? staleCommits : freshCommits));
 					})
 			)
 		};
