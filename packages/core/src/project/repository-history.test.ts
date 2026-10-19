@@ -212,6 +212,39 @@ describe("Repository history log integration (Ticket #345)", () => {
 		expect(firstResult).toBe(false);
 		expect(repo.historyCommits).toEqual(freshCommits);
 	});
+
+	it("keeps fetched history when the ahead-count read fails", async () => {
+		const mockCommits: GitHistoryCommit[] = [
+			{
+				sha: "cccccccccccccccccccccccccccccccccccccccc",
+				shortSha: "ccccccc",
+				subject: "feat: something",
+				author: "Hatch",
+				timestamp: 1700000002
+			}
+		];
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: mock(async () => mockCommits),
+			getAheadCount: mock(async () => {
+				throw new Error("rev-list failed");
+			})
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const result = await repo.refreshHistory();
+
+		expect(result).toBe(true);
+		expect(repo.historyCommits).toEqual(mockCommits);
+		expect(repo.aheadCount).toBe(0);
+	});
 });
 
 describe("History tab: .git-watch refresh (Ticket #349 / ADR 0027)", () => {
