@@ -36,6 +36,18 @@ import {
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
+/**
+ * A memory reading that is the same on every machine.
+ *
+ * The platform's real reader is `/proc`, which only Linux has: anywhere else
+ * it answers nothing and the row's figure stays a dash for ever. A test that
+ * pins the figure the runtime publishes needs a reader that answers the same
+ * everywhere, so this one stands in for it — and the reading is a real one
+ * the runtime has to carry, not a dash it can pass through.
+ */
+const FIXED_MEMORY_BYTES = 412 * 1024 * 1024;
+const fixedMemory = async (): Promise<number> => FIXED_MEMORY_BYTES;
+
 afterEach(async () => {
 	while (cleanups.length > 0) await cleanups.pop()!();
 });
@@ -116,14 +128,19 @@ function settingsReader(store: Record<string, Record<string, unknown>>): {
 
 async function startPlugin(
 	script: readonly string[] = [],
-	settings: Record<string, Record<string, unknown>> = {}
+	settings: Record<string, Record<string, unknown>> = {},
+	/** Replaces the platform's memory reader, for a test that pins the figure. */
+	processMemory?: (pid: number) => Promise<number | null>
 ): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
 	const wireLog = join(makeProject({}), 'wire.log');
 	// Always on: the stub is the only witness to what the client sent, and a
 	// suite where some tests have one and some do not is a suite where the
 	// difference is invisible.
-	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
+	const platform = createRealProcessPlatform({
+		script: [...script, '--log-file', wireLog],
+		...(processMemory ? { processMemory } : {})
+	});
 	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	const settingsAccess = settingsReader(settings);
 	host.provideService(SETTINGS_READER_SERVICE_KEY, {
@@ -382,25 +399,24 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 	it('fills the status details slot with the memory the platform observed (#282)', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
-		const harness = await startPlugin();
+		const harness = await startPlugin([], {}, fixedMemory);
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 
-		// The stub's RSS is real, so it varies by machine: the assertion pins
-		// the shape (never blank, never zero) and that it arrived, not the number.
+		// The figure is the platform's reading carried through, so the wait is
+		// for the read to land rather than for a number to turn up: a dash
+		// means the platform has not answered yet.
 		await waitFor(
 			() =>
 				(harness.runtime.getStatusRows()[0]?.details ?? []).some(
-					(detail) => detail.label === 'memory' && detail.value !== '—'
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
 				),
 			{ label: 'the memory figure' }
 		);
 		const memory = harness.runtime
 			.getStatusRows()[0]
 			.details.find((detail) => detail.label === 'memory')!;
-		expect(memory.value).toMatch(/^\d+ (KiB|MiB)$/);
-		expect(memory.value).not.toBe('0 MiB');
-		expect(memory.value).not.toBe('0 KiB');
+		expect(memory.value).toBe('412 MiB');
 	});
 
 	it('shows dashes while the handshake is still in flight (#282)', async () => {
@@ -428,7 +444,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 
 	it('clears the figures when the server stops and re-reports them on restart (#282)', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
-		const harness = await startPlugin();
+		const harness = await startPlugin([], {}, fixedMemory);
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 		const key = lspServerKey('typescript', root);
@@ -451,7 +467,7 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 					.getStatusRows()
 					.find((server) => server.server === key)
 					?.details ?? []).some(
-					(detail) => detail.label === 'memory' && detail.value !== '—'
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
 				),
 			{ label: 'the re-reported memory figure' }
 		);

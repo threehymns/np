@@ -37,6 +37,12 @@ export interface RealProcessPlatformOptions {
 	readonly script?: StubScript;
 	/** Swaps the descriptor's command for the stub binary. Default true. */
 	readonly useStubBinary?: boolean;
+	/**
+	 * Replaces the real memory reader. The real one reads `/proc`, which only
+	 * Linux has, so a test that pins the figure it gets needs a reader that
+	 * answers the same on every machine.
+	 */
+	readonly processMemory?: (pid: number) => Promise<number | null>;
 }
 
 export interface RealProcessPlatform extends LspPlatform {
@@ -86,18 +92,27 @@ export function createRealProcessPlatform(
 			});
 			return lspProcess;
 		},
-		/** Real `/proc` RSS, so the details slot is asserted against a live process. Null off Linux. */
-		async processMemory(pid: number): Promise<number | null> {
-			try {
-				const status = await readFile(`/proc/${pid}/status`, 'utf-8');
-				const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
-				if (!match) return null;
-				return Number(match[1]) * 1024;
-			} catch {
-				return null;
-			}
-		}
+		/** The real reader by default: a live process's RSS out of `/proc`. */
+		processMemory: options.processMemory ?? readProcessMemory
 	};
+}
+
+/**
+ * The real reader: a live process's RSS out of `/proc`.
+ *
+ * Null off Linux, where there is no `/proc` to read: the figure then stays a
+ * dash, which is what the runtime is meant to show for a platform that
+ * cannot report one.
+ */
+async function readProcessMemory(pid: number): Promise<number | null> {
+	try {
+		const status = await readFile(`/proc/${pid}/status`, 'utf-8');
+		const match = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+		if (!match) return null;
+		return Number(match[1]) * 1024;
+	} catch {
+		return null;
+	}
 }
 
 type ChildProcess = ReturnType<typeof spawn>;
