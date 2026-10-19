@@ -567,7 +567,7 @@ export async function renderLspMarkdown(text: string): Promise<HTMLElement> {
 	return dom;
 }
 
-/** A Lezer parser behind its fence language, loaded once and cached. */
+/** A Lezer parser behind its fence language, cached once it loads. */
 const fenceParsers = new Map<string, Promise<{ parse(code: string): Tree } | null>>();
 
 function fenceLanguage(info: string): string {
@@ -601,6 +601,13 @@ async function fenceParser(language: string): Promise<{ parse(code: string): Tre
 		}
 	})();
 	fenceParsers.set(language, pending);
+	// A miss is not a permanent answer: languages register after startup
+	// (`Editor.svelte` rebuilds on `languageRevision` for exactly this reason),
+	// so a cached null would leave that fence plain for the rest of the
+	// session. Drop only our own entry, so a newer attempt is never evicted.
+	void pending.then((parser) => {
+		if (!parser && fenceParsers.get(language) === pending) fenceParsers.delete(language);
+	});
 	return pending;
 }
 

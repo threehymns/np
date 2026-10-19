@@ -11,8 +11,10 @@ import {
 	LSP_LOG_STORE_SERVICE_KEY,
 	LSP_RUNTIME_SERVICE_KEY,
 	LSP_PLATFORM_SERVICE_KEY,
+	getActiveLanguages,
 	lspRegistration,
 	PluginHost,
+	syncActiveLanguageDescriptions,
 	type LspLogStore,
 	type LspRuntime,
 } from "@np/core";
@@ -416,6 +418,33 @@ describe("lsp markdown rendering", () => {
 		expect(await highlightFencedCode("plain", "nosuchlang")).toBe("plain");
 		expect(await highlightFencedCode("a < b", "")).toBe("a &lt; b");
 	});
+
+	it("retries a fence language that was looked up before its plugin registered", async () => {
+		// A lookup that finds no language is not a permanent answer: plugins
+		// register languages after startup, and Editor.svelte rebuilds on
+		// `languageRevision` for exactly this reason. A cached null would keep
+		// such a fence plain for the rest of the session.
+		const before = getActiveLanguages();
+		try {
+			expect(await highlightFencedCode("const x = 1;", "toyfence")).toBe("const x = 1;");
+
+			const typescript = languages.find((desc) => desc.name === "TypeScript")!;
+			syncActiveLanguageDescriptions([
+				...before,
+				LanguageDescription.of({
+					name: "ToyFence",
+					alias: ["toyfence"],
+					extensions: ["toy"],
+					load: () => typescript.load(),
+				}),
+			]);
+
+			const html = await highlightFencedCode("const x = 1;", "toyfence");
+			expect(html).toContain("<span");
+		} finally {
+			syncActiveLanguageDescriptions(before);
+		}
+	}, 30_000);
 
 	it("drops the fence's trailing newline so no phantom line renders", async () => {
 		const html = await highlightFencedCode("const x = 1;\n", "typescript");
