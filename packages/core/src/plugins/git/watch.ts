@@ -250,6 +250,10 @@ export async function startGitWatcher(options: StartGitWatcherOptions): Promise<
  * Stops any active git directory watcher attached to the workspace state.
  */
 export function stopWorkspaceGitWatcher(state: WorkspaceGitState): void {
+	// Invalidate any watcher start that is still awaiting installation: the
+	// stale start will stop and discard its own subscription instead of
+	// overwriting state.watcherStop.
+	state.watcherGeneration = (state.watcherGeneration ?? 0) + 1;
 	if (state.watcherStop) {
 		const stop = state.watcherStop;
 		state.watcherStop = null;
@@ -283,6 +287,7 @@ export async function startWorkspaceGitWatcher(
 	clientOptions?: GitWatchClient
 ): Promise<void> {
 	stopWorkspaceGitWatcher(state);
+	const watcherGeneration = state.watcherGeneration;
 	if (state.disposed || !state.isActive() || origin.scheme !== 'file') return;
 
 	try {
@@ -295,7 +300,12 @@ export async function startWorkspaceGitWatcher(
 			...clientOptions
 		});
 
-		if (state.disposed || !state.isActive() || state.repository !== repo) {
+		if (
+			state.disposed ||
+			!state.isActive() ||
+			state.repository !== repo ||
+			state.watcherGeneration !== watcherGeneration
+		) {
 			if (stop) await stop();
 			return;
 		}
