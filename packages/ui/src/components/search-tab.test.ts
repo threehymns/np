@@ -3,6 +3,11 @@ import { describe, it, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { defaultKeymap } from "../../../core/src/keymap.svelte";
+import {
+	searchStatusText,
+	shouldRunSearchOnKeydown,
+	truncationCapText
+} from "./search-tab-behavior";
 
 const SEARCH_TAB_SRC = fs.readFileSync(path.join(__dirname, "SearchTab.svelte"), "utf-8");
 const PANE_SRC = fs.readFileSync(path.join(__dirname, "Pane.svelte"), "utf-8");
@@ -20,8 +25,11 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 	it("renders visible truncation notice when results hit caps", () => {
 		expect(SEARCH_TAB_SRC).toContain("isTruncated");
 		expect(SEARCH_TAB_SRC).toContain("Results truncated: capped at");
-		expect(SEARCH_TAB_SRC).toContain("5,000 files");
-		expect(SEARCH_TAB_SRC).toContain("10,000 matches");
+		// The cap numbers live in the behaviour module, so the component
+		// renders what that module decides.
+		expect(SEARCH_TAB_SRC).toContain("truncationCapText(truncationReason)");
+		expect(truncationCapText("files")).toBe("5,000 files");
+		expect(truncationCapText("matches")).toBe("10,000 matches");
 	});
 
 	it("renders context lines before and after matches", () => {
@@ -234,13 +242,26 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		expect(SEARCH_TAB_SRC).toContain("CircleNotchIcon");
 		expect(SEARCH_TAB_SRC).toContain("animate-spin");
 		expect(SEARCH_TAB_SRC).toContain("role=\"progressbar\"");
-		expect(SEARCH_TAB_SRC).toContain("Searching... {totalMatches}");
+		// The status line is produced by the behaviour module.
+		expect(SEARCH_TAB_SRC).toContain("searchStatusText({");
+		expect(
+			searchStatusText({ isSearching: true, totalMatches: 3, fileCount: 2, isQueryEmpty: false })
+		).toBe("Searching... 3 matches across 2 files");
 	});
 
 	it("completed searches display final match and file counts", () => {
-		expect(SEARCH_TAB_SRC).toContain("{totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {fileResults.length}");
-		expect(SEARCH_TAB_SRC).toContain("No results found");
-		expect(SEARCH_TAB_SRC).toContain("Type a query to search");
+		expect(
+			searchStatusText({ isSearching: false, totalMatches: 1, fileCount: 1, isQueryEmpty: false })
+		).toBe("1 match across 1 file");
+		expect(
+			searchStatusText({ isSearching: false, totalMatches: 4, fileCount: 2, isQueryEmpty: false })
+		).toBe("4 matches across 2 files");
+		expect(
+			searchStatusText({ isSearching: false, totalMatches: 0, fileCount: 0, isQueryEmpty: false })
+		).toBe("No results found");
+		expect(
+			searchStatusText({ isSearching: false, totalMatches: 0, fileCount: 0, isQueryEmpty: true })
+		).toBe("Type a query to search");
 	});
 
 	it("truncation notice is unmissable when caps are hit", () => {
@@ -248,14 +269,16 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		expect(SEARCH_TAB_SRC).toContain('aria-live="assertive"');
 		expect(SEARCH_TAB_SRC).toContain("WarningIcon");
 		expect(SEARCH_TAB_SRC).toContain("<strong>Results truncated:</strong> capped at");
-		expect(SEARCH_TAB_SRC).toContain("5,000 files");
-		expect(SEARCH_TAB_SRC).toContain("10,000 matches");
+		expect(SEARCH_TAB_SRC).toContain("truncationCapText(truncationReason)");
 		expect(SEARCH_TAB_SRC).toContain("Refine your query");
+		expect(truncationCapText("files")).toBe("5,000 files");
+		expect(truncationCapText("matches")).toBe("10,000 matches");
 	});
 
 	it("Enter does not run search during IME composition", () => {
-		expect(SEARCH_TAB_SRC).toContain("e.key === 'Enter'");
-		expect(SEARCH_TAB_SRC).toContain("!e.isComposing");
+		expect(SEARCH_TAB_SRC).toContain("shouldRunSearchOnKeydown({ key: e.key, isComposing: e.isComposing })");
+		expect(shouldRunSearchOnKeydown({ key: "Enter" })).toBe(true);
+		expect(shouldRunSearchOnKeydown({ key: "Enter", isComposing: true })).toBe(false);
 	});
 
 	it("keybinding cmd+shift+f is registered without duplication and maps to edit.findInFiles", () => {
