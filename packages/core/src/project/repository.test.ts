@@ -20,6 +20,17 @@ function createMockAdapter(overrides: Partial<VCSAdapter> = {}): VCSAdapter {
 	};
 }
 
+describe('Repository.getSafetyReport', () => {
+	it('preserves adapter preflight errors for actionable UI feedback', async () => {
+		const adapter = createMockAdapter({
+			switchBranch: mock(async () => ({ status: 'error', message: 'Unable to read the index. Retry.' }))
+		});
+		const repo = new Repository(mockOrigin, () => adapter);
+		await expect(repo.getSafetyReport([], 'feature')).rejects.toThrow('Unable to read the index. Retry.');
+		expect(repo.isBusy).toBe(false);
+	});
+});
+
 describe('Repository.refresh', () => {
 	it('catches getChanges failures and preserves dirty state from getStatus', async () => {
 		const mockAdapter = createMockAdapter({
