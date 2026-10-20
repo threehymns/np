@@ -51,16 +51,16 @@ export class Workspace {
 	lastSaveCancellationReason = $state<string | null>(null);
 
 	/**
-	 * A folder switch is in flight. Workspace-level, not Project-level: the
-	 * operation rewrites the window (documents, tabs, panes) as well as the
-	 * project's root, and the Project is the thing being replaced, so a flag
-	 * on it would be lost exactly when the open has to be rolled back.
+	 * A Root switch is in flight. Workspace-level, not Project-level: the
+	 * open rewrites the window (documents, tabs, panes) as well as the Root
+	 * the Project is opened on, and the flag has to cover both, because the
+	 * window state is part of what a failed open has to roll back.
 	 */
 	projectOpening = $state(false);
 	/**
-	 * The last folder-open failure, or null. Workspace-level for the same
+	 * The last Root-open failure, or null. Workspace-level for the same
 	 * reason as `projectOpening`: the failure belongs to the operation, not
-	 * to the project that was being replaced.
+	 * to the Project that was open before it.
 	 */
 	projectError = $state<string | null>(null);
 	/**
@@ -68,15 +68,15 @@ export class Workspace {
 	 */
 	private branchSwitching = $state(false);
 	/**
-	 * How many times the current project has been replaced.
+	 * How many times the Root the current Project is opened on has been
+	 * replaced.
 	 *
 	 * Workspace-level on purpose. The counter guards work that outlives the
-	 * Project it guards: opening a folder replaces the Project, so a counter
-	 * stored on the Project would be recreated with it and reset to zero.
-	 * The guard would then compare a stale identity against a fresh one and
-	 * find them equal, which is exactly the failure the guard exists to
-	 * prevent. The Workspace is the one object in the model that survives a
-	 * project switch.
+	 * Project it guards. The Project survives a Root change, so a counter
+	 * stored on it would not reset; and a Project is a store that never
+	 * observes its Root being replaced, so it could not count the opens
+	 * either. The Workspace is what runs the open, so it is the only object
+	 * that can count them.
 	 */
 	private projectGeneration = $state(0);
 	/**
@@ -89,7 +89,8 @@ export class Workspace {
 	commitDrafts = $state<Record<string, string>>({});
 
 	/**
-	 * URI of the current project's root, or '' when no folder is open.
+	 * URI of the Root the current Project is opened on, or '' when no Root
+	 * is open.
 	 */
 	get projectUri(): string {
 		return this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
@@ -97,8 +98,8 @@ export class Workspace {
 
 	/**
 	 * True while a project or repository mutation is running. Callers use it
-	 * to refuse concurrent mutations: two folder opens, or a folder open and
-	 * a branch switch, must not interleave.
+	 * to refuse concurrent mutations: two Root opens, or a Root open and a
+	 * branch switch, must not interleave.
 	 */
 	get projectMutationBusy(): boolean {
 		return this.projectOpening || this.branchSwitching || !!this.project.repository?.isBusy;
@@ -107,8 +108,8 @@ export class Workspace {
 	/**
 	 * Snapshot of the project that is current right now. Held across an
 	 * await and compared with `isCurrentProject` afterwards, so a result
-	 * that arrives after the user switched folders is discarded instead of
-	 * being applied to the wrong project.
+	 * that arrives after the user opened a different Root is discarded
+	 * instead of being applied to the wrong project.
 	 */
 	captureProject(): ProjectIdentity {
 		return {
@@ -120,8 +121,8 @@ export class Workspace {
 
 	/**
 	 * Is the captured identity still the current project? False once the
-	 * folder changed, once the repository was replaced, or once the project
-	 * was replaced a second time.
+	 * Root changed, once the Repository was replaced, or once the Root was
+	 * replaced a second time.
 	 */
 	isCurrentProject(target: ProjectIdentity): boolean {
 		return (
