@@ -5,10 +5,10 @@ import { EditorView, keymap, type KeyBinding } from "@codemirror/view";
 import { LanguageDescription, type Language } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
-	acceptCompletion,
 	CompletionContext,
 	completionStatus,
 	currentCompletions,
+	selectedCompletion,
 	startCompletion,
 	type Completion,
 	type CompletionResult,
@@ -1145,6 +1145,13 @@ describe("completion composition — rebound keys reach all tiers (Issue #287)",
 			// Buffer words are reachable
 			expect(labels).toContain("Notebook");
 
+			// The accept key takes the popover's selected option, so read which
+			// option that is before accepting it. The note tier ranks first, so
+			// the selected option is the note completion and not one of the
+			// three below it.
+			const accepted = selectedCompletion(view.state);
+			expect(accepted?.label).toBe("Note A");
+
 			// Allow interactionDelay to elapse so CodeMirror allows completion acceptance
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -1155,9 +1162,15 @@ describe("completion composition — rebound keys reach all tiers (Issue #287)",
 
 			// The active completion was accepted into the document
 			expect(completionStatus(view.state)).toBeNull();
-			// The popup closing alone is not enough: the accepted
-			// completion must have inserted its text into the document.
-			expect(view.state.doc.toString()).not.toBe(doc);
+			// The popup closing alone is not enough: the accepted completion
+			// must have inserted its own text into the document. "Note A" is
+			// the accepted option's own text, so a document that changed
+			// without carrying it means the wrong option was accepted.
+			expect(view.state.doc.toString()).toContain("Note A");
+			// And the two options the accept key must not have taken are
+			// absent: the snippet body and the server item's label.
+			expect(view.state.doc.toString()).not.toContain("expanded_body");
+			expect(view.state.doc.toString()).not.toContain("NotepadServer");
 		} finally {
 			view.destroy();
 		}
