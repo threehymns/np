@@ -540,7 +540,13 @@
 					hunkCompartment.of(
 						createHunkWidgetExtension(currentOptions.fileChange, appState, currentOptions.hunks, currentOptions.unstagedChunks)
 					),
-					...langExtensions,
+					// The bare Original pane has no language compartment, so it
+					// needs the static language extensions. The Working-copy
+					// pane gets its language only through languageCompartment
+					// below: a static copy here would win the language facet
+					// (first value wins) and make compartment reconfigures in
+					// update() ineffective.
+					...(bareOriginal ? langExtensions : []),
 					// Editor parity for the inline Working-copy pane only
 					// (#271): independent undo history, vim bindings,
 					// completions with workspace context, detected language,
