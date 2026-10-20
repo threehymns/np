@@ -295,15 +295,20 @@ export class FileExcerptMap {
 		this.bufferText =
 			this.bufferText.slice(0, edit.from) + edit.insert + this.bufferText.slice(edit.to);
 		if (bufferDelta !== 0) {
+			// Identify the owning segment first: an insertion at a segment's
+			// end belongs to that segment (segmentAtBufferOffset is inclusive
+			// of bufferEnd), so the owner's end must grow. Later segments shift;
+			// the owner resizes.
+			const owner = this.segmentAtBufferOffset(edit.from);
 			for (const segment of this.excerpts) {
-				if (segment.bufferStart >= edit.to) {
-					segment.bufferStart += bufferDelta;
-					segment.bufferEnd += bufferDelta;
-				} else if (segment.bufferEnd > edit.from) {
+				if (segment === owner) {
 					segment.bufferEnd = Math.max(
 						segment.bufferStart,
 						segment.bufferEnd + bufferDelta
 					);
+				} else if (segment.bufferStart >= edit.to) {
+					segment.bufferStart += bufferDelta;
+					segment.bufferEnd += bufferDelta;
 				}
 			}
 		}
@@ -315,15 +320,18 @@ export class FileExcerptMap {
 				fileEdit.insert +
 				this.fileContent.slice(fileEdit.to);
 			if (fileDelta !== 0) {
+				const fileOwner = this.excerpts.find(
+					(s) => fileEdit.from >= s.fileStart && fileEdit.from <= s.fileEnd
+				);
 				for (const segment of this.excerpts) {
-					if (segment.fileStart >= fileEdit.to) {
-						segment.fileStart += fileDelta;
-						segment.fileEnd += fileDelta;
-					} else if (segment.fileEnd > fileEdit.from) {
+					if (segment === fileOwner) {
 						segment.fileEnd = Math.max(
 							segment.fileStart,
 							segment.fileEnd + fileDelta
 						);
+					} else if (segment.fileStart >= fileEdit.to) {
+						segment.fileStart += fileDelta;
+						segment.fileEnd += fileDelta;
 					}
 				}
 			}

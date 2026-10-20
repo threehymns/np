@@ -742,6 +742,35 @@ describe("Excerpt map stays in sync after direct edits (Issue #336)", () => {
 		});
 	});
 
+	it("grows the owning segment on insertion at an excerpt boundary", () => {
+		const { map } = makeTwoExcerptMap();
+		const first = map.excerpts[0];
+
+		// Insert two chars at the very end of the first excerpt.
+		const atEnd = { from: first.bufferEnd, to: first.bufferEnd, insert: "ZZ" };
+		const fileEditEnd = map.mapExcerptEditToFileEdit(atEnd);
+		expect(fileEditEnd).not.toBeNull();
+		map.applyExcerptEdit(atEnd, fileEditEnd);
+
+		// The owning segment grew; the insertion is inside it.
+		expect(map.excerpts[0].bufferEnd).toBe(first.bufferEnd);
+		expect(map.bufferText.slice(first.bufferEnd - 2, first.bufferEnd)).toBe("ZZ");
+		// The second excerpt shifted by the insertion length.
+		expect(map.excerpts[1].bufferStart).toBeGreaterThan(first.bufferEnd);
+
+		// Insert two chars at the very start of the second excerpt.
+		const second = map.excerpts[1];
+		const atStart = { from: second.bufferStart, to: second.bufferStart, insert: "YY" };
+		const fileEditStart = map.mapExcerptEditToFileEdit(atStart);
+		expect(fileEditStart).not.toBeNull();
+		const secondEndBefore = second.bufferEnd;
+		map.applyExcerptEdit(atStart, fileEditStart);
+
+		expect(map.excerpts[1].bufferStart).toBe(second.bufferStart);
+		expect(map.excerpts[1].bufferEnd).toBe(secondEndBefore + 2);
+		expect(map.bufferText.slice(second.bufferStart, second.bufferStart + 2)).toBe("YY");
+	});
+
 	it("returns null for an edit spanning two segments", () => {
 		const { map } = makeTwoExcerptMap();
 
