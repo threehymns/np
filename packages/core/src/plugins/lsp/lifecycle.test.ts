@@ -419,6 +419,28 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 		expect(memory.value).toBe('412 MiB');
 	});
 
+	it('shows a dash when the platform cannot report a memory figure (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		// The platform's own reader reads `/proc`, which only Linux has: off
+		// Linux it answers nothing at all. A reader that answers null stands in
+		// for that platform on every machine, so the case is pinned everywhere
+		// rather than only where a runner happens to have a `/proc`.
+		let asked = 0;
+		const harness = await startPlugin([], {}, async () => {
+			asked++;
+			return null;
+		});
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		await waitFor(() => asked > 0, { label: 'the platform to be asked for the figure' });
+
+		// A dash and not a zero: a server that has reported nothing says so.
+		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
+			label: 'memory',
+			value: '—'
+		});
+	});
+
 	it('shows dashes while the handshake is still in flight (#282)', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
 		const gate = makeGate();
