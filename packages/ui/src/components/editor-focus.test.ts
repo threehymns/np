@@ -387,3 +387,92 @@ describe("The editorFocused context belongs to the focused editor", () => {
 		expect(keymaps.context.editorFocused).toBeUndefined();
 	});
 });
+
+/**
+ * When focus moves between panes, Svelte runs the gaining pane's effect
+ * before the losing pane's cleanup. The losing pane's release is then stale:
+ * it must not clear the contexts the gaining pane just claimed, and its
+ * leftover listeners must not write into them either.
+ */
+describe("A stale claim never touches a newer editor's contexts", () => {
+	it("keeps the keymap contexts when an older editor lets go after a newer one claimed", () => {
+		const keymaps = fakeKeymaps();
+
+		const releaseA = claimEditorKeymapContexts(keymaps, {
+			focused: true,
+			vimEnabled: false,
+		});
+		const releaseB = claimEditorKeymapContexts(keymaps, {
+			focused: true,
+			vimEnabled: false,
+		});
+
+		releaseA();
+		expect(keymaps.context.editor).toBe(true);
+
+		releaseB();
+		expect(keymaps.context.editor).toBeUndefined();
+	});
+
+	it("keeps the vim mode when an older editor lets go after a newer one claimed", () => {
+		const keymaps = fakeKeymaps();
+		const cmA = fakeCm();
+		const cmB = fakeCm();
+
+		const releaseA = claimEditorKeymapContexts(keymaps, {
+			focused: true,
+			vimEnabled: true,
+			cm: cmA,
+		});
+		const releaseB = claimEditorKeymapContexts(keymaps, {
+			focused: true,
+			vimEnabled: true,
+			cm: cmB,
+		});
+
+		// A's listener is still attached but its claim is stale: a mode
+		// change on the old editor must not write into the contexts.
+		cmA.emit("insert");
+		expect(keymaps.context.vim_mode).toBe("normal");
+
+		releaseA();
+		expect(keymaps.context.vim_mode).toBe("normal");
+
+		cmB.emit("insert");
+		expect(keymaps.context.vim_mode).toBe("insert");
+
+		releaseB();
+		expect(keymaps.context.vim_mode).toBeUndefined();
+	});
+
+	it("keeps editorFocused when an older editor lets go after a newer one claimed", () => {
+		const keymaps = fakeKeymaps();
+		const rootA = fakeRoot();
+		const rootB = fakeRoot();
+
+		const releaseA = claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root: rootA,
+			activeElement: () => null,
+		});
+		const releaseB = claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root: rootB,
+			activeElement: () => null,
+		});
+
+		rootB.emit("focusin");
+		expect(keymaps.context.editorFocused).toBe(true);
+
+		// A's listeners are still attached but its claim is stale: a focus
+		// event on the old root must not clear the newer editor's context.
+		rootA.emit("focusout", { relatedTarget: {} });
+		expect(keymaps.context.editorFocused).toBe(true);
+
+		releaseA();
+		expect(keymaps.context.editorFocused).toBe(true);
+
+		releaseB();
+		expect(keymaps.context.editorFocused).toBeUndefined();
+	});
+});

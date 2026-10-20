@@ -46,6 +46,18 @@ export interface VimModeSource {
 }
 
 /**
+ * The claim generation for the keymap contexts, bumped on every claim. A
+ * release only clears the contexts when its generation is still the latest:
+ * when focus moves between panes, Svelte runs the gaining pane's effect
+ * before the losing pane's cleanup, so the losing pane's release must not
+ * wipe the contexts the gaining pane just claimed.
+ */
+let keymapClaimGeneration = 0;
+
+/** The same generation guard for the "editorFocused" context. */
+let focusedClaimGeneration = 0;
+
+/**
  * Apply the word-wrap preference to an editor.
  *
  * Only the focused editor follows the preference. An editor in another pane
@@ -75,7 +87,10 @@ export function applyEditorWrap(
  * keybindings down with it.
  *
  * The returned function releases the contexts. It is safe to call when
- * nothing was claimed.
+ * nothing was claimed. A release from a superseded claim clears nothing:
+ * each claim carries a generation, and only the latest generation may
+ * write the contexts, so an older editor letting go after a newer editor
+ * claimed cannot take the newer editor's keybindings down with it.
  */
 export function claimEditorKeymapContexts(
 	keymaps: KeymapContextOwner,
@@ -89,10 +104,12 @@ export function claimEditorKeymapContexts(
 		return () => {};
 	}
 
+	const generation = ++keymapClaimGeneration;
 	keymaps.setContext("editor", true);
 
 	const cm = options.vimEnabled ? (options.cm ?? null) : null;
 	const onModeChange = (args: { mode: string }) => {
+		if (generation !== keymapClaimGeneration) return;
 		keymaps.setContext("vim_mode", args.mode);
 	};
 
@@ -105,6 +122,7 @@ export function claimEditorKeymapContexts(
 
 	return () => {
 		if (cm) cm.off("vim-mode-change", onModeChange);
+		if (generation !== keymapClaimGeneration) return;
 		keymaps.setContext("editor", undefined);
 		keymaps.setContext("vim_mode", undefined);
 	};
@@ -126,7 +144,8 @@ export function claimEditorKeymapContexts(
  * moment it let go.
  *
  * The returned function releases the context. It is safe to call when nothing
- * was claimed.
+ * was claimed. Like the keymap contexts, the release is guarded by the
+ * claim generation: a superseded claim clears nothing.
  */
 export function claimEditorFocusedContext(
 	keymaps: KeymapContextOwner,
@@ -141,6 +160,7 @@ export function claimEditorFocusedContext(
 		return () => {};
 	}
 
+	const generation = ++focusedClaimGeneration;
 	const root = options.root;
 	const syncFocus = () => {
 		const active = options.activeElement();
@@ -151,9 +171,11 @@ export function claimEditorFocusedContext(
 		}
 	};
 	const onFocusIn = () => {
+		if (generation !== focusedClaimGeneration) return;
 		keymaps.setContext("editorFocused", true);
 	};
 	const onFocusOut = (event: { relatedTarget?: unknown }) => {
+		if (generation !== focusedClaimGeneration) return;
 		const next = event.relatedTarget;
 		if (next && root.contains(next)) return;
 		keymaps.setContext("editorFocused", undefined);
@@ -166,6 +188,7 @@ export function claimEditorFocusedContext(
 	return () => {
 		root.removeEventListener("focusin", onFocusIn);
 		root.removeEventListener("focusout", onFocusOut);
+		if (generation !== focusedClaimGeneration) return;
 		keymaps.setContext("editorFocused", undefined);
 	};
 }
