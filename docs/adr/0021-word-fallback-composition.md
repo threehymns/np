@@ -122,7 +122,7 @@ through the option's `info` function, which CodeMirror calls when it renders
 the option's documentation. The round trip is one request per option the
 popover shows, and the runtime keeps each reply, so a second visit to the same
 option is a cache hit rather than a second request. The advertisement and the
-hover request beside it are stated in ADR 0024.
+hover request beside it are stated in ADR 0028.
 
 `completionProvider` is declared because the client *issues*
 `textDocument/completion`. Declaring nothing while asking for the answers
