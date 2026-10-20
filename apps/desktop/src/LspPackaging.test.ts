@@ -130,8 +130,9 @@ describe('adding a second server is one descriptor and configuration (#281)', ()
 			.sort();
 		expect(missingFromVtsls).toEqual([]);
 
-		// 2. First server descriptor is unaffected and unchanged.
-		expect(LSP_DESCRIPTORS).toHaveLength(1);
-		expect(LSP_DESCRIPTORS[0].id).toBe('typescript');
+		// 2. The typescript descriptor is present, and the registry length is not
+		// asserted: a second bundled server is configuration, so adding one must
+		// not break this test.
+		expect(LSP_DESCRIPTORS.some((descriptor) => descriptor.id === 'typescript')).toBe(true);
 	});
 });
