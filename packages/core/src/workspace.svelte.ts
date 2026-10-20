@@ -710,12 +710,18 @@ export class Workspace {
 	}
 
 	/**
-	 * Open a folder as the current project.
+	 * Open a Root as the current project.
 	 *
 	 * Returns whether the project changed. A cancelled picker, a denied
 	 * permission and a failed destination load all leave the current project
 	 * exactly as it was and report false; the failure reason, when there is
 	 * one, lands in `projectError`.
+	 *
+	 * "Exactly as it was" covers the state that names the project: the
+	 * settings attachment follows the Root, and the recent folders list
+	 * names the Roots that were opened, so a failed open puts both back
+	 * rather than leaving either pointing at a project that was never
+	 * opened.
 	 *
 	 * Only one project mutation runs at a time: a second request while one
 	 * is in flight is refused rather than interleaved.
@@ -739,9 +745,14 @@ export class Workspace {
 			documents: this.documents,
 			layout: this.layout,
 			activePaneId: this.activePaneId,
-			nodes: this.project.projectTree.nodes
+			nodes: this.project.projectTree.nodes,
+			searchQuery: this.project.projectTree.searchQuery,
+			recentFolders: $state.snapshot(this.recentFolders)
 		};
 		let changed = false;
+		// Whether the settings attachment has moved to the destination. The
+		// attachment follows the Root, so a failed open has to move it back.
+		let attachmentMoved = false;
 		try {
 			const origin = specificOrigin ?? await this.project.storage.pickDirectory();
 			if (!origin) return false;
@@ -764,6 +775,10 @@ export class Workspace {
 
 			this.project.rootOrigin = origin;
 			this.project.hasRootPermission = true;
+			// The settings attachment moves with the Root. It is marked as
+			// moved before the call, so a failure inside the callback still
+			// leaves the rollback able to move it back.
+			attachmentMoved = true;
 			await this.onRootOriginChange?.(origin);
 
 			// Repository lifecycle is owned by feature plugins (#202)
@@ -810,7 +825,25 @@ export class Workspace {
 				this.layout = previous.layout;
 				this.activePaneId = previous.activePaneId;
 				this.project.projectTree.nodes = previous.nodes;
+				this.project.projectTree.searchQuery = previous.searchQuery;
 				this.project.projectTree.resetExpansionState();
+				// The recent folders list names the Roots that were opened.
+				// The destination was never opened, so it does not belong in
+				// the list, and the list the open started from is the list
+				// the window goes back to.
+				this.recentFolders = previous.recentFolders;
+				// The settings attachment followed the Root to the
+				// destination, so it follows the Root back. The permission
+				// is restored first, because the host reads it to decide
+				// whether the settings of a Root can be attached at all.
+				if (attachmentMoved) {
+					try {
+						await this.onRootOriginChange?.(previous.root);
+					} catch {
+						// The open failure is the reason to report. A failure
+						// to put the settings back does not change it.
+					}
+				}
 			}
 			if (!(error instanceof Error && error.name === 'AbortError')) {
 				this.projectError = `Failed to open folder: ${error instanceof Error ? error.message : String(error)}`;

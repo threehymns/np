@@ -129,6 +129,50 @@ describe("workspace project lifecycle (ticket #188)", () => {
 		expect(ws.documents.map((d) => d.content)).toContain("Root draft");
 	});
 
+	it("rolls the settings attachment and the recent folders back when the destination fails to load", async () => {
+		const harness = await makeWorkspace();
+		const ws = harness.ws;
+		const { Preferences } = await import("./preferences.svelte");
+
+		// The workspace settings are attached to the project that is open,
+		// so the attachment follows the Root. The host wires it the way the
+		// application does.
+		const prefs = new Preferences({ getItem: () => null, setItem: () => {} });
+		const rootSettings = JSON.stringify({ editor: { tab_size: 4 } });
+		const otherSettings = JSON.stringify({ editor: { tab_size: 8 } });
+		const settingsByRoot: Record<string, string> = {
+			"/projects/np": rootSettings,
+			"/projects/other": otherSettings
+		};
+		ws.project.storage.readFile = mock(async (origin: FileOrigin) => {
+			const root = origin.path.replace(/\/\.np\/settings\.json$/, "");
+			return settingsByRoot[root] ?? "";
+		});
+		ws.onRootOriginChange = async (origin) => {
+			if (origin && ws.project.hasRootPermission) {
+				await prefs.attachWorkspace(ws.project.storage, origin);
+			} else {
+				prefs.clearWorkspace();
+			}
+		};
+
+		await ws.openDirectory(rootOrigin);
+		expect(prefs.getWorkspaceText()).toBe(rootSettings);
+
+		const persistence = ws.project.persistence as MemorySessionPersistence;
+		persistence.loadOpenFiles = mock(async () => {
+			throw new Error("load failed");
+		});
+
+		expect(await ws.openDirectory(otherOrigin)).toBe(false);
+
+		// The attachment went to the destination, so the failed open has to
+		// bring it back to the project that is still open.
+		expect(prefs.getWorkspaceText()).toBe(rootSettings);
+		// The recent folders must not name a project that was never opened.
+		expect(ws.recentFolders.map((f) => f.path)).toEqual(["/projects/np"]);
+	});
+
 	it("preserves the outgoing session when a picker is cancelled or permission is denied", async () => {
 		const harness = await makeWorkspace();
 		const ws = harness.ws;
