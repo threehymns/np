@@ -161,6 +161,20 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		expect(scan.truncated).toBe(true);
 	});
 
+	it("the shared file matcher keeps offsets correct with CRLF line endings", () => {
+		const scan = findMatchesInContentFn(
+			"first\r\ntarget on second\r\nthird",
+			buildSearchRegexFn({ pattern: "target" }),
+			0,
+			Number.POSITIVE_INFINITY
+		);
+
+		expect(scan.matches.length).toBe(1);
+		// "first\r\n" is 7 chars, so the match on line 2 starts at offset 7.
+		expect(scan.matches[0].offset).toBe(7);
+		expect(scan.matches[0].line).toBe(2);
+	});
+
 	it("the engine only reads the Worktree snapshot and never walks the disk itself", async () => {
 		const storage = createMockStorage({
 			"/test-project/a.txt": "search target in a",

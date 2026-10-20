@@ -199,14 +199,20 @@ export function findMatchesInContent(
 	maxMatches: number,
 	signal?: AbortSignal
 ): FileMatchScan {
-	const lines = content.split(/\r?\n/);
+	// Split while keeping the separators: charOffset must advance by the
+	// actual separator length (CRLF is 2 chars, LF is 1) so match offsets
+	// stay correct in files with Windows line endings.
+	const parts = content.split(/(\r?\n)/);
+	const lineCount = Math.ceil(parts.length / 2);
+	const lineTextAt = (idx: number): string => parts[idx * 2];
 	const matches: SearchMatch[] = [];
 	let charOffset = 0;
 	let truncated = false;
 
-	for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+	for (let lineIdx = 0; lineIdx < lineCount; lineIdx++) {
 		if (signal?.aborted) break;
-		const lineText = lines[lineIdx];
+		const lineText = lineTextAt(lineIdx);
+		const separator = parts[lineIdx * 2 + 1] ?? '';
 		searchRegex.lastIndex = 0;
 		let match: RegExpExecArray | null;
 
@@ -227,12 +233,12 @@ export function findMatchesInContent(
 			// Build context lines
 			const contextBefore: SearchMatchContextLine[] = [];
 			for (let b = Math.max(0, lineIdx - contextLines); b < lineIdx; b++) {
-				contextBefore.push({ line: b + 1, text: lines[b] });
+				contextBefore.push({ line: b + 1, text: lineTextAt(b) });
 			}
 
 			const contextAfter: SearchMatchContextLine[] = [];
-			for (let a = lineIdx + 1; a <= Math.min(lines.length - 1, lineIdx + contextLines); a++) {
-				contextAfter.push({ line: a + 1, text: lines[a] });
+			for (let a = lineIdx + 1; a <= Math.min(lineCount - 1, lineIdx + contextLines); a++) {
+				contextAfter.push({ line: a + 1, text: lineTextAt(a) });
 			}
 
 			matches.push({
@@ -246,7 +252,7 @@ export function findMatchesInContent(
 			});
 		}
 
-		charOffset += lineText.length + 1;
+		charOffset += lineText.length + separator.length;
 
 		if (truncated) {
 			break;
