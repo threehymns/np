@@ -515,7 +515,11 @@
 			return 'normal';
 		}
 
-		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
+		// Seed the pane from the bound Document's language when it carries an
+		// override; the change-detection key below is derived from docLanguage,
+		// so starting from the filepath language would leave an overridden
+		// pane stuck until the key changes.
+		const langDesc = options.docLanguage ?? LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
 			if (disposed) return;
 			const bareOriginal = currentOptions.registerAs === 'split';
@@ -870,7 +874,11 @@
 			return 'normal';
 		}
 
-		const langDesc = LanguageSupport.getLanguageForFile(options.filepath);
+		// Seed both panes from the bound Document's language when it carries an
+		// override; the b-pane's change-detection key is derived from
+		// docLanguage, so starting from the filepath language would leave an
+		// overridden pane stuck until the key changes.
+		const langDesc = options.docLanguage ?? LanguageSupport.getLanguageForFile(options.filepath);
 		getLanguageExtensions(langDesc).then((langExtensions) => {
 			if (disposed) return;
 			view = new MergeView({
