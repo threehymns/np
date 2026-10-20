@@ -168,6 +168,26 @@ describe("DiffViewer inline Working-copy pane parity (#271 review)", () => {
 		expect(src).toContain("languageRevision: appState.plugins?.languageRevision");
 	});
 
+	it("keeps the inline language compartment the sole language source for the Working-copy pane", () => {
+		const body = setupEditorBody();
+		// A static copy would win the language facet (first value wins) and
+		// make the compartment reconfigure in update() ineffective, so only
+		// the bare Original pane (which has no compartment) gets one.
+		expect(body).toContain("...(bareOriginal ? langExtensions : [])");
+		expect(body).not.toMatch(/^\s*\.\.\.langExtensions,$/m);
+	});
+
+	it("seeds both diff panes from the bound Document language instead of the filepath", () => {
+		// Both setup paths (inline editor and split merge view) derive the
+		// initial language from docLanguage, matching the change-detection
+		// keys — so an override present at mount can't leave a pane stuck on
+		// the filepath language with update() never firing.
+		const seeds = src.match(
+			/const langDesc = options\.docLanguage \?\? LanguageSupport\.getLanguageForFile\(options\.filepath\);/g
+		);
+		expect(seeds?.length).toBe(2);
+	});
+
 	it("matches tab editing keybindings and behaviors in the inline pane", () => {
 		const body = setupEditorBody();
 		for (const token of [
