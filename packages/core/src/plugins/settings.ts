@@ -1530,6 +1530,28 @@ export class SettingsManager {
 	}
 
 	/**
+	 * The value one scope stores for one key, with no other scope folded in.
+	 *
+	 * `resolve` answers "what does this setting mean now", which is a question
+	 * about every scope at once. A settings page that edits one scope asks a
+	 * different question: "what does this scope itself say". This answers that
+	 * one, so a page can show and write a scope's own value without
+	 * materialising the other scope's values into it (ADR 0014, ADR 0031).
+	 *
+	 * The value is the scope's stored value, exactly as stored. An invalid one
+	 * comes back as it is, because the page that edits it has to be able to
+	 * show the user what is wrong with it.
+	 */
+	getScopeValue<T = any>(
+		namespace: string,
+		key: string,
+		scope: SettingScope = 'user'
+	): T | undefined {
+		const resolved = this.resolver.resolve<T>(namespace, key);
+		return scope === 'workspace' ? resolved.workspaceValue : resolved.userValue;
+	}
+
+	/**
 	 * Checks if an explicit override exists in the specified scope.
 	 */
 	hasOverride(namespace: string, key: string, scope: SettingScope = 'workspace'): boolean {

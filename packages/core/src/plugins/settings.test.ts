@@ -306,6 +306,99 @@ describe('editor.languages layering (#286)', () => {
 	});
 });
 
+describe('A scope\'s own value (#327)', () => {
+	const USER_MAP = { Markdown: { words: 'disabled' } };
+	const WORKSPACE_MAP = { TypeScript: { min_word_length: 2 } };
+
+	/**
+	 * A preferences store with a different map in each scope, so the folded
+	 * map and the two own maps are three different answers.
+	 */
+	async function prefsWithBothScopes() {
+		const storage = new MockStorage({
+			'np-prefs-v2': JSON.stringify({ editor: { languages: USER_MAP } })
+		});
+		const prefs = new Preferences(storage);
+		const workspaceFiles: string[] = [];
+
+		await prefs.attachWorkspace(
+			{
+				readFile: async () => JSON.stringify({ editor: { languages: WORKSPACE_MAP } }),
+				saveFile: async (content: string) => {
+					workspaceFiles.push(content);
+				}
+			},
+			{ scheme: 'file', path: '/workspace', name: 'workspace' }
+		);
+
+		return { prefs, storage, workspaceFiles };
+	}
+
+	it('gives the user scope the user\'s own map, not the folded one', async () => {
+		const { prefs } = await prefsWithBothScopes();
+
+		expect(prefs.getScopeValue('editor', 'languages', 'user')).toEqual(USER_MAP);
+		// The folded map is still the resolved one, and is still the answer to
+		// "what does this language get".
+		expect(prefs.get('editor', 'languages')).toEqual({
+			Markdown: { words: 'disabled' },
+			TypeScript: { min_word_length: 2 }
+		});
+	});
+
+	it('gives the workspace scope the workspace\'s own map, not the folded one', async () => {
+		const { prefs } = await prefsWithBothScopes();
+
+		expect(prefs.getScopeValue('editor', 'languages', 'workspace')).toEqual(WORKSPACE_MAP);
+	});
+
+	it('gives a scope that stores no map an empty one, not the other scope\'s', async () => {
+		const storage = new MockStorage();
+		const prefs = new Preferences(storage);
+		await prefs.attachWorkspace(
+			{
+				readFile: async () => JSON.stringify({ editor: { languages: WORKSPACE_MAP } }),
+				saveFile: async () => {}
+			},
+			{ scheme: 'file', path: '/workspace', name: 'workspace' }
+		);
+
+		expect(prefs.getScopeValue('editor', 'languages', 'user')).toBeUndefined();
+		expect(prefs.getScopeValue('editor', 'languages', 'workspace')).toEqual(WORKSPACE_MAP);
+	});
+
+	it('a write in the user scope leaves the workspace scope\'s stored value alone', async () => {
+		const { prefs, storage, workspaceFiles } = await prefsWithBothScopes();
+
+		prefs.set('editor', 'languages', { Python: { words: 'enabled' } }, 'user');
+
+		expect(prefs.getScopeValue('editor', 'languages', 'user')).toEqual({
+			Python: { words: 'enabled' }
+		});
+		expect(prefs.getScopeValue('editor', 'languages', 'workspace')).toEqual(WORKSPACE_MAP);
+		// The workspace file was not rewritten, and the user's own document
+		// did not gain the workspace's entries.
+		expect(workspaceFiles).toEqual([]);
+		expect(JSON.parse(storage.getItem('np-prefs-v2')!).editor.languages).toEqual({
+			Python: { words: 'enabled' }
+		});
+	});
+
+	it('a write in the workspace scope leaves the user scope\'s stored value alone', async () => {
+		const { prefs, storage } = await prefsWithBothScopes();
+		const userWritesBefore = storage.setItemCalls.length;
+
+		prefs.set('editor', 'languages', { Rust: { lsp: false } }, 'workspace');
+
+		expect(prefs.getScopeValue('editor', 'languages', 'workspace')).toEqual({
+			Rust: { lsp: false }
+		});
+		expect(prefs.getScopeValue('editor', 'languages', 'user')).toEqual(USER_MAP);
+		// The user's own document was not rewritten.
+		expect(storage.setItemCalls.length).toBe(userWritesBefore);
+	});
+});
+
 describe('Invalid Stored Values & Diagnostics (#198)', () => {
 	const validationSchema: SettingNamespaceSchema = {
 		namespace: 'demo',
