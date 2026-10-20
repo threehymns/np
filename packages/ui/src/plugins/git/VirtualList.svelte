@@ -1,6 +1,6 @@
 <script lang="ts" generics="T">
 	import type { Snippet } from 'svelte';
-	import { VirtualListController } from './virtual-list.svelte';
+	import { VirtualListController, visibleRows } from './virtual-list.svelte';
 
 	let {
 		items = [],
@@ -70,7 +70,7 @@
 		}
 	});
 
-	let visibleItems = $derived(items.slice(controller.startIndex, controller.endIndex));
+	let rows = $derived(visibleRows(items, controller.startIndex, controller.endIndex, getKey));
 </script>
 
 <div
@@ -80,9 +80,9 @@
 	data-slot={dataSlot}
 >
 	<div style="padding-top: {controller.topPadding}px; padding-bottom: {controller.bottomPadding}px; box-sizing: border-box;">
-		{#each visibleItems as item, idx (getKey ? getKey(item, controller.startIndex + idx) : controller.startIndex + idx)}
+		{#each rows as row (row.key)}
 			{#if children}
-				{@render children(item, controller.startIndex + idx)}
+				{@render children(row.item, row.index)}
 			{/if}
 		{/each}
 	</div>

@@ -7,6 +7,48 @@ export interface VirtualListOptions {
 	viewportHeight?: number;
 }
 
+export interface VirtualRow<T> {
+	/** The item this row renders. */
+	item: T;
+	/** The row's absolute index in the full item list. */
+	index: number;
+	/**
+	 * The key the row is rendered under.
+	 *
+	 * The key is what makes a row recyclable: a row whose key is unchanged
+	 * when the window moves keeps its DOM node instead of being torn down and
+	 * rebuilt, so scrolling reuses the rows that are still on screen.
+	 */
+	key: string | number;
+}
+
+/**
+ * The rows a virtual list renders for one window of its items.
+ *
+ * The window is the half-open range `[startIndex, endIndex)` of the full
+ * list, so the rows are a slice of the list and never the whole of it
+ * unless the list is shorter than the window.
+ *
+ * The bounds are clamped to the list, so a window that runs past the end
+ * (the list shrank, or the scroll offset was beyond the last row) yields
+ * the rows that exist rather than rows for items that do not.
+ */
+export function visibleRows<T>(
+	items: T[],
+	startIndex: number,
+	endIndex: number,
+	getKey?: (item: T, index: number) => string | number
+): VirtualRow<T>[] {
+	const start = Math.max(0, Math.min(startIndex, items.length));
+	const end = Math.max(start, Math.min(endIndex, items.length));
+	const rows: VirtualRow<T>[] = [];
+	for (let index = start; index < end; index++) {
+		const item = items[index];
+		rows.push({ item, index, key: getKey ? getKey(item, index) : index });
+	}
+	return rows;
+}
+
 function resolveNumeric(val: NumericOrGetter | undefined, fallback: number): number {
 	if (val === undefined) return fallback;
 	return typeof val === 'function' ? val() : val;
