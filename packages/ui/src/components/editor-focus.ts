@@ -1,5 +1,4 @@
 import { EditorView } from "@codemirror/view";
-import { vim } from "@replit/codemirror-vim";
 import type { Compartment } from "@codemirror/state";
 
 /**
@@ -52,24 +51,6 @@ export function applyEditorWrap(
 		effects: options.compartment.reconfigure(
 			options.wrap ? EditorView.lineWrapping : [],
 		),
-	});
-}
-
-/**
- * Apply the vim-mode preference to an editor.
- *
- * Only the focused editor runs vim mode. The vim extension keeps its own
- * state (the mode, the registers), so it is installed and removed as the
- * focus moves rather than left running in a pane the user is not typing in.
- */
-export function applyEditorVim(
-	view: FocusableView | null | undefined,
-	options: { focused: boolean; vimEnabled: boolean; compartment: Compartment },
-): void {
-	if (!view || !options.focused) return;
-
-	view.dispatch({
-		effects: options.compartment.reconfigure(options.vimEnabled ? vim() : []),
 	});
 }
 

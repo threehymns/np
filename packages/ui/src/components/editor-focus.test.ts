@@ -6,7 +6,6 @@ import { Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
 	applyEditorWrap,
-	applyEditorVim,
 	claimEditorKeymapContexts,
 	type FocusableView,
 	type KeymapContextOwner,
@@ -117,15 +116,6 @@ describe("The editor in a pane without focus keeps no focus-sensitive state", ()
 		expect(dispatched).toEqual([]);
 	});
 
-	it("does not run vim mode", () => {
-		const { view, dispatched } = fakeView();
-		const compartment = new Compartment();
-
-		applyEditorVim(view, { focused: false, vimEnabled: true, compartment });
-
-		expect(dispatched).toEqual([]);
-	});
-
 	it("claims no keymap context, so the focused editor's contexts survive", () => {
 		const keymaps = fakeKeymaps();
 		const cm = fakeCm();
@@ -156,28 +146,6 @@ describe("The focused editor owns the focus-sensitive state", () => {
 			EditorView.lineWrapping,
 		);
 		expect((dispatched[1].effects as { value: { extension: unknown } }).value.extension).toEqual([]);
-	});
-
-	it("runs vim mode when the preference is on", () => {
-		const { view, dispatched } = fakeView();
-		const compartment = new Compartment();
-
-		applyEditorVim(view, { focused: true, vimEnabled: true, compartment });
-
-		expect(dispatched).toHaveLength(1);
-		const configured = (dispatched[0].effects as { value: { extension: unknown } }).value.extension;
-		expect(Array.isArray(configured)).toBe(true);
-		expect((configured as unknown[]).length).toBeGreaterThan(0);
-	});
-
-	it("removes vim mode when the preference is off", () => {
-		const { view, dispatched } = fakeView();
-		const compartment = new Compartment();
-
-		applyEditorVim(view, { focused: true, vimEnabled: false, compartment });
-
-		expect(dispatched).toHaveLength(1);
-		expect((dispatched[0].effects as { value: { extension: unknown } }).value.extension).toEqual([]);
 	});
 
 	it("claims the editor keymap context and releases it again", () => {
@@ -238,7 +206,7 @@ describe("The editor component follows the focused prop", () => {
 	it("takes word wrap, vim mode and the keymap contexts from the focused prop", () => {
 		const blocks = effectBlocks(editorSource);
 
-		for (const call of ["applyEditorWrap(", "applyEditorVim(", "claimEditorKeymapContexts("]) {
+		for (const call of ["applyEditorWrap(", "vimCompartment.reconfigure", "claimEditorKeymapContexts("]) {
 			const block = blockWith(blocks, call);
 			expect(block).toContain("focused");
 			expect(block).not.toContain("active");

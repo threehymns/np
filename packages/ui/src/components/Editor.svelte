@@ -12,7 +12,7 @@
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
 	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
-	import { applyEditorWrap, applyEditorVim, claimEditorKeymapContexts } from "./editor-focus";
+	import { applyEditorWrap, claimEditorKeymapContexts } from "./editor-focus";
 
 	let {
 		doc,
@@ -227,13 +227,19 @@
 		applyEditorWrap(view, { focused, wrap, compartment: wrapCompartment });
 	});
 
-	// Sync vim setting
+	// Sync vim setting. Only the focused editor runs vim mode: the vim
+	// extension keeps its own state (the mode, the registers), so it is
+	// installed as the focus moves rather than left running in a pane the
+	// user is not typing in.
 	$effect(() => {
-		applyEditorVim(view, {
-			focused,
-			vimEnabled: appState.prefs.vimMode,
-			compartment: vimCompartment,
-		});
+		const vimEnabled = appState.prefs.vimMode;
+		if (view && focused) {
+			view.dispatch({
+				effects: vimCompartment.reconfigure(
+					vimEnabled ? vim() : [],
+				),
+			});
+		}
 	});
 
 	// Sync plugin editor contributions when contributions or language change
