@@ -383,7 +383,19 @@ describe("clipboard bindings respect editor focus", () => {
 });
 
 describe("completion trigger and acceptance keybindings (Issue #287)", () => {
-	function newCompletionRegistry(initialCommands?: Record<string, { action?: () => any; isEnabled?: () => boolean }>) {
+	/**
+	 * A registry with the completion commands registered.
+	 *
+	 * `focused` mirrors the `editorFocused` context the editor sets: the
+	 * `editor` context alone is tab-scoped, so it stays true while the user
+	 * is interacting with something that never takes focus, such as a hover
+	 * tooltip. The completion bindings are focus-scoped, so the default here
+	 * is a focused editor and the focus test asks for an unfocused one.
+	 */
+	function newCompletionRegistry(
+		initialCommands?: Record<string, { action?: () => any; isEnabled?: () => boolean }>,
+		focused = true,
+	) {
 		const executed: string[] = [];
 		const defaultCommands: Record<string, any> = {
 			"edit.complete": { action: () => true },
@@ -408,6 +420,8 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 		};
 		const reg = new KeymapRegistry(appState);
 		reg.loadBindings(defaultKeymap as any);
+		reg.setContext("editor", true);
+		if (focused) reg.setContext("editorFocused", true);
 		return { reg, executed, commandMap, appState };
 	}
 
@@ -432,7 +446,6 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 
 	it("binds ctrl+space to edit.complete and enter to edit.acceptCompletion when vim is off", () => {
 		const { reg, executed } = newCompletionRegistry();
-		reg.setContext("editor", true);
 
 		// Trigger completion via ctrl+space
 		const triggerKey = completionKeyEvent(" ", { ctrl: true });
@@ -449,7 +462,6 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 
 	it("binds ctrl+space to edit.complete and ctrl+y to edit.acceptCompletion in vim insert mode", () => {
 		const { reg, executed } = newCompletionRegistry();
-		reg.setContext("editor", true);
 		reg.setContext("vim_mode", "insert");
 
 		// Trigger via ctrl+space
@@ -470,7 +482,6 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 
 	it("does not bind completion trigger or accept keys in vim normal mode", () => {
 		const { reg, executed } = newCompletionRegistry();
-		reg.setContext("editor", true);
 		reg.setContext("vim_mode", "normal");
 
 		const triggerKey = completionKeyEvent(" ", { ctrl: true });
@@ -490,12 +501,11 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 
 	it("allows user keymap to rebind trigger and acceptance keys", () => {
 		const { reg, executed } = newCompletionRegistry();
-		reg.setContext("editor", true);
 
 		// User overrides: rebind trigger to alt+/ and accept to tab
 		reg.reloadUserKeymap(JSON.stringify([
 			{
-				context: "editor && !vim_mode",
+				context: "editor && editorFocused && !vim_mode",
 				bindings: {
 					"alt+/": "edit.complete",
 					"tab": "edit.acceptCompletion",
@@ -528,12 +538,11 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 
 	it("does not swallow keystrokes for unbindings or stale disabled-plugin bindings", () => {
 		const { reg } = newCompletionRegistry();
-		reg.setContext("editor", true);
 
 		// User unbinds enter and binds ctrl+e to a disabled plugin command
 		reg.reloadUserKeymap(JSON.stringify([
 			{
-				context: "editor && !vim_mode",
+				context: "editor && editorFocused && !vim_mode",
 				bindings: {
 					"enter": "",
 					"ctrl+e": "disabledPlugin.action",
@@ -563,12 +572,48 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 			// When no completion popup is open, acceptCompletion returns false
 			"edit.acceptCompletion": { action: () => false }
 		});
-		reg.setContext("editor", true);
 
 		const enterKey = completionKeyEvent("Enter");
 		// Returns false and does not prevent default, so Enter creates a newline
 		expect(reg.handleKeydown(enterKey.e)).toBe(false);
 		expect(enterKey.prevented()).toBe(0);
 		expect(executed).toEqual(["edit.acceptCompletion"]);
+	});
+
+	/**
+	 * The trigger and the acceptance key are focus-scoped, and the reason is
+	 * the shape of the two overlays: the completion popup is an overlay exactly
+	 * like the hover tooltip, and the `editor` context stays true for the
+	 * whole active tab, including while the user selects text in a tooltip
+	 * (which never takes focus). An overlay must not open another overlay on
+	 * top of itself, so the trigger waits for real focus.
+	 */
+	it("does not trigger or accept a completion while the editor is not focused", () => {
+		const { reg, executed } = newCompletionRegistry(undefined, false);
+
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const acceptKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(acceptKey.e)).toBe(false);
+		expect(acceptKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
+	});
+
+	it("does not trigger or accept a completion while the editor is not focused in vim insert mode", () => {
+		const { reg, executed } = newCompletionRegistry(undefined, false);
+		reg.setContext("vim_mode", "insert");
+
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const acceptKey = completionKeyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(acceptKey.e)).toBe(false);
+		expect(acceptKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
 	});
 });

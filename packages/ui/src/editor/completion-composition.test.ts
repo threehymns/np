@@ -1095,11 +1095,16 @@ describe("completion composition — rebound keys reach all tiers (Issue #287)",
 		const reg = new KeymapRegistry(appState);
 		reg.loadBindings(defaultKeymap as any);
 		reg.setContext("editor", true);
+		// The completion trigger and the acceptance key are focus-scoped: the
+		// `editor` context is tab-scoped and stays true while the user is
+		// interacting with something that never takes focus, such as a hover
+		// tooltip, and the completion popup is an overlay like that tooltip.
+		reg.setContext("editorFocused", true);
 
 		// Rebind trigger to alt+/ and accept to tab
 		reg.reloadUserKeymap(JSON.stringify([
 			{
-				context: "editor && !vim_mode",
+				context: "editor && editorFocused && !vim_mode",
 				bindings: {
 					"alt+/": "edit.complete",
 					"tab": "edit.acceptCompletion",

@@ -62,14 +62,23 @@ export const defaultKeymap: KeymapBinding[] = [
 		}
 	},
 	{
-		context: "editor && vim_mode == insert",
+		// The completion trigger and the acceptance key are focus-scoped, not
+		// merely tab-scoped, for the same reason the clipboard bindings are:
+		// the `editor` context stays true for the whole active tab, including
+		// while the user selects text in a hover tooltip, which never takes
+		// focus. The completion popup is an overlay exactly like that tooltip,
+		// and an overlay must not open another overlay on top of itself. So the
+		// trigger waits for real focus, and the acceptance key with it: a
+		// completion accepted while the user is reading a tooltip they cannot
+		// see is a completion they did not choose.
+		context: "editor && editorFocused && vim_mode == insert",
 		bindings: {
 			"ctrl+space": "edit.complete",
 			"ctrl+y": "edit.acceptCompletion"
 		}
 	},
 	{
-		context: "editor && !vim_mode",
+		context: "editor && editorFocused && !vim_mode",
 		bindings: {
 			"ctrl+space": "edit.complete",
 			"enter": "edit.acceptCompletion"
