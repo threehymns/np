@@ -5,9 +5,11 @@ unasked. Both answers reach the editor through the one store ADR 0022 puts
 between the protocol and the decorations, so a file that one server serves by
 pull and another by push is one file with one set of marks, and the store has
 to say which of the two answers wins. It says the pull. A pull is asked for
-against the document as the editor holds it, while a push may have been
-computed against the revision before the last change, so the pull is the newer
-word for that path and the store keeps it.
+after the change, against the document as the editor holds it, while a push
+may have been computed against the revision before that change, so the pull is
+the newer word for that path and the store keeps it. The store does not
+compare revisions to decide this. The source of the result decides, per path
+and per server, and that is the whole of the rule.
 
 ## One slice per path and per server, and the source that filled it
 
@@ -24,9 +26,10 @@ serves the same file still lands, in its own slice, and the file shows what
 both servers say about it. A report that carries no findings clears that
 server's slice for that path and nothing else, on the terms a clean push
 already had, and a path no server has an opinion about holds no slice at all.
-A report that is dropped changes nothing: the store's revision does not move,
-so a view that re-reads on every notification is not woken for a result it did
-not take.
+A push that finds a pull-sourced slice is dropped before that check, so a
+clean push never clears what the pull filed. A report that is dropped changes
+nothing: the store's revision does not move, so a view that re-reads on every
+notification is not woken for a result it did not take.
 
 ## A server with no pull support keeps the behaviour it had
 
@@ -57,9 +60,10 @@ is never handed the previous result id of the process that died.
 
 - `diagnostic-pull.test.ts`: a pull landing on a path that already holds a
   push from the same server, a push refused against a pulled path, a push
-  from a second server still landing, an unchanged report costing nothing, a
-  failed pull leaving the pushed findings alone, a bounded retry, a server
-  that supports no pull behaving as it did before, and the result id cache
-  going with a stopped server.
+  from a second server still landing, an empty pull clearing that server's
+  slice and no other, an unchanged report costing nothing, a failed pull
+  leaving the pushed findings alone, a bounded retry, a server that supports
+  no pull behaving as it did before, and the result id cache going with a
+  stopped server.
 - `diagnostics.test.ts`: the per-server slices the store reads out, and the
-  clean-file and stop semantics both sources inherit.
+  clean-file and stop semantics the pull inherits.

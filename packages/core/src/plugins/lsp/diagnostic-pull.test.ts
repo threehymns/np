@@ -206,6 +206,62 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(listenerCalls).toBe(1);
 	});
 
+	it('an empty pull clears that server slice and leaves a sibling server alone', async () => {
+		const store = new LspDiagnosticsStore();
+		const serverB = 'serverB@/repo';
+		let response: unknown = {
+			kind: 'full',
+			resultId: 'r1',
+			items: [
+				{
+					range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } },
+					message: 'pulledA'
+				}
+			]
+		};
+
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: () => Effect.succeed(response)
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		const pushB = parsePublishDiagnostics(serverB, {
+			uri,
+			diagnostics: [
+				{
+					range: { start: { line: 2, character: 0 }, end: { line: 2, character: 5 } },
+					message: 'pushB'
+				}
+			]
+		});
+		store.publish(pushB!);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulledA', 'pushB']);
+
+		// The next pull says the file is clean, so that server slice goes and
+		// the other server findings for the same path stay.
+		response = { kind: 'full', resultId: 'r2', items: [] };
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushB']);
+	});
+
 	it('a failed pull leaves the pushed findings alone', async () => {
 		const store = new LspDiagnosticsStore();
 		const push = parsePublishDiagnostics(server, {
