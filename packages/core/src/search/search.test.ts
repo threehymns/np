@@ -86,7 +86,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/README.md": "# Title\nNothing here\nFooter"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		const stream = engine.search({ pattern: "findme" });
@@ -120,7 +120,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/b.txt": "search target in b"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		// Reset readDirectory call counter from initial scan
 		storage.readDirectory.mockClear();
@@ -142,7 +142,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/ignored-folder/file.txt": "target keyword"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		const results = await engine.search({ pattern: "target keyword" }).all();
@@ -162,7 +162,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/.svelte-kit/generated/root.svelte": "target"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		const results = await engine.search({ pattern: "target" }).all();
@@ -177,7 +177,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/file2.txt": "match match match match match"  // 5 matches
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		// Cap at 4 matches max
@@ -197,7 +197,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		}
 		const storage = createMockStorage(files);
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		// Cap at 3 files scanned max
@@ -216,7 +216,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/binary.bin": "\0\0some binary searchtarget data"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		const results = await engine.search({ pattern: "searchtarget" }).all();
@@ -230,7 +230,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 			"/test-project/code.ts": "hello world"
 		});
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 
@@ -251,7 +251,7 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		}
 		const storage = createMockStorage(files);
 		const wt = new WorktreeClass(rootOrigin, { storage });
-		await wt.scan(undefined, { recursive: true });
+		await wt.scan();
 
 		const engine = new TypeScriptSearchEngineClass(wt);
 		const ac = new AbortController();

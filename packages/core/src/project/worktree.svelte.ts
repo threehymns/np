@@ -1,4 +1,4 @@
-import type { FileOrigin, Storage } from '../storage';
+import { toURI, type FileOrigin, type Storage } from '../storage';
 import { isNotFoundError } from '../utils';
 import type { TreeNode } from './tree.svelte';
 
@@ -34,8 +34,11 @@ export interface WorktreeOptions {
 }
 
 export interface WorktreeScanOptions {
+	/**
+	 * Marks a path as expanded in the published snapshot. Display state
+	 * only: it never changes which files the snapshot contains.
+	 */
 	isExpanded?: (path: string) => boolean;
-	recursive?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -95,6 +98,12 @@ export class GitIgnoreMatcher {
  * Per ADR 0025, Worktree owns the live file snapshot: the scanner lives here,
  * external watchers (ticket 2) and search (ticket 3) consume this snapshot,
  * and the file explorer tree subscribes to it rather than feeding entries in.
+ *
+ * Per ADR 0032, the snapshot is always the whole project file set. Which
+ * files a scan publishes never depends on who triggered it: the tree's scan,
+ * a watcher's rescan and the polled refresh all publish the same files.
+ * Expansion state is display only, so the tree filters the snapshot for
+ * display instead of narrowing what the snapshot contains.
  */
 export class Worktree {
 	root: FileOrigin;
@@ -107,6 +116,12 @@ export class Worktree {
 	private listeners = new Set<SnapshotListener>();
 	private scanGeneration = 0;
 	private isScanning = $state(false);
+	/**
+	 * The expansion predicate the file explorer handed us last. Remembered
+	 * so a scan that carries none (a watcher's rescan) keeps publishing the
+	 * display state the tree already had.
+	 */
+	private expansionProvider: ((path: string) => boolean) | null = null;
 
 	constructor(
 		root: FileOrigin,
@@ -205,6 +220,9 @@ export class Worktree {
 		const generation = ++this.scanGeneration;
 		this.isScanning = true;
 		try {
+			// The matcher belongs to this scan: an overlapping rescan must
+			// not filter entries with another scan's rules.
+			let scanGitignore: GitIgnoreMatcher | null = null;
 			try {
 				const gitignoreOrigin: FileOrigin = {
 					scheme: targetRoot.scheme,
@@ -212,17 +230,25 @@ export class Worktree {
 					name: '.gitignore'
 				};
 				const content = await this.storage.readFile(gitignoreOrigin);
-				this.gitignore = new GitIgnoreMatcher(content);
+				scanGitignore = new GitIgnoreMatcher(content);
 			} catch (e: any) {
-				this.gitignore = null;
 				if (!isNotFoundError(e)) {
 					console.warn('[Worktree] Error reading .gitignore:', e);
 				}
 			}
 
-			const recursive = options?.recursive ?? false;
-			const builtNodes = await this.buildLevel(targetRoot, '', options?.isExpanded, recursive);
-			if (generation === this.scanGeneration) {
+			// Remember the expansion predicate so a later scan without one
+			// publishes the same display state. It never changes the file set.
+			if (options?.isExpanded) {
+				this.expansionProvider = options.isExpanded;
+			}
+			const isExpanded = options?.isExpanded ?? this.expansionProvider ?? undefined;
+
+			// The whole project file set, every time: the snapshot does not
+			// depend on who triggered the scan (ADR 0032).
+			const builtNodes = await this.buildLevel(targetRoot, '', isExpanded, scanGitignore);
+			if (generation === this.scanGeneration && toURI(targetRoot) === toURI(this.root)) {
+				this.gitignore = scanGitignore;
 				this.updateSnapshot(builtNodes);
 			}
 			return builtNodes;
@@ -240,7 +266,7 @@ export class Worktree {
 		origin: FileOrigin,
 		path = '',
 		isExpanded?: (path: string) => boolean,
-		recursive = false
+		matcher: GitIgnoreMatcher | null = this.gitignore
 	): Promise<TreeNode[]> {
 		if (!this.storage) return [];
 		const nodes: TreeNode[] = [];
@@ -256,9 +282,8 @@ export class Worktree {
 
 				if (entry.name === 'node_modules' || entry.name === '.svelte-kit' || entry.name === '.git') continue;
 				if (entry.name.startsWith('.') && entry.name !== '.gitignore') continue;
-				if (this.gitignore?.ignores(entryPath)) continue;
+				if (matcher?.ignores(entryPath)) continue;
 
-				const shouldRecurse = recursive || (isExpanded ? isExpanded(entryPath) : false);
 				const node: TreeNode = {
 					name: entry.name,
 					kind: entry.kind,
@@ -268,8 +293,8 @@ export class Worktree {
 					children: entry.kind === 'directory' ? [] : undefined
 				};
 
-				if (shouldRecurse && node.kind === 'directory') {
-					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded, recursive);
+				if (node.kind === 'directory') {
+					node.children = await this.buildLevel(entry.origin, entryPath, isExpanded, matcher);
 				}
 
 				nodes.push(node);
