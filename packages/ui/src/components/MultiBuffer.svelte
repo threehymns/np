@@ -25,6 +25,12 @@
 		header: Snippet<[string]>;
 		content: Snippet<[string]>;
 		onTopSectionVisible?: (filepath: string) => void;
+		/**
+		 * Called when focus enters a section, so the host can tell which file
+		 * the user is working in. The Diff Viewer uses it to publish the save
+		 * target for the focused file.
+		 */
+		onSectionFocusIn?: (filepath: string) => void;
 	}
 
 	let {
@@ -34,7 +40,8 @@
 		emptyState,
 		header,
 		content,
-		onTopSectionVisible
+		onTopSectionVisible,
+		onSectionFocusIn
 	}: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
@@ -68,7 +75,11 @@
 	{:else}
 		{#each sections as section (section.key)}
 			{@const collapsed = isCollapsed(section.filepath)}
-			<div class="flex flex-col bg-background" id="{idPrefix}file-{section.filepath}">
+			<div
+				class="flex flex-col bg-background"
+				id="{idPrefix}file-{section.filepath}"
+				onfocusin={() => onSectionFocusIn?.(section.filepath)}
+			>
 				<!-- File Header inside multibuffer -->
 				<div class="sticky top-0 z-10 bg-background pt-2 pb-1 px-2">
 					{@render header(section.filepath)}
