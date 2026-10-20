@@ -5,6 +5,7 @@ export * from './diff-binding';
 export * from './persistence';
 export * from './preferences.svelte';
 export * from './document.svelte';
+export * from './tab-ids';
 export * from './workspace.svelte';
 export * from './split-tree.svelte';
 export * from './commands.svelte';
