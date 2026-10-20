@@ -576,6 +576,10 @@ It is red on `master` (16 of 46 tests in this environment, every cause measured 
 suite first, which is a piece of work in its own right. The fixes are small and mechanical, and
 they belong in one pull request that is not one of these sixteen.
 
+That pull request now exists: #357, open against `master`, fixes the four specs and leaves the
+suite at 46 of 46. It does not wire the suite into CI, because that is a separate decision about
+what every pull request should pay for. Once #357 lands, the suite is green but still not a gate.
+
 ### What is failing on master, and why
 
 The suite was run against `origin/master` on a clean worktree. Forty six tests ran: 16 failed and
@@ -623,6 +627,9 @@ two assignments to `project.rootOrigin` makes all three tests pass.
 None of this is a product defect. The behaviour behind the vcs and diff-viewer failures is the
 behaviour the code intends. The specs were written against an earlier shape of the API and were
 not updated when the API moved.
+
+#357 fixes all sixteen of them, and no product code. The suite is 46 of 46 on that branch, twice
+in a row.
 
 ### Two pull request bodies carry stale test output
 
