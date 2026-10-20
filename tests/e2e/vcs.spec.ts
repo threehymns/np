@@ -8,6 +8,11 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 		await page.goto('/');
 		await expect(page.locator('.cm-content')).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
+		// The git plugin activates after the app boots, and the workspace only
+		// exposes a repository while its owner plugin is active. Wait for the
+		// owner before the spec publishes a repository on the plugin's behalf.
+		await page.waitForFunction(() => (window as any).appState?.plugins?.isPluginActive('git'));
+
 		// Install mock filesystem classes and the repo setup helper inside the browser context
 		await page.evaluate(installMockFS);
 		await page.evaluate(() => {
@@ -54,6 +59,10 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 				appState.workspace.rootHandle = root;
 				appState.workspace.project.hasRootPermission = true;
 				appState.workspace.project.repository = repository;
+				// A repository is published by a plugin and carries that plugin's
+				// id as its owner. The git plugin owns the repository in the app,
+				// so the spec publishes the mock repository the same way.
+				appState.workspace.project.repositoryOwnerId = 'git';
 
 				return { root, repository, gitFs };
 			};
@@ -320,7 +329,10 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 		const tab = page.locator('button[role="tab"]:has-text("file-to-delete.md")');
 		await expect(tab).toBeVisible();
 		await expect(tab).toHaveClass(/line-through/);
-		await expect(tab).toHaveAttribute('title', 'file-to-delete.md (deleted on disk)');
+		// The "deleted on disk" wording is the tab's tooltip text, not a title
+		// attribute, so hover the tab to read it.
+		await tab.hover();
+		await expect(page.getByText('file-to-delete.md (deleted on disk)')).toBeVisible();
 	});
 
 	test('should carry forward staged modifications and keep them staged', async ({ page }) => {
