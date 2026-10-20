@@ -92,7 +92,14 @@
       {:else if appState.plugins.getSidebarPanel(appState.activeSidebarTab)}
         {@const panel = appState.plugins.getSidebarPanel(appState.activeSidebarTab)!}
         {@const PanelComponent = panel.component}
-        <PanelComponent {...(panel.props ?? {})} />
+        <!-- Sidebar panels are scoped to the current project: a project switch
+             (or a new repository for it) remounts the panel so its state
+             (selected paths, per-project drafts) cannot leak across. -->
+        {#key appState.workspace.projectUri}
+          {#key appState.workspace.project.repository}
+            <PanelComponent {...(panel.props ?? {})} />
+          {/key}
+        {/key}
       {/if}
     </div>
     

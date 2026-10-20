@@ -31,7 +31,16 @@
 		initController.reset();
 	});
 
-	let commitMessage = $state('');
+	// The commit draft belongs to the project it was written in: it is
+	// stored per project URI and follows the current project, so switching
+	// away and back finds the draft again and a draft never shows up under
+	// a different project.
+	const projectUri = $derived(appState.workspace.projectUri);
+	let commitMessage = $derived(appState.workspace.commitDrafts[projectUri] ?? '');
+
+	function setCommitMessage(value: string) {
+		appState.workspace.commitDrafts[projectUri] = value;
+	}
 	let commitTextareaEl = $state<HTMLTextAreaElement | null>(null);
 	let commitIsOverflowing = $state(false);
 
@@ -266,9 +275,13 @@
 			message = `${message}\n\nSigned-off-by: ${userConfig.name} <${userConfig.email}>`;
 		}
 
+		// The identity is captured at the moment of the commit, so a commit
+		// that lands after the user switched projects does not clear the
+		// draft of the project it was not written for.
+		const target = appState.workspace.captureProject();
 		const success = await appState.commands.execute('git.commit', message, { amend: isAmend });
-		if (success) {
-			commitMessage = '';
+		if (success && appState.workspace.isCurrentProject(target)) {
+			setCommitMessage('');
 			isAmend = false;
 		}
 	}
@@ -315,7 +328,10 @@
 			Promise.resolve(repo.refresh()).catch(err => {
 				console.error("[GitPanel] Failed to refresh repository:", err);
 			});
-			repo.adapter.getUserConfig?.().then(cfg => { userConfig = cfg || null; }).catch(() => {});
+			const target = appState.workspace.captureProject();
+			repo.adapter.getUserConfig?.().then(cfg => {
+				if (appState.workspace.isCurrentProject(target)) userConfig = cfg || null;
+			}).catch(() => {});
 		}
 	});
 </script>
@@ -590,10 +606,6 @@
 		</div>
 		</Tooltip.Provider>
 
-		<!-- Footer -->
-		<div class="p-2">
-  		<BranchSelectButton />
-		</div>
 		<!-- Commit Input -->
 		<div class="border-t border-border shrink-0 bg-background flex flex-col relative">
  			{#snippet commitButton()}
@@ -645,7 +657,7 @@
   			<textarea
 				bind:this={commitTextareaEl}
 				placeholder={commitPlaceholder}
-				bind:value={commitMessage}
+				bind:value={() => commitMessage, setCommitMessage}
 				onkeydown={handleTextareaKeydown}
 				class="w-full min-h-[64px] max-h-28 bg-transparent p-2 text-xs text-foreground placeholder-muted-foreground/60 focus:outline-none resize-y overflow-y-auto font-sans border-b rounded-t-md"
 				class:border-transparent={!commitIsOverflowing}
@@ -658,7 +670,7 @@
   						<Tooltip.Root>
  							<Tooltip.Trigger>
   								{#snippet child({ props })}
- 									<Dialog.Trigger {...props} class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
+									<Dialog.Trigger {...props} aria-label="Open Commit Modal" class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
   										<CornersOutIcon />
  									</Dialog.Trigger>
   								{/snippet}
@@ -668,7 +680,7 @@
  							</Tooltip.Content>
   						</Tooltip.Root>
   						<Dialog.Content showCloseButton={false} class="sm:max-w-xl p-2 top-65">
- 							<Textarea bind:value={commitMessage} onkeydown={handleTextareaKeydown} class="h-80 focus-visible:ring-0 focus-visible:border-border border-input" />
+ 							<Textarea bind:value={() => commitMessage, setCommitMessage} onkeydown={handleTextareaKeydown} class="h-80 focus-visible:ring-0 focus-visible:border-border border-input" />
  							<div class="absolute bottom-4 inset-x-4 flex gap-3 items-center">
   								<BranchSelectButton class="hover:bg-muted" />
   								<div class="flex-1"></div>

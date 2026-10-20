@@ -1,102 +1,171 @@
 <script lang="ts">
 	import { useAppState } from '@np/core';
+	import { onDestroy } from 'svelte';
 	import { CheckIcon, GitBranchIcon } from "phosphor-svelte";
 	import * as Command from './ui/command';
 	import * as Popover from './ui/popover';
+	import * as Tooltip from './ui/tooltip';
 	import BranchSafetyModal from './BranchSafetyModal.svelte';
 	import type { RepositorySafetyReport } from '@np/core';
-	import { cn } from '@np/core';
+	import Button, { type ButtonSize } from './ui/button/button.svelte';
 
-	let { class: className = '' }: { class?: string } = $props();
+	let { class: className = '', open = $bindable(false), size = 'default' }: { class?: string; open?: boolean; size?: ButtonSize } = $props();
 
 	const appState = useAppState();
-	let branchComboOpen = $state(false);
-	let safetyReport = $state<RepositorySafetyReport | null>(null);
-	let pendingBranch = $state<string | null>(null);
+	const workspace = appState.workspace;
+	let trigger = $state<HTMLButtonElement | null>(null);
+	let restoreFocus = false;
+	let pending = $state<{ branch: string; target: ReturnType<typeof workspace.captureProject>; report: RepositorySafetyReport | null; error: string | null } | null>(null);
+	let checking = $state(false);
+	let request = 0;
+	let visiblePending = $derived(pending && workspace.isCurrentProject(pending.target) && !workspace.projectOpening ? pending : null);
 
-	async function switchBranch(branch: string) {
-		const report = await appState.workspace.getBranchSafetyReport(branch);
-		if (report && !report.canSwitch) {
-			safetyReport = report;
-			pendingBranch = branch;
-			branchComboOpen = false;
-			return;
-		}
-		await appState.workspace.switchBranch(branch);
-		branchComboOpen = false;
+	function cancel() {
+		request++;
+		pending = null;
+		checking = false;
 	}
 
-	async function recheckSafety() {
-		if (!pendingBranch) return;
-		const report = await appState.workspace.getBranchSafetyReport(pendingBranch);
-		if (report && report.canSwitch) {
-			const branch = pendingBranch;
-			safetyReport = null;
-			pendingBranch = null;
-			await appState.workspace.switchBranch(branch);
-		} else {
-			safetyReport = report;
+	async function switchBranch(branch: string, target = workspace.captureProject()) {
+		if (checking || workspace.projectMutationBusy || !workspace.isCurrentProject(target)) return;
+		open = false;
+		if (branch === workspace.currentBranch) return;
+		const id = ++request;
+		checking = true;
+		try {
+			const report = await workspace.getBranchSafetyReport(branch, target);
+			if (id !== request || !workspace.isCurrentProject(target) || !report) return;
+			if (!report.canSwitch) {
+				pending = { branch, target, report, error: null };
+				return;
+			}
+			const result = await workspace.switchBranch(branch, target);
+			if (id !== request || !workspace.isCurrentProject(target)) return;
+			if (result.status === 'blocked') {
+				pending = { branch, target, report: { canSwitch: false, unsavedFiles: [], uncommittedFiles: result.files }, error: null };
+			} else if (result.status === 'error') {
+				pending = { branch, target, report: null, error: result.message };
+			} else {
+				pending = null;
+			}
+		} catch (error) {
+			if (id === request && workspace.isCurrentProject(target)) {
+				pending = { branch, target, report: null, error: error instanceof Error ? error.message : String(error) };
+			}
+		} finally {
+			if (id === request) checking = false;
 		}
+	}
+
+	onDestroy(cancel);
+
+	function recheckSafety() {
+		if (visiblePending) void switchBranch(visiblePending.branch, visiblePending.target);
 	}
 
 </script>
 
 {#if appState.workspace.project.hasRootPermission && appState.workspace.currentBranch}
-	<Popover.Root bind:open={branchComboOpen}>
-		<Popover.Trigger>
-			{#snippet child({ props })}
-				<button
-					{...props}
-					class={cn("flex items-center gap-1 opacity-50 hover:opacity-100 hover:bg-sidebar-accent transition-all px-1 rounded-sm py-0.5 -ml-0.5 truncate", className)}
-				>
-					{#if appState.workspace.project.repository?.isBusy}
-						<div class="size-3 animate-spin border-2 border-sidebar-foreground/50 border-t-sidebar-foreground rounded-full"></div>
-					{:else}
-						<GitBranchIcon class="size-3 shrink-0" />
-					{/if}
-					<span class="text-[10px] truncate max-w-[80px]">{appState.workspace.currentBranch}</span>
-				</button>
-			{/snippet}
-		</Popover.Trigger>
-		<Popover.Content class="p-0 flex flex-col group/branch-pop" align="start">
+	<Tooltip.Provider delayDuration={400}>
+	<Popover.Root bind:open={open}>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				{#snippet child({ props })}
+					<span {...props} class="inline-flex min-w-0 max-w-[50%]">
+						<Popover.Trigger bind:ref={trigger}>
+							{#snippet child({ props: popoverProps })}
+								<Button
+									{...popoverProps}
+									type="button"
+									disabled={checking || workspace.projectMutationBusy}
+									aria-label={`Switch branch: ${workspace.currentBranch}`}
+									aria-busy={checking || workspace.projectMutationBusy}
+									class="min-w-0 shrink {className}"
+									variant="ghost"
+									size={size}
+								>
+									{#if checking || workspace.projectMutationBusy}
+										<div class="size-3 shrink-0 animate-spin border-2 border-current border-t-transparent rounded-full"></div>
+									{:else}
+										<GitBranchIcon />
+									{/if}
+									<span class="truncate min-w-0">{appState.workspace.currentBranch}</span>
+								</Button>
+							{/snippet}
+						</Popover.Trigger>
+					</span>
+				{/snippet}
+			</Tooltip.Trigger>
+			<!-- The tooltip is dropped while the picker is open: a tooltip that
+				 stays open over the picker registers its own escape layer and
+				swallows the Escape key the picker needs. The tooltip itself is
+				not disabled, because a disabled tooltip stops reacting to the
+				pointer leaving its trigger and would open late, over the header. -->
+			{#if !open}
+				<Tooltip.Content side="bottom" align="start" class="text-[10px] px-2 py-1 max-w-xs break-all">
+					{workspace.currentBranch}
+				</Tooltip.Content>
+			{/if}
+		</Tooltip.Root>
+		<Popover.Content
+			trapFocus={false}
+			onOpenAutoFocus={() => restoreFocus = false}
+			onEscapeKeydown={() => restoreFocus = true}
+			onCloseAutoFocus={(event) => {
+				event.preventDefault();
+				if (restoreFocus) trigger?.focus();
+			}}
+			aria-label="Branches" class="max-w-[calc(100vw-1rem)] p-0 flex flex-col group/branch-pop" align="start">
 			<Command.Root class="flex-1 p-0 group-data-[side=top]/branch-pop:flex-col-reverse">
-				<Command.Input placeholder="Switch Branch" class="h-8" />
+				<Command.Input aria-label="Search branches" placeholder="Switch Branch" class="h-8" />
 				<Command.List class="px-1 py-1">
 					<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
 					{#each appState.workspace.branches as branch (branch)}
-						<Command.Item
-							value={branch}
-							onSelect={() => switchBranch(branch)}
-							class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
-						>
-							<div class="flex items-center gap-2 truncate">
-								<GitBranchIcon class="size-3 opacity-50" />
-								<span class="truncate">{branch}</span>
-							</div>
-							{#if appState.workspace.currentBranch === branch}
-								<CheckIcon class="size-3 opacity-50" />
-							{/if}
-						</Command.Item>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<Command.Item
+										{...props}
+										value={branch}
+										aria-current={workspace.currentBranch === branch ? 'true' : undefined}
+										disabled={checking || workspace.projectMutationBusy}
+										onSelect={() => switchBranch(branch)}
+										class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
+									>
+										<div class="flex items-center gap-2 truncate">
+											<GitBranchIcon class="size-3 opacity-50" />
+											<span class="truncate">{branch}</span>
+										</div>
+										{#if appState.workspace.currentBranch === branch}
+											<CheckIcon class="size-3 opacity-50" />
+										{/if}
+									</Command.Item>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Content side="right" align="center" class="text-[10px] px-2 py-1 max-w-xs break-all">
+								{branch}
+							</Tooltip.Content>
+						</Tooltip.Root>
 					{/each}
 				</Command.List>
 			</Command.Root>
 		</Popover.Content>
 	</Popover.Root>
+	</Tooltip.Provider>
 {/if}
 
-{#if safetyReport && pendingBranch}
-	<BranchSafetyModal 
-		report={safetyReport} 
-		targetBranch={pendingBranch} 
+{#if visiblePending}
+	<BranchSafetyModal
+		report={visiblePending.report ?? { canSwitch: false, unsavedFiles: [], uncommittedFiles: [] }}
+		error={visiblePending.error}
+		busy={checking || workspace.projectMutationBusy}
+		targetBranch={visiblePending.branch}
 		onConfirm={recheckSafety}
-		onCancel={() => { safetyReport = null; pendingBranch = null; }}
+		onCancel={cancel}
 	/>
 {/if}
 
 <style>
-	/* When bits-ui flips the popover above the trigger (data-side="top"),
-	   flex-col-reverse puts the filter input at the bottom, closest to the
-	   trigger. Flip its asymmetric padding so spacing stays identical. */
 	:global(.group\/branch-pop[data-side='top'] [data-slot='command-input-wrapper']) {
 		padding-top: 0;
 		padding-bottom: 0.25rem;

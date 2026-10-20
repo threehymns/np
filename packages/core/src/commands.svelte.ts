@@ -809,6 +809,14 @@ export function registerCoreCommands(appState: AppState) {
 		}
 	});
 
+	coreCommands.push({
+		id: 'applicationMenu.toggle',
+		label: 'Toggle Application Menu',
+		category: 'View',
+		action: () => appState.applicationMenu?.toggle(),
+		isEnabled: () => !!appState.applicationMenu
+	});
+
   coreCommands.push({
     id: 'commandPalette.toggle',
     label: 'Command Palette: Toggle',

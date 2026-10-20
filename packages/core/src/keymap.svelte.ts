@@ -93,6 +93,7 @@ export const defaultKeymap: KeymapBinding[] = [
 	{
 		// Global bindings
 		bindings: {
+			"f10": "applicationMenu.toggle",
 			"cmd+n": "file.new",
 			"cmd+o": "file.open",
 			"cmd+s": "file.save",
@@ -404,7 +405,7 @@ export class KeymapRegistry {
 		const isStandardInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
 		const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
 
-		if (isStandardInput && !hasModifier) {
+		if (isStandardInput && !hasModifier && e.key !== 'F10') {
 			return false;
 		}
 
