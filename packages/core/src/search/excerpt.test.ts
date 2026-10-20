@@ -8,6 +8,8 @@ import type { SearchMatch, FileSearchResult } from "./types";
 import {
 	computeLineStarts,
 	FileExcerptMap,
+	buildExcerptMapForContent,
+	isExcerptMapStale,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
 	applyReplaceAll
@@ -399,6 +401,91 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		expect(docB.content).toBe("console.log('REPLACED');");
 	});
 
+	it("replaces a match whose text differs from the query pattern", async () => {
+		// A regular expression query matches text the pattern does not spell
+		// out. Replace-all works from the match itself, so the replacement
+		// lands on the matched text and not on the pattern.
+		const storage = createMockStorage({
+			"/test-project/regex.ts": "const value = foo123bar;"
+		});
+		const workspace = createTestWorkspace(storage);
+
+		const origin: FileOrigin = {
+			scheme: "file",
+			path: "/test-project/regex.ts",
+			name: "regex.ts"
+		};
+		const fileResults: FileSearchResult[] = [
+			{
+				filepath: "regex.ts",
+				origin,
+				matches: [
+					{
+						line: 1,
+						column: 15,
+						offset: 14,
+						matchLength: 9,
+						lineText: "const value = foo123bar;",
+						contextBefore: [],
+						contextAfter: []
+					}
+				]
+			}
+		];
+
+		const res = await applyReplaceAll({
+			workspace,
+			fileResults,
+			replacement: "X"
+		});
+
+		expect(res.totalReplacements).toBe(1);
+		const doc = workspace.documents.find((d) => d.origin?.path.endsWith("regex.ts"))!;
+		expect(doc.content).toBe("const value = X;");
+	});
+
+	it("skips a match whose text no longer sits at the recorded offset", async () => {
+		// The document moved on since the search ran: the offset now points
+		// at other text, so the match is skipped instead of overwriting it.
+		const storage = createMockStorage({
+			"/test-project/moved.ts": "alpha XXXX gamma"
+		});
+		const workspace = createTestWorkspace(storage);
+
+		const origin: FileOrigin = {
+			scheme: "file",
+			path: "/test-project/moved.ts",
+			name: "moved.ts"
+		};
+		const fileResults: FileSearchResult[] = [
+			{
+				filepath: "moved.ts",
+				origin,
+				matches: [
+					{
+						line: 1,
+						column: 7,
+						offset: 6,
+						matchLength: 4,
+						lineText: "alpha beta gamma",
+						contextBefore: [],
+						contextAfter: []
+					}
+				]
+			}
+		];
+
+		const res = await applyReplaceAll({
+			workspace,
+			fileResults,
+			replacement: "X"
+		});
+
+		expect(res.totalReplacements).toBe(0);
+		const doc = workspace.documents.find((d) => d.origin?.path.endsWith("moved.ts"))!;
+		expect(doc.content).toBe("alpha XXXX gamma");
+	});
+
 	it("undo after replace-all works per file independently", async () => {
 		const files: Record<string, string> = {
 			"/test-project/fileA.ts": "alpha target beta",
@@ -778,5 +865,107 @@ describe("Excerpt map stays in sync after direct edits (Issue #336)", () => {
 			to: shiftedOffset2 + 6,
 			insert: "Z"
 		});
+	});
+
+	it("produces no file edit at all for a rejected cross-segment edit", () => {
+		const { map } = makeTwoExcerptMap();
+
+		// The edit spans the hidden file text between the two excerpts, so it
+		// is rejected as a whole: no file edit is produced, so nothing is
+		// written to the file.
+		const edit = {
+			from: map.excerpts[0].bufferEnd - 2,
+			to: map.excerpts[1].bufferStart + 2,
+			insert: ""
+		};
+		expect(map.mapExcerptEditsToFileEdits([edit])).toEqual([]);
+	});
+});
+
+describe("Excerpt map follows the document it mirrors (Issue #336)", () => {
+	const mirrorOrigin: FileOrigin = {
+		scheme: "file",
+		path: "/test-project/src/mirror.ts",
+		name: "mirror.ts"
+	};
+
+	const originalContent = "const alpha = 'findme';\nconst beta = 'other';\n";
+
+	function makeMirrorMap(content = originalContent) {
+		const built = buildExcerptMapForContent(
+			"src/mirror.ts",
+			mirrorOrigin,
+			content,
+			{ pattern: "findme" }
+		);
+		expect(built).not.toBeNull();
+		return built!;
+	}
+
+	it("reports a stale map when the document changed outside the excerpt view", () => {
+		const built = makeMirrorMap();
+
+		// The document moved on (an edit in the main editor): the map's file
+		// offsets no longer describe the text the document holds.
+		expect(isExcerptMapStale(built.map, "// a new first line\n" + originalContent)).toBe(true);
+	});
+
+	it("reports a fresh map while the document still holds the map's content", () => {
+		const built = makeMirrorMap();
+		expect(isExcerptMapStale(built.map, originalContent)).toBe(false);
+	});
+
+	it("reports a fresh map for a document that is not open", () => {
+		const built = makeMirrorMap();
+		expect(isExcerptMapStale(built.map, undefined)).toBe(false);
+	});
+
+	it("reports a fresh map right after the excerpt view applied its own edit", () => {
+		const built = makeMirrorMap();
+
+		const buf = built.map.fileOffsetToExcerptOffset(originalContent.indexOf("findme"))!;
+		const excerptEdit = { from: buf, to: buf + 6, insert: "REPLACED" };
+		const fileEdit = built.map.mapExcerptEditToFileEdit(excerptEdit)!;
+		built.map.applyExcerptEdit(excerptEdit, fileEdit);
+
+		// The document now holds exactly what the map holds, so the map is
+		// not stale and the view must not rebuild itself.
+		expect(built.map.fileContent).toBe(originalContent.replace("findme", "REPLACED"));
+		expect(isExcerptMapStale(built.map, built.map.fileContent)).toBe(false);
+	});
+
+	it("rebuilds the map from the current content and re-derives the matches", () => {
+		const built = makeMirrorMap();
+		const staleOffset = built.matches[0].offset;
+
+		// The document gained a line above the match: the old map's offsets
+		// point at the wrong place, so the rebuilt map starts from the
+		// current content and finds the match where it is now.
+		const edited = "// a new first line\n" + originalContent;
+		const rebuilt = makeMirrorMap(edited);
+
+		expect(rebuilt.map.fileContent).toBe(edited);
+		expect(rebuilt.matches.length).toBe(1);
+		expect(rebuilt.matches[0].line).toBe(2);
+		expect(rebuilt.matches[0].offset).toBe(staleOffset + "// a new first line\n".length);
+
+		// The rebuilt map hands out offsets relative to the current content.
+		const buf = rebuilt.map.fileOffsetToExcerptOffset(rebuilt.matches[0].offset)!;
+		expect(rebuilt.map.bufferText.slice(buf, buf + 6)).toBe("findme");
+		expect(rebuilt.map.mapExcerptEditToFileEdit({ from: buf, to: buf + 6, insert: "X" })).toEqual({
+			from: rebuilt.matches[0].offset,
+			to: rebuilt.matches[0].offset + 6,
+			insert: "X"
+		});
+	});
+
+	it("keeps the search's matches when the query is not a usable pattern", () => {
+		const built = buildExcerptMapForContent(
+			"src/mirror.ts",
+			mirrorOrigin,
+			originalContent,
+			{ pattern: "(unclosed", isRegex: true }
+		);
+		expect(built).toBeNull();
 	});
 });

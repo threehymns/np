@@ -115,6 +115,13 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
 	});
 
+	it("replaces across the session's query, not a component-local pattern", () => {
+		// The query lives in the workspace session, so replace-all works on
+		// the query the user typed, with the options that go with it.
+		expect(SEARCH_TAB_SRC).toContain("session.query");
+		expect(SEARCH_TAB_SRC).not.toContain("queryText");
+	});
+
 	it("keeps the excerpt map in sync after direct user edits", () => {
 		expect(SEARCH_TAB_SRC).toContain("excerptMap.applyExcerptEdit(excerptEdit, fileEdit)");
 		// Pre-transaction coordinates are handled latest-first so each edit
@@ -138,5 +145,17 @@ describe("Editable results safety guards contract audit (Issue #336)", () => {
 		// Document writes are serialized per view so an in-flight edit of our
 		// own never looks like an external change.
 		expect(SEARCH_TAB_SRC).toContain("applyChain");
+	});
+
+	it("rebuilds a stale excerpt map when the document changes outside the view", () => {
+		// The view watches the documents it mirrors and rebuilds the map
+		// from the document's current content when they diverge.
+		expect(SEARCH_TAB_SRC).toContain("isExcerptMapStale");
+		expect(SEARCH_TAB_SRC).toContain("entry.rebuild()");
+		expect(SEARCH_TAB_SRC).toContain("appState.workspace.documents");
+		// The rebuilt map re-derives the file's matches from the session's
+		// query, so its offsets describe the content the document holds.
+		expect(SEARCH_TAB_SRC).toContain("buildExcerptMapForContent");
+		expect(SEARCH_TAB_SRC).toContain("session.toQuery()");
 	});
 });
