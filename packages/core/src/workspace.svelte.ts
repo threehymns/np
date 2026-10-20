@@ -151,6 +151,16 @@ export class Workspace {
 	 */
 	private pendingDiffRestore = new Map<string, { filepath: string; staged?: boolean }>();
 
+	/**
+	 * Diff-filepath -> bound Document id for Working-copy pane bindings
+	 * (#269). Written by the mounted Diff Viewer alongside its own binding
+	 * effect and read by the Git Hunk Actions choke point through the same
+	 * shared lookup, so both sides stay bound to the same Document across a
+	 * Save As (which moves the Document's origin without changing the diff
+	 * filepath). Stale ids are pruned on lookup, never persisted.
+	 */
+	readonly diffBoundDocIds = new Map<string, string>();
+
 	private applyPendingDiffRestore() {
 		if (!this.isRepositoryActive) return;
 		const repo = this.project.repository;
@@ -243,7 +253,37 @@ export class Workspace {
 				}
 			}
 		}
-		const docs = Array.from(serializedMap.values());
+
+		// Tab-less bound Documents (Diff Viewer Working-copy pane bindings for
+		// files with no open tab, issue #272) hold user text no tab serializes.
+		// Persist dirty ones as tab-less entries under the same draft rules so
+		// pane edits survive a restart; clean ones are re-derivable from the
+		// next loaded diff snapshot and need no entry.
+		//
+		// A document can be open in more than one pane, so "has a tab" means
+		// "has a tab in some pane".
+		const tabbedDocIds = new Set<string>();
+		for (const pane of this.getAllPanes()) {
+			for (const tab of pane.tabs) {
+				if (tab.type === 'document') tabbedDocIds.add(tab.docId ?? tab.id);
+			}
+		}
+		const tablessDocs: SerializedDocument[] = [];
+		for (const doc of this.documents) {
+			if (tabbedDocIds.has(doc.id)) continue;
+			if (!doc.isModified && doc.origin && !doc.deletedOnDisk) continue;
+			tablessDocs.push({
+				id: doc.id,
+				origin: doc.origin ? $state.snapshot(doc.origin) : null,
+				untitledTitle: doc.untitledTitle,
+				deletedOnDisk: doc.deletedOnDisk ? true : undefined,
+				...(doc.isModified || !doc.origin || doc.deletedOnDisk
+					? { draftContent: doc.content }
+					: {}),
+				tabless: true
+			});
+		}
+		const docs = [...Array.from(serializedMap.values()), ...tablessDocs];
 		return { version: WORKSPACE_PERSISTENCE_VERSION, docs };
 	}
 
@@ -556,6 +596,10 @@ export class Workspace {
 		const targetUri = toURI(origin);
 		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
 		if (existing) {
+			// A tab-less bound Document (Diff Viewer Working-copy pane, issue
+			// #272) holds the file's live text but no tab. Opening the file
+			// must show a tab, so adopt the bound Document instead of
+			// creating a second truth.
 			const existingTab = this.activePane.tabs.find(t => (t.docId ?? t.id) === existing.id);
 			if (existingTab) {
 				this.activePane.activeTabId = existingTab.id;
@@ -996,6 +1040,10 @@ export class Workspace {
 						doc.restoreDraft(serialized.draftContent);
 					}
 					restoredDocs.push(doc);
+					// Tab-less bound Documents (issue #272) restore their draft
+					// text without opening a tab; the Diff Viewer rebinds them
+					// by URI when its diff loads.
+					if (serialized.tabless) continue;
 					restoredTabs.push({
 						id: doc.id,
 						type: 'document'
