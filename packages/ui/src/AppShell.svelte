@@ -145,7 +145,7 @@
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
 	<header aria-label="Workspace" class="relative shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
 		<AppMenu size="xs" bind:open={() => menuOpen, setMenuOpen} />
-		<div class={menuOpen ? 'hidden' : 'flex min-w-0 max-w-xl items-center gap-1 py-1'}>
+		<div class={menuOpen ? 'hidden' : 'flex flex-row w-full items-center justify-start py-1'}>
 			<ProjectSelectButton size="xs" bind:open={() => picker === 'project', (open) => picker = open ? 'project' : picker === 'project' ? null : picker} />
 			{#key appState.workspace.project.repository}
 				<BranchSelectButton size="xs" bind:open={() => picker === 'branch', (open) => picker = open ? 'branch' : picker === 'branch' ? null : picker} />

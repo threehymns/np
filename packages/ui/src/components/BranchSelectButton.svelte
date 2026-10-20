@@ -2,23 +2,32 @@
 	import { useAppState } from '@np/core';
 	import { onDestroy } from 'svelte';
 	import { CheckIcon, GitBranchIcon } from "phosphor-svelte";
-	import * as Command from './ui/command';
-	import * as Popover from './ui/popover';
-	import * as Tooltip from './ui/tooltip';
 	import BranchSafetyModal from './BranchSafetyModal.svelte';
 	import type { RepositorySafetyReport } from '@np/core';
-	import Button, { type ButtonSize } from './ui/button/button.svelte';
+	import PickerPopover from './PickerPopover.svelte';
+	import type { PickerRow } from './picker-row';
+	import type { ButtonSize } from './ui/button/button.svelte';
 
 	let { class: className = '', open = $bindable(false), size = 'default' }: { class?: string; open?: boolean; size?: ButtonSize } = $props();
 
 	const appState = useAppState();
 	const workspace = appState.workspace;
-	let trigger = $state<HTMLButtonElement | null>(null);
-	let restoreFocus = false;
 	let pending = $state<{ branch: string; target: ReturnType<typeof workspace.captureProject>; report: RepositorySafetyReport | null; error: string | null } | null>(null);
 	let checking = $state(false);
 	let request = 0;
 	let visiblePending = $derived(pending && workspace.isCurrentProject(pending.target) && !workspace.projectOpening ? pending : null);
+	let busy = $derived(checking || workspace.projectMutationBusy);
+
+	let rows = $derived(
+		workspace.branches.map(
+			(branch): PickerRow => ({
+				value: branch,
+				label: branch,
+				tooltip: branch,
+				current: branch === workspace.currentBranch
+			})
+		)
+	);
 
 	function cancel() {
 		request++;
@@ -65,93 +74,43 @@
 
 </script>
 
-{#if appState.workspace.project.hasRootPermission && appState.workspace.currentBranch}
-	<Tooltip.Provider delayDuration={400}>
-	<Popover.Root bind:open={open}>
-		<Tooltip.Root>
-			<Tooltip.Trigger>
-				{#snippet child({ props })}
-					<span {...props} class="inline-flex min-w-0 max-w-[50%]">
-						<Popover.Trigger bind:ref={trigger}>
-							{#snippet child({ props: popoverProps })}
-								<Button
-									{...popoverProps}
-									type="button"
-									disabled={checking || workspace.projectMutationBusy}
-									aria-label={`Switch branch: ${workspace.currentBranch}`}
-									aria-busy={checking || workspace.projectMutationBusy}
-									class="min-w-0 shrink {className}"
-									variant="ghost"
-									size={size}
-								>
-									{#if checking || workspace.projectMutationBusy}
-										<div class="size-3 shrink-0 animate-spin border-2 border-current border-t-transparent rounded-full"></div>
-									{:else}
-										<GitBranchIcon />
-									{/if}
-									<span class="truncate min-w-0">{appState.workspace.currentBranch}</span>
-								</Button>
-							{/snippet}
-						</Popover.Trigger>
-					</span>
-				{/snippet}
-			</Tooltip.Trigger>
-			<!-- The tooltip is dropped while the picker is open: a tooltip that
-				 stays open over the picker registers its own escape layer and
-				swallows the Escape key the picker needs. The tooltip itself is
-				not disabled, because a disabled tooltip stops reacting to the
-				pointer leaving its trigger and would open late, over the header. -->
-			{#if !open}
-				<Tooltip.Content side="bottom" align="start" class="text-[10px] px-2 py-1 max-w-xs break-all">
-					{workspace.currentBranch}
-				</Tooltip.Content>
+{#if workspace.project.hasRootPermission && workspace.currentBranch}
+	<PickerPopover
+		bind:open
+		{size}
+		label={workspace.currentBranch}
+		ariaLabel={`Switch branch: ${workspace.currentBranch}`}
+		popupLabel="Branches"
+		inputLabel="Search branches"
+		inputPlaceholder="Switch Branch"
+		emptyText="No branches found."
+		{rows}
+		onSelect={(item) => switchBranch(item.value)}
+		disabled={busy}
+		{busy}
+		flipInputOnTop
+		class={className}
+		maxWidth="max-w-[50%]"
+	>
+		{#snippet icon()}
+			{#if busy}
+				<svg class="animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-dasharray="42 57" />
+				</svg>
+			{:else}
+				<GitBranchIcon />
 			{/if}
-		</Tooltip.Root>
-		<Popover.Content
-			trapFocus={false}
-			onOpenAutoFocus={() => restoreFocus = false}
-			onEscapeKeydown={() => restoreFocus = true}
-			onCloseAutoFocus={(event) => {
-				event.preventDefault();
-				if (restoreFocus) trigger?.focus();
-			}}
-			aria-label="Branches" class="max-w-[calc(100vw-1rem)] p-0 flex flex-col group/branch-pop" align="start">
-			<Command.Root class="flex-1 p-0 group-data-[side=top]/branch-pop:flex-col-reverse">
-				<Command.Input aria-label="Search branches" placeholder="Switch Branch" class="h-8" />
-				<Command.List class="px-1 py-1">
-					<Command.Empty class="py-2 text-[11px] text-center">No branches found.</Command.Empty>
-					{#each appState.workspace.branches as branch (branch)}
-						<Tooltip.Root>
-							<Tooltip.Trigger>
-								{#snippet child({ props })}
-									<Command.Item
-										{...props}
-										value={branch}
-										aria-current={workspace.currentBranch === branch ? 'true' : undefined}
-										disabled={checking || workspace.projectMutationBusy}
-										onSelect={() => switchBranch(branch)}
-										class="text-[11px] flex items-center justify-between gap-2 px-2 py-1.5"
-									>
-										<div class="flex items-center gap-2 truncate">
-											<GitBranchIcon class="size-3 opacity-50" />
-											<span class="truncate">{branch}</span>
-										</div>
-										{#if appState.workspace.currentBranch === branch}
-											<CheckIcon class="size-3 opacity-50" />
-										{/if}
-									</Command.Item>
-								{/snippet}
-							</Tooltip.Trigger>
-							<Tooltip.Content side="right" align="center" class="text-[10px] px-2 py-1 max-w-xs break-all">
-								{branch}
-							</Tooltip.Content>
-						</Tooltip.Root>
-					{/each}
-				</Command.List>
-			</Command.Root>
-		</Popover.Content>
-	</Popover.Root>
-	</Tooltip.Provider>
+		{/snippet}
+		{#snippet row(item: PickerRow)}
+			<div class="flex min-w-0 items-center gap-2 truncate">
+				<GitBranchIcon class="size-3 shrink-0 opacity-50" />
+				<span class="truncate">{item.label}</span>
+			</div>
+			{#if item.current}
+				<CheckIcon class="size-3 shrink-0 opacity-50" />
+			{/if}
+		{/snippet}
+	</PickerPopover>
 {/if}
 
 {#if visiblePending}
@@ -164,10 +123,3 @@
 		onCancel={cancel}
 	/>
 {/if}
-
-<style>
-	:global(.group\/branch-pop[data-side='top'] [data-slot='command-input-wrapper']) {
-		padding-top: 0;
-		padding-bottom: 0.25rem;
-	}
-</style>

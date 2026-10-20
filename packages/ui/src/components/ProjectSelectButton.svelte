@@ -1,18 +1,15 @@
 <script lang="ts">
 	import { useAppState, toURI, type FileOrigin } from '@np/core';
 	import { FolderOpen } from 'phosphor-svelte';
-	import * as Command from './ui/command';
-	import * as Popover from './ui/popover';
-	import * as Tooltip from './ui/tooltip';
+	import PickerPopover from './PickerPopover.svelte';
+	import type { PickerRow } from './picker-row';
 	import Button, { type ButtonSize } from './ui/button/button.svelte';
 
 
 	const appState = useAppState();
 	const workspace = appState.workspace;
-	let { open = $bindable(false), size = 'default' }: { open?: boolean; size?: ButtonSize } = $props();
+	let { open = $bindable(false), size = 'default', class: className = '' }: { open?: boolean; size?: ButtonSize; class?: string } = $props();
 	let root = $derived(workspace.project.rootOrigin);
-	let trigger = $state<HTMLButtonElement | null>(null);
-	let restoreFocus = false;
 
 	async function select(origin?: FileOrigin) {
 		if (workspace.projectMutationBusy) return;
@@ -23,93 +20,67 @@
 	function toDisplayPath(origin: FileOrigin): string {
 		return origin.scheme === 'file' ? origin.path : toURI(origin);
 	}
+
+	let rows = $derived(
+		workspace.recentFolders.map((folder): PickerRow => {
+			const uri = toURI(folder);
+			return {
+				key: uri,
+				value: folder.path,
+				keywords: [folder.name, folder.path],
+				label: folder.name,
+				description: toDisplayPath(folder),
+				tooltip: toDisplayPath(folder),
+				current: uri === workspace.projectUri
+			};
+		})
+	);
+
+	function selectRow(item: PickerRow) {
+		const folder = workspace.recentFolders.find((candidate) => toURI(candidate) === item.key);
+		if (folder) void select(folder);
+	}
 </script>
 
-<div class="min-w-0 flex-1">
-	{#if root}
-		<Tooltip.Provider delayDuration={400}>
-		<Popover.Root bind:open>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					{#snippet child({ props })}
-						<span {...props} class="inline-flex min-w-0 max-w-full">
-							<Popover.Trigger bind:ref={trigger}>
-								{#snippet child({ props: popoverProps })}
-									<Button {...popoverProps}
-									  type="button"
-										aria-label={`Switch project: ${root.name}`}
-										disabled={workspace.projectMutationBusy}
-										class="min-w-0 shrink"
-										variant="ghost"
-										size={size}
-									>
-										<span class="truncate min-w-0">{root.name}</span>
-									</Button>
-								{/snippet}
-							</Popover.Trigger>
-						</span>
-					{/snippet}
-				</Tooltip.Trigger>
-				<!-- The tooltip is dropped while the picker is open: a tooltip that
-					stays open over the picker registers its own escape layer and
-					swallows the Escape key the picker needs. The tooltip itself is
-					not disabled, because a disabled tooltip stops reacting to the
-					pointer leaving its trigger and would open late, over the header. -->
-				{#if !open}
-					<Tooltip.Content side="bottom" align="start" class="text-[10px] px-2 py-1 max-w-xs break-all">
-						{toDisplayPath(root)}
-					</Tooltip.Content>
-				{/if}
-			</Tooltip.Root>
-			<Popover.Content
-				trapFocus={false}
-				onOpenAutoFocus={() => restoreFocus = false}
-				onEscapeKeydown={() => restoreFocus = true}
-				onCloseAutoFocus={(event) => {
-					event.preventDefault();
-					if (restoreFocus) trigger?.focus();
-				}}
-				aria-label="Recent projects" align="start" class="w-80 max-w-[calc(100vw-1rem)] p-0">
-				<Command.Root>
-					<Command.Input aria-label="Search recent projects" placeholder="Search recent projects" />
-					<Command.List class="max-h-64 p-1">
-						<Command.Empty>No projects found.</Command.Empty>
-					{#each workspace.recentFolders as folder (toURI(folder))}
-						<Tooltip.Root>
-							<Tooltip.Trigger>
-								{#snippet child({ props })}
-									<Command.Item {...props} value={folder.path} keywords={[folder.name, folder.path]} onSelect={() => select(folder)} disabled={workspace.projectMutationBusy} class="flex min-w-0 gap-2 text-xs">
-										<div class="min-w-0 flex-1">
-											<div class="truncate">{folder.name}</div>
-											<div class="truncate text-[10px] text-muted-foreground">{toDisplayPath(folder)}</div>
-										</div>
-										{#if toURI(folder) === workspace.projectUri}<span class="shrink-0 text-[10px]">Current</span>{/if}
-									</Command.Item>
-								{/snippet}
-							</Tooltip.Trigger>
-							<Tooltip.Content side="right" align="center" class="text-[10px] px-2 py-1 max-w-xs break-all">
-								{toDisplayPath(folder)}
-							</Tooltip.Content>
-						</Tooltip.Root>
-					{/each}
-					</Command.List>
-				</Command.Root>
-				<div class="border-t p-1">
-					<button type="button" onclick={() => select()} disabled={workspace.projectMutationBusy} class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><FolderOpen class="size-4" />Open Folder</button>
-				</div>
-			</Popover.Content>
-		</Popover.Root>
-		</Tooltip.Provider>
-	{:else}
-		<Button
-			type="button"
-			onclick={() => select()}
-			disabled={workspace.projectMutationBusy}
-			aria-label="Open folder"
-			variant="ghost"
-			size={size}
-		>
-			<FolderOpen />Open Folder
-		</Button>
-	{/if}
-</div>
+{#if root}
+	<PickerPopover
+		bind:open
+		{size}
+		label={root.name}
+		ariaLabel={`Switch project: ${root.name}`}
+		tooltip={toDisplayPath(root)}
+		popupLabel="Recent projects"
+		inputLabel="Search recent projects"
+		emptyText="No projects found."
+		{rows}
+		onSelect={selectRow}
+		disabled={workspace.projectMutationBusy}
+		busy={workspace.projectMutationBusy}
+		class={className}
+	>
+		{#snippet row(item: PickerRow)}
+			<div class="min-w-0 flex-1">
+				<div class="truncate">{item.label}</div>
+				<div class="truncate text-[10px] text-muted-foreground">{item.description}</div>
+			</div>
+			{#if item.current}
+				<span class="shrink-0 text-[10px]">Current</span>
+			{/if}
+		{/snippet}
+		{#snippet footer()}
+			<button type="button" onclick={() => select()} disabled={workspace.projectMutationBusy} class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><FolderOpen class="size-4" />Open Folder</button>
+		{/snippet}
+	</PickerPopover>
+{:else}
+	<Button
+		type="button"
+		onclick={() => select()}
+		disabled={workspace.projectMutationBusy}
+		aria-label="Open folder"
+		variant="ghost"
+		{size}
+		class={className}
+	>
+		<FolderOpen />Open Folder
+	</Button>
+{/if}
