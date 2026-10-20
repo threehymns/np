@@ -117,10 +117,21 @@ function sentMessages(process: { written(): string[] }): Record<string, unknown>
  * Answers the request itself, so the client's promise settles and the test does
  * not leak a pending waiter — and asserts on the request rather than on anything
  * internal, because what the server receives is the whole of the claim.
+ *
+ * `options` exists for the one test that has to hand the client a field it does
+ * not have, so it is spread in untyped. Every other caller passes none.
  */
-async function handshakeParams(process: ReturnType<typeof fakeProcess>): Promise<Record<string, unknown>> {
+async function handshakeParams(
+	process: ReturnType<typeof fakeProcess>,
+	options: Record<string, unknown> = {}
+): Promise<Record<string, unknown>> {
 	const { LspClient } = await import('./client');
-	const client = new LspClient({ process, server: 'typescript@/repo', logs: new LspLogStore() });
+	const client = new LspClient({
+		process,
+		server: 'typescript@/repo',
+		logs: new LspLogStore(),
+		...options
+	} as unknown as ConstructorParameters<typeof LspClient>[0]);
 	const settled = client.initialize({ rootUri: 'file:///repo', capabilities: {} });
 	const sent = () => sentMessages(process).find((m) => m.method === 'initialize');
 	// Polled rather than a fixed number of microtasks: a transport that names its
@@ -291,5 +302,44 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		// rather than an omission — and a missing field is not. A known server pid
 		// must not stand in for an unknown parent.
 		expect((await handshakeParams(fakeProcess({ pid: 4242, parentPid: undefined }))).processId).toBeNull();
+	});
+});
+
+/**
+ * The boundary the two closed decisions fix.
+ *
+ * `textDocumentSync`, `completionProvider` and everything else the client
+ * claims in `initialize` describe the client, not the server, and are one table
+ * in `LspClient` that a second server adds nothing to. A descriptor that could
+ * add to that table could claim a capability the client does not implement,
+ * which is what `resolveProvider: true` would be, so the channel is closed.
+ *
+ * The option is forged through a cast, because it does not exist. The test
+ * fails the day someone adds it back.
+ */
+describe("The client's capability table is the client's (#281)", () => {
+	it('ignores a capability table handed to the client alongside it', async () => {
+		const capabilities = (await handshakeParams(fakeProcess(), {
+			capabilities: {
+				textDocumentSync: 2,
+				textDocument: {
+					synchronization: { dynamicRegistration: true, change: 2 },
+					hover: { dynamicRegistration: true }
+				}
+			}
+		})).capabilities as Record<string, unknown>;
+
+		// The server-capability name a descriptor would have claimed, and the
+		// leaves it would have overridden. None of them is the client's to give.
+		expect(capabilities).not.toHaveProperty('textDocumentSync');
+		const textDocument = capabilities.textDocument as Record<string, unknown>;
+		const synchronization = textDocument.synchronization as Record<string, unknown>;
+		expect(synchronization).not.toHaveProperty('change');
+		expect(synchronization.dynamicRegistration).toBe(false);
+
+		// The client's own table is still there, whole: the forged table neither
+		// added to it nor replaced it.
+		expect(textDocument.completion).toBeDefined();
+		expect(textDocument.hover).toBeDefined();
 	});
 });
