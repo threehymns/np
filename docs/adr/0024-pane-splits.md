@@ -1,113 +1,81 @@
-# ADR 0024: Pane Splits
+# The workspace layout is a tree of panes and axes
 
-*   **Status:** Accepted
-*   **Decider:** threehymns
-*   **Date:** 2026-10-15
+A workspace that shows one tab strip cannot show two documents side by side,
+so the layout becomes a tree: a pane holds tabs, an axis holds two or more
+children along one direction, and the root is a pane until the first split.
+The pane is what the user reads, and the tree is what makes a second pane
+possible.
 
-## Context and Problem Statement
+## What a split does
 
-The editor is a single pane: one `Workspace` holds a flat `tabs` array and one
-`activeTabId`. Users cannot view two documents side by side, or two views of
-the same document. This ADR introduces panes and splits.
+A split puts a new pane next to the pane being split, or nests a new axis
+when the direction is orthogonal to the one that pane already sits in. The
+new pane takes the focus. There are three ways to fill it: empty, so it
+shows the empty state; move, so the tab the user was on moves into it; and
+clone, so the new pane opens a second tab onto the same document. A diff
+tab and the language server logs veto cloning, because neither is a view
+onto a document session; every other tab allows it, and a vetoed clone
+falls back to an empty pane.
 
-## Glossary
+## One document, many views
 
-*   **Pane:** a tab container. Holds an ordered list of tabs, one of which is
-    active, and renders its own tab bar. The unit the user splits and focuses.
-*   **Split:** the action of dividing one pane into two, side by side
-    (horizontal axis) or stacked (vertical axis).
-*   **Axis:** an interior layout node holding two or more panes (or nested
-    axes) along one direction, with a relative flex weight per child.
-*   **Split tree:** the layout model. A node is either a pane or an axis;
-    the workspace root is a single pane until the first split.
-*   **Document session:** the open-document model (`DocumentSession`). One
-    session may now back tabs in multiple panes; each pane holds its own
-    editor view onto the shared session.
-*   **Tab:** a view onto a document session (or diff view) inside one pane.
-    Closing a tab never destroys its session while another tab still
-    references it.
-*   **Empty pane:** a pane with zero tabs. Renders the shared `Empty`
-    component, not a blank editor.
+A document session may back tabs in more than one pane. Each pane holds its
+own editor view, so the cursor, the selection and the scroll position are
+per view, while the content, the dirty state and the save lifecycle stay
+per session. The save-or-discard prompt fires only when the last tab
+referencing a session closes, so closing a cloned tab while the session
+lives on elsewhere closes silently.
 
-## Decision
+## Panes die with their last tab
 
-### Layout model: tree of axes
+A pane whose last tab closes is removed, and the tree collapses around it,
+with the focus falling back to a neighbouring pane. There is no close-pane
+command: the last pane is guarded and survives as an empty pane.
 
-The split tree replaces the flat `tabs` array. Splitting inserts adjacent in
-a matching axis or nests a new axis; removing a pane collapses single-child
-axes. The root is never removed: the workspace always has at least one pane.
-Sizes are relative flex weights; v1 splits are fixed 50/50, so the flex field
-exists in the model but no resize UI ships yet.
+Focus moves by geometric hit-testing rather than by walking the tree. Take
+the active pane's rectangle, step one pixel past the requested edge, and
+hit-test that point against the panes on screen. That stays right under any
+nesting, which tree-walking does not.
 
-### Split modes
+## The focused editor owns the focus-sensitive state
 
-Three modes, all shipping in v1:
+A pane that does not have focus still holds a live view of its document: it
+keeps its content, its language and its completions in sync, so a cloned
+view shows the edits made in the pane the user is typing in. What it does
+not own is the state that follows the focus: word wrap, vim mode, and the
+keymap contexts. The keymap contexts are global, one set for the whole
+application, so exactly one editor may hold them, and it is the editor in
+the focused pane. A second owner would clear them when it let go and take
+the focused editor's keybindings with it.
 
-*   **Empty:** the new pane starts with zero tabs and shows the `Empty`
-    component.
-*   **Move:** the active tab moves into the new pane.
-*   **Clone:** the new pane opens a second tab onto the same document
-    session. The diff viewer and LSP logs tabs veto cloning (per-tab
-    `canSplit`); every other tab type allows it.
+## What a pane looks like
 
-The new pane always takes focus after a split.
+A pane renders its own tab bar. The active pane's bar is drawn at full
+opacity and the other panes' bars are dimmed, so the focus is visible
+without a border or an accent. A pane with no tabs renders the shared
+empty state rather than a blank editor.
 
-### Shared sessions, per-pane views
+## Keys
 
-One `DocumentSession` may back tabs in several panes. Each pane owns its
-editor view (cursor, scroll, and selection are per-view; content, dirty
-state, and save lifecycle are per-session). The save/discard prompt fires
-only when the last tab referencing a session closes — closing a cloned tab
-while the session lives on elsewhere closes silently.
+Split and focus are commands in the keymap registry like any other, so they
+are remappable. The ``cmd+k`` chord is the way in: an arrow after it splits
+in that direction, and ``cmd`` and an arrow after it moves the focus. There
+is no separate one-key split, because ``cmd+\`` already toggles the sidebar
+and the two would be the same chord on Linux and Windows, where ``cmd`` is
+``ctrl``.
 
-### Pane lifecycle
+## Persistence
 
-Implicit death: a pane whose last tab closes is removed and the tree
-collapses, with focus falling back to a neighbor. There is no close-pane
-command. The last pane is guarded and survives as an empty pane.
+The persisted open files are version-keyed. A record whose version is not
+the current one is discarded and the workspace starts fresh and empty,
+because there is no migration code and a shape the workspace cannot read
+is worse than an empty workspace. State written before the versioning
+existed was a bare array; it is read as the current version, so it loads as
+it always did and never counts as a mismatch.
 
-### Focus navigation
+## Out of scope
 
-Directional focus commands (`pane.focusLeft` / `Right` / `Up` / `Down`)
-resolve via geometric hit-testing from day one: take the active pane's
-bounding rect, step one pixel past the requested edge, and hit-test against
-known pane rects. This stays correct under arbitrary nesting, unlike
-tree-walking.
-
-### Keybindings
-
-Split and focus commands are registered in the keymap registry like any
-other command, so they are remappable:
-
-*   `cmd-\` / `ctrl-\`: split right
-*   `cmd-k` then arrow: split in that direction
-*   `cmd-k cmd-arrow`: move focus between panes
-
-### Active pane indication
-
-The active pane's tab bar renders at full opacity; inactive panes' tab bars
-are dimmed. No borders or accent chrome.
-
-## Out of scope for v1
-
-Drag-and-drop splits, pane zoom, move-item-between-panes, layout
-persistence across restarts, and draggable dividers. The model carries flex
-weights so resizing is a pure UI addition later.
-
-## Persistence migration
-
-There is no migration path for pre-split persisted workspace state. The
-persisted state is version-keyed; on a version mismatch the workspace starts
-fresh (empty) instead of attempting to read the old shape. This keeps a stale
-tab strip from blocking new tabs without requiring the user to clear state
-manually, and avoids carrying migration code as tech debt.
-
-## Consequences
-
-*   `Workspace.tabs` / `activeTabId` migrate into the root pane; every
-    existing call site that assumes a single tab strip must go through the
-    active pane.
-*   `DocumentSession` gains multi-view attachment; anything that assumes one
-    view per session (scroll restore, cursor tracking) must become per-tab.
-*   The tab bar component becomes per-pane; the workspace renders the split
-    tree instead of one strip.
+Drag-and-drop splits, pane zoom, moving a tab between panes, persisting the
+layout across restarts, and draggable dividers. The model carries a
+relative weight per child, so resizing is a UI addition later rather than a
+change to the model.
