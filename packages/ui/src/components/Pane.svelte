@@ -187,9 +187,17 @@
 							<TabComponent {...(tabContent.props ?? {})} />
 						{:else if Editor}
 							{#if tabDocument}
+								<!--
+									Every rendered editor is live, so a cloned view in another
+									pane shows the edits made in the pane that has focus.
+									The focus-sensitive state (word wrap, vim mode, the
+									global keymap contexts) belongs to the focused
+									editor alone.
+								-->
 								<Editor
 									doc={tabDocument}
-									active={isActive}
+									active={true}
+									focused={isActive}
 									bind:view={editorViews[`${pane.id}:${tab.id}`]}
 									paneId={pane.id}
 									style="font-size: {appState.prefs.zoom}%;"
