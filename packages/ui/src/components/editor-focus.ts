@@ -26,6 +26,17 @@ export interface KeymapContextOwner {
 }
 
 /**
+ * The part of an editor view's DOM root the focus context needs: it has to
+ * know whether the document's active element is inside it, and it has to hear
+ * about focus moving in and out.
+ */
+export interface FocusContextRoot {
+	contains(node: unknown): boolean;
+	addEventListener(type: string, handler: (event: any) => void): void;
+	removeEventListener(type: string, handler: (event: any) => void): void;
+}
+
+/**
  * The part of the vim extension's CodeMirror instance that reports the mode
  * the user is in.
  */
@@ -96,5 +107,65 @@ export function claimEditorKeymapContexts(
 		if (cm) cm.off("vim-mode-change", onModeChange);
 		keymaps.setContext("editor", undefined);
 		keymaps.setContext("vim_mode", undefined);
+	};
+}
+
+/**
+ * Claim the "editorFocused" context for the focused editor.
+ *
+ * The context says the editor really holds the focus. A hover tooltip never
+ * takes focus, so a selection inside a tooltip reads here as "unfocused" and
+ * falls through to native copy instead of being hijacked into the editor's
+ * copy command. Movement within the editor, such as into the search panel
+ * that lives in the editor root, keeps the context: only leaving the root
+ * clears it.
+ *
+ * Only the focused editor owns this context, the same way it owns the
+ * "editor" and "vim_mode" contexts. In a split, every pane renders a live
+ * editor, and a second owner would clear the focused editor's context the
+ * moment it let go.
+ *
+ * The returned function releases the context. It is safe to call when nothing
+ * was claimed.
+ */
+export function claimEditorFocusedContext(
+	keymaps: KeymapContextOwner,
+	options: {
+		focused: boolean;
+		root: FocusContextRoot | null | undefined;
+		/** The document's active element, or null when there is none. */
+		activeElement: () => unknown;
+	},
+): () => void {
+	if (!options.focused || !options.root) {
+		return () => {};
+	}
+
+	const root = options.root;
+	const syncFocus = () => {
+		const active = options.activeElement();
+		if (active && root.contains(active)) {
+			keymaps.setContext("editorFocused", true);
+		} else {
+			keymaps.setContext("editorFocused", undefined);
+		}
+	};
+	const onFocusIn = () => {
+		keymaps.setContext("editorFocused", true);
+	};
+	const onFocusOut = (event: { relatedTarget?: unknown }) => {
+		const next = event.relatedTarget;
+		if (next && root.contains(next)) return;
+		keymaps.setContext("editorFocused", undefined);
+	};
+
+	syncFocus();
+	root.addEventListener("focusin", onFocusIn);
+	root.addEventListener("focusout", onFocusOut);
+
+	return () => {
+		root.removeEventListener("focusin", onFocusIn);
+		root.removeEventListener("focusout", onFocusOut);
+		keymaps.setContext("editorFocused", undefined);
 	};
 }

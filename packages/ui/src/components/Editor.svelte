@@ -12,7 +12,7 @@
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
 	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
-	import { applyEditorWrap, claimEditorKeymapContexts } from "./editor-focus";
+	import { applyEditorWrap, claimEditorFocusedContext, claimEditorKeymapContexts } from "./editor-focus";
 
 	let {
 		doc,
@@ -271,40 +271,26 @@
 		});
 	});
 
-	// Focus-scoped keymap context for the clipboard bindings: `editor` stays
-	// true for the whole active tab, but cut/copy/paste must only fire when
-	// the editor truly has focus. A hover tooltip never takes focus, so a
-	// tooltip text selection reads here as "unfocused" and falls through to
-	// native copy instead of being hijacked into edit.copy of a collapsed
-	// editor selection. Movement within the editor (content to search panel)
-	// keeps the context: only leaving the editor root clears it.
+	// Sync the editorFocused context: the editor truly has focus. A hover
+	// tooltip never takes focus, so a tooltip text selection reads here as
+	// "unfocused" and falls through to native copy instead of being hijacked
+	// into edit.copy of a collapsed editor selection. Movement within the
+	// editor (content to search panel) keeps the context: only leaving the
+	// editor root clears it.
+	//
+	// Only the focused editor owns this context, the same way it owns the
+	// "editor" and "vim_mode" contexts. In a split, every pane renders a live
+	// editor, and a second owner would clear the focused editor's context the
+	// moment it let go.
 	$effect(() => {
-		if (!active || !view) return;
-		const root = view.dom;
-		const syncFocus = () => {
-			if (typeof document === "undefined") return;
-			if (root.contains(document.activeElement)) {
-				appState.keymaps.setContext("editorFocused", true);
-			} else {
-				appState.keymaps.setContext("editorFocused", undefined);
-			}
-		};
-		const onFocusIn = () => {
-			appState.keymaps.setContext("editorFocused", true);
-		};
-		const onFocusOut = (e: FocusEvent) => {
-			if (e.relatedTarget instanceof Node && root.contains(e.relatedTarget)) return;
-			appState.keymaps.setContext("editorFocused", undefined);
-		};
-		syncFocus();
-		root.addEventListener("focusin", onFocusIn);
-		root.addEventListener("focusout", onFocusOut);
-		return () => {
-			root.removeEventListener("focusin", onFocusIn);
-			root.removeEventListener("focusout", onFocusOut);
-			appState.keymaps.setContext("editorFocused", undefined);
-		};
+		return claimEditorFocusedContext(appState.keymaps, {
+			focused,
+			root: view?.dom,
+			activeElement: () =>
+				typeof document === "undefined" ? null : document.activeElement,
+		});
 	});
+
 	// Also sync mode when view changes or vim is toggled
 	$effect(() => {
 		if (view && focused && appState.prefs.vimMode) {

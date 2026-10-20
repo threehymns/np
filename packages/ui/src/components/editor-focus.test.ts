@@ -6,8 +6,10 @@ import { Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
 	applyEditorWrap,
+	claimEditorFocusedContext,
 	claimEditorKeymapContexts,
 	type FocusableView,
+	type FocusContextRoot,
 	type KeymapContextOwner,
 	type VimModeSource,
 } from "./editor-focus";
@@ -206,10 +208,13 @@ describe("The editor component follows the focused prop", () => {
 	it("takes word wrap, vim mode and the keymap contexts from the focused prop", () => {
 		const blocks = effectBlocks(editorSource);
 
-		for (const call of ["applyEditorWrap(", "vimCompartment.reconfigure", "claimEditorKeymapContexts("]) {
+		for (const call of ["applyEditorWrap(", "vimCompartment.reconfigure", "claimEditorKeymapContexts(", "claimEditorFocusedContext("]) {
 			const block = blockWith(blocks, call);
 			expect(block).toContain("focused");
-			expect(block).not.toContain("active");
+			// The `active` prop is the one that says the editor is live. The
+			// focus-sensitive blocks must not read it. `activeElement` is a
+			// different word and does not match.
+			expect(block).not.toMatch(/\bactive\b/);
 		}
 	});
 
@@ -222,5 +227,163 @@ describe("The editor component follows the focused prop", () => {
 	it("gives the editor the real focus state", () => {
 		expect(paneSource).toContain("focused={isActive}");
 		expect(paneSource).toContain("active={true}");
+	});
+});
+
+/**
+ * An editor DOM root, reduced to what the focus context needs: whether the
+ * document's active element is inside it, and whether focus moved in or out.
+ */
+function fakeRoot(): FocusContextRoot & {
+	emit(type: string, event?: { relatedTarget?: unknown }): void;
+	inside: Set<unknown>;
+} {
+	const listeners: Record<string, ((event: any) => void)[]> = {};
+	const inside = new Set<unknown>();
+	return {
+		inside,
+		contains(node: unknown) {
+			return inside.has(node);
+		},
+		addEventListener(type: string, handler: (event: any) => void) {
+			(listeners[type] ??= []).push(handler);
+		},
+		removeEventListener(type: string, handler: (event: any) => void) {
+			const list = listeners[type];
+			if (!list) return;
+			const index = list.indexOf(handler);
+			if (index !== -1) list.splice(index, 1);
+		},
+		emit(type: string, event: { relatedTarget?: unknown } = {}) {
+			for (const handler of [...(listeners[type] ?? [])]) handler(event);
+		},
+	};
+}
+
+describe("The editorFocused context belongs to the focused editor", () => {
+	it("claims nothing when the editor is not focused", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+
+		const release = claimEditorFocusedContext(keymaps, {
+			focused: false,
+			root,
+			activeElement: () => "child",
+		});
+
+		expect(keymaps.context.editorFocused).toBeUndefined();
+		expect(root.inside.has("child")).toBe(false);
+		release();
+	});
+
+	it("claims nothing when there is no editor to claim it for", () => {
+		const keymaps = fakeKeymaps();
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root: null,
+			activeElement: () => null,
+		});
+
+		expect(keymaps.context.editorFocused).toBeUndefined();
+	});
+
+	it("is set while the document's active element is inside the editor", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+		const child = {};
+		root.inside.add(child);
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => child,
+		});
+
+		expect(keymaps.context.editorFocused).toBe(true);
+	});
+
+	it("is clear when the active element is outside the editor", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => ({}),
+		});
+
+		expect(keymaps.context.editorFocused).toBeUndefined();
+	});
+
+	it("follows focus moving into the editor", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => null,
+		});
+		expect(keymaps.context.editorFocused).toBeUndefined();
+
+		root.emit("focusin");
+		expect(keymaps.context.editorFocused).toBe(true);
+	});
+
+	it("follows focus leaving the editor", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => null,
+		});
+		root.emit("focusin");
+		expect(keymaps.context.editorFocused).toBe(true);
+
+		root.emit("focusout", { relatedTarget: {} });
+		expect(keymaps.context.editorFocused).toBeUndefined();
+	});
+
+	it("keeps the context when focus moves inside the editor", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+		const panel = {};
+		root.inside.add(panel);
+
+		claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => null,
+		});
+		root.emit("focusin");
+
+		// Movement into the search panel, which lives in the editor root, is
+		// not movement out of the editor.
+		root.emit("focusout", { relatedTarget: panel });
+		expect(keymaps.context.editorFocused).toBe(true);
+	});
+
+	it("releases the context when the editor lets go", () => {
+		const keymaps = fakeKeymaps();
+		const root = fakeRoot();
+
+		const release = claimEditorFocusedContext(keymaps, {
+			focused: true,
+			root,
+			activeElement: () => null,
+		});
+		root.emit("focusin");
+		expect(keymaps.context.editorFocused).toBe(true);
+
+		release();
+		expect(keymaps.context.editorFocused).toBeUndefined();
+
+		// The listener goes with the claim, so a focus event after the
+		// editor let go does not write into the contexts again.
+		root.emit("focusin");
+		expect(keymaps.context.editorFocused).toBeUndefined();
 	});
 });
