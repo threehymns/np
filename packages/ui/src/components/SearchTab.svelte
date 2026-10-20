@@ -325,8 +325,14 @@
 					const line = state.doc.line(lineNo);
 					const fileOffset = excerptMap.excerptOffsetToFileOffset(line.from);
 					if (fileOffset !== null) {
-						const prefix = content.slice(0, fileOffset);
-						const fileLine = prefix.split('\n').length;
+						// Use the map's live file content, not the init-time
+						// snapshot: edits applied through applyExcerptEdit update
+						// the map but not the captured `content` variable.
+						const live = excerptMap.fileContent;
+						let fileLine = 1;
+						for (let i = 0; i < fileOffset && i < live.length; i++) {
+							if (live[i] === '\n') fileLine++;
+						}
 						return String(fileLine);
 					}
 					return String(lineNo);
