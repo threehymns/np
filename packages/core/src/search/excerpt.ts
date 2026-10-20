@@ -1,8 +1,9 @@
 import { EditorState, Transaction } from '@codemirror/state';
 import { history, historyField } from '@codemirror/commands';
-import type { SearchMatch, FileSearchResult } from './types';
+import type { SearchMatch, FileSearchResult, SearchQuery } from './types';
 import type { FileOrigin } from '../storage';
 import { toURI } from '../storage';
+import { buildSearchRegex, findMatchesInContent } from './engine';
 import { DocumentSession } from '../document.svelte';
 import type { Workspace } from '../workspace.svelte';
 
@@ -58,7 +59,12 @@ export class FileExcerptMap {
 	/** Current excerpt buffer text; updated by applyExcerptEdit after direct edits */
 	bufferText: string = '';
 	readonly separator: string;
-	private fileContent: string;
+	/**
+	 * The file content the map was built from. Every file offset the map
+	 * hands out is relative to this text, so a map whose content no longer
+	 * matches the document would write an edit to the wrong place.
+	 */
+	fileContent: string;
 
 	constructor(
 		filepath: string,
@@ -323,6 +329,67 @@ export class FileExcerptMap {
 			}
 		}
 	}
+}
+
+/**
+ * True when the document no longer holds the content an excerpt map was
+ * built from. The map hands out file offsets relative to that content, so a
+ * stale map would write an edit to the wrong place in the file.
+ *
+ * A document that is not open has no content to compare against: the map
+ * mirrors the file on disk, and the snapshot search covers that case.
+ */
+export function isExcerptMapStale(map: FileExcerptMap, documentContent: string | undefined): boolean {
+	if (documentContent === undefined) return false;
+	return map.fileContent !== documentContent;
+}
+
+export interface ExcerptMapBuild {
+	/** The map for the given content. */
+	map: FileExcerptMap;
+	/** The matches the map was built from, re-derived from the content. */
+	matches: SearchMatch[];
+}
+
+/**
+ * Builds an excerpt map for the current content of a file, re-deriving the
+ * file's matches from the query.
+ *
+ * A map built from older content hands out offsets that no longer point at
+ * the text the user sees, so a map that has to survive a change made
+ * elsewhere has to start from the content the document holds now. The
+ * query's own options (regular expression, case sensitivity, whole word)
+ * decide how the matches are found, exactly as they did for the search.
+ *
+ * Returns null when the query is not a usable pattern, for example an
+ * invalid regular expression: the caller keeps the map it has rather than
+ * replacing it with an empty one.
+ */
+export function buildExcerptMapForContent(
+	filepath: string,
+	origin: FileOrigin,
+	content: string,
+	query: SearchQuery,
+	contextLines = 1
+): ExcerptMapBuild | null {
+	let regex: RegExp;
+	try {
+		regex = buildSearchRegex(query);
+	} catch {
+		return null;
+	}
+
+	const { matches } = findMatchesInContent(
+		content,
+		regex,
+		contextLines,
+		Number.POSITIVE_INFINITY
+	);
+
+	return {
+		map: new FileExcerptMap(filepath, origin, content, matches, { contextLines }),
+		matches
+	};
 }
 
 /**

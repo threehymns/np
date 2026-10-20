@@ -12,6 +12,7 @@ let WorkspaceClass: typeof import("../workspace.svelte").Workspace;
 let ProjectClass: typeof import("../project/project.svelte").Project;
 let SearchTabSessionClass: typeof import("./session.svelte").SearchTabSession;
 let buildSearchRegexFn: typeof import("./engine").buildSearchRegex;
+let findMatchesInContentFn: typeof import("./engine").findMatchesInContent;
 let globToRegexFn: typeof import("./engine").globToRegex;
 let parseGlobsFn: typeof import("./engine").parseGlobs;
 
@@ -27,6 +28,7 @@ beforeAll(async () => {
 	const searchMod = await import("./engine");
 	TypeScriptSearchEngineClass = searchMod.TypeScriptSearchEngine;
 	buildSearchRegexFn = searchMod.buildSearchRegex;
+	findMatchesInContentFn = searchMod.findMatchesInContent;
 	globToRegexFn = searchMod.globToRegex;
 	parseGlobsFn = searchMod.parseGlobs;
 
@@ -123,6 +125,40 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		expect(stream.progress.matchedFiles).toBe(1);
 		expect(stream.progress.totalMatches).toBe(1);
 		expect(stream.progress.truncated).toBe(false);
+	});
+
+	it("the shared file matcher reports the same matches as the engine search", async () => {
+		const content = "line 1\nconst target = 'findme';\nline 3\nline 4";
+		const storage = createMockStorage({ "/test-project/src/index.ts": content });
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const results = await engine.search({ pattern: "findme" }).all();
+
+		// The excerpt view re-derives matches with the same matcher, so a
+		// rebuilt excerpt reports the positions a fresh search would.
+		const scan = findMatchesInContentFn(
+			content,
+			buildSearchRegexFn({ pattern: "findme" }),
+			1,
+			Number.POSITIVE_INFINITY
+		);
+
+		expect(scan.truncated).toBe(false);
+		expect(scan.matches).toEqual(results[0].matches);
+	});
+
+	it("the shared file matcher stops at the match budget", () => {
+		const scan = findMatchesInContentFn(
+			"aaa\naaa\naaa",
+			buildSearchRegexFn({ pattern: "aaa" }),
+			1,
+			2
+		);
+
+		expect(scan.matches.length).toBe(2);
+		expect(scan.truncated).toBe(true);
 	});
 
 	it("the engine only reads the Worktree snapshot and never walks the disk itself", async () => {

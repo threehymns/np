@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
 	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
-	import { FileExcerptMap, applyReplaceAll, applyEditsToDocumentSession, toURI } from '@np/core';
+	import {
+		FileExcerptMap,
+		applyReplaceAll,
+		applyEditsToDocumentSession,
+		buildExcerptMapForContent,
+		isExcerptMapStale,
+		toURI
+	} from '@np/core';
 	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
 	import Icon from './Icon.svelte';
 	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
@@ -31,9 +38,30 @@
 
 	interface ExcerptViewEntry {
 		view: EditorView;
+		/** URI of the document the excerpt mirrors. */
+		uri: string;
 		getMap: () => FileExcerptMap;
+		/** Rebuild the view from the document's current content. */
+		rebuild: () => void;
 	}
 	const activeExcerptViews = new SvelteMap<string, ExcerptViewEntry>();
+
+	// An excerpt mirrors a live document. When that document changes outside
+	// its excerpt view, for example an edit in the main editor, the map's
+	// file offsets no longer point at the text the document holds and an
+	// edit made through the excerpt would land at a shifted position.
+	// Rebuild the view from the document's current content when that
+	// happens, so the map always describes the content it edits.
+	$effect(() => {
+		const documents = appState.workspace.documents;
+		for (const entry of activeExcerptViews.values()) {
+			const doc = documents.find((d) => d.origin && toURI(d.origin) === entry.uri);
+			if (!doc) continue;
+			const content = doc.content;
+			if (!isExcerptMapStale(entry.getMap(), content)) continue;
+			entry.rebuild();
+		}
+	});
 
 	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
 
@@ -206,13 +234,26 @@
 			}
 			if (!alive()) return;
 
-			let excerptMap = new FileExcerptMap(
+			// The excerpt mirrors the document: its text is the document's
+			// current content and its match positions are derived from that
+			// content with the session's query. A map built from older
+			// content hands out file offsets that no longer point at the
+			// text the user sees.
+			const built = buildExcerptMapForContent(
 				fileResult.filepath,
 				fileResult.origin,
 				content,
-				fileResult.matches,
-				{ contextLines: 1 }
+				session.toQuery(),
+				1
 			);
+			// An unusable query (an invalid regular expression) leaves the
+			// search's own matches in place rather than showing nothing.
+			const matches = built ? built.matches : fileResult.matches;
+			let excerptMap =
+				built?.map ??
+				new FileExcerptMap(fileResult.filepath, fileResult.origin, content, matches, {
+					contextLines: 1
+				});
 
 			// The map snapshots the document at init() time. Track the document
 			// revision it reflects so an edit made anywhere else (main editor,
@@ -248,7 +289,7 @@
 
 			const highlightDecorations = () => {
 				const builder = new RangeSetBuilder<Decoration>();
-				for (const match of fileResult.matches) {
+				for (const match of matches) {
 					const bufFrom = excerptMap.fileOffsetToExcerptOffset(match.offset);
 					if (bufFrom !== null) {
 						const bufTo = Math.min(bufFrom + match.matchLength, excerptMap.bufferText.length);
@@ -366,7 +407,14 @@
 
 			activeExcerptViews.set(fileResult.filepath, {
 				view,
-				getMap: () => excerptMap
+				uri,
+				getMap: () => excerptMap,
+				rebuild: () => {
+					if (!alive()) return;
+					view?.destroy();
+					view = undefined;
+					void init();
+				}
 			});
 		}
 
