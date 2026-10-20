@@ -64,15 +64,15 @@ opposite of what it says. Zed's default is the reason this is easy to get
 backwards.
 
 **No bound chosen is not no bound at all.** The runtime substitutes its own when
-the setting supplies none, and spec #263 asks for this: story 4 is words behind a
+the setting supplies none, and the fallback asks for it: words answer behind a
 server that errors *or times out*, and a request that cannot time out can never
-report one. Read literally, the two halves of the spec cancel — `0` means the
+report one. Read literally, the two halves of the fallback cancel — `0` means the
 popover waits for whichever server is answering, and a server that hangs without
 erroring is never late, only silent, so at the defaults the fallback this ADR is
 about never ran. The code resolved the tension toward silence, which is the one
 outcome `'fallback'` exists to remove, and a fix belongs to the runtime rather
 than the setting: changing the default to a non-zero number would have satisfied
-story 4 by contradicting the setting the same spec mandates.
+the fallback by contradicting the setting it is read against.
 
 The substituted bound is the same reasoning as `initialize`'s: an unbounded wait
 on a server is a wait on a document the runtime may never be able to answer. It
@@ -114,23 +114,31 @@ degrade into `replace_suffix`. A range is clamped into the document at apply tim
 because a range the server computed against an older revision can point past its
 end, and an out-of-bounds offset throws in every consumer of one.
 
-`completionItem/resolve` is not used, and the client says so. vtsls advertises
-`resolveProvider: true`, and a real server often withholds documentation until it
-is asked — so most items will show a signature and no JSDoc. CodeMirror has no
-public hook for "the popover is now showing this option", so the round trip has
-nowhere to hang. Doing it anyway means N requests per keystroke, or a cache that
-lands the docs one keystroke late. That is a design of its own and it belongs
-with hover, which spec #263 defers for the same reason.
+`completionItem/resolve` is used, and the client declares it: `initialize`
+advertises `resolveSupport` for the four properties the round trip fills. A
+server often withholds documentation until it is asked, and the popover asks
+through the option's `info` function, which CodeMirror calls when it renders
+the option's documentation. The round trip is one request per option the
+popover shows, and the runtime keeps each reply, so a second visit to the same
+option is a cache hit rather than a second request. The advertisement and the
+hover request beside it are stated in ADR 0024.
 
-So `initialize` declares `completionProvider: { resolveProvider: false }`, and the
-declared absence is the point: the client *issues* `textDocument/completion`, so
-declaring nothing would be a protocol error — a server is entitled to answer "no
-completions here" for a client that never advertised it wanted any, and vtsls
-does exactly that. `triggerCharacters` is declared absent for the same reason:
-the characters are the client's to honour, and this client has no per-character
-trigger, because CodeMirror decides when to ask and the trigger policy filters
-it. The client's capability table is the client's and not the descriptor's for
-the reason ADR 0020 gives, so neither of these is a field a second server could
+`completionProvider` is declared because the client *issues*
+`textDocument/completion`. Declaring nothing while asking for the answers
+anyway is a protocol error: a server is entitled to answer "no completions
+here" for a client that never advertised it wanted any, and vtsls does exactly
+that.
+
+`triggerCharacters` is declared absent, because the characters are the
+server's to announce rather than the client's to claim. Each running server's
+`initialize` result is read for its own, and the live union of them is what the
+trigger policy filters against. An empty prefix is allowed, so a trigger
+character asks the server even when nothing has been typed; the client-side
+brakes, meaning the minimum word length, prose silence and the global popup
+toggle, decide whether a trigger opens the popover at all.
+
+The client's capability table is the client's and not the descriptor's, for
+the reason ADR 0020 gives, so none of these is a field a second server could
 fill in.
 
 ## What is asserted, and where

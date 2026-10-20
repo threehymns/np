@@ -96,9 +96,6 @@ export type HoverAnswer =
 	| { readonly state: 'serving'; readonly hover: ServerHover | null }
 	| { readonly state: 'unavailable'; readonly provider: string; readonly reason: string };
 
-/** How far either side of the selection the visible-window resolve covers (#292). */
-export const RESOLVE_WINDOW_BEFORE_AFTER = 4;
-
 /**
  * How many resolved items the once-only cache keeps before the oldest is
  * evicted.
@@ -106,8 +103,7 @@ export const RESOLVE_WINDOW_BEFORE_AFTER = 4;
  * A server that puts the file and position into `data` makes almost every
  * completion session a new key, and each entry holds full documentation, so an
  * unbounded cache grows for the life of the server. A few hundred covers the
- * visible window and the popovers around it without keeping a session's whole
- * history.
+ * options a popover shows without keeping a session's whole history.
  */
 export const RESOLVED_ITEMS_LIMIT = 200;
 
@@ -594,11 +590,14 @@ export class LspRuntime
 			if (this.resolvedItems.has(key)) {
 				// A hit merges the raw reply onto the *current* item: its range and
 				// primary edit are the only ones anchored to this document. The
-				// cached reply's own additional edits are dropped for the same
-				// reason — they were resolved against an earlier revision — while
-				// edits the current item already carries survive.
+				// item's own edits are the ones that came with the completion
+				// reply for this document, so they win over the cached reply's,
+				// which were computed against an earlier revision. An item that
+				// carries none takes the cached reply's edits, because those are
+				// the only ones the server sent and dropping them would lose the
+				// server's instruction without a word.
 				return mergeResolvedCompletion(item, this.resolvedItems.get(key), {
-					keepResolvedAdditionalEdits: false
+					preferItemEdits: true
 				});
 			}
 			this.syncDocument(entry, { ...document, path });
@@ -619,36 +618,6 @@ export class LspRuntime
 			);
 			return item;
 		}
-	}
-
-	/**
-	 * Resolves the visible window around one selection, once-only (#292).
-	 *
-	 * The window is the selection plus {@link RESOLVE_WINDOW_BEFORE_AFTER}
-	 * entries either side. Items whose documentation already arrived are
-	 * skipped except the selection itself, which is always re-resolved for
-	 * out-of-spec servers that return more later; items already resolved are
-	 * never asked twice. Returns the items in order, with resolved entries
-	 * replaced by their merged form.
-	 */
-	async resolveVisible(
-		document: LspDocumentInput,
-		items: readonly CompletionSuggestion[],
-		selectedIndex: number,
-		timeoutMs?: number
-	): Promise<readonly CompletionSuggestion[]> {
-		if (items.length === 0) return items;
-		const selected = Math.max(0, Math.min(selectedIndex, items.length - 1));
-		const from = Math.max(0, selected - RESOLVE_WINDOW_BEFORE_AFTER);
-		const to = Math.min(items.length - 1, selected + RESOLVE_WINDOW_BEFORE_AFTER);
-		const resolved = [...items];
-		for (let index = from; index <= to; index++) {
-			const item = resolved[index];
-			// Already documented and not the selection: nothing withheld.
-			if (item.documentation && index !== selected) continue;
-			resolved[index] = await this.resolveCompletion(document, item, timeoutMs);
-		}
-		return resolved;
 	}
 
 	/** Generic resolve seam: hands back the suggestion with docs/detail filled. */

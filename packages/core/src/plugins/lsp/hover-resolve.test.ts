@@ -221,9 +221,9 @@ describe('completionItem/resolve', () => {
 		expect(resolvedSecond.documentation).toContain('A thing with an id');
 	}, 30_000);
 
-	it('does not reuse cached additional edits for a later item that names none', async () => {
+	it('keeps the cached reply’s edits for an item that names none, rather than losing them', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
-		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);
+		const { runtime, wireLog } = await startPlugin(['--mode', 'lazy-docs']);
 		const document = docFor(root, 'a.ts', 'const w = wid');
 		const first = {
 			label: 'Widget',
@@ -239,15 +239,20 @@ describe('completionItem/resolve', () => {
 		// The stub attaches the import edit to the resolve reply, so the first
 		// answer carries it.
 		expect(resolvedFirst.additionalTextEdits ?? []).toHaveLength(1);
+		const before = received(wireLog).filter((line) => line.includes('completionItem/resolve')).length;
 
-		// The second item carries no edits of its own, so the cached reply's
-		// edits — resolved against an earlier revision — must not ride along.
+		// The item carries no edits of its own, so the cached reply's edits are
+		// the only ones the server sent. They ride along rather than being
+		// dropped, and the item is still not asked a second time.
 		const resolvedSecond = await runtime.resolveCompletion(document, {
 			...first,
 			replaceRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }
 		});
 
-		expect(resolvedSecond.additionalTextEdits ?? null).toBeNull();
+		expect(
+			received(wireLog).filter((line) => line.includes('completionItem/resolve')).length
+		).toBe(before);
+		expect(resolvedSecond.additionalTextEdits ?? []).toHaveLength(1);
 		expect(resolvedSecond.documentation).toContain('A thing with an id');
 	}, 30_000);
 
@@ -300,31 +305,6 @@ describe('completionItem/resolve', () => {
 			received(wireLog).filter((line) => line.includes('completionItem/resolve')).length
 		).toBe(before + 1);
 	}, 60_000);
-
-	it('resolves the visible window plus-minus four, skipping documented items except the selection', async () => {
-		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });
-		const { runtime } = await startPlugin(['--mode', 'lazy-docs']);
-		const document = docFor(root, 'a.ts', 'const w = wid');
-
-		// Ten items sharing one label but distinct data, so each is its own
-		// resolve key. Index 0 already documented (nothing withheld).
-		const items = Array.from({ length: 10 }, (_, i) => ({
-			label: 'Widget',
-			insertText: 'Widget',
-			detail: null as string | null,
-			documentation: i === 0 ? 'already here' : null,
-			kind: 7 as number | null,
-			replaceRange: null,
-			data: { id: i }
-		}));
-		// Selection at 5: window is 1..9, so 0 stays untouched either way.
-		const resolved = await runtime.resolveVisible(document, items, 5);
-
-		expect(resolved[0].documentation).toBe('already here');
-		for (let i = 1; i <= 9; i++) {
-			expect(resolved[i].documentation).toContain('A thing with an id');
-		}
-	}, 30_000);
 
 	it('keeps the unresolved item when resolve fails, rather than failing the popover', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'a.ts': 'const w = wid' });

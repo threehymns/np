@@ -144,12 +144,17 @@ export function parseServerCompletions(result: unknown): ServerCompletionList {
 /** Options for {@link mergeResolvedCompletion}, all defaulted to the plain merge. */
 export interface MergeResolvedOptions {
 	/**
-	 * Whether the reply's own `additionalTextEdits` may be adopted. Defaults to
-	 * true. A cache hit passes false: those edits were anchored to whichever
-	 * revision produced the reply, and only the item being merged now can say
-	 * what is still valid for this document.
+	 * Whether the item's own additional edits win over the reply's.
+	 *
+	 * Defaults to false, which is a fresh round trip: the reply is the newer
+	 * answer. A cache hit passes true: the reply was fetched against an
+	 * earlier revision, so the item's own edits are the ones anchored to this
+	 * document.
+	 *
+	 * Either way the other set is the fallback for an item that carries none,
+	 * so a server's edits are never dropped on the floor.
 	 */
-	readonly keepResolvedAdditionalEdits?: boolean;
+	readonly preferItemEdits?: boolean;
 }
 
 /**
@@ -188,15 +193,15 @@ export function mergeResolvedCompletion(
 			? resolved.detail
 			: original.detail;
 	const documentation = flattenMarkup(resolved.documentation) ?? original.documentation;
-	// A cached reply's edits are dropped rather than adopted (see
-	// {@link MergeResolvedOptions.keepResolvedAdditionalEdits}); the item's own
-	// edits are the only ones still anchored to this document. Otherwise the
-	// reply's edits win, as they do on a fresh round trip.
+	// The item's own edits are the fallback for a reply that carries none, and
+	// the reply's are the fallback for an item that carries none. Whichever
+	// set wins (see {@link MergeResolvedOptions.preferItemEdits}), the other is
+	// only used when the winner is empty, so a server's edits are never lost.
 	const edits =
-		options.keepResolvedAdditionalEdits === false
+		options.preferItemEdits === true
 			? original.additionalTextEdits !== undefined
 				? { additionalTextEdits: original.additionalTextEdits }
-				: {}
+				: readAdditionalEdits(resolved, undefined)
 			: readAdditionalEdits(resolved, original.additionalTextEdits);
 	return {
 		...original,

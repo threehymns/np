@@ -260,17 +260,16 @@ export class LspClient {
 							contextSupport: true,
 							completionItem: {
 								// `resolveSupport` for the four properties the
-								// visible-window round trip fills (spec #280, Zed
-								// contract #292): `documentation` and `detail`
-								// land in labels immediately, `additionalTextEdits`
-								// and `command` defer to confirm time. `textEdit`
-								// is deliberately excluded — "otherwise Zed
-								// becomes slow to complete things" — so only
-								// its `newText` is ever re-derived, never its
-								// range. This amends ADR 0021's declared
-								// absence: advertising without implementing
-								// would be a lie that costs a round trip, and
-								// this slice implements it.
+								// round trip fills: `documentation` and `detail`
+								// land in the popover's docs panel,
+								// `additionalTextEdits` and `command` defer to
+								// confirm time. `textEdit` is deliberately
+								// excluded — "otherwise Zed becomes slow to
+								// complete things" — so only its `newText` is
+								// ever re-derived, never its range. Advertising a
+								// resolve the client does not implement would be
+								// a lie that costs a round trip, and the client
+								// implements it.
 								resolveSupport: {
 									properties: ['additionalTextEdits', 'command', 'detail', 'documentation']
 								},
@@ -279,9 +278,9 @@ export class LspClient {
 						},
 						hover: {
 							// Hover is its own `textDocument/hover` request with
-							// no resolve phase (spec #280, #292): markdown-only,
-							// sharing only the fan-out shape and the Markdown
-							// pipeline with the resolve path.
+							// no resolve phase: markdown-only, sharing only the
+							// fan-out shape and the Markdown pipeline with the
+							// resolve path.
 							dynamicRegistration: false,
 							contentFormat: ['markdown']
 						}
@@ -289,13 +288,11 @@ export class LspClient {
 						// client-table reason from the other side: trigger
 						// characters arrive in the *server's*
 						// `completionProvider`, and there is no
-						// client-capability field for them. This client has no
-						// per-character trigger to declare: CodeMirror decides when
-						// to ask, the trigger policy filters it (`min_word_length`,
-						// prose silence, the global popup toggle), and live
-						// honoring of the server's characters is its own
-						// follow-up (#297) which amends ADR 0021's
-						// absent-characters clause.
+						// client-capability field for them. CodeMirror decides
+						// when to ask, the trigger policy filters it
+						// (`min_word_length`, prose silence, the global popup
+						// toggle), and the runtime honours each running
+						// server's announced characters live.
 					},
 					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
 				}
