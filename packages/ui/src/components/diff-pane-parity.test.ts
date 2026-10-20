@@ -103,6 +103,14 @@ describe("DiffViewer Working-copy pane parity (#271)", () => {
 		expect(src).toContain("view.b.scrollDOM.scrollLeft = prevLeft;");
 	});
 
+	it("maps the selection through minimal sync changes instead of resetting it", () => {
+		// An explicit selection would replace the one CodeMirror maps through
+		// the minimal change, leaving absolute offsets stale. The clamped
+		// offsets are only for the full-replacement fallback.
+		expect(src).toContain("const minimal = hasRightDocChange ? minimalTextChange(rightDoc, insert) : undefined;");
+		expect(src).toContain("selection: hasRightDocChange && !minimal ? clamped : undefined,");
+	});
+
 	it("publishes the focused b-pane as the active editor with identity-checked cleanup", () => {
 		expect(src).toContain("appState.activeEditorView = view!.b;");
 		expect(src).toContain("if (appState.activeEditorView === view?.b)");
@@ -206,6 +214,15 @@ describe("DiffViewer inline Working-copy pane parity (#271 review)", () => {
 
 	it("syncs Document -> inline pane as a minimal hunk out of undo history", () => {
 		expect(setupEditorBody()).toContain("minimalTextChange(currentDoc, insert)");
+	});
+
+	it("maps the inline selection through minimal sync changes instead of resetting it", () => {
+		// An explicit selection would replace the one CodeMirror maps through
+		// the minimal change, leaving absolute offsets stale. The clamped
+		// offsets are only for the full-replacement fallback.
+		const body = setupEditorBody();
+		expect(body).toContain("const minimal = hasDocChange ? minimalTextChange(currentDoc, insert) : undefined;");
+		expect(body).toContain("selection: hasDocChange && !minimal ? clamped : undefined,");
 	});
 
 	it("publishes the focused inline pane as the active editor with identity-checked cleanup", () => {
