@@ -12,6 +12,22 @@ export interface DesktopWatcherOptions {
 	ignore?: string[];
 }
 
+/**
+ * The directories the watcher must not report.
+ *
+ * Each pattern ends with a slash and a globstar on purpose.
+ * `@parcel/watcher` compiles a glob into a regular expression and matches
+ * the whole path against it, so a pattern that names only the directory
+ * matches the directory itself but not the files inside it, and a nested
+ * install still floods the watcher with events. The trailing globstar
+ * ignores the directory and everything under it, at any depth.
+ */
+export const DEFAULT_IGNORE_PATTERNS = [
+	'**/node_modules/**',
+	'**/.git/**',
+	'**/.svelte-kit/**'
+];
+
 export class DesktopWatcher {
 	private dirPath: string;
 	private onEvents: (events: WatcherEvent[]) => void;
@@ -26,7 +42,7 @@ export class DesktopWatcher {
 		this.dirPath = options.dirPath;
 		this.onEvents = options.onEvents;
 		this.debounceMs = options.debounceMs ?? 50;
-		this.ignore = options.ignore ?? ['**/node_modules', '**/.git', '**/.svelte-kit'];
+		this.ignore = options.ignore ?? DEFAULT_IGNORE_PATTERNS;
 	}
 
 	async start(): Promise<void> {

@@ -212,6 +212,35 @@ describe('DesktopWatcher', () => {
 		expect(kept).toBeDefined();
 	});
 
+	it('ignores an ignored directory created after the watch starts', async () => {
+		const received: WatcherEvent[][] = [];
+		const watcher = new DesktopWatcher({
+			dirPath: testDir,
+			debounceMs: 20,
+			onEvents: (events) => {
+				received.push(events);
+			}
+		});
+
+		await watcher.start();
+
+		// The directory and the file inside it are both created after the
+		// watch starts, so the whole subtree has to be pruned. Filtering
+		// the events of a directory that already existed is not enough.
+		await fs.mkdir(path.join(testDir, 'node_modules'));
+		await fs.writeFile(path.join(testDir, 'node_modules', 'ignored.txt'), 'ignore me');
+		await fs.writeFile(path.join(testDir, 'kept.txt'), 'keep me');
+		await new Promise((r) => setTimeout(r, 100));
+
+		await watcher.close();
+
+		const allEvents = received.flat();
+		const ignored = allEvents.find((e) => e.path.includes('node_modules'));
+		const kept = allEvents.find((e) => path.basename(e.path) === 'kept.txt');
+		expect(ignored).toBeUndefined();
+		expect(kept).toBeDefined();
+	});
+
 	it('stops watching cleanly and does not deliver events after close()', async () => {
 		const received: WatcherEvent[][] = [];
 		const watcher = new DesktopWatcher({
