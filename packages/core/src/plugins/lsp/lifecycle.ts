@@ -193,7 +193,6 @@ export function parseTriggerCharacters(result: unknown): readonly string[] {
 	if (!Array.isArray(characters)) return [];
 	return characters.filter((c): c is string => typeof c === 'string' && c.length > 0);
 }
-}
 
 /** A document presented to the runtime, waiting to be synced to its server. */
 interface PendingDocument {
