@@ -101,11 +101,24 @@ export class VirtualListController {
 		return this.itemCount * this.rowHeight;
 	}
 
+	/**
+	 * The scroll offset actually used for window math, clamped to the
+	 * list's maximum scrollable position. `scrollTop` can go stale when
+	 * the list shrinks (e.g. a refresh returns fewer commits): without
+	 * the clamp, `startIndex` runs past the end of the list and the
+	 * window renders nothing with a huge top padding until a scroll
+	 * event corrects it.
+	 */
+	get effectiveScrollTop(): number {
+		const maxScroll = Math.max(0, this.totalHeight - this.viewportHeight);
+		return Math.min(Math.max(0, this.scrollTop), maxScroll);
+	}
+
 	get startIndex(): number {
 		const h = this.rowHeight;
 		const count = this.itemCount;
 		if (h <= 0 || count <= 0) return 0;
-		const rawStart = Math.floor(this.scrollTop / h);
+		const rawStart = Math.floor(this.effectiveScrollTop / h);
 		return Math.max(0, rawStart - this.overscan);
 	}
 
@@ -114,7 +127,7 @@ export class VirtualListController {
 		const count = this.itemCount;
 		if (h <= 0 || count <= 0) return 0;
 		const effectiveViewport = this.viewportHeight > 0 ? this.viewportHeight : 600;
-		const rawEnd = Math.ceil((this.scrollTop + effectiveViewport) / h);
+		const rawEnd = Math.ceil((this.effectiveScrollTop + effectiveViewport) / h);
 		return Math.min(count, rawEnd + this.overscan);
 	}
 
