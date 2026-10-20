@@ -30,6 +30,7 @@
 	let replaceText = $state('');
 	let fileResults = $state<FileSearchResult[]>([]);
 	let isSearching = $state(false);
+	let isReplacing = $state(false);
 	let isTruncated = $state(false);
 	let truncationReason = $state<'files' | 'matches' | undefined>(undefined);
 	let searchTimeout: any = null;
@@ -190,22 +191,28 @@
 	}
 
 	async function replaceAll() {
-		if (fileResults.length === 0 || !session.query) return;
+		if (fileResults.length === 0 || !session.query || isReplacing) return;
+		isReplacing = true;
 
-		// Replace-all applies across all results in one action (per-file undo)
-		// No confirmation modal, no summary report.
-		// Dirty files accept replace edits without warnings.
-		await applyReplaceAll({
-			workspace: appState.workspace,
-			fileResults,
-			replacement: replaceText
-		});
-
-		// Re-run the search so every excerpt view rebuilds from fresh matches
-		// computed against the post-replacement content. Reusing the old match
-		// offsets would misalign excerpts whenever the replacement length
-		// differs from the match length.
-		await runSearch();
+		try {
+			// Replace-all applies across all results in one action (per-file undo)
+			// No confirmation modal, no summary report.
+			// Dirty files accept replace edits without warnings.
+			await applyReplaceAll({
+				workspace: appState.workspace,
+				fileResults,
+				replacement: replaceText
+			});
+		} catch (error) {
+			console.error('Replace all failed:', error);
+		} finally {
+			// Re-run the search so every excerpt view rebuilds from fresh matches
+			// computed against the post-replacement content. Reusing the old match
+			// offsets would misalign excerpts whenever the replacement length
+			// differs from the match length.
+			await runSearch();
+			isReplacing = false;
+		}
 	}
 
 	function setupExcerptEditor(node: HTMLDivElement, fileResult: FileSearchResult) {
@@ -531,7 +538,7 @@
 				class="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Replace query"
 				onkeydown={(e) => {
-					if (e.key === 'Enter') {
+					if (e.key === 'Enter' && !isReplacing) {
 						e.preventDefault();
 						replaceAll();
 					}
@@ -540,7 +547,7 @@
 			<button
 				type="button"
 				onclick={replaceAll}
-				disabled={fileResults.length === 0 || !session.query}
+				disabled={fileResults.length === 0 || !session.query || isReplacing}
 				class="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
 				aria-label="Replace all"
 			>
