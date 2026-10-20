@@ -25,11 +25,13 @@ export class DocumentSession {
 	private _viewStates = new SvelteMap<string, DocumentViewState>();
 
 	getViewState(viewId: string): DocumentViewState {
-		let vs = this._viewStates.get(viewId);
-		if (!vs) {
-			vs = $state({});
-			this._viewStates.set(viewId, vs);
-		}
+		const existing = this._viewStates.get(viewId);
+		if (existing) return existing;
+		// The state has to be declared, not assigned: Svelte only accepts
+		// `$state(...)` as a declaration initializer, and the module would
+		// not compile otherwise.
+		const vs = $state<DocumentViewState>({});
+		this._viewStates.set(viewId, vs);
 		return vs;
 	}
 
