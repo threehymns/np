@@ -153,6 +153,13 @@ export class AppState {
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.
 	activeDiffNavigator = $state<DiffHunkNavigator | undefined>(undefined);
+	/**
+	 * Hands the DOM focus to the editor of the active pane. The UI
+	 * publishes it and the pane commands consume it, the same way
+	 * `activeEditorView` is published and consumed: only the shell knows
+	 * which editor belongs to which pane.
+	 */
+	focusActivePaneEditor = $state<(() => void) | undefined>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;

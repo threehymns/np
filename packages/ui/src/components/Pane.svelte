@@ -9,6 +9,7 @@
 	import { flip } from 'svelte/animate';
 	import type { EditorView } from '@codemirror/view';
 	import type EditorComponent from './Editor.svelte';
+	import { paneEditorKey } from './pane-focus';
 
 	let {
 		pane,
@@ -180,6 +181,7 @@
 			{#each pane.tabs as tab (tab.id)}
 				{@const tabDocument = appState.documents.find(d => d.id === (tab.docId ?? tab.id))}
 				{@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
+				{@const viewKey = paneEditorKey(pane.id, tab.id)}
 				<Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full min-h-0">
 					{#if pane.activeTabId === tab.id}
 						{#if tab.pluginId && tabContent}
@@ -198,7 +200,7 @@
 									doc={tabDocument}
 									active={true}
 									focused={isActive}
-									bind:view={editorViews[`${pane.id}:${tab.id}`]}
+									bind:view={editorViews[viewKey]}
 									paneId={pane.id}
 									style="font-size: {appState.prefs.zoom}%;"
 									wrap={appState.prefs.wordWrap}

@@ -6,6 +6,7 @@
   import type EditorComponent from './Editor.svelte';
   import type FileExplorerComponent from './FileExplorer.svelte';
   import SplitTree from './SplitTree.svelte';
+  import { focusPaneEditor, paneEditorKey } from './pane-focus';
 
   const appState = useAppState();
 
@@ -17,8 +18,18 @@
   $effect(() => {
     const activePane = appState.workspace.activePane;
     appState.activeEditorView = (activePane && activePane.activeTabId)
-      ? editorViews[`${activePane.id}:${activePane.activeTabId}`]
+      ? editorViews[paneEditorKey(activePane.id, activePane.activeTabId)]
       : undefined;
+  });
+
+  // Moving the focus between panes is a command, and the command hands the
+  // DOM focus to the editor that ends up active. The shell knows which
+  // editor belongs to which pane, so it publishes the way to focus the
+  // active one (UI publishes, core commands consume).
+  $effect(() => {
+    appState.focusActivePaneEditor = () => {
+      focusPaneEditor(editorViews, appState.workspace.activePane);
+    };
   });
 
   onMount(() => {

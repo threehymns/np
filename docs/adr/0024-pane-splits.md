@@ -48,6 +48,14 @@ application, so exactly one editor may hold them, and it is the editor in
 the focused pane. A second owner would clear them when it let go and take
 the focused editor's keybindings with it.
 
+## The keyboard follows the pane
+
+Moving the focus between panes hands the keyboard to the editor that ends
+up active, so the user keeps typing where they are looking. The keyboard
+follows only when the move came from an editor: a command run from the
+palette or from a toolbar leaves the focus where it is, because those
+still hold the keyboard the user is typing into.
+
 ## What a pane looks like
 
 A pane renders its own tab bar. The active pane's bar is drawn at full

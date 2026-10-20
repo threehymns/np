@@ -382,4 +382,76 @@ describe("ADR 0024: Pane Splits", () => {
 			expect(serialized.version).toBe(WORKSPACE_PERSISTENCE_VERSION);
 		});
 	});
+
+	describe("9. The DOM focus follows the pane", () => {
+		/**
+		 * A command registry over a workspace that only knows how to move
+		 * the focus, plus the focus the movement hands over. The
+		 * `editorFocused` context says whether the editor holds the DOM
+		 * focus right now, which is what tells an editor-originated
+		 * interaction from one that came from the palette.
+		 */
+		function makeFocusAppState(options: {
+			editorFocused: boolean;
+			moved: boolean;
+		}) {
+			const commands = new CommandRegistry();
+			const moved: string[] = [];
+			const focused: string[] = [];
+			registerCoreCommands({
+				commands,
+				workspace: {
+					focusPaneInDirection: (direction: string) => {
+						moved.push(direction);
+						return options.moved;
+					},
+				},
+				keymaps: {
+					context: options.editorFocused ? { editorFocused: true } : {},
+				},
+				focusActivePaneEditor: () => {
+					focused.push("active");
+				},
+			} as any);
+			return { commands, moved, focused };
+		}
+
+		it("hands the DOM focus to the destination editor when the move came from an editor", () => {
+			const { commands, moved, focused } = makeFocusAppState({
+				editorFocused: true,
+				moved: true,
+			});
+
+			commands.execute("pane.focusRight");
+
+			expect(moved).toEqual(["right"]);
+			expect(focused).toEqual(["active"]);
+		});
+
+		it("leaves the focus where it is when the move came from the palette", () => {
+			const { commands, moved, focused } = makeFocusAppState({
+				editorFocused: false,
+				moved: true,
+			});
+
+			commands.execute("pane.focusRight");
+
+			// The pane still takes the focus; the keyboard stays where the
+			// user is typing.
+			expect(moved).toEqual(["right"]);
+			expect(focused).toEqual([]);
+		});
+
+		it("hands over no focus when there is no pane to move to", () => {
+			const { commands, moved, focused } = makeFocusAppState({
+				editorFocused: true,
+				moved: false,
+			});
+
+			commands.execute("pane.focusRight");
+
+			expect(moved).toEqual(["right"]);
+			expect(focused).toEqual([]);
+		});
+	});
 });

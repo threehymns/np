@@ -8,6 +8,7 @@ import { transformer } from "./transformer";
 import { getActiveLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import { DEFAULT_DIFF_CONFIG } from "./project/vcs";
+import type { SplitDirection } from "./split-tree.svelte";
 import {
 	CORE_COMMANDS_OWNER,
 	createAddCommandsTransform,
@@ -466,6 +467,22 @@ function toggleFootnoteFormat(appState: AppState) {
 	view.focus();
 }
 
+/**
+ * Move the focus to the pane in the given direction.
+ *
+ * The DOM focus follows the pane, but only when the interaction that
+ * started the move came from an editor: a command run from the palette or
+ * from a toolbar leaves the keyboard where it is, so the palette keeps
+ * the text the user is typing into. The `editorFocused` context is what
+ * says the editor holds the focus right now.
+ */
+function focusPaneInDirection(appState: AppState, direction: SplitDirection): void {
+	const fromEditor = appState.keymaps.context['editorFocused'] === true;
+	const moved = appState.workspace.focusPaneInDirection(direction);
+	if (!moved || !fromEditor) return;
+	appState.focusActivePaneEditor?.();
+}
+
 // Core command contributions, registered as one replayable transform (ADR 0012).
 // The host replays registered transforms in order from an empty initial value
 // on every rebuild; removing a plugin rebuilds without its commands and a
@@ -576,7 +593,7 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Pane: Focus Left',
 		category: 'View',
 		keywords: ['pane'],
-		action: () => { appState.workspace.focusPaneInDirection('left'); }
+		action: () => { focusPaneInDirection(appState, 'left'); }
 	});
 
 	coreCommands.push({
@@ -584,7 +601,7 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Pane: Focus Right',
 		category: 'View',
 		keywords: ['pane'],
-		action: () => { appState.workspace.focusPaneInDirection('right'); }
+		action: () => { focusPaneInDirection(appState, 'right'); }
 	});
 
 	coreCommands.push({
@@ -592,7 +609,7 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Pane: Focus Up',
 		category: 'View',
 		keywords: ['pane'],
-		action: () => { appState.workspace.focusPaneInDirection('up'); }
+		action: () => { focusPaneInDirection(appState, 'up'); }
 	});
 
 	coreCommands.push({
@@ -600,7 +617,7 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Pane: Focus Down',
 		category: 'View',
 		keywords: ['pane'],
-		action: () => { appState.workspace.focusPaneInDirection('down'); }
+		action: () => { focusPaneInDirection(appState, 'down'); }
 	});
 
 	coreCommands.push({
