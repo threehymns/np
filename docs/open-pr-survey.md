@@ -293,9 +293,12 @@ called out per pull request below.
 - Issue #280, behind #320, was labelled `needs-triage` while every other issue in this set was
   `ready-for-agent`. It was fully specified and implemented.
 
-**What was done.** #324 was merged, and #280 and #285 closed with it. The issues that belong to
-branches that have not landed are left open on purpose: #274, #281, #282, #286, #287, #288, #305,
-#323, #330, #352, #353 and #355. #288 is a decision record and was not edited.
+**What was done.** #324 was merged, and #280 and #285 closed with it. Every pull request that
+implements a ticket now closes it when it lands, so the tracker closes as the branches land rather
+than needing a second pass. The issues that no pull request implements are left open on purpose:
+#288, #305, #323, #330, #352, #353 and #355. #288 is a decision record and was not edited. What
+each pull request closes, and why those seven stay open, is in "What the pull requests close, and
+what they deliberately leave open" below.
 
 ### 10. The project-search line had three answers to one question, and no record of which
 
@@ -546,6 +549,42 @@ The two follow-up issues the author promised and never filed are now filed: #352
 reopen pull triggers) and #353 (the ordering of pull against push freshness).
 
 ## The holes I did not close
+
+### What the pull requests close, and what they deliberately leave open
+
+The seven project-search pull requests and #327 said "Implements #332" and the like in a commit
+message. That creates a cross-reference, but it does not close the ticket, so nine tickets would
+have stayed open after every branch had landed. Each body now carries the closing keyword.
+
+| Pull request | Closes |
+| --- | --- |
+| #338 | #332 |
+| #340 | #333 |
+| #339 | #334 |
+| #342 | #335 |
+| #343 | #336 |
+| #341 | #337 |
+| #327 | #286 |
+| #329 | #307 |
+| #350 | #344, #345, #346, #347, #348, #349 |
+| #321 | #282 |
+| #325 | #287 |
+| #328 | #281 |
+| #276 | #268, #269, #270, #271, #272, #273, #274 |
+| #190 | #186, #187, #188, #189 |
+
+Four tickets stay open on purpose.
+
+- **#352 and #353** are the two follow-ups #329 filed for itself: a pull when a document is opened
+  or reopened, and the ordering rule that keeps a stale pull from overwriting a fresh push. The
+  pull request's own body says it filed them, and it does not close them.
+- **#355** is the seventh project-search ticket, the one that re-runs the search when the
+  `Worktree` snapshot version changes. No open pull request implements it. The engine already
+  prunes its file cache when the snapshot version moves, but the search tab has no subscription to
+  the snapshot, so the query is not re-run. The ticket is blocked by #334 and #333, so it becomes
+  workable once those land.
+- **#330** is the umbrella ticket for the project-search work. It should close when every child
+  ticket has landed, which is after #355.
 
 ### Nothing in CI compiles a `.svelte.ts` module
 
