@@ -752,8 +752,9 @@
 						);
 						const prevTop = view.scrollDOM.scrollTop;
 						const prevLeft = view.scrollDOM.scrollLeft;
+						const minimal = hasDocChange ? minimalTextChange(currentDoc, insert) : undefined;
 						const syncChange = hasDocChange
-							? (minimalTextChange(currentDoc, insert) ?? {
+							? (minimal ?? {
 									from: 0,
 									to: view.state.doc.length,
 									insert
@@ -761,7 +762,10 @@
 							: undefined;
 						view.dispatch({
 							changes: syncChange,
-							selection: hasDocChange ? clamped : undefined,
+							// Minimal changes map the existing selection through the
+							// change; only the full-replacement fallback needs the
+							// clamped absolute offsets.
+							selection: hasDocChange && !minimal ? clamped : undefined,
 							effects: effects.length > 0 ? effects : undefined,
 							annotations: hasDocChange
 								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
@@ -1153,8 +1157,9 @@
 						);
 						const prevTop = view.b.scrollDOM.scrollTop;
 						const prevLeft = view.b.scrollDOM.scrollLeft;
+						const minimal = hasRightDocChange ? minimalTextChange(rightDoc, insert) : undefined;
 						const syncChange = hasRightDocChange
-							? (minimalTextChange(rightDoc, insert) ?? {
+							? (minimal ?? {
 									from: 0,
 									to: view.b.state.doc.length,
 									insert
@@ -1162,7 +1167,10 @@
 							: undefined;
 						view.b.dispatch({
 							changes: syncChange,
-							selection: hasRightDocChange ? clamped : undefined,
+							// Minimal changes map the existing selection through the
+							// change; only the full-replacement fallback needs the
+							// clamped absolute offsets.
+							selection: hasRightDocChange && !minimal ? clamped : undefined,
 							effects: effectsB.length > 0 ? effectsB : undefined,
 							annotations: hasRightDocChange
 								? [splitSyncAnnotation.of(true), Transaction.addToHistory.of(false)]
