@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
 	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
+	import { SEARCH_TAB_ID } from '@np/core';
 	import {
 		FileExcerptMap,
 		applyReplaceAll,
@@ -19,6 +20,12 @@
 	import { history, historyKeymap, undoDepth } from '@codemirror/commands';
 	import { isResultFileDirty, shouldUndoReplaceAllOperation } from './search-tab-behavior';
 	import { getLanguageExtensions, editorTheme, LanguageSupport } from '../editor/index';
+	import {
+		searchStatusText,
+		shouldFocusSearchInput,
+		shouldRunSearchOnKeydown,
+		truncationCapText
+	} from './search-tab-behavior';
 
 	interface Props {
 		tabId?: string;
@@ -88,6 +95,14 @@
 	});
 
 	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
+	let searchStatus = $derived(
+		searchStatusText({
+			isSearching,
+			totalMatches,
+			fileCount: fileResults.length,
+			isQueryEmpty: !session.query
+		})
+	);
 
 	let sections = $derived<MultibufferSection[]>(
 		fileResults.map((r) => ({
@@ -97,11 +112,12 @@
 	);
 
 	$effect(() => {
-		const _nonce = appState.workspace.searchTabFocusNonce;
-		if (inputRef && (_nonce > 0 || appState.activeTabId === '__project_search__')) {
-			inputRef.focus();
-			inputRef.select();
-		}
+		const focusNonce = appState.workspace.searchTabFocusNonce;
+		const activeTabId = appState.activeTabId;
+		if (!inputRef) return;
+		if (!shouldFocusSearchInput({ focusNonce, activeTabId, searchTabId: SEARCH_TAB_ID })) return;
+		inputRef.focus();
+		inputRef.select();
 	});
 
 	function toggleCollapse(filepath: string) {
@@ -139,13 +155,12 @@
 	function handleKeydown(e: KeyboardEvent) {
 		// Enter during IME composition confirms the composition candidate,
 		// not the query: don't fire a search on the partial text.
-		if (e.key === 'Enter' && !e.isComposing) {
-			if (searchTimeout) {
-				clearTimeout(searchTimeout);
-				searchTimeout = null;
-			}
-			runSearch();
+		if (!shouldRunSearchOnKeydown({ key: e.key, isComposing: e.isComposing })) return;
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+			searchTimeout = null;
 		}
+		runSearch();
 	}
 
 	async function runSearch() {
@@ -712,20 +727,10 @@
 				{#if isSearching}
 					<span class="text-muted-foreground flex items-center gap-1.5" role="status">
 						<CircleNotchIcon class="size-3.5 animate-spin text-primary" />
-						{#if fileResults.length === 0}
-							<span>Searching...</span>
-						{:else}
-							<span>Searching... {totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {fileResults.length} {fileResults.length === 1 ? 'file' : 'files'}</span>
-						{/if}
+						<span>{searchStatus}</span>
 					</span>
-				{:else if !session.query}
-					<span class="text-muted-foreground">Type a query to search</span>
-				{:else if fileResults.length === 0}
-					<span class="text-muted-foreground">No results found</span>
 				{:else}
-					<span class="text-muted-foreground">
-						{totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {fileResults.length} {fileResults.length === 1 ? 'file' : 'files'}
-					</span>
+					<span class="text-muted-foreground">{searchStatus}</span>
 				{/if}
 			</div>
 
@@ -733,7 +738,7 @@
 				<!-- Plain text: the alert banner below is the sole live-region cap announcement -->
 				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
 					<WarningIcon class="size-3.5 text-amber-500 shrink-0" />
-					<span>Results truncated: capped at {truncationReason === 'files' ? '5,000 files' : '10,000 matches'}</span>
+					<span>Results truncated: capped at {truncationCapText(truncationReason)}</span>
 				</div>
 			{/if}
 		</div>
@@ -749,7 +754,7 @@
 			<div class="flex items-center gap-2">
 				<WarningIcon class="size-4 text-amber-500 shrink-0" />
 				<span>
-					<strong>Results truncated:</strong> capped at {truncationReason === 'files' ? '5,000 files' : '10,000 matches'}. Refine your query to see more specific matches.
+					<strong>Results truncated:</strong> capped at {truncationCapText(truncationReason)}. Refine your query to see more specific matches.
 				</span>
 			</div>
 		</div>
