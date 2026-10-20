@@ -97,7 +97,7 @@
 	<Menubar.Root
 		hidden={!open}
 		aria-label="Application menu"
-		class={cn("border-none! bg-transparent p-0 h-fit")}
+		class={cn("border-none! bg-transparent p-0 h-8 items-center")}
 		value={open ? category : ''}
 		onValueChange={changeValue}
 		loop
