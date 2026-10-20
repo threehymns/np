@@ -26,8 +26,8 @@ the pipeline that are described in the last section.
 | --- | --- | --- | --- | --- |
 | #331 | `docs/project-search-adrs` | `master` | docs only | Nothing. Merge first, it is free |
 | #338 | `feat/worktree-owns-snapshot` | `master` | 2184 pass | Nothing |
-| #339 | `feat/search-tab-engine` | `feat/worktree-owns-snapshot` | 2136 pass | Nothing |
-| #340 | `feat/desktop-watcher` | `feat/search-tab-engine` | 2163 pass | Nothing |
+| #339 | `feat/search-tab-engine` | `feat/worktree-owns-snapshot` | 2205 pass | Nothing |
+| #340 | `feat/desktop-watcher` | `feat/search-tab-engine` | 2232 pass | Nothing |
 | #350 | `feat/git-history-tab` | `feat/desktop-watcher` | 2349 pass | Nothing |
 | #342 | `feat/query-options` | `feat/search-tab-engine` | 2218 pass | Nothing |
 | #343 | `feat/replace-multibuffer` | `feat/query-options` | 2259 pass | Nothing |
@@ -45,6 +45,10 @@ For comparison, `master` runs 2173 pass, 4 skip, 0 fail. Every branch above runs
 one clean run, and `bun run check` is clean on all of them with the one pre-existing warning
 (`a11y_no_noninteractive_element_interactions` on the editor wrapper `div` in
 `packages/ui/src/components/Editor.svelte`, present on `master` too).
+
+Each of these numbers is the number the pull request's own check reports. The counts in the bodies
+were brought up to date where the CI propagation had moved them; a body that disagrees with its
+check is a body a reviewer has to re-derive.
 
 Three pull requests have already landed and are no longer in this list: #320 (hover and
 `completionItem`/resolve, `8fc8f740`), #324 (the rune-placement gate) and #351 (the CI trigger
@@ -124,6 +128,13 @@ merged. A stacked pull request runs the workflow file from its *head* branch, so
 `ci.yml` had to be propagated down the stack, which meant rebasing the stack root onto `master`
 first and then each branch onto its parent. Every branch now carries the unfiltered trigger, and
 every pull request shows a passing `test` check.
+
+Four branches still carry the old filtered workflow file: `feat/remappable-completion-keys`,
+`feat/per-language-settings`, `feat/diagnostic-pull` and `docs/project-search-adrs`. Their base is
+`master`, so the filter matches and their checks run, and GitHub evaluates the workflow from the
+merge, which takes `master`'s unfiltered side. They are harmless where they are. They would stop
+running if their base ever changed, so they are worth a rebase the next time one of them is
+touched.
 
 ### 3. Test files are never typechecked
 
@@ -391,7 +402,7 @@ shows stale results on desktop. Nothing implements it, and no ticket in #332 to 
 ### #350, git history tab
 
 The virtual-list windowing was lifted out of the component into `packages/ui/src/virtual-list.svelte.ts`
-with ten tests. The `git log -z` fixture has two records. ADR 0027 is in the house format.
+with twelve tests. The `git log -z` fixture has two records. ADR 0027 is in the house format.
 
 Four commits were pushed to this branch after its body was last written, so its `## Tests` section
 showed numbers from an older tip. The numbers have been brought up to date. The same happened on
@@ -482,8 +493,9 @@ A second pass fixed the real defect behind it: the settings page edited a single
 scope's overrides were written to the wrong place. The page now reads and writes the active
 scope's own map, through `SettingsManager.getScopeValue` and `Preferences.getScopeValue`, with the
 per-language map in the new
-`packages/ui/src/components/settings/language-overrides.ts` and thirteen tests. ADR 0031 records
-the layering.
+`packages/ui/src/components/settings/language-overrides.ts` and tests in
+`packages/ui/src/components/settings/language-overrides.test.ts` and
+`packages/ui/src/components/settings-modal-scope.test.ts`. ADR 0031 records the layering.
 
 ### #328, second bundled language server
 
