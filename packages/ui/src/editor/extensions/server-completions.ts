@@ -6,8 +6,13 @@ import type {
 	CompletionSource,
 } from "@codemirror/autocomplete";
 import { insertCompletionText, pickedCompletion } from "@codemirror/autocomplete";
+import type { Tree } from "@lezer/common";
+import { highlightCode } from "@lezer/highlight";
+import { marked } from "marked";
+import { sanitizeHtml } from "@np/core/transformer";
 import {
 	EDITOR_COMPLETION_DEFAULTS,
+	getActiveLanguages,
 	type CompletionAnswer,
 	type CompletionLspInsertMode,
 	type CompletionQuery,
@@ -20,6 +25,7 @@ import {
 	type BufferWordSettings,
 } from "./buffer-words";
 import { currentDocFacet } from "./wikilinks";
+import { markdownHighlight } from "./highlight";
 
 /**
  * Server completion items as one more source on the existing chain (spec #263,
@@ -159,8 +165,37 @@ export class ServerCompletionCoordinator implements ServerOutcomeReader {
  * owns it, because it is the same name the snippet and word sources are built
  * from, and a second copy of it is a second thing to keep in step.
  */
+export type CompletionResolveDocument = {
+	readonly path: string;
+	readonly fileName: string;
+	readonly content: string;
+	readonly language: string | null;
+};
+
+/**
+ * Asks for the part one item withheld (spec #280, #292).
+ *
+ * Once-only per item: a second call for the same key costs no round trip,
+ * and a failure degrades to the unresolved item rather than to an error.
+ */
+export type CompletionResolve = (
+	item: CompletionSuggestion,
+	document: CompletionResolveDocument
+) => Promise<CompletionSuggestion>;
+
+/** Runs one resolved command at confirm time, gated on the server offering it. */
+export type CompletionRunCommand = (
+	command: string,
+	args: readonly unknown[] | undefined,
+	document: CompletionResolveDocument
+) => void;
+
 export interface ServerCompletionSourceOptions {
 	readonly fetch: CompletionFetch;
+	/** Resolves withheld docs/detail; absent means the first reply is the last. */
+	readonly resolve?: CompletionResolve;
+	/** Runs a resolved command at confirm; absent means commands are dropped. */
+	readonly runCommand?: CompletionRunCommand;
 	/** Defaults to {@link DEFAULT_SERVER_COMPLETION_SETTINGS}. */
 	readonly readSettings?: () => ServerCompletionSettings;
 	/**
@@ -265,7 +300,13 @@ export interface ServerCompletionChain {
 export function serverCompletions(
 	options: ServerCompletionSourceOptions & { readonly languageName: string | null }
 ): ServerCompletionChain {
-	const { languageName, fetch, readSettings = staticServerSettings } = options;
+	const {
+		languageName,
+		fetch,
+		resolve,
+		runCommand,
+		readSettings = staticServerSettings
+	} = options;
 	const readTriggerSettings = options.readTriggerSettings ?? staticTriggerSettings;
 	const readTriggerCharacters = options.readTriggerCharacters ?? staticNoTriggers;
 	const coordinator = new ServerCompletionCoordinator();
@@ -319,7 +360,16 @@ export function serverCompletions(
 			const resultFrom = word ? word.from : context.pos;
 			return outcome.then((answer) =>
 				answer.state === "serving" && answer.items.length > 0
-					? serverResult(answer, resultFrom, context.pos, settings)
+					? serverResult(answer, resultFrom, context.pos, settings, {
+							resolve,
+							runCommand,
+							document: {
+								path: path ?? '',
+								fileName: document?.fileName ?? path ?? '',
+								content: context.state.doc.toString(),
+								language: languageName
+							}
+						})
 					: null
 			);
 		};
@@ -394,7 +444,12 @@ function serverResult(
 	list: { readonly items: readonly CompletionSuggestion[]; readonly incomplete: boolean },
 	from: number,
 	to: number,
-	settings: ServerCompletionSettings
+	settings: ServerCompletionSettings,
+	resolveContext?: {
+		readonly resolve?: CompletionResolve;
+		readonly runCommand?: CompletionRunCommand;
+		readonly document: CompletionResolveDocument;
+	}
 ): CompletionResult {
 	return {
 		from,
@@ -403,7 +458,9 @@ function serverResult(
 		// `replace_range` the named range is applied at accept time instead,
 		// inside the option's own `apply`.
 		to,
-		options: list.items.map((item) => serverOption(item, settings)),
+		options: list.items.map((item) =>
+			serverOption(item, settings, resolveContext)
+		),
 		// No `validFor` and no `filter: false`, both deliberately. `validFor` means
 		// "this list is still right, do not ask again" — the buffer-word source's
 		// reason for having one and the opposite of what a server wants, since an
@@ -417,18 +474,185 @@ function serverResult(
 
 function serverOption(
 	item: CompletionSuggestion,
-	settings: ServerCompletionSettings
+	settings: ServerCompletionSettings,
+	resolveContext?: {
+		readonly resolve?: CompletionResolve;
+		readonly runCommand?: CompletionRunCommand;
+		readonly document: CompletionResolveDocument;
+	}
 ): Completion {
+	// The box is what makes a late resolve land in an early accept: `info`
+	// fills it when the popover shows this option, and `apply` reads whatever
+	// is current when the user confirms — so docs resolved before confirm
+	// ride into the label and the hover surface, and edits resolved before
+	// confirm ride into the second transaction.
+	const box: { current: CompletionSuggestion } = { current: item };
+	let resolving: Promise<CompletionSuggestion> | null = null;
+	const ensureResolved = (): Promise<CompletionSuggestion> | null => {
+		if (!resolveContext?.resolve || !resolveContext.document.path) return null;
+		// Opaque data is what makes a resolve worthwhile: docs may already have
+		// arrived while edits/command were withheld for confirm time, so a
+		// documented item with data still resolves. Without data there is no
+		// key to send back, so nothing is asked.
+		if (!box.current.data) return null;
+		if (resolving) return resolving;
+		resolving = resolveContext
+			.resolve(box.current, resolveContext.document)
+			.then((resolved) => {
+				box.current = resolved;
+				return resolved;
+			})
+			.finally(() => {
+				resolving = null;
+			});
+		return resolving;
+	};
+	let info: Completion["info"];
+	if (!settings.showDocumentation) {
+		// `show_completion_documentation: false` drops the docs but keeps the
+		// signature: the signature is the popover's shape, not documentation.
+		info = undefined;
+	} else if (item.documentation) {
+		// Immediate docs render through the same Markdown pipeline as resolved
+		// ones, without costing a round trip: the function closes over the text
+		// rather than asking the server.
+		const text = item.documentation;
+		info = () => renderLspMarkdown(text);
+	} else if (resolveContext?.resolve) {
+		// Withheld docs have nowhere to hang until the popover shows this
+		// option — CodeMirror has no public "now selected" hook, so the `info`
+		// function is the hook (spec #280). Once-only lives in the runtime;
+		// here the function is what makes the visible option the resolved one.
+		info = () => {
+			const pending = ensureResolved();
+			if (!pending) return null;
+			return pending.then(async (resolved) => {
+				if (!settings.showDocumentation) return null;
+				const text =
+					resolved.documentation ??
+					(resolved.detail ? `${resolved.detail}` : null);
+				if (!text) return null;
+				return renderLspMarkdown(text);
+			});
+		};
+	} else {
+		info = undefined;
+	}
 	return {
 		label: item.label,
 		type: SERVER_COMPLETION_TYPE,
 		boost: SERVER_RANKS_WITH_NOTE_SOURCES,
 		detail: item.detail ?? undefined,
-		// `show_completion_documentation: false` drops the docs but keeps the
-		// signature: the signature is the popover's shape, not documentation.
-		info: settings.showDocumentation ? item.documentation ?? undefined : undefined,
-		apply: serverApply(item, settings.insertMode)
+		info,
+		apply: serverApply(box, settings.insertMode, resolveContext, ensureResolved)
 	};
+}
+
+/**
+ * One Markdown pipeline for both surfaces (#295): completion `info` and the
+ * hover tooltip render the same flattened string the same way.
+ *
+ * Server-controlled Markdown becomes HTML, so it is sanitized before it
+ * reaches the popover: docs arrive over the protocol and must not carry
+ * scripts or event handlers into the editor DOM.
+ */
+export async function renderLspMarkdown(text: string): Promise<HTMLElement> {
+	const dom = document.createElement("div");
+	dom.className = "cm-lsp-info";
+	dom.innerHTML = sanitizeHtml(await marked.parse(text));
+	await highlightCodeBlocks(dom);
+	// No `white-space: pre-wrap`: the div holds block HTML now, not plain
+	// text, and pre-wrap would preserve the newlines between blocks as
+	// forced breaks — a phantom empty line under every block.
+	return dom;
+}
+
+/** A Lezer parser behind its fence language, cached once it loads. */
+const fenceParsers = new Map<string, Promise<{ parse(code: string): Tree } | null>>();
+
+function fenceLanguage(info: string): string {
+	return info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+async function fenceParser(language: string): Promise<{ parse(code: string): Tree } | null> {
+	const cached = fenceParsers.get(language);
+	if (cached) return cached;
+	const pending = (async () => {
+		try {
+			if (!language) return null;
+			const desc = getActiveLanguages().find(
+				(candidate) =>
+					candidate.name.toLowerCase() === language ||
+					candidate.alias.some((name) => name.toLowerCase() === language)
+			);
+			if (!desc) return null;
+			const loaded = (await desc.load()) as unknown;
+			const candidates = Array.isArray(loaded) ? loaded : [loaded];
+			for (const candidate of candidates) {
+				const parser = (candidate as { language?: { parser?: unknown } })?.language?.parser ??
+					(candidate as { parser?: unknown })?.parser;
+				if (parser && typeof (parser as { parse?: unknown }).parse === "function") {
+					return parser as { parse(code: string): Tree };
+				}
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	})();
+	fenceParsers.set(language, pending);
+	// A miss is not a permanent answer: languages register after startup
+	// (`Editor.svelte` rebuilds on `languageRevision` for exactly this reason),
+	// so a cached null would leave that fence plain for the rest of the
+	// session. Drop only our own entry, so a newer attempt is never evicted.
+	void pending.then((parser) => {
+		if (!parser && fenceParsers.get(language) === pending) fenceParsers.delete(language);
+	});
+	return pending;
+}
+
+function escapeCodeHtml(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Highlights one fenced code block to inner HTML with the editor's own token
+ * colors and no editor instance: the Lezer parser for the fence language plus
+ * `highlightCode` over the shared `markdownHighlight` style, whose classes the
+ * open editor already mounts. Unknown languages and load failures degrade to
+ * escaped plain text, never to an error.
+ */
+export async function highlightFencedCode(code: string, info: string): Promise<string> {
+	// Fences conventionally end in a newline, which inside `<pre>` renders as
+	// a phantom empty line below the code. Strip it before parsing so the
+	// tree and the emitted text agree.
+	const source = code.replace(/\n+$/, "");
+	const parser = await fenceParser(fenceLanguage(info));
+	if (!parser) return escapeCodeHtml(source);
+	try {
+		let html = "";
+		highlightCode(source, parser.parse(source), markdownHighlight, (text, classes) => {
+			html += classes
+				? `<span class="${classes}">${escapeCodeHtml(text)}</span>`
+				: escapeCodeHtml(text);
+		}, () => {
+			html += "\n";
+		});
+		return html;
+	} catch {
+		return escapeCodeHtml(source);
+	}
+}
+
+/** Highlights every fenced code block the Markdown parser emitted. */
+async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
+	const blocks = dom.querySelectorAll("pre code");
+	for (const block of Array.from(blocks)) {
+		const element = block as HTMLElement;
+		const match = /(?:^|\s)language-([\w+-]+)/.exec(element.className);
+		if (!match) continue;
+		element.innerHTML = await highlightFencedCode(element.textContent ?? "", match[1]);
+	}
 }
 
 /**
@@ -441,18 +665,84 @@ function serverOption(
  * silently replacing an unknown range is worse than replacing less.
  */
 function serverApply(
-	item: CompletionSuggestion,
-	insertMode: CompletionLspInsertMode
+	box: { current: CompletionSuggestion },
+	insertMode: CompletionLspInsertMode,
+	resolveContext?: {
+		readonly resolve?: CompletionResolve;
+		readonly runCommand?: CompletionRunCommand;
+		readonly document: CompletionResolveDocument;
+	},
+	ensureResolved?: () => Promise<CompletionSuggestion> | null
 ): NonNullable<Completion["apply"]> {
 	return (view, completion, applyFrom, applyTo) => {
+		const item = box.current;
+		const preState = view.state;
 		const range =
 			insertMode === "replace_range" && item.replaceRange !== null
-				? serverRangeToOffsets(view.state, item.replaceRange)
+				? serverRangeToOffsets(preState, item.replaceRange)
 				: { from: applyFrom, to: applyTo };
-		view.dispatch({
-			...insertCompletionText(view.state, item.insertText, range.from, range.to),
+		const spec = {
+			...insertCompletionText(preState, item.insertText, range.from, range.to),
 			annotations: pickedCompletion.of(completion)
-		});
+		};
+		// Built for mapping only: the dispatched spec is the same object, so
+		// the changes below describe exactly the primary insert that landed.
+		const primary = preState.update(spec);
+		view.dispatch(spec);
+		const postDoc = view.state.doc;
+		// The primary's post-transaction extent, for the overlap check: the
+		// insert starts where the pre-range started and runs for the inserted
+		// text. Mapped edits are compared against this, not against the
+		// pre-transaction range, so both sides are in post-transaction space.
+		const primaryFrom = primary.changes.mapPos(range.from, 1);
+		const primaryTo = primaryFrom + item.insertText.length;
+		// Confirm-time additional edits (#292): the primary insert lands first
+		// in its own transaction, and the extra edits land after in a second
+		// one, skipping anything overlapping the primary. A command runs only
+		// through `runCommand`, which the runtime gates on
+		// `executeCommandProvider`.
+		const applyExtras = (resolved: CompletionSuggestion): void => {
+			box.current = resolved;
+			const edits = resolved.additionalTextEdits;
+			if (edits && edits.length > 0) {
+				// The document moved under a deferred resolve (the user kept
+				// typing while the round trip was in flight): positions from
+				// the server's revision no longer map cleanly, so the extras
+				// are dropped rather than mis-placed. The command below still
+				// runs, because it names no position.
+				if (view.state.doc !== postDoc) {
+					// Fall through to the command.
+				} else {
+					const changes = [];
+					for (const edit of edits) {
+						// Against the pre-dispatch revision the server answered
+						// for, then mapped through the primary insert.
+						const pre = serverRangeToOffsets(preState, edit.range);
+						const from = primary.changes.mapPos(pre.from, 1);
+						const to = primary.changes.mapPos(pre.to, 1);
+						// Overlap-skip: an extra edit touching the primary range
+						// would fight the insert that just landed.
+						if (from < primaryTo && to > primaryFrom) continue;
+						changes.push({ from, to, insert: edit.newText });
+					}
+					if (changes.length > 0) view.dispatch({ changes });
+				}
+			}
+			const command = resolved.command;
+			if (command && resolveContext?.runCommand && resolveContext.document.path) {
+				resolveContext.runCommand(command.command, command.args, resolveContext.document);
+			}
+		};
+		const current = box.current;
+		if (current.additionalTextEdits?.length || current.command) {
+			applyExtras(current);
+			return;
+		}
+		// Not yet resolved: ask now so a fast accept still lands the edits a
+		// beat later, rather than dropping them. Failure degrades to the
+		// primary insert above, which already landed.
+		const pending = ensureResolved?.() ?? null;
+		if (pending) void pending.then(applyExtras, () => undefined);
 	};
 }
 
@@ -461,8 +751,11 @@ function serverApply(
  * against an older revision of the document can point past its end, and every
  * consumer of an out-of-bounds offset would throw, so it is clamped into the
  * document rather than trusted.
+ *
+ * Shared with the hover source, which covers the reported symbol range the
+ * same way completions cover the named replace range.
  */
-function serverRangeToOffsets(
+export function serverRangeToOffsets(
 	state: EditorState,
 	range: NonNullable<CompletionSuggestion["replaceRange"]>
 ): { from: number; to: number } {

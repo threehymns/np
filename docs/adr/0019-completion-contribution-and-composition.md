@@ -32,7 +32,7 @@ This deviates from ADR 0003, which names two drivers this key does not satisfy. 
 
 ## Snippets are a sibling registry, not an editor contribution
 
-Spec #194 anticipated completions arriving through the editor contribution pattern. The snippet pack is a sibling *data* registry mirroring `languages.ts`, not a new `EditorContributionType`, and the deviation is deliberate.
+Completions arriving through the editor contribution pattern was the anticipated shape. The snippet pack is a sibling *data* registry mirroring `languages.ts`, not a new `EditorContributionType`, and the deviation is deliberate.
 
 `EditorContribution.extension` is a bare CodeMirror `Extension`. A completion source is not an `Extension` until it has a language to attach to, and a pack that names a language another contribution registered cannot supply one itself — there is no editor contribution it could be that would survive without a `Language` in hand. A pack is data: typed triggers with plain bodies joined on a language identity, with no placeholders and no snippet variables, because expanding tab stops is out of scope. That is the shape a registry already holds and replays, so the snippet pack is declared as one: the host materializes records from plugin transforms with an owning plugin, and the editor turns the current language's records into a completion source.
 

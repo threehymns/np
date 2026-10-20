@@ -20,6 +20,7 @@ import {
 	DEFAULT_SERVER_COMPLETION_SETTINGS,
 	type ServerCompletionSettings,
 } from "./server-completions";
+import type { ServerHoverSettings } from "./server-hover";
 
 /**
  * The `editor` settings namespace owns the completion triggers, and
@@ -125,6 +126,27 @@ export function readServerCompletionSettings(
 		showDocumentation:
 			scoped.value[SHOW_COMPLETION_DOCUMENTATION_SETTING] !== false,
 	};
+}
+
+/**
+ * The hover gate for one language (spec #280): the same `lsp` switch the
+ * completion source reads, narrowed to the one field the hover source
+ * consults.
+ *
+ * Hover and completion share the gate — a language whose server is off
+ * answers neither — so the narrowing is taken from {@link
+ * readServerCompletionSettings}, which already applies the fold and the
+ * `false`-only rule, rather than re-derived here. A reader of its own would
+ * be a second answer to one question, and the divergence is invisible until
+ * a language keeps hovering after its completions stop. The shell asks for
+ * the gate through this reader because the key's name is feature vocabulary
+ * the shell may not speak.
+ */
+export function readServerHoverSettings(
+	read: SettingReader,
+	languageName: string | null,
+): ServerHoverSettings {
+	return { lsp: readServerCompletionSettings(read, languageName).lsp };
 }
 
 /** Narrows a stored `words` to the documented union, defaulting when it is not one. */

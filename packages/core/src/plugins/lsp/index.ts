@@ -1,5 +1,7 @@
 import {
 	COMPLETION_COORDINATOR_SERVICE_KEY,
+	COMPLETION_RESOLVE_SERVICE_KEY,
+	HOVER_COORDINATOR_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
 	type WorkspaceLike
 } from '../services';
@@ -54,6 +56,12 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	// server is what will answer it. Publishing both is the seam ADR 0008 describes —
 	// one provider, two consumers, each reaching for the key it knows.
 	host.provideService(COMPLETION_COORDINATOR_SERVICE_KEY, runtime);
+	// The same runtime under the hover and resolve names (spec #280): the shell
+	// asks about a position and hands back a suggestion without naming a server,
+	// and resolve rides with hover as the doc-fill path because it has no display
+	// surface of its own (#295).
+	host.provideService(HOVER_COORDINATOR_SERVICE_KEY, runtime);
+	host.provideService(COMPLETION_RESOLVE_SERVICE_KEY, runtime);
 
 	// One closure for both events: opening a document and changing one are the
 	// same work — resolve the server, start it if the file is served, sync the

@@ -6,9 +6,13 @@ import { Direction, type EditorView } from "@codemirror/view";
 import {
 	buildRoundedSelectionPath,
 	RoundedSelectionMarker,
+	coverLineBox,
 	tightRectanglesForRange,
 	isPosInTable,
+	tooltipSelectionState,
 	type SelectionRect,
+	type TooltipSelection,
+	type TooltipSelectionContainer,
 } from "./rounded-selection";
 
 describe("buildRoundedSelectionPath", () => {
@@ -451,5 +455,263 @@ describe("tightRectanglesForRange markdown table suppression", () => {
 		const range = EditorSelection.range(0, 2);
 		const rects = tightRectanglesForRange(outer, range);
 		expect(rects.length).toBe(1);
+	});
+});
+
+/**
+ * Tooltip text selections draw the same rounded path as editor selections.
+ *
+ * The overlay state is pure in its inputs (a Selection-like and a container)
+ * so it is asserted with fakes: no layout engine is needed to prove the
+ * show/hide rules and the rect clipping, which are the whole of this seam.
+ * Rects are viewport-space client rects, matching the fixed overlay.
+ */
+describe("tooltipSelectionState", () => {
+	const box = { left: 10, top: 20, right: 210, bottom: 60 };
+
+	function container(inside: unknown): TooltipSelectionContainer {
+		return {
+			contains: (node: unknown) => node === inside,
+			getBoundingClientRect: () => ({ ...box }),
+		} as unknown as TooltipSelectionContainer;
+	}
+
+	function selection(opts: {
+		collapsed?: boolean;
+		anchor?: unknown;
+		rects?: Array<{ left: number; top: number; right: number; bottom: number }>;
+		noRanges?: boolean;
+	}): TooltipSelection {
+		return {
+			isCollapsed: opts.collapsed ?? false,
+			anchorNode: (opts.anchor ?? null) as unknown as Node,
+			getRangeAt: () => {
+				if (opts.noRanges) throw new Error("no ranges");
+				return {
+					getClientRects: () => opts.rects ?? [],
+				};
+			},
+		} as unknown as TooltipSelection;
+	}
+
+	it("hides without a selection or with a collapsed one", () => {
+		const inside = {};
+		expect(tooltipSelectionState(null, container(inside))).toBeNull();
+		expect(
+			tooltipSelectionState(selection({ collapsed: true, anchor: inside }), container(inside))
+		).toBeNull();
+	});
+
+	it("hides when the drag started outside the tooltip", () => {
+		const inside = {};
+		const outside = {};
+		const sel = selection({
+			anchor: outside,
+			rects: [{ left: 20, top: 25, right: 100, bottom: 45 }],
+		});
+		expect(tooltipSelectionState(sel, container(inside))).toBeNull();
+	});
+
+	it("hides when the range holds no rects", () => {
+		const inside = {};
+		expect(
+			tooltipSelectionState(selection({ anchor: inside, noRanges: true }), container(inside))
+		).toBeNull();
+		expect(
+			tooltipSelectionState(selection({ anchor: inside, rects: [] }), container(inside))
+		).toBeNull();
+	});
+
+	it("draws the rounded path over fully-inside rects", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection({
+				anchor: inside,
+				rects: [{ left: 20, top: 25, right: 100, bottom: 45 }],
+			}),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 25, width: 80, height: 20 });
+		expect(state!.pathData).toContain("M");
+		expect(state!.pathData.endsWith("Z")).toBe(true);
+	});
+
+	it("clips rects sticking out of the tooltip box", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection({
+				anchor: inside,
+				rects: [{ left: 150, top: 25, right: 300, bottom: 45 }],
+			}),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 150, top: 25, width: 60, height: 20 });
+	});
+
+	it("hides when every rect falls outside the box", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection({
+				anchor: inside,
+				rects: [{ left: 300, top: 25, right: 400, bottom: 45 }],
+			}),
+			container(inside)
+		);
+		expect(state).toBeNull();
+	});
+
+	it("drops zero-area rects", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection({
+				anchor: inside,
+				rects: [
+					{ left: 50, top: 25, right: 50, bottom: 45 },
+					{ left: 20, top: 25, right: 100, bottom: 45 },
+				],
+			}),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 25, width: 80, height: 20 });
+	});
+});
+
+/**
+ * Fragment rects expand to the measured line height, like the editor layer
+ * fills the rendered line block: raw client rects hug the glyph ink and
+ * would otherwise paint a thin band per line instead of the full line box.
+ */
+describe("tooltipSelectionState line coverage", () => {
+	const box = { left: 10, top: 20, right: 210, bottom: 100 };
+
+	function container(inside: unknown) {
+		return {
+			contains: (node: unknown) => node === inside,
+			getBoundingClientRect: () => ({ ...box }),
+		};
+	}
+
+	function selection(anchor: unknown, rects: Array<{ left: number; top: number; right: number; bottom: number }>) {
+		return {
+			isCollapsed: false,
+			anchorNode: anchor,
+			getRangeAt: () => ({ getClientRects: () => rects }),
+		};
+	}
+
+	it("merges same-line fragments into one rect without a measurer", () => {
+		const inside = {};
+		// Text, pill, text slivers of one visual line: stroking each
+		// separately notches the path at every inline boundary.
+		const state = tooltipSelectionState(
+			selection(inside, [
+				{ left: 20, top: 26, right: 60, bottom: 38 },
+				{ left: 60, top: 24, right: 110, bottom: 40 },
+				{ left: 110, top: 26, right: 150, bottom: 38 },
+			]),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 24, width: 130, height: 16 });
+		expect(state!.pathData.match(/Z/g)).toHaveLength(1);
+	});
+
+	it("keeps adjacent lines separate for the seam snap", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection(inside, [
+				{ left: 20, top: 22, right: 100, bottom: 38 },
+				{ left: 20, top: 42, right: 80, bottom: 58 },
+			]),
+			container(inside)
+		);
+		expect(state).not.toBeNull();
+		// 4px gap: two polygons, joined visually by the seam snap.
+		expect(state!.pathData.match(/Z/g)).toHaveLength(2);
+	});
+
+	it("covers each line with the measured span", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection(inside, [{ left: 20, top: 26, right: 100, bottom: 38 }]),
+			container(inside),
+			{ coverLine: () => ({ top: 22, bottom: 42 }) }
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 22, width: 80, height: 20 });
+	});
+
+	it("keeps the tight line rect when measurement is unavailable", () => {
+		const inside = {};
+		const rect = { left: 20, top: 26, right: 100, bottom: 38 };
+		expect(
+			tooltipSelectionState(selection(inside, [rect]), container(inside), {
+				coverLine: () => null,
+			})!.bounds
+		).toEqual({ left: 20, top: 26, width: 80, height: 12 });
+		expect(
+			tooltipSelectionState(selection(inside, [rect]), container(inside))!.bounds
+		).toEqual({ left: 20, top: 26, width: 80, height: 12 });
+	});
+
+	it("covers pill overhang reported by the measurer", () => {
+		const inside = {};
+		// Glyph band 26..38 with a padded pill painting 22..42: the cover
+		// carries the overhang so the pill stays inside the highlight.
+		const state = tooltipSelectionState(
+			selection(inside, [{ left: 20, top: 26, right: 100, bottom: 38 }]),
+			container(inside),
+			{ coverLine: () => ({ top: 22, bottom: 42 }) }
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 22, width: 80, height: 20 });
+	});
+
+	it("clamps coverage to the tooltip box", () => {
+		const inside = {};
+		const state = tooltipSelectionState(
+			selection(inside, [{ left: 20, top: 21, right: 100, bottom: 35 }]),
+			container(inside),
+			{ coverLine: () => ({ top: 5, bottom: 200 }) }
+		);
+		expect(state).not.toBeNull();
+		expect(state!.bounds).toEqual({ left: 20, top: 20, width: 80, height: 80 });
+	});
+});
+
+/**
+ * Multi-line inline ancestors must not leak into a line's cover: a fenced
+ * block's `code` wrapper is `display: inline` yet spans every line, and
+ * unioning it fills the whole section for a one-line selection. Only
+ * single-line inlines (code pills) join the line-height fill.
+ */
+describe("coverLineBox", () => {
+	const fragment = { left: 20, top: 26, right: 100, bottom: 38 };
+
+	it("fills to the line height with no inline boxes", () => {
+		// Height 12 with line height 20: 4px of leading each side.
+		expect(coverLineBox(fragment, 20, [])).toEqual({ top: 22, bottom: 42 });
+	});
+
+	it("unions single-line pill boxes that paint outside the line box", () => {
+		const cover = coverLineBox(fragment, 20, [{ left: 60, top: 24, right: 110, bottom: 44 }]);
+		expect(cover).toEqual({ top: 22, bottom: 44 });
+	});
+
+	it("excludes a multi-line wrapper box", () => {
+		// The fenced block's code wrapper around one selected line: covering
+		// it would fill the whole section.
+		const cover = coverLineBox(fragment, 20, [
+			{ left: 60, top: 24, right: 110, bottom: 40 },
+			{ left: 20, top: 20, right: 150, bottom: 120 },
+		]);
+		expect(cover).toEqual({ top: 22, bottom: 42 });
+	});
+
+	it("keeps the fragment when there is nothing to cover with", () => {
+		expect(coverLineBox(fragment, 0, [])).toEqual({ top: 26, bottom: 38 });
 	});
 });

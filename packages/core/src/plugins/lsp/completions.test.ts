@@ -106,4 +106,104 @@ describe('parseServerCompletions', () => {
 		// unknown range.
 		expect(list.items.map((item) => item.replaceRange)).toEqual([null, null]);
 	});
+
+	it('keeps the opaque data a resolve round trip sends back', () => {
+		const list = parseServerCompletions([
+			{ label: 'Widget', data: { file: 'a.ts', id: 7 } }
+		]);
+
+		expect(list.items[0].data).toEqual({ file: 'a.ts', id: 7 });
+	});
+});
+
+describe('mergeResolvedCompletion', () => {
+	it('fills documentation and detail immediately, keeping the original range', async () => {
+		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
+		const [original] = parseServerCompletions([
+			{
+				label: 'Widget',
+				data: { id: 7 },
+				textEdit: {
+					range: { start: { line: 1, character: 20 }, end: { line: 1, character: 23 } },
+					newText: 'Widget'
+				}
+			}
+		]).items;
+
+		const merged = mergeResolvedCompletion(original, {
+			label: 'Widget',
+			detail: '(class) Widget',
+			documentation: { kind: 'markdown', value: 'A thing with an id.' },
+			textEdit: {
+				range: { start: { line: 1, character: 0 }, end: { line: 1, character: 99 } },
+				newText: 'Widget()'
+			},
+			data: { id: 7 }
+		});
+
+		expect(merged.detail).toBe('(class) Widget');
+		expect(merged.documentation).toBe('A thing with an id.');
+		// Only the text is re-derived; the range stays the anchor the first
+		// reply named.
+		expect(merged.insertText).toBe('Widget()');
+		expect(merged.replaceRange).toEqual(original.replaceRange);
+	});
+
+	it('keeps additional edits and command for confirm time rather than applying them', async () => {
+		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
+		const [original] = parseServerCompletions([{ label: 'Widget', data: 1 }]).items;
+
+		const merged = mergeResolvedCompletion(original, {
+			label: 'Widget',
+			additionalTextEdits: [
+				{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } }, newText: 'import' }
+			],
+			command: { command: 'refactor', arguments: [1] }
+		});
+
+		expect(merged.additionalTextEdits).toEqual([
+			{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } }, newText: 'import' }
+		]);
+		expect(merged.command).toEqual({ command: 'refactor', args: [1] });
+		// Docs/detail untouched when the resolve carries none.
+		expect(merged.documentation).toBe(original.documentation);
+	});
+
+	it('keeps the item’s own edits when asked, falling back to the reply’s', async () => {
+		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
+		const [original] = parseServerCompletions([{ label: 'Widget', data: 1 }]).items;
+
+		const replyEdits = [
+			{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } }, newText: 'cached' }
+		];
+		const merged = mergeResolvedCompletion(
+			original,
+			{ detail: '(class) Widget', additionalTextEdits: replyEdits },
+			{ preferItemEdits: true }
+		);
+		// Docs land, and an item that names no edits of its own takes the
+		// reply's, because those are the only ones the server sent.
+		expect(merged.detail).toBe('(class) Widget');
+		expect(merged.additionalTextEdits).toEqual(replyEdits);
+
+		const own = [
+			{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }, newText: 'own' }
+		];
+		const kept = mergeResolvedCompletion(
+			{ ...original, additionalTextEdits: own },
+			{ additionalTextEdits: replyEdits },
+			{ preferItemEdits: true }
+		);
+		// The current item's own edits are what survive a cache hit.
+		expect(kept.additionalTextEdits).toEqual(own);
+	});
+
+	it('leaves the item alone when the resolve cannot be read', async () => {
+		const { mergeResolvedCompletion, parseServerCompletions } = await import('./completions');
+		const [original] = parseServerCompletions([{ label: 'Widget' }]).items;
+
+		for (const reply of [null, undefined, 'error', 42]) {
+			expect(mergeResolvedCompletion(original, reply)).toBe(original);
+		}
+	});
 });

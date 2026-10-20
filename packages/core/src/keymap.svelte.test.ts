@@ -305,3 +305,79 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 		expect(reg.keyBuffer[0]!.key).toBe("k");
 	});
 });
+
+/**
+ * Clipboard bindings are focus-scoped, not merely tab-scoped.
+ *
+ * The `editor` context stays true for the whole active tab, including while
+ * the user mouse-selects text in a hover tooltip — which never takes focus,
+ * so the editor's own selection is typically collapsed there. Firing
+ * `edit.copy` into that state kills the native copy (preventDefault) and
+ * then copies nothing (empty editor selection): the keystroke is swallowed.
+ * Scoping cut/copy/paste to `editor && editorFocused` lets a tooltip
+ * selection fall through to the browser instead.
+ */
+describe("clipboard bindings respect editor focus", () => {
+	function newClipboardRegistry(focused: boolean) {
+		const executed: string[] = [];
+		const appState: any = {
+			commands: {
+				execute: (id: string) => {
+					executed.push(id);
+					return true;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		reg.setContext("editor", true);
+		if (focused) reg.setContext("editorFocused", true);
+		return { reg, executed };
+	}
+
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			target: { tagName: "DIV" },
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented };
+	}
+
+	for (const [key, command] of [
+		["c", "edit.copy"],
+		["x", "edit.cut"],
+		["v", "edit.paste"],
+	] as const) {
+		it(`ctrl+${key} fires ${command} when the editor is focused`, () => {
+			withPlatform("Win32");
+			const { reg, executed } = newClipboardRegistry(true);
+
+			const k = keyEvent(key, { ctrl: true });
+			expect(reg.handleKeydown(k.e)).toBe(true);
+			expect(k.prevented()).toBe(1);
+			expect(executed).toEqual([command]);
+		});
+
+		it(`ctrl+${key} passes through when the tab is active but unfocused`, () => {
+			withPlatform("Win32");
+			const { reg, executed } = newClipboardRegistry(false);
+
+			// Tab-active, focus elsewhere (e.g. a tooltip selection): the
+			// browser's native clipboard handling must survive untouched.
+			const k = keyEvent(key, { ctrl: true });
+			expect(reg.handleKeydown(k.e)).toBe(false);
+			expect(k.prevented()).toBe(0);
+			expect(executed).toEqual([]);
+		});
+	}
+});

@@ -3,7 +3,7 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 
 	import '../editor/styles/editor.css';
@@ -11,7 +11,7 @@
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
-	import { COMPLETION_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 
 	let {
@@ -273,6 +273,40 @@
 		};
 	});
 
+	// Focus-scoped keymap context for the clipboard bindings: `editor` stays
+	// true for the whole active tab, but cut/copy/paste must only fire when
+	// the editor truly has focus. A hover tooltip never takes focus, so a
+	// tooltip text selection reads here as "unfocused" and falls through to
+	// native copy instead of being hijacked into edit.copy of a collapsed
+	// editor selection. Movement within the editor (content to search panel)
+	// keeps the context: only leaving the editor root clears it.
+	$effect(() => {
+		if (!active || !view) return;
+		const root = view.dom;
+		const syncFocus = () => {
+			if (typeof document === "undefined") return;
+			if (root.contains(document.activeElement)) {
+				appState.keymaps.setContext("editorFocused", true);
+			} else {
+				appState.keymaps.setContext("editorFocused", undefined);
+			}
+		};
+		const onFocusIn = () => {
+			appState.keymaps.setContext("editorFocused", true);
+		};
+		const onFocusOut = (e: FocusEvent) => {
+			if (e.relatedTarget instanceof Node && root.contains(e.relatedTarget)) return;
+			appState.keymaps.setContext("editorFocused", undefined);
+		};
+		syncFocus();
+		root.addEventListener("focusin", onFocusIn);
+		root.addEventListener("focusout", onFocusOut);
+		return () => {
+			root.removeEventListener("focusin", onFocusIn);
+			root.removeEventListener("focusout", onFocusOut);
+			appState.keymaps.setContext("editorFocused", undefined);
+		};
+	});
 	// Also sync mode when view changes or vim is toggled
 	$effect(() => {
 		if (view && active && appState.prefs.vimMode) {
@@ -348,6 +382,12 @@
 		const completionCoordinator = appState.plugins?.getService<CompletionCoordinator>(
 			COMPLETION_COORDINATOR_SERVICE_KEY
 		);
+		const hoverCoordinator = appState.plugins?.getService<HoverCoordinator>(
+			HOVER_COORDINATOR_SERVICE_KEY
+		);
+		const resolveCoordinator = appState.plugins?.getService<CompletionResolveCoordinator>(
+			COMPLETION_RESOLVE_SERVICE_KEY
+		);
 		if (view && active) {
 			const readSetting = (namespace: string, key: string) =>
 				appState.prefs.get(namespace, key);
@@ -371,12 +411,29 @@
 							server: completionCoordinator
 								? {
 										fetch: (query: CompletionQuery) => completionCoordinator.fetch(query),
+										resolve: resolveCoordinator
+											? (item, document) => resolveCoordinator.resolveItem(item, document)
+											: undefined,
+										runCommand: resolveCoordinator
+											? (command, args, document) =>
+													resolveCoordinator.runCommand(command, args, document)
+											: undefined,
 										readSettings: () =>
 											readServerCompletionSettings(readSetting, languageName),
 										readTriggerCharacters: () =>
 											completionCoordinator.triggerCharacters?.() ?? [],
 									}
 								: null,
+								hover: hoverCoordinator
+									? {
+											fetchHover: (query) => hoverCoordinator.fetchHover(query),
+											readSettings: () =>
+												readServerHoverSettings(readSetting, languageName),
+											fetchTimeoutMs:
+												readServerCompletionSettings(readSetting, languageName).fetchTimeoutMs ||
+												undefined,
+										}
+									: null,
 						}),
 					),
 				});
