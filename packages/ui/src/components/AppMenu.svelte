@@ -97,7 +97,7 @@
 	<Menubar.Root
 		hidden={!open}
 		aria-label="Application menu"
-		class={cn("border-none! bg-transparent p-0 h-8 items-center")}
+		class={cn("border-none! bg-transparent p-0 h-7 items-center")}
 		value={open ? category : ''}
 		onValueChange={changeValue}
 		loop
@@ -108,6 +108,7 @@
 					class={cn("focus-visible:outline-2 focus-visible:outline-ring")}
 					onfocus={() => { if (open) category = name; }}
 					onkeydown={handleTriggerKeydown}
+					size={size}
 				>{name}</Menubar.Trigger>
 				<Menubar.Content
 					onpointerdown={(event) => event.preventDefault()}
