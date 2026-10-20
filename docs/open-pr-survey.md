@@ -173,10 +173,11 @@ The hole itself is still open. It is described in "The holes I did not close".
 
 `bun run test:e2e` runs sixteen spec files under `tests/e2e/`. Nothing in CI invokes it.
 
-On `master`, `tests/e2e/vcs.spec.ts` fails 21 of 22 in this environment, mostly with
-`expect(received).not.toBeNull() / Received: null`. The suite is not a usable signal today, so it
-is not something to fix in one of these pull requests. It is worth knowing before anyone reads an
-e2e failure on a branch as that branch's fault.
+On `master`, the suite fails 16 of its 46 tests in this environment, in four spec files. Every one
+of those failures is a stale expectation against an API that has since moved, not a product defect.
+The suite is not a usable signal today, so it is not something to fix in one of these pull requests.
+It is worth knowing before anyone reads an e2e failure on a branch as that branch's fault. The
+measured cause of each failure is in "What is failing on master, and why" below.
 
 One exception was a real code gap rather than a suite problem. #190's `tests/e2e/vcs.spec.ts`
 asserted `await expect(branchTrigger(page)).toHaveAttribute('title', branch)`, and
@@ -570,8 +571,58 @@ of their own, not to a feature that happens to be open.
 
 ### The Playwright suite is not a gate
 
-It is red on `master` (21 of 22 in `tests/e2e/vcs.spec.ts` in this environment) and nothing in CI
-runs it. Making it a gate means fixing the suite first, which is a piece of work in its own right.
+It is red on `master` (16 of 46 tests in this environment, every cause measured and written up in
+"What is failing on master, and why") and nothing in CI runs it. Making it a gate means fixing the
+suite first, which is a piece of work in its own right. The fixes are small and mechanical, and
+they belong in one pull request that is not one of these sixteen.
+
+### What is failing on master, and why
+
+The suite was run against `origin/master` on a clean worktree. Forty six tests ran: 16 failed and
+30 passed. The failures sit in four spec files, and every cause predates all of these pull
+requests. Each cause was confirmed by changing one thing in the spec and watching the failures
+turn into passes.
+
+**`tests/e2e/vcs.spec.ts`, 9 of its 10 tests.** The spec's `setupTestGitRepo` helper assigns
+`appState.workspace.project.repository = repository` directly. Since `5c58aae4` ("gate repository
+exposure on owner plugin state", 2026-09-26) the workspace only treats a repository as usable when
+`project.repositoryOwnerId` names a plugin that is active, so the spec's repository is invisible
+to the code it is testing. `getBranchSafetyReport` returns null, `switchBranch` returns
+`{ status: 'error', message: 'No repository' }`, and the file explorer's branch button never
+renders. Adding one line to the spec, `appState.workspace.project.repositoryOwnerId = 'git'`,
+turns 8 of the 9 into passes. The ninth fails for a different reason: the "deleted on disk"
+marker moved off the tab button's `title` attribute and into a tooltip in `00ee8747` ("style:
+improve tab styles", 2026-09-08), so `toHaveAttribute('title', ...)` can no longer match. The
+`line-through` class assertion still holds.
+
+**`tests/e2e/diff-viewer-feedback.spec.ts`, all 5 of its tests.** Two separate problems. The
+first is a race: the `git.openDiff` command is registered when the git plugin activates, which
+happens asynchronously after boot, so a spec that runs the command as soon as `appState` exists is
+calling a command that does not exist yet. The command then does nothing, no diff tab is created,
+and the first test fails. The second is a behaviour change: `git.openDiff` without a filepath
+calls `Repository.setActiveDiffFileByPath(undefined)`, which nulls `activeDiffFile`, and the diff
+viewer then expands every file instead of expanding the active one and collapsing the rest. That
+call arrived in `a27ab5de` (2026-09-04); before it, the active file that `Repository.refresh` had
+established survived. The spec's premise, that only the active file loads a diff, cannot hold
+while every file is expanded. Passing a filepath, `git.openDiff('README.md')`, turns 4 of the 5
+into passes.
+
+**`tests/e2e/editor.spec.ts`, its one test.** The test types Markdown into the default untitled
+document. The language is resolved from the file name, and "Untitled 1" has no extension, so the
+document is plain text and the Markdown rendering rules never run; the raw source stays visible.
+Forcing `documents[0].userLanguageOverride = 'Markdown'` makes the heading and bold assertions
+pass. The last assertion still fails, and it should: the editor replaces an unordered list marker
+with a `BulletWidget`, so the rendered text is a bullet, not the literal `-` the spec expects.
+
+**`tests/e2e/file-origin.spec.ts`, 1 of its 3 tests.** The spec sets `appState.workspace.rootOrigin`.
+Since `0941d188` ("route folder consumers through Project", 2026-10-02) that property belongs to
+the project, `appState.workspace.project.rootOrigin`. The relative path case therefore resolves
+against no root and never opens, so the spec sees three opens where it expects four. Changing the
+two assignments to `project.rootOrigin` makes all three tests pass.
+
+None of this is a product defect. The behaviour behind the vcs and diff-viewer failures is the
+behaviour the code intends. The specs were written against an earlier shape of the API and were
+not updated when the API moved.
 
 ### Two pull request bodies carry stale test output
 
