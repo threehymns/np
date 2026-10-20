@@ -167,4 +167,30 @@ describe("VirtualList windowing", () => {
 		expect(source).toContain("{#each rows as row (row.key)}");
 		expect(source).toContain("{@render children(row.item, row.index)}");
 	});
+
+	it("clamps the window when the list shrinks below the scroll position", () => {
+		const controller = controllerFor(200);
+		// Scrolled to the bottom of the long list.
+		controller.handleScroll(200 * ROW_HEIGHT - VIEWPORT_HEIGHT);
+
+		// A refresh returns far fewer items; the recorded scroll offset is
+		// now beyond the last row.
+		controller.updateItemCount(50);
+
+		// The window must cover the tail of the short list, not an empty
+		// range past its end.
+		expect(controller.startIndex).toBeLessThan(50);
+		expect(controller.endIndex).toBe(50);
+		const rows = visibleRows(commits(50), controller.startIndex, controller.endIndex, bySha);
+		expect(rows.length).toBeGreaterThan(0);
+		expect(rows[rows.length - 1].index).toBe(49);
+	});
+
+	it("keeps top padding within the list when the scroll offset is stale", () => {
+		const controller = controllerFor(200);
+		controller.handleScroll(200 * ROW_HEIGHT - VIEWPORT_HEIGHT);
+		controller.updateItemCount(50);
+
+		expect(controller.topPadding).toBeLessThanOrEqual(50 * ROW_HEIGHT);
+	});
 });

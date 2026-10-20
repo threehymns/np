@@ -30,12 +30,17 @@
 		overscan: () => overscan
 	});
 
-	// Preserve scroll position across item updates / re-renders
+	// Preserve scroll position across item updates / re-renders.
+	// The restore target is clamped to the list's current maximum scroll
+	// position: if the list shrank since the position was recorded,
+	// restoring the raw value would ask for an impossible offset.
 	$effect(() => {
 		items;
 		if (containerEl && controller.lastScrollTop > 0) {
-			if (containerEl.scrollTop !== controller.lastScrollTop) {
-				containerEl.scrollTop = controller.lastScrollTop;
+			const maxScroll = Math.max(0, controller.totalHeight - controller.viewportHeight);
+			const target = Math.min(controller.lastScrollTop, maxScroll);
+			if (containerEl.scrollTop !== target) {
+				containerEl.scrollTop = target;
 			}
 		}
 	});
