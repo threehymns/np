@@ -15,6 +15,7 @@ import {
 	type Rect,
 } from "./split-tree.svelte";
 import { CommandRegistry, registerCoreCommands } from "./commands.svelte";
+import { commandSearchText } from "./plugins/commands";
 import { defaultKeymap } from "./keymap.svelte";
 import type { Workspace } from "./workspace.svelte";
 
@@ -323,6 +324,52 @@ describe("ADR 0024: Pane Splits", () => {
 			expect(globalBindings["cmd+k cmd+left"]).toBe("pane.focusLeft");
 			expect(globalBindings["cmd+k cmd+up"]).toBe("pane.focusUp");
 			expect(globalBindings["cmd+k cmd+down"]).toBe("pane.focusDown");
+		});
+
+		it("gives every pane command the 'pane' keyword", () => {
+			// The titles name the action and its direction, so the keyword is
+			// what makes the commands answer to "pane" outright.
+			const commands = new CommandRegistry();
+			registerCoreCommands({
+				commands,
+				workspace: {
+					splitActivePane: () => {},
+					focusPaneInDirection: () => true,
+				},
+			} as any);
+
+			for (const id of [
+				"pane.splitRight",
+				"pane.splitLeft",
+				"pane.splitUp",
+				"pane.splitDown",
+				"pane.focusLeft",
+				"pane.focusRight",
+				"pane.focusUp",
+				"pane.focusDown",
+			]) {
+				const command = commands.get(id)!;
+				expect(command.label.startsWith("Pane: ")).toBe(true);
+				expect(command.keywords).toContain("pane");
+				// The palette matches a query against the search text, so the
+				// keyword has to be in it for "pane" to find the command.
+				expect(commandSearchText(command)).toContain("pane");
+			}
+		});
+
+		it("leaves unrelated commands unreachable by 'pane'", () => {
+			const commands = new CommandRegistry();
+			registerCoreCommands({
+				commands,
+				workspace: {
+					splitActivePane: () => {},
+					focusPaneInDirection: () => true,
+				},
+			} as any);
+
+			for (const id of ["format.bold", "file.new", "edit.undo", "view.zoomIn"]) {
+				expect(commandSearchText(commands.get(id)!)).not.toContain("pane");
+			}
 		});
 	});
 

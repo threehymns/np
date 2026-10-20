@@ -1,6 +1,11 @@
 export interface CommandPaletteItem {
 	id: string;
 	label: string;
+	/**
+	 * Alternate terms the palette matches a query against, for an entry whose
+	 * label does not name what it belongs to.
+	 */
+	keywords?: string[];
 	shortcut?: string;
 	action: () => void | Promise<void>;
 	disabled?: boolean;

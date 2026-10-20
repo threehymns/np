@@ -539,57 +539,67 @@ export function registerCoreCommands(appState: AppState) {
 
 	coreCommands.push({
 		id: 'pane.splitRight',
-		label: 'Split Right',
+		label: 'Pane: Split Right',
 		category: 'View',
+		// The keyword states the alias outright, so the commands answer to
+		// "pane" however the title is worded.
+		keywords: ['pane'],
 		action: () => { appState.workspace.splitActivePane('right', 'clone'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.splitLeft',
-		label: 'Split Left',
+		label: 'Pane: Split Left',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.splitActivePane('left', 'clone'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.splitUp',
-		label: 'Split Up',
+		label: 'Pane: Split Up',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.splitActivePane('up', 'clone'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.splitDown',
-		label: 'Split Down',
+		label: 'Pane: Split Down',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.splitActivePane('down', 'clone'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.focusLeft',
-		label: 'Focus Left Pane',
+		label: 'Pane: Focus Left',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.focusPaneInDirection('left'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.focusRight',
-		label: 'Focus Right Pane',
+		label: 'Pane: Focus Right',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.focusPaneInDirection('right'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.focusUp',
-		label: 'Focus Up Pane',
+		label: 'Pane: Focus Up',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.focusPaneInDirection('up'); }
 	});
 
 	coreCommands.push({
 		id: 'pane.focusDown',
-		label: 'Focus Down Pane',
+		label: 'Pane: Focus Down',
 		category: 'View',
+		keywords: ['pane'],
 		action: () => { appState.workspace.focusPaneInDirection('down'); }
 	});
 
