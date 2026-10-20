@@ -413,11 +413,13 @@
 {:else}
 	<div class="flex flex-col h-full bg-sidebar border-r border-border select-none relative font-sans text-xs">
 		<!-- Peer Tabs Header: Changes / History -->
-		<div class="flex items-center border-b border-border px-2 py-1.5 shrink-0 bg-sidebar" role="tablist">
-			<div class="inline-flex items-center bg-muted/60 p-0.5 rounded-md text-xs font-medium text-muted-foreground w-full">
+		<div class="flex items-center border-b border-border px-2 py-1.5 shrink-0 bg-sidebar">
+			<div class="inline-flex items-center bg-muted/60 p-0.5 rounded-md text-xs font-medium text-muted-foreground w-full" role="tablist">
 				<button
 					type="button"
 					role="tab"
+					id="git-panel-tab-changes"
+					aria-controls="git-panel-panel-changes"
 					aria-selected={activeTab === 'changes'}
 					onclick={() => switchTab('changes')}
 					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'changes' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
@@ -427,6 +429,8 @@
 				<button
 					type="button"
 					role="tab"
+					id="git-panel-tab-history"
+					aria-controls="git-panel-panel-history"
 					aria-selected={activeTab === 'history'}
 					onclick={() => switchTab('history')}
 					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'history' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
@@ -439,6 +443,9 @@
 		<!-- CHANGES TAB BODY -->
 		<div
 			class="flex-1 flex flex-col min-h-0 {activeTab === 'changes' ? '' : 'hidden'}"
+			role="tabpanel"
+			id="git-panel-panel-changes"
+			aria-labelledby="git-panel-tab-changes"
 			aria-hidden={activeTab !== 'changes'}
 			data-slot="changes-tab-body"
 		>
@@ -759,6 +766,9 @@
 		<!-- HISTORY TAB BODY -->
 		<div
 			class="flex-1 flex flex-col min-h-0 {activeTab === 'history' ? '' : 'hidden'}"
+			role="tabpanel"
+			id="git-panel-panel-history"
+			aria-labelledby="git-panel-tab-history"
 			aria-hidden={activeTab !== 'history'}
 			data-slot="history-tab-body"
 		>
