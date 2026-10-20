@@ -206,6 +206,73 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(listenerCalls).toBe(1);
 	});
 
+	it('a failed pull leaves the pushed findings alone', async () => {
+		const store = new LspDiagnosticsStore();
+		const push = parsePublishDiagnostics(server, {
+			uri,
+			diagnostics: [
+				{
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+					message: 'pushed'
+				}
+			]
+		});
+		store.publish(push!);
+		const revAfterPush = store.revision;
+
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: () => Effect.fail(new Error('boom'))
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('30 seconds');
+				})
+			)
+		);
+
+		// The pull failed and was given up on, and the pushed findings are
+		// still the ones the store holds: a failed request says nothing about
+		// the file, so it must not clear what the server did say.
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed']);
+		expect(store.revision).toBe(revAfterPush);
+	});
+
+	it('an unusable pull report leaves the pushed findings alone', async () => {
+		const store = new LspDiagnosticsStore();
+		const push = parsePublishDiagnostics(server, {
+			uri,
+			diagnostics: [
+				{
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+					message: 'pushed'
+				}
+			]
+		});
+		store.publish(push!);
+		const revAfterPush = store.revision;
+
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: () => Effect.succeed({ kind: 'not-a-report' })
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('30 seconds');
+				})
+			)
+		);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed']);
+		expect(store.revision).toBe(revAfterPush);
+	});
+
 	it('retries are bounded: a permanently failing server gives up instead of retrying forever', async () => {
 		const calls: RecordedCall[] = [];
 		const store = new LspDiagnosticsStore();
