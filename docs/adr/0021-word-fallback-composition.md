@@ -64,15 +64,16 @@ opposite of what it says. Zed's default is the reason this is easy to get
 backwards.
 
 **No bound chosen is not no bound at all.** The runtime substitutes its own when
-the setting supplies none, and the fallback asks for it: words answer behind a
-server that errors *or times out*, and a request that cannot time out can never
-report one. Read literally, the two halves of the fallback cancel — `0` means the
-popover waits for whichever server is answering, and a server that hangs without
-erroring is never late, only silent, so at the defaults the fallback this ADR is
-about never ran. The code resolved the tension toward silence, which is the one
-outcome `'fallback'` exists to remove, and a fix belongs to the runtime rather
-than the setting: changing the default to a non-zero number would have satisfied
-the fallback by contradicting the setting it is read against.
+the setting supplies none, and the fallback is what needs it: words answer
+behind a server that errors *or times out*, and a request that cannot time out
+can never report one. Read literally, the setting and the fallback cancel each
+other out — `0` means the popover waits for whichever server is answering, and a
+server that hangs without erroring is never late, only silent, so at the
+defaults the fallback this ADR is about never ran. The code resolved the
+tension toward silence, which is the one outcome `'fallback'` exists to remove,
+and a fix belongs to the runtime rather than the setting: changing the default
+to a non-zero number would have satisfied the fallback by contradicting the
+setting it is read against.
 
 The substituted bound is the same reasoning as `initialize`'s: an unbounded wait
 on a server is a wait on a document the runtime may never be able to answer. It
