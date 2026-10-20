@@ -1,5 +1,5 @@
 import "../../../../tests/contract/rune-setup";
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
 import { DocumentSession, type FileOrigin } from "@np/core";
 import { diffOriginForFilepath, findBoundDocument as coreFindBoundDocument } from "@np/core";
 import { createMockStorage } from "../../../../tests/mock-storage";
@@ -271,6 +271,60 @@ describe("diff split Working-copy binding (#269)", () => {
 			const rebound = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "new working tree\n");
 			expect(rebound).toBe(doc);
 			expect(rebound!.content).toBe("unsaved pane edits\n");
+		});
+
+		it("does not revert a saved Document to a snapshot it already has", async () => {
+			// The cursor-jump bug: a save refreshes the repository, and the
+			// binding effect re-runs while the cached snapshot still
+			// describes the file as it was BEFORE the save. Re-applying it
+			// reverts the just-saved content, and the Working-copy pane's
+			// cursor jumps from the end of the saved edit back to before it.
+			// The caller marks the snapshot as already applied, and the
+			// Document keeps the content it saved.
+			const { scope, storage } = makeScope();
+			storage.saveFile = mock(async () => originForDiffFilepath(root, "src/a.ts")) as any;
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n")!;
+			// The pane edit, then the save: the Document is clean again and
+			// holds the newer content.
+			doc.content = "base working tree\nplus pane edits\n";
+			expect(doc.isModified).toBe(true);
+			expect(await doc.save({ coveredByRoot: true })).toBe(true);
+			expect(doc.isModified).toBe(false);
+			// The stale snapshot arrives: it must not be applied.
+			const rebound = ensureSplitDocument(
+				scope,
+				ids,
+				makeChange("src/a.ts"),
+				"base working tree\n",
+				false
+			);
+			expect(rebound).toBe(doc);
+			expect(rebound!.content).toBe("base working tree\nplus pane edits\n");
+		});
+
+		it("still reloads a clean Document from a newer snapshot", () => {
+			// The apply-once gate only skips a snapshot the Document
+			// already has; a genuinely newer one still reloads the
+			// Document, so a file changed outside the app is picked up.
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n")!;
+			const rebound = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "new working tree\n", true);
+			expect(rebound).toBe(doc);
+			expect(rebound!.content).toBe("new working tree\n");
+		});
+
+		it("still creates the Document when the snapshot may not be applied", () => {
+			// The apply-once gate only guards the reload of an EXISTING
+			// Document: a file that has no Document yet is still bound, or
+			// it would never get a working-copy pane.
+			const { scope } = makeScope();
+			const ids = new Map<string, string>();
+			const doc = ensureSplitDocument(scope, ids, makeChange("src/a.ts"), "base working tree\n", false);
+			expect(doc).toBeDefined();
+			expect(doc!.content).toBe("base working tree\n");
+			expect(ids.get("src/a.ts")).toBe(doc!.id);
 		});
 	});
 

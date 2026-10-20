@@ -13,7 +13,13 @@
 
 	export interface MultibufferSection {
 		filepath: string;
-		/** Stable identity across content updates (e.g. path + staged flag). */
+		/**
+		 * Stable identity across content updates AND scope changes (e.g. a
+		 * diffed file switching between the staged, unstaged, and combined
+		 * scopes). Re-keying a section destroys and rebuilds its content,
+		 * so hosts must key by whatever identifies the file, not by the
+		 * state it happens to be in.
+		 */
 		key: string;
 	}
 

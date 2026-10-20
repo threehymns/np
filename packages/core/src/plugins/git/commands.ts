@@ -388,7 +388,11 @@ export function createGitCommands(
 				ws.tabs.push({ id, type: 'diff', pluginId: manifest.id });
 			}
 			ws.activeTabId = id;
-			if (ws.project.repository) {
+			// Narrow the active file only when one is given. The panel's
+			// "Uncommitted Changes" button opens the tab without a path,
+			// and clearing the active file there left the Diff Viewer with
+			// no active file: every file expanded, none highlighted.
+			if (filepath && ws.project.repository) {
 				ws.project.repository.setActiveDiffFileByPath(filepath);
 			}
 		}

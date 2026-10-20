@@ -344,13 +344,36 @@
 	// syncCleanSnapshot would revert the just-saved Document to the
 	// pre-save snapshot (the Document is clean after save, so the
 	// isModified guard does not protect it).
+	//
+	// The invalidation only clears the FRESH cache. The snapshots the
+	// panes render from survive it (renderDiffs), so a repository refresh
+	// updates the panes in place instead of tearing them down and
+	// remounting CodeMirror; the binding path below reads the fresh cache
+	// only, so the stale-snapshot revert stays fixed.
 	let lastChangesRef: GitChange[] | null = null;
+	// The diff snapshot each bound Document was last synced to, per file.
+	// A snapshot is applied ONCE: re-applying the snapshot a Document
+	// already has cannot help (a clean Document already matches it) and
+	// it can hurt. A Document saved since the snapshot was taken holds
+	// newer content, and syncing the older snapshot back reverts the
+	// save - the Working-copy pane's cursor then jumps from the end of
+	// the saved edit back to before it. The map is cleared with the
+	// snapshot cache whenever the repository replaces the change list:
+	// the next snapshots belong to a new generation and must be applied.
+	const appliedSnapshots = new Map<string, CachedDiffDetail>();
 	$effect(() => {
 		const currentChanges = repo?.changes ?? null;
 		if (currentChanges !== lastChangesRef) {
 			loadedDiffs = {};
 			loadingDiffs = {};
+			appliedSnapshots.clear();
 			lastChangesRef = currentChanges;
+			// Keep the last known snapshot per live file, drop the ones for
+			// files that left the change list.
+			const liveFiles = new Set(activeChanges.map((c) => c.filepath));
+			for (const filepath of Object.keys(renderDiffs)) {
+				if (!liveFiles.has(filepath)) delete renderDiffs[filepath];
+			}
 		}
 		const files = activeChanges;
 		const root = appState.workspace.project.rootOrigin;
@@ -365,8 +388,15 @@
 		};
 		const boundIds = appState.workspace.diffBoundDocIds;
 		for (const file of files) {
-			const detail = resolveFileDiff(file);
-			ensureSplitDocument(scope, boundIds, file, detail?.modifiedContent ?? file.modifiedContent);
+			const detail = resolveFreshFileDiff(file);
+			// Apply a snapshot to a bound Document once. A Document that was
+			// saved after the snapshot was taken holds newer content, and
+			// syncing the older snapshot back would revert the save (the
+			// pane's cursor jumps back to before the saved edit).
+			const alreadyApplied = detail !== null && appliedSnapshots.get(file.filepath) === detail;
+			const content = detail?.modifiedContent ?? file.modifiedContent;
+			ensureSplitDocument(scope, boundIds, file, content, !alreadyApplied);
+			if (detail && !alreadyApplied) appliedSnapshots.set(file.filepath, detail);
 		}
 		const active = new Set(files.map((f) => f.filepath));
 		for (const filepath of [...boundIds.keys()]) {
@@ -1351,8 +1381,32 @@
 		unstagedChunks?: readonly Chunk[];
 	}
 
+	// Per-file diff snapshots, keyed by `diffCacheKey`, with two lifetimes:
+	//
+	// - `loadedDiffs` holds the snapshots fetched for the CURRENT change
+	//   list. It is invalidated whenever the repository replaces that list
+	//   (every save refreshes it).
+	// - `renderDiffs` holds the last snapshot known for each FILE and
+	//   survives that invalidation. The panes render from it, so a
+	//   refresh swaps the base snapshot in place (the action's update path
+	//   reconfigures the diff compartment) instead of unmounting the
+	//   CodeMirror instances and mounting new ones.
+	//
+	// `renderDiffs` is keyed by filepath, not by `diffCacheKey`: a file's
+	// diff SCOPE can change under it (staged -> combined when a save
+	// turns a staged file into a staged+unstaged one), and the scope key
+	// would change with it. A scope-keyed fallback would miss on the new
+	// key, the pane's diff would go missing for a moment, and the pane
+	// would be torn down and rebuilt - losing the cursor and the scroll
+	// position. Keyed by filepath, the last snapshot survives the scope
+	// change and the fresh one replaces it in place.
+	//
+	// The binding path never reads `renderDiffs`: a snapshot from a
+	// previous change list must not reach `syncCleanSnapshot`, or a
+	// just-saved Document would be reverted to its pre-save content.
 	let loadedDiffs = $state<Record<string, CachedDiffDetail>>({});
 	let loadingDiffs = $state<Record<string, boolean>>({});
+	let renderDiffs = $state<Record<string, CachedDiffDetail>>({});
 
 	function getOrComputeDiffHunks(diff: FileDiffDetail, isStaged: boolean = false): { hunks: readonly Chunk[]; unstagedChunks: readonly Chunk[] } {
 		const cached = diff as CachedDiffDetail;
@@ -1371,18 +1425,36 @@
 		return { hunks, unstagedChunks };
 	}
 
+	/**
+	 * Snapshot the panes render from. Falls back to the last known snapshot
+	 * for the FILE so a repository refresh - or a change of the file's diff
+	 * scope - does not tear the pane down: the fresh snapshot replaces it
+	 * in place once it arrives.
+	 */
 	function resolveFileDiff(fileChange: GitChange): CachedDiffDetail | null {
 		const key = diffCacheKey(fileChange);
-		if (loadedDiffs[key]) {
-			return loadedDiffs[key];
-		}
+		return loadedDiffs[key] ?? renderDiffs[fileChange.filepath] ?? synthesizeFileDiff(fileChange, key);
+	}
+
+	/**
+	 * Snapshot from the CURRENT change list only. The binding path uses
+	 * this one: a snapshot from a previous change list must never reach
+	 * `syncCleanSnapshot`, or a just-saved Document would be reverted to
+	 * its pre-save content.
+	 */
+	function resolveFreshFileDiff(fileChange: GitChange): CachedDiffDetail | null {
+		const key = diffCacheKey(fileChange);
+		return loadedDiffs[key] ?? synthesizeFileDiff(fileChange, key);
+	}
+
+	/** Snapshot carried by the change itself, cached under `key`. */
+	function synthesizeFileDiff(fileChange: GitChange, key: string): CachedDiffDetail | null {
 		const detail = fileDiffFromChange(fileChange);
-		if (detail) {
-			getOrComputeDiffHunks(detail, fileChange.staged);
-			loadedDiffs[key] = detail;
-			return detail;
-		}
-		return null;
+		if (!detail) return null;
+		getOrComputeDiffHunks(detail, fileChange.staged);
+		loadedDiffs[key] = detail;
+		renderDiffs[fileChange.filepath] = detail;
+		return detail;
 	}
 
 	async function fetchDiff(filepath: string, options?: { staged?: boolean; combined?: boolean; status?: 'M' | 'A' | 'D' | 'U' }) {
@@ -1395,12 +1467,14 @@
 				const detail: CachedDiffDetail = diff ?? { originalContent: '', modifiedContent: '', stagedContent: '' };
 				getOrComputeDiffHunks(detail, options?.staged);
 				loadedDiffs[key] = detail;
+				renderDiffs[filepath] = detail;
 			}
 		} catch (e) {
 			console.error(`Failed to load diff for ${filepath}:`, e);
 			const fallback: CachedDiffDetail = { originalContent: '', modifiedContent: '', stagedContent: '' };
 			getOrComputeDiffHunks(fallback, options?.staged);
 			loadedDiffs[key] = fallback;
+			renderDiffs[filepath] = fallback;
 		} finally {
 			loadingDiffs[key] = false;
 		}
@@ -1655,10 +1729,17 @@
 	}
 
 	// Multibuffer sections: one stacked section per active change, keyed by
-	// filepath + staged flag (shared reusable component in ./MultiBuffer.svelte).
+	// filepath. `activeChanges` already holds one entry per filepath (the
+	// staged and unstaged changes of a file are combined into one), so the
+	// filepath is the section's identity. The diff SCOPE of a file can
+	// change under it - a save turns a staged file into a staged+unstaged
+	// one, and the combined change reports `staged: false` - so the scope
+	// must not be part of the key: re-keying the section would destroy and
+	// rebuild the CodeMirror instances, dropping the cursor and the scroll
+	// position.
 	let changeByFilepath = $derived(new Map(activeChanges.map((c) => [c.filepath, c])));
 	let multibufferSections = $derived(
-		activeChanges.map((c) => ({ filepath: c.filepath, key: c.filepath + '-' + c.staged }))
+		activeChanges.map((c) => ({ filepath: c.filepath, key: c.filepath }))
 	);
 </script>
 

@@ -68,6 +68,30 @@ describe("DiffViewer split Working-copy pane binding", () => {
 		expect(matches.length).toBe(1);
 	});
 
+	it("applies a diff snapshot to a bound Document once", () => {
+		// Regression lock: the binding effect re-runs whenever the bound
+		// Document changes - on every keystroke, and on the save that
+		// makes it clean again. Re-applying the cached snapshot on every
+		// run reverted a just-saved Document to the pre-save snapshot: the
+		// Working-copy pane's content jumped back, and the cursor with it
+		// (from the end of the saved edit to before it). A snapshot is
+		// applied once per snapshot; a newer one still reloads the
+		// Document, and the map is cleared with the cache when the
+		// repository replaces the change list.
+		expect(src).toContain("const appliedSnapshots = new Map<string, CachedDiffDetail>();");
+		expect(src).toContain("appliedSnapshots.clear();");
+		expect(src).toContain("ensureSplitDocument(scope, boundIds, file, content, !alreadyApplied);");
+		expect(src).toContain("appliedSnapshots.set(file.filepath, detail);");
+		// The bookkeeping is cleared where the snapshot cache is, so both
+		// share one generation.
+		const invalidation = src.slice(
+			src.indexOf("if (currentChanges !== lastChangesRef)"),
+			src.indexOf("const files = activeChanges;")
+		);
+		expect(invalidation).toContain("loadedDiffs = {}");
+		expect(invalidation).toContain("appliedSnapshots.clear();");
+	});
+
 	it("prunes binding-owned Documents using cross-pane tab counts", () => {
 		// Regression lock: the prune check once used workspace.tabs (active
 		// pane only), so a clean Document open in another pane looked

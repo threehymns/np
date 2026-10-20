@@ -182,18 +182,27 @@ export function shouldPruneBoundDocument(
  * content; dirty Documents keep their edits. Returns undefined when the
  * diff is not loaded yet, the file is deleted, or there is no workspace
  * root.
+ *
+ * `maySyncSnapshot` gates the reload of an EXISTING Document. A snapshot
+ * is applied once: re-applying the snapshot a Document already has
+ * cannot help (a clean Document already matches it) and it can hurt. A
+ * Document saved since the snapshot was taken holds newer content, and
+ * syncing the older snapshot back reverts the save - the Working-copy
+ * pane's cursor jumps from the end of the saved edit back to before it.
+ * The caller passes false for a snapshot the Document already has.
  */
 export function ensureSplitDocument(
 	scope: SplitDocumentScope,
 	boundDocIds: Map<string, string>,
 	change: GitChange,
-	snapshotModifiedContent: string | undefined
+	snapshotModifiedContent: string | undefined,
+	maySyncSnapshot: boolean = true
 ): DocumentSession | undefined {
 	if (change.status === "D") return undefined;
 	if (snapshotModifiedContent === undefined) return undefined;
 	const existing = findBoundDocument(scope.documents, boundDocIds, scope.rootOrigin, change.filepath);
 	if (existing) {
-		existing.syncCleanSnapshot(snapshotModifiedContent);
+		if (maySyncSnapshot) existing.syncCleanSnapshot(snapshotModifiedContent);
 		return existing;
 	}
 	if (!scope.rootOrigin) return undefined;
