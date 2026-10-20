@@ -924,11 +924,51 @@ describe('SpawnGitAdapter', () => {
 			});
 		};
 
-		it('parses NUL-delimited records into GitHistoryCommit entries', async () => {
-			const record = 'feat: hello\x00Alice\x001700000000\x00abcdef1\x00abcdef1234567890abcdef1234567890abcdef12\x00tag: v1.0\x00';
-			logReturning(record);
+		/**
+		 * One record of `git log -z --format=%s%x00%an%x00%at%x00%h%x00%H%x00%D`.
+		 *
+		 * The format writes six NUL-separated fields per commit (subject,
+		 * author, timestamp, short sha, full sha, ref decoration) and `-z`
+		 * terminates each record with a NUL. The last record is terminated
+		 * too, so a stream of N records splits into 6N + 1 pieces: the 6N
+		 * fields and the empty tail the final NUL leaves behind.
+		 *
+		 * The decoration is empty on every commit but the one the current
+		 * branch points at, so the stream of two records ends in two NULs:
+		 * the empty decoration field, then the terminator.
+		 */
+		const historyRecord = (
+			subject: string,
+			author: string,
+			timestamp: string,
+			shortSha: string,
+			sha: string,
+			refDecoration: string
+		) => [subject, author, timestamp, shortSha, sha, refDecoration].join('\x00') + '\x00';
+
+		it('parses a two-record NUL-delimited stream into GitHistoryCommit entries', async () => {
+			logReturning(
+				historyRecord(
+					'feat: hello',
+					'Alice',
+					'1700000000',
+					'abcdef1',
+					'abcdef1234567890abcdef1234567890abcdef12',
+					'tag: v1.0'
+				) +
+					historyRecord(
+						'fix: goodbye',
+						'Bob',
+						'1700000100',
+						'bcdef23',
+						'bcdef234567890abcdef1234567890abcdef12345678',
+						''
+					)
+			);
 
 			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+
+			// Both records are read, newest first, each with its own fields.
 			expect(history).toEqual([
 				{
 					sha: 'abcdef1234567890abcdef1234567890abcdef12',
@@ -937,8 +977,17 @@ describe('SpawnGitAdapter', () => {
 					author: 'Alice',
 					timestamp: 1700000000,
 					refDecoration: 'tag: v1.0'
+				},
+				{
+					sha: 'bcdef234567890abcdef1234567890abcdef12345678',
+					shortSha: 'bcdef23',
+					subject: 'fix: goodbye',
+					author: 'Bob',
+					timestamp: 1700000100
 				}
 			]);
+			// The empty decoration of the older commit is not an empty string.
+			expect(history[1].refDecoration).toBeUndefined();
 		});
 
 		it('handles truncated stream gracefully', async () => {
