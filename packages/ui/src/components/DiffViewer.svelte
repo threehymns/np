@@ -37,7 +37,8 @@
 		createLiveHunkMemo,
 		hasGitChangeChanged,
 		resolveSplitRightContent,
-		isDiffHeaderDirty
+		isDiffHeaderDirty,
+		shouldPruneBoundDocument
 	} from './diff-split-binding.js';
 
 	class HunkWidget extends WidgetType {
@@ -333,7 +334,24 @@
 	// Deleted files never bind (their presentation stays read-only).
 	// Clean binding-owned tab-less Documents for files that left are pruned;
 	// dirty Documents and tab-bound Documents are preserved.
+	//
+	// Tracks the git-status revision that loadedDiffs was built from. The
+	// cached snapshots are invalidated HERE, at the top of the binding
+	// effect, not in a separate effect: this effect is created earlier, so
+	// a standalone invalidation effect would run after it and lose the
+	// race. Without this ordering, a git refresh that lands after a save
+	// could let the loop below read a stale loadedDiffs entry and
+	// syncCleanSnapshot would revert the just-saved Document to the
+	// pre-save snapshot (the Document is clean after save, so the
+	// isModified guard does not protect it).
+	let lastChangesRef: GitChange[] | null = null;
 	$effect(() => {
+		const currentChanges = repo?.changes ?? null;
+		if (currentChanges !== lastChangesRef) {
+			loadedDiffs = {};
+			loadingDiffs = {};
+			lastChangesRef = currentChanges;
+		}
 		const files = activeChanges;
 		const root = appState.workspace.project.rootOrigin;
 		if (!root) return;
@@ -360,8 +378,11 @@
 				boundIds.delete(filepath);
 				continue;
 			}
-			const hasTab = workspace.tabs.some((t) => t.id === doc.id);
-			if (!hasTab && !doc.isModified) {
+			// Count tabs across ALL panes (and resolve cloned tabs via docId),
+			// not just the active pane: workspace.tabs only covers the
+			// active pane, so a Document open elsewhere would look tab-less
+			// and get pruned, leaving a dangling tab.
+			if (shouldPruneBoundDocument((id) => workspace.countTabsForDocument(id), doc)) {
 				const idx = workspace.documents.indexOf(doc);
 				if (idx !== -1) workspace.documents.splice(idx, 1);
 				boundIds.delete(filepath);
@@ -1362,16 +1383,6 @@
 			loadingDiffs[key] = false;
 		}
 	}
-
-	let lastChangesRef: GitChange[] | null = null;
-	$effect(() => {
-		const currentChanges = repo?.changes ?? null;
-		if (currentChanges !== lastChangesRef) {
-			loadedDiffs = {};
-			loadingDiffs = {};
-			lastChangesRef = currentChanges;
-		}
-	});
 
 	$effect(() => {
 		for (const file of activeChanges) {

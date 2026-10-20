@@ -159,6 +159,22 @@ export interface SplitDocumentScope {
 }
 
 /**
+ * Whether a binding-owned Document for a filepath that left activeChanges
+ * should be pruned from the workspace. Dirty Documents are always
+ * preserved (their edits survive). Tab-bound Documents are preserved —
+ * tabs are counted across ALL panes and cloned tabs resolve via docId,
+ * because `workspace.tabs` only covers the active pane and a Document open
+ * elsewhere would otherwise look tab-less and get pruned, leaving a
+ * dangling tab.
+ */
+export function shouldPruneBoundDocument(
+	countTabsForDocument: (docId: string) => number,
+	doc: { id: string; isModified: boolean }
+): boolean {
+	return countTabsForDocument(doc.id) === 0 && !doc.isModified;
+}
+
+/**
  * Ensure a shared Document exists for the diff filepath, reusing the open
  * one when present. New Documents start from the git snapshot's
  * working-tree content (content == baseline, so clean), without opening a

@@ -49,4 +49,30 @@ describe("DiffViewer split Working-copy pane binding", () => {
 		// with no bound Document to type into.
 		expect(src).not.toContain("if (file.staged && !file.combined) continue;");
 	});
+
+	it("invalidates cached diff snapshots inside the binding effect, before ensureSplitDocument", () => {
+		// Regression lock: loadedDiffs was once cleared in a separate
+		// $effect declared AFTER the binding effect, so the binding effect
+		// ran first and could read a stale snapshot. After a save (Document
+		// clean), syncCleanSnapshot would then revert the just-saved
+		// Document to the pre-save snapshot. The invalidation must live at
+		// the top of the binding effect itself.
+		const bindingEffectIdx = src.indexOf("ensureSplitDocument(scope, boundIds, file,");
+		expect(bindingEffectIdx).toBeGreaterThan(-1);
+		const invalidationIdx = src.indexOf("if (currentChanges !== lastChangesRef)");
+		expect(invalidationIdx).toBeGreaterThan(-1);
+		expect(invalidationIdx).toBeLessThan(bindingEffectIdx);
+		// No standalone invalidation effect may remain: exactly one
+		// lastChangesRef comparison guards the ordering.
+		const matches = src.match(/if \(currentChanges !== lastChangesRef\)/g) ?? [];
+		expect(matches.length).toBe(1);
+	});
+
+	it("prunes binding-owned Documents using cross-pane tab counts", () => {
+		// Regression lock: the prune check once used workspace.tabs (active
+		// pane only), so a clean Document open in another pane looked
+		// tab-less and was pruned, leaving a dangling tab.
+		expect(src).toContain("shouldPruneBoundDocument(");
+		expect(src).not.toContain("workspace.tabs.some((t) => t.id === doc.id)");
+	});
 });

@@ -13,6 +13,7 @@ import {
 	hasGitChangeChanged,
 	resolveSplitRightContent,
 	isDiffHeaderDirty,
+	shouldPruneBoundDocument,
 	ensureSplitDocument
 } from "./diff-split-binding";
 
@@ -384,6 +385,28 @@ describe("diff split Working-copy binding (#269)", () => {
 			expect(memo.size()).toBe(2);
 			memo.prune(new Set(["a.ts"]));
 			expect(memo.size()).toBe(1);
+		});
+	});
+
+	describe("shouldPruneBoundDocument (tab-less clean Documents)", () => {
+		const cleanDoc = { id: "doc-1", isModified: false };
+		const dirtyDoc = { id: "doc-1", isModified: true };
+
+		it("prunes a clean Document with no tabs anywhere", () => {
+			expect(shouldPruneBoundDocument(() => 0, cleanDoc)).toBe(true);
+		});
+
+		it("preserves a clean Document that has a tab (even in a non-active pane)", () => {
+			// countTabsForDocument counts across ALL panes and resolves
+			// cloned tabs via docId; the predicate must not prune when it
+			// returns > 0. Previously the call site used workspace.tabs
+			// (active pane only), pruning Documents open elsewhere.
+			expect(shouldPruneBoundDocument(() => 1, cleanDoc)).toBe(false);
+			expect(shouldPruneBoundDocument(() => 3, cleanDoc)).toBe(false);
+		});
+
+		it("preserves a dirty Document even with no tabs", () => {
+			expect(shouldPruneBoundDocument(() => 0, dirtyDoc)).toBe(false);
 		});
 	});
 });
