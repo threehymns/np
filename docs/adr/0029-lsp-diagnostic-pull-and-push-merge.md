@@ -5,11 +5,12 @@ unasked. Both answers reach the editor through the one store ADR 0022 puts
 between the protocol and the decorations, so a file that one server serves by
 pull and another by push is one file with one set of marks, and the store has
 to say which of the two answers wins. It says the pull. A pull is asked for
-after the change, against the document as the editor holds it, while a push
-may have been computed against the revision before that change, so the pull is
-the newer word for that path and the store keeps it. The store does not
-compare revisions to decide this. The source of the result decides, per path
-and per server, and that is the whole of the rule.
+after the change, so the server computes it against at least the revision the
+editor last synced, while a push may have been computed against the revision
+before that change, so the pull is the newer word for that path and the store
+keeps it. The store does not compare revisions to decide this. The source of
+the result decides, per path and per server, and that is the whole of the
+rule.
 
 ## One slice per path and per server, and the source that filled it
 
