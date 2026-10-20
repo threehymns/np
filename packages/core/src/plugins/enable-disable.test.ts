@@ -9,7 +9,7 @@ import { SettingsManager, type SettingNamespaceSchema, type WorkspaceSettingsSto
 import type { PluginManifest, PluginRegistration } from './types';
 import { Workspace } from '../workspace.svelte';
 import { DocumentSession } from '../document.svelte';
-import { MemorySessionPersistence } from '../persistence';
+import { MemorySessionPersistence, type SerializedWorkspace } from '../persistence';
 import { AppState } from '../state.svelte';
 import { toURI } from '../storage';
 import type { FileOrigin, Storage } from '../storage';

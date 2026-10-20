@@ -9,7 +9,7 @@ import { checkManifestFile } from './boundary-check';
 import { DIALOGS_SERVICE_KEY } from './services';
 import { Workspace } from '../workspace.svelte';
 import { DocumentSession } from '../document.svelte';
-import { MemorySessionPersistence } from '../persistence';
+import { MemorySessionPersistence, type SerializedWorkspace } from '../persistence';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';

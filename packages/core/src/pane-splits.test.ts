@@ -96,9 +96,10 @@ describe("ADR 0024: Pane Splits", () => {
 			const layout = splitPane(rootPane, rootPane.id, "right", p2);
 
 			const result = removePane(layout, p2.id);
-			expect(result.newRoot.type).toBe("pane");
-			expect(result.newRoot.id).toBe(rootPane.id);
-			expect(result.neighborId).toBe(rootPane.id);
+			expect(result).not.toBeNull();
+			expect(result!.newRoot.type).toBe("pane");
+			expect(result!.newRoot.id).toBe(rootPane.id);
+			expect(result!.neighborId).toBe(rootPane.id);
 		});
 	});
 
@@ -227,6 +228,28 @@ describe("ADR 0024: Pane Splits", () => {
 			expect(ws.activePane.activeTabId).toBe("");
 			expect(ws.layout.type).toBe("pane");
 		});
+
+		it("closes the tab in the pane that holds it, not in the active pane", async () => {
+			const ws = makeWorkspace();
+			const doc = await ws.newFile();
+			const pane1 = ws.activePane;
+			const pane2 = ws.splitActivePane("right", "clone");
+			// The clone shares the session, so both panes hold a tab for it.
+			expect(ws.countTabsForDocument(doc.id)).toBe(2);
+
+			// The active pane is the one that does not hold the tab, so a
+			// close that fell back to the active pane would close the wrong
+			// tab.
+			ws.activePaneId = pane1.id;
+
+			await ws.performClose(doc.id, pane2.id);
+
+			expect(pane2.tabs.length).toBe(0);
+			expect(pane1.tabs.length).toBe(1);
+			// The pane died with its last tab, and the focus stayed where it was.
+			expect(ws.getAllPanes().length).toBe(1);
+			expect(ws.activePaneId).toBe(pane1.id);
+		});
 	});
 
 	describe("6. Geometric focus navigation", () => {
@@ -308,7 +331,7 @@ describe("ADR 0024: Pane Splits", () => {
 			expect(WORKSPACE_PERSISTENCE_VERSION).toBe(1);
 
 			const ws = makeWorkspace();
-			const serialized = ws.serializeTabs();
+			const serialized = ws.serializeWorkspace();
 			expect(serialized.version).toBe(WORKSPACE_PERSISTENCE_VERSION);
 		});
 	});

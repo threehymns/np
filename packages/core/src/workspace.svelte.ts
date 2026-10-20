@@ -191,7 +191,15 @@ export class Workspace {
 		}, 500);
 	}
 
-	private serializeTabs(): SerializedWorkspace {
+	/**
+	 * The persisted shape of the workspace's open files: the version key and
+	 * one entry per open document, in tab order across the panes.
+	 *
+	 * The tabs themselves are not persisted. A document that is open in more
+	 * than one pane is written once, so the layout is not part of the saved
+	 * state and a session always comes back in a single pane.
+	 */
+	serializeWorkspace(): SerializedWorkspace {
 		const serializedMap = new Map<string, SerializedDocument>();
 		for (const pane of this.getAllPanes()) {
 			for (const tab of pane.tabs) {
@@ -248,7 +256,7 @@ export class Workspace {
 		}
 
 		const folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
-		const serializedDocs = this.serializeTabs();
+		const serializedDocs = this.serializeWorkspace();
 
 		await this.project.saveOpenFiles(serializedDocs, folderUri);
 	}
@@ -726,7 +734,16 @@ export class Workspace {
 		return true;
 	}
 
-	private async performClose(id: string, paneId?: string) {
+	/**
+	 * Close a tab without asking, in the pane that holds it.
+	 *
+	 * This is the unconditional close: the tab leaves its pane, the document
+	 * leaves the workspace when no tab references it any more, and a pane
+	 * whose last tab closed dies with it. It does not ask about unsaved
+	 * changes, so a caller that has not already asked must use `closeTab`,
+	 * which prompts, or `finalizeClose`, which is the answer to that prompt.
+	 */
+	async performClose(id: string, paneId?: string) {
 		const targetPane = paneId
 			? this.findPane(paneId)
 			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
@@ -903,7 +920,7 @@ export class Workspace {
 
 
 	async saveFolderState(folderUri: string) {
-		const serializedDocs = this.serializeTabs();
+		const serializedDocs = this.serializeWorkspace();
 
 		await this.project.saveOpenFiles(serializedDocs, folderUri);
 		await this.project.saveActiveDocumentId(this.activeTabId, folderUri);
