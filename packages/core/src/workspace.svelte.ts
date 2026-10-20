@@ -6,7 +6,7 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { Project } from './project/project.svelte';
-import type { RepositorySafetyReport } from './project/repository.svelte';
+import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 
@@ -30,6 +30,12 @@ import {
 
 export type { WorkspaceTab } from './split-tree.svelte';
 
+export interface ProjectIdentity {
+	uri: string;
+	repository: Repository | null;
+	generation: number;
+}
+
 export class Workspace {
 	documents = $state<DocumentSession[]>([]);
 	layout = $state<LayoutNode>(new Pane());
@@ -43,6 +49,87 @@ export class Workspace {
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
+
+	/**
+	 * A folder switch is in flight. Workspace-level, not Project-level: the
+	 * operation rewrites the window (documents, tabs, panes) as well as the
+	 * project's root, and the Project is the thing being replaced, so a flag
+	 * on it would be lost exactly when the open has to be rolled back.
+	 */
+	projectOpening = $state(false);
+	/**
+	 * The last folder-open failure, or null. Workspace-level for the same
+	 * reason as `projectOpening`: the failure belongs to the operation, not
+	 * to the project that was being replaced.
+	 */
+	projectError = $state<string | null>(null);
+	/**
+	 * A branch switch is in flight.
+	 */
+	private branchSwitching = $state(false);
+	/**
+	 * How many times the current project has been replaced.
+	 *
+	 * Workspace-level on purpose. The counter guards work that outlives the
+	 * Project it guards: opening a folder replaces the Project, so a counter
+	 * stored on the Project would be recreated with it and reset to zero.
+	 * The guard would then compare a stale identity against a fresh one and
+	 * find them equal, which is exactly the failure the guard exists to
+	 * prevent. The Workspace is the one object in the model that survives a
+	 * project switch.
+	 */
+	private projectGeneration = $state(0);
+	/**
+	 * Commit message drafts, keyed by project URI.
+	 *
+	 * Workspace-level because the draft has to outlive the project it was
+	 * written in: switching away and back must find the draft again, and a
+	 * draft written for one project must never show up under another.
+	 */
+	commitDrafts = $state<Record<string, string>>({});
+
+	/**
+	 * URI of the current project's root, or '' when no folder is open.
+	 */
+	get projectUri(): string {
+		return this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
+	}
+
+	/**
+	 * True while a project or repository mutation is running. Callers use it
+	 * to refuse concurrent mutations: two folder opens, or a folder open and
+	 * a branch switch, must not interleave.
+	 */
+	get projectMutationBusy(): boolean {
+		return this.projectOpening || this.branchSwitching || !!this.project.repository?.isBusy;
+	}
+
+	/**
+	 * Snapshot of the project that is current right now. Held across an
+	 * await and compared with `isCurrentProject` afterwards, so a result
+	 * that arrives after the user switched folders is discarded instead of
+	 * being applied to the wrong project.
+	 */
+	captureProject(): ProjectIdentity {
+		return {
+			uri: this.projectUri,
+			repository: this.project.repository,
+			generation: this.projectGeneration
+		};
+	}
+
+	/**
+	 * Is the captured identity still the current project? False once the
+	 * folder changed, once the repository was replaced, or once the project
+	 * was replaced a second time.
+	 */
+	isCurrentProject(target: ProjectIdentity): boolean {
+		return (
+			target.uri === this.projectUri &&
+			target.repository === this.project.repository &&
+			target.generation === this.projectGeneration
+		);
+	}
 
 	private untitledCounter = 0;
 	private isRestoring = $state(true);
@@ -622,38 +709,68 @@ export class Workspace {
 		return newDoc;
 	}
 
-	async openDirectory(specificOrigin?: FileOrigin) {
-		let origin: FileOrigin | null = null;
-
-		if (specificOrigin) {
-			origin = specificOrigin;
-		} else {
-			origin = await this.project.storage.pickDirectory();
+	/**
+	 * Open a folder as the current project.
+	 *
+	 * Returns whether the project changed. A cancelled picker, a denied
+	 * permission and a failed destination load all leave the current project
+	 * exactly as it was and report false; the failure reason, when there is
+	 * one, lands in `projectError`.
+	 *
+	 * Only one project mutation runs at a time: a second request while one
+	 * is in flight is refused rather than interleaved.
+	 */
+	async openDirectory(specificOrigin?: FileOrigin): Promise<boolean> {
+		if (this.projectMutationBusy) return false;
+		this.projectOpening = true;
+		this.projectError = null;
+		if (this.restorePromise) {
+			try {
+				await this.restorePromise;
+			} catch {
+				// A failed session restore must not block opening a folder.
+			}
 		}
-
-		if (!origin) return;
-		
-		// Verify permission
-		const granted = await this.project.storage.verifyPermission(origin, true);
-		if (!granted) return;
-
-		// Save old state
-		await this.flushSaveOpenFiles();
-		const oldFolderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
-		await this.saveFolderState(oldFolderUri);
-
-		this.isRestoring = true;
-
+		const previous = {
+			root: this.project.rootOrigin,
+			repository: this.project.repository,
+			repositoryOwnerId: this.project.repositoryOwnerId,
+			permission: this.project.hasRootPermission,
+			documents: this.documents,
+			layout: this.layout,
+			activePaneId: this.activePaneId,
+			nodes: this.project.projectTree.nodes
+		};
+		let changed = false;
 		try {
+			const origin = specificOrigin ?? await this.project.storage.pickDirectory();
+			if (!origin) return false;
+			if (!await this.project.storage.verifyPermission(origin, true)) {
+				this.projectError = 'Permission denied. The current project is unchanged.';
+				return false;
+			}
+
+			// Save the outgoing session before the project is replaced, so
+			// switching back finds it.
+			await this.flushSaveOpenFiles();
+			await this.saveFolderState(this.projectUri);
+
+			this.isRestoring = true;
+			// The generation moves before anything asynchronous starts, so a
+			// result that arrives for the outgoing project can tell that it
+			// is stale.
+			this.projectGeneration++;
+			changed = true;
+
 			this.project.rootOrigin = origin;
 			this.project.hasRootPermission = true;
 			await this.onRootOriginChange?.(origin);
 
-			// Repository lifecycle is owned by feature plugins (#202) through
-			// the generic workspace-opened hook: with the Git plugin enabled
-			// this detects and refreshes; with it disabled the slot stays
-			// null. The slot is cleared unconditionally so the UI never shows
-			// stale branch/changes for the new folder. Explicit failure
+			// Repository lifecycle is owned by feature plugins (#202)
+			// through the generic workspace-opened hook: with the Git plugin
+			// enabled this detects and refreshes; with it disabled the slot
+			// stays null. The slot is cleared unconditionally so the UI never
+			// shows stale branch/changes for the new folder. Explicit failure
 			// decision (ADR 0013): a throwing hook is contained by the host
 			// with plugin attribution, so when the owning hook fails the slot
 			// stays in this safe empty state and open proceeds (tree scan,
@@ -662,27 +779,46 @@ export class Workspace {
 			this.project.repositoryOwnerId = null;
 			await this.pluginHost.runWorkspaceOpened({ origin, workspace: this });
 
+			// The outgoing project's documents and panes do not belong to the
+			// incoming project; they are replaced by the destination's
+			// session below.
+			this.documents = [];
+			const freshPane = new Pane();
+			this.layout = freshPane;
+			this.activePaneId = freshPane.id;
+
 			// Add to recent folders
-			const newRecent = this.recentFolders.filter(f => toURI(f) !== toURI(origin!));
-			this.recentFolders = [origin, ...newRecent].slice(0, 10);
+			this.recentFolders = [origin, ...this.recentFolders.filter(f => toURI(f) !== toURI(origin))].slice(0, 10);
 
 			// Reset project tree expansion state
 			this.project.projectTree.resetExpansionState();
+			this.project.projectTree.searchQuery = '';
 
 			await this.project.projectTree.scan(origin);
 
 			// Load new folder state
-			const folderUri = toURI(origin);
-			await this.loadFolderState(folderUri);
-		} finally {
-			this.isRestoring = false;
-		}
-
-		// Refresh permissions for already open files
-		for (const doc of this.documents) {
-			if (doc.origin && this.project.coversOrigin(doc.origin)) {
-				doc.markPermissionGranted();
+			await this.loadFolderState(toURI(origin), true);
+			this.pendingCloseId = null;
+			return true;
+		} catch (error) {
+			if (changed) {
+				this.project.rootOrigin = previous.root;
+				this.project.repository = previous.repository;
+				this.project.repositoryOwnerId = previous.repositoryOwnerId;
+				this.project.hasRootPermission = previous.permission;
+				this.documents = previous.documents;
+				this.layout = previous.layout;
+				this.activePaneId = previous.activePaneId;
+				this.project.projectTree.nodes = previous.nodes;
+				this.project.projectTree.resetExpansionState();
 			}
+			if (!(error instanceof Error && error.name === 'AbortError')) {
+				this.projectError = `Failed to open folder: ${error instanceof Error ? error.message : String(error)}`;
+			}
+			return false;
+		} finally {
+			if (changed) this.isRestoring = false;
+			this.projectOpening = false;
 		}
 	}
 
@@ -833,9 +969,17 @@ export class Workspace {
 		this.debouncedSaveOpenFiles();
 	}
 
-	async getBranchSafetyReport(targetBranch: string): Promise<RepositorySafetyReport | null> {
-		if (!this.project.repository || !this.isRepositoryActive) return null;
-		
+	/**
+	 * Preflight for a branch switch: what would be lost by switching now.
+	 *
+	 * The report is computed against the captured project identity and is
+	 * discarded when the project changed while the preflight was running:
+	 * a report about the previous project must not gate the next one.
+	 */
+	async getBranchSafetyReport(targetBranch: string, target = this.captureProject()): Promise<RepositorySafetyReport | null> {
+		if (!target.repository || !this.isCurrentProject(target) || this.projectMutationBusy) return null;
+		if (!this.isRepositoryActive) return null;
+
 		const modifiedFiles = await Promise.all(
 			this.documents
 				.filter(doc => doc.isModified)
@@ -847,17 +991,32 @@ export class Workspace {
 					return doc.fileName;
 				})
 		);
-			
-		return await this.project.repository.getSafetyReport(modifiedFiles, targetBranch);
+
+		if (!this.isCurrentProject(target) || this.projectMutationBusy) return null;
+		const report = await target.repository.getSafetyReport(modifiedFiles, targetBranch);
+		return this.isCurrentProject(target) && !this.projectMutationBusy ? report : null;
 	}
 
-	async switchBranch(branchName: string): Promise<SwitchResult> {
-		if (!this.project.repository || !this.project.rootOrigin || !this.isRepositoryActive) {
+	/**
+	 * Switch the current project's repository to another branch.
+	 *
+	 * The captured project identity is checked before and after the switch:
+	 * a switch requested for one project and landing after the user moved to
+	 * another is refused rather than applied to the wrong project.
+	 */
+	async switchBranch(branchName: string, target = this.captureProject()): Promise<SwitchResult> {
+		if (!this.isCurrentProject(target)) {
+			return { status: 'error', message: 'Project changed. Select the branch again.' };
+		}
+		if (!target.repository || !this.project.rootOrigin || !this.isRepositoryActive) {
 			return { status: 'error', message: 'No repository' };
 		}
-
+		if (this.projectMutationBusy) return { status: 'error', message: 'Another project or repository operation is running.' };
+		this.branchSwitching = true;
 		try {
-			const result = await this.project.repository.switchBranch(branchName);
+			const result = await target.repository.switchBranch(branchName);
+			if (!this.isCurrentProject(target)) return { status: 'error', message: 'Project changed.' };
+
 			
 			if (result.status === 'switched' || result.status === 'noop') {
 				// Full reload after branch switch
@@ -884,6 +1043,8 @@ export class Workspace {
 		} catch (e: any) {
 			console.error('Failed to switch branch', e);
 			return { status: 'error', message: e.message || 'Failed to switch branch' };
+		} finally {
+			this.branchSwitching = false;
 		}
 	}
 
@@ -970,7 +1131,7 @@ export class Workspace {
 		await this.project.saveActiveDocumentId(this.activeTabId, folderUri);
 	}
 
-	async loadFolderState(folderUri: string) {
+	async loadFolderState(folderUri: string, strict = false) {
 		this.pendingDiffRestore.clear();
 		try {
 			const origins = await this.project.loadOpenFiles(folderUri);
@@ -1076,6 +1237,7 @@ export class Workspace {
 				await this.newFile();
 			}
 		} catch (e) {
+			if (strict) throw e;
 			console.error('[Workspace] Failed to load folder state', e);
 			this.pendingDiffRestore.clear();
 			this.documents = [];
@@ -1118,15 +1280,22 @@ export class Workspace {
 
 				if (rootOrigin) {
 					this.project.rootOrigin = rootOrigin;
+					const restoreUri = toURI(rootOrigin);
+					const restoreGeneration = this.projectGeneration;
 
 					const permission = await this.project.storage.queryPermission(rootOrigin, true);
-					
+
 					if (permission === 'granted') {
 						this.project.hasRootPermission = true;
 						await this.onRootOriginChange?.(rootOrigin);
 						// Initialize repo and tree in background
 						(async () => {
 							try {
+								// The folder may have changed while the restore was
+								// waiting: a repository or a tree published for the
+								// restored folder would be stale state for a project
+								// that is no longer current.
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) return;
 								// Drop the previous session's repository before the
 								// plugin-owned probe so the UI never shows stale
 								// state. Detection/refresh run through the generic
@@ -1137,10 +1306,18 @@ export class Workspace {
 									origin: rootOrigin!,
 									workspace: this
 								});
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) return;
 								// Session restore loads tabs before the repo exists;
 								// re-apply the persisted diff selection once changes are in.
 								this.applyPendingDiffRestore();
 								await this.project.projectTree.scan(rootOrigin!);
+								if (this.projectGeneration !== restoreGeneration || this.projectUri !== restoreUri) {
+									const current = this.project.rootOrigin;
+									if (current && this.project.hasRootPermission) {
+										await this.project.projectTree.scan(current);
+									}
+								}
+
 							} catch (e: any) {
 								console.error('[Workspace] Failed to initialize repo/tree during restore:', e);
 							}
