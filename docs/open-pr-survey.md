@@ -34,7 +34,7 @@ the pipeline that are described in the last section.
 | #341 | `feat/search-polish` | `feat/replace-multibuffer` | 2281 pass | Nothing |
 | #326 | `feat/pane-splits` | `master` | 2211 pass | Nothing in the code; the compile hole is still open |
 | #276 | `impl/268-editable-diff-working-copy-pane` | `feat/pane-splits` | 2394 pass | Nothing |
-| #190 | `feat/compact-header-switchers` | `impl/268-editable-diff-working-copy-pane` | 2405 pass | Nothing |
+| #190 | `feat/compact-header-switchers` | `impl/268-editable-diff-working-copy-pane` | 2406 pass | Nothing |
 | #321 | `feat/lsp-status-details` | `master` | 2193 pass | Nothing |
 | #325 | `feat/remappable-completion-keys` | `master` | 2182 pass | Nothing |
 | #327 | `feat/per-language-settings` | `master` | 2196 pass | Nothing |
@@ -441,10 +441,40 @@ old flat fields, so it was a re-plumb rather than a text merge.
 
 Three real bugs were found and fixed on the way: the header overflowed when the application menu
 opened, Escape did not close the project picker, and the header changed height when the menu
-opened. ADR 0033 records the project identity guard.
+opened.
+
+Three review findings were open on it and all three are now closed:
+
+- **The ADR used "folder" where the repository has a defined term.** `CONTEXT.md` has the
+  glossary, and it names four things: the Workspace is the window state, the Project is the
+  backing store behind one Workspace, the Worktree is a checkout within a Project, and the Root
+  is the folder path a Project is opened on. The glossary also says the `recent-folders` naming
+  stays, so that list keeps its name. The ADR now uses the four terms.
+- **The ADR contradicted itself about whether the Project is replaced.** The code settles it. The
+  `Project` is constructed once, in the `Workspace` constructor, and `openDirectory` rewrites it in
+  place, so opening a Root replaces the Root and the Repository and not the Project. The ADR now
+  says that, and the argument for the generation counter follows from it: a Project is a store
+  that never observes its Root being replaced, and the Workspace is what runs the open, so the
+  Workspace is the only object that can count the opens. The same wrong claim was in the comment on
+  `projectGeneration` in `packages/core/src/workspace.svelte.ts` and in the pull request body's
+  summary bullet, and the code comment is corrected too, so the code and the ADR now tell the same
+  story.
+- **A failed open left the settings attachment and the recent-folders entry behind.** The open
+  attaches the workspace settings to the destination root and adds the destination to the
+  recent-folders list before the open finishes. A failure after that left the window pointing at a
+  project that was never opened: the settings of the project that was still open were gone, and
+  the recent-folders list named a root the window had never been on. Both are snapshotted with the
+  rest of the outgoing state and put back in the rollback, and the root permission is put back
+  first, because the host reads it to decide whether the settings of a root can be attached at
+  all. The test wires the real `Preferences` class, gives each root a distinct
+  `.np/settings.json`, and fails without the fix in both halves.
 
 The repository owner's in-progress work on the branch, the removal of the `header-sizes.ts` size
 abstraction, was carried forward and committed rather than discarded.
+
+Its e2e suite is 10 failed and 67 passed, against 17 failed and 29 passed on its base. Nine of the
+failures are base failures. The tenth, `tests/e2e/edit-menu.spec.ts:78`, passes when that spec runs
+on its own and fails only under the full run's parallel load.
 
 ### #321, status details slot
 
