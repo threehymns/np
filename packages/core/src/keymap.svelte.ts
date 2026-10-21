@@ -121,7 +121,11 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+k cmd+up": "pane.focusUp",
 			"cmd+k cmd+down": "pane.focusDown",
 			"cmd+f8": "diff.nextHunk",
-			"cmd+shift+f8": "diff.prevHunk"
+			"cmd+shift+f8": "diff.prevHunk",
+			// The project-wide diagnostics tab (#309). The shortcut other editors
+			// use for the problems panel, which is the same thing: every finding
+			// the servers reported, in one list.
+			"cmd+shift+m": "diagnostics.open"
 		}
 	}
 ];

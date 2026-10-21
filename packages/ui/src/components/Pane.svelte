@@ -12,6 +12,7 @@
 	import type EditorComponent from './Editor.svelte';
 	import { paneEditorKey } from './pane-focus';
 	import { hasDirtyResults } from './search-tab-behavior';
+	import DiagnosticsTab from './DiagnosticsTab.svelte';
 
 	let {
 		pane,
@@ -29,7 +30,7 @@
 	let allPanes = $derived(appState.workspace.getAllPanes());
 	let isSplit = $derived(allPanes.length > 1);
 	let showTabBar = $derived(
-		isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId || t.type === 'search')
+		isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId || t.type === 'search' || t.type === 'diagnostics')
 	);
 
 	// A search tab holds unsaved work when a file its results show is
@@ -121,7 +122,7 @@
 					{#each pane.tabs as tab (tab.id)}
 						{@const tabDocument = appState.documents.find(d => d.id === (tab.docId ?? tab.id))}
 						{@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
-						{@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? 'Untitled')}
+						{@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? tab.title ?? 'Untitled')}
 						{@const searchSession = tab.type === 'search' ? tab.searchSession : undefined}
 						{@const isModified = searchSession
 							? hasDirtyResults(searchSession.resultUris, documentDirtiness)
@@ -216,6 +217,10 @@
 						{:else if tab.pluginId && tabContent}
 							{@const TabComponent = tabContent.component}
 							<TabComponent {...(tabContent.props ?? {})} />
+						{:else if tab.type === 'diagnostics'}
+							<!-- The project-wide diagnostics tab (#309): a view over the
+							     merged store, with its own session on the workspace. -->
+							<DiagnosticsTab tabId={tab.id} />
 						{:else if Editor}
 							{#if tabDocument}
 								<!--

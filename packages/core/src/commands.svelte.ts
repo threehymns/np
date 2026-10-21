@@ -897,6 +897,19 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'diagnostics.open',
+		label: 'Open Project Diagnostics',
+		category: 'Diagnostics',
+		keywords: ['problems', 'errors', 'lsp'],
+		action: () => {
+			// The tab reads the merged diagnostics store; opening it asks the
+			// workspace for a tab, not a server for an answer.
+			appState.workspace.openDiagnosticsTab();
+			return true;
+		}
+	});
+
+	coreCommands.push({
 		id: 'view.zoomIn',
 		label: 'Zoom In',
 		category: 'View',

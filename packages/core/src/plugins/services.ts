@@ -70,7 +70,7 @@ export interface WorkspaceLike {
 	} | null;
 	tabs: Array<{
 		id: string;
-		type: 'document' | 'diff';
+		type: 'document' | 'diff' | 'diagnostics';
 		pluginId?: string;
 	}>;
 	activeTabId: string;

@@ -38,6 +38,21 @@ export type {
 	LspLogLevel,
 	LspLogsFocus
 } from './lsp/logs';
+// The merged diagnostics store, for the diagnostics tab (#309). The tab reads
+// the store's public surface and never the protocol behind it, so the types it
+// needs are published by name — the store, the findings it holds, and the
+// severity they carry.
+export { LSP_DIAGNOSTICS_STORE_SERVICE_KEY } from './lsp/diagnostics';
+export type {
+	LspDiagnostic,
+	LspDiagnosticSeverity,
+	LspDiagnosticsStore,
+	LspPosition,
+	LspRange
+} from './lsp/diagnostics';
+// The inverse of the file URI the protocol addresses documents with, so a
+// consumer can match a finding's URI against a local path.
+export { fromFileUri } from './lsp/root';
 // Command ids, as bare strings: the status menu has to name the commands it
 // dispatches, and importing the constants is what stops a rename in `commands`
 // from leaving the menu pointing at nothing — a literal in a component compiles

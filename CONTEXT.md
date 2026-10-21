@@ -84,6 +84,16 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Zed Icon Theme**: A JSON configuration file in the Zed editor format defining icon mappings via `file_stems` (filename → icon key), `file_suffixes` (extension → icon key), and `file_icons` (icon key → SVG path). Themes are loaded dynamically from GitHub repos via jsDelivr, with all assets committed to the repository (no build artifacts).
 - **Installed Theme**: A third-party File Icon Pack installed by the user from a GitHub repository URL, cached in localStorage and resolved through jsDelivr CDN for icon assets.
 
+## Diagnostics
+The findings a Language Server reports about the project, gathered in one place.
+- **Finding**: One problem a server reported: a severity, a message, a source and code, and a position in a file. Read out of the **Merged Diagnostics Store**, never from a server directly.
+- **Severity**: How serious a Finding is: error, warning, info, or hint. The order of the words is the order of the severity — the first is the most serious.
+- **Merged Diagnostics Store**: The LSP plugin's single store of Findings, holding what every server reported, pushed or pulled, and what the editor's underlines read. Published under a service key, so a view reads the store and not the protocol behind it.
+- **Diagnostics Tab**: The project-wide view over the Merged Diagnostics Store: one section per file on the reusable multibuffer, each Finding with the lines around it. A host-owned tab, not a Document.
+- **Diagnostics Session**: What one reader chose for one Diagnostics Tab: the **Severity Filter** and the sort order. Held on the Workspace, keyed by tab, so it survives switching tabs and is dropped when the tab closes.
+- **Severity Filter**: The one severity a reader narrowed to, or all of them. One at a time, not a set.
+- **Surrounding Code**: The lines of a file around a Finding — two on each side — read from the Document the editor has open. A file the workspace has no Document for has no Surrounding Code, and its Finding is shown without it.
+
 ## Version Control
 - **VCSAdapter**: The interface through which the app performs version-control operations, abstracting the underlying engine (system git, isomorphic-git) behind one contract. _Avoid_: git adapter, SimpleGitAdapter
 - **Carry-Forward**: The property of a branch switch that preserves modified and staged files instead of overwriting them. _Avoid_: auto-merge, preserve
