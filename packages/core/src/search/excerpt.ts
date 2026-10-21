@@ -8,7 +8,7 @@ import type {
 	ReplaceAllFileChange,
 	ReplaceAllUndo
 } from './types';
-import type { FileOrigin, Storage } from '../storage';
+import type { FileOrigin } from '../storage';
 import { toURI } from '../storage';
 import { buildSearchRegex, findMatchesInContent } from './engine';
 import type { DocumentSession } from '../document.svelte';
@@ -513,11 +513,13 @@ export function applyEditsToDocumentSession(
 /**
  * Replaces all occurrences across all search results in one action.
  *
- * A file that is open is changed in its document, the way a keystroke
- * would: the user saves it, and the file's own history can undo it. A
- * file that is not open is written, because a replace-all that opened a
- * tab for every file it touched buried the user's window in tabs, and
- * the tab was only ever there to host an undo the search tab now owns.
+ * The results are an editor for the files they show, so a replace-all
+ * changes the files in memory and leaves them unsaved: a Document per
+ * file, the way an editor leaves a changed file dirty. A file that is not
+ * open gets a Document with no tab — the same bound Document a Diff
+ * Viewer's working-copy pane uses (issue #272) — because replacing in the
+ * results must not open a tab for every file it touches, and a tab was
+ * only ever there to host an undo the search tab now owns.
  *
  * The operation is returned as an undo record, so the search tab can
  * undo the whole thing in one step.
@@ -539,50 +541,38 @@ export async function applyReplaceAll(options: {
 	for (const result of fileResults) {
 		if (result.matches.length === 0) continue;
 
-		// 1. Find the open document. Match by exact URI only: a path-suffix
-		// fallback can resolve to a different file that happens to share
-		// the same filename.
-		const doc = workspace.documents.find(
+		// 1. The text the operation works on. Match by exact URI only: a
+		// path-suffix fallback can resolve to a different file that happens
+		// to share the same filename. An open document is the truth; a file
+		// that is not open is read once, and the Document created below
+		// holds it from then on.
+		const existing = workspace.documents.find(
 			(d) => d.origin && toURI(d.origin) === toURI(result.origin)
 		);
-
-		if (doc) {
-			// 2. The file is open: the change belongs to its document.
-			const before = doc.content;
-			const fileEdits = buildReplaceAllEditsForFile(result.matches, replacement, doc.content);
-			if (fileEdits.length === 0) continue;
-			applyEditsToDocumentSession(doc, fileEdits, workspace);
-			totalReplacements += fileEdits.length;
-			modifiedFiles.push(result.filepath);
-			changes.push({ origin: result.origin, before, doc });
-			continue;
+		let content = existing?.content;
+		if (content === undefined) {
+			try {
+				content = await workspace.project.storage.readFile(result.origin);
+			} catch {
+				// A file that cannot be read is left alone.
+				continue;
+			}
 		}
 
-		// 3. The file is not open: write it. The user's next visit to the
-		// file finds the replacement already in it.
-		let content: string;
-		try {
-			content = await workspace.project.storage.readFile(result.origin);
-		} catch {
-			// A file that cannot be read is left alone.
-			continue;
-		}
 		const fileEdits = buildReplaceAllEditsForFile(result.matches, replacement, content);
 		if (fileEdits.length === 0) continue;
-		try {
-			// saveFile with the file's own origin writes it in place: the
-			// picker is only for a file that has no origin yet.
-			await workspace.project.storage.saveFile(
-				applyEditsToText(content, fileEdits),
-				result.origin
-			);
-		} catch {
-			// A file that cannot be written is left alone.
-			continue;
-		}
+
+		// 2. The change belongs to a Document, tab or no tab. Nothing is
+		// written here: the file stays dirty in memory until the user saves
+		// it, exactly like a file changed in an editor.
+		const doc = existing ?? (await workspace.getOrCreateBoundDocument(result.origin, content));
+		if (!doc) continue;
+
+		const before = doc.content;
+		applyEditsToDocumentSession(doc, fileEdits, workspace);
 		totalReplacements += fileEdits.length;
 		modifiedFiles.push(result.filepath);
-		changes.push({ origin: result.origin, before: content, doc: null });
+		changes.push({ origin: result.origin, before, doc });
 	}
 
 	return { modifiedFiles, totalReplacements, undo: { changes } };
@@ -594,58 +584,18 @@ export async function applyReplaceAll(options: {
  */
 export async function undoReplaceAll(undo: ReplaceAllUndo, workspace: Workspace): Promise<void> {
 	for (const change of [...undo.changes].reverse()) {
-		if (change.doc) {
-			// The change went into an open document: put the document back
-			// the way it was, through the same path the change took, so the
-			// editor's state and history follow. The whole content is
-			// restored, because one replace-all is one operation: the edits
-			// it made are not separable from what came after them.
-			const current = change.doc.content;
-			if (current === change.before) continue;
-			applyEditsToDocumentSession(
-				change.doc,
-				[{ from: 0, to: current.length, insert: change.before }],
-				workspace
-			);
-			continue;
-		}
-		try {
-			await workspace.project.storage.saveFile(change.before, change.origin);
-		} catch {
-			// A file that cannot be written back stays as it is.
-		}
+		// The change went into a Document: put it back through the same path
+		// the change took, so the editor's state and history follow. The
+		// whole content is restored, because one replace-all is one
+		// operation: the edits it made are not separable from what came
+		// after them.
+		const current = change.doc.content;
+		if (current === change.before) continue;
+		applyEditsToDocumentSession(
+			change.doc,
+			[{ from: 0, to: current.length, insert: change.before }],
+			workspace
+		);
 	}
-}
-
-/**
- * Applies an edit to a file that is not open.
- *
- * The results are the editor for the files they show, so an edit made
- * there changes the file itself. The file is written, not opened: a
- * replace operation never opens a tab behind the user's back.
- */
-export async function applyEditToFile(options: {
-	storage: Storage;
-	origin: FileOrigin;
-	/** The file's content before the edit. */
-	content: string;
-	edit: SingleEdit;
-}): Promise<void> {
-	await options.storage.saveFile(
-		applyEditsToText(options.content, [options.edit]),
-		options.origin
-	);
-}
-
-/**
- * Applies edits to text. The edits address the text as it was before
- * them, so they are applied from the last one backwards.
- */
-export function applyEditsToText(text: string, edits: SingleEdit[]): string {
-	let result = text;
-	for (const edit of [...edits].sort((a, b) => b.from - a.from)) {
-		result = result.slice(0, edit.from) + edit.insert + result.slice(edit.to);
-	}
-	return result;
 }
 

@@ -38,8 +38,6 @@ export {
 	buildExcerptMapForContent,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
-	applyEditsToText,
-	applyEditToFile,
 	applyReplaceAll,
 	undoReplaceAll
 } from './excerpt';

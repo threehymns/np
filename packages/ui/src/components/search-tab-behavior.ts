@@ -25,3 +25,40 @@ export function shouldUndoReplaceAllOperation(options: {
 }): boolean {
 	return options.hasPendingReplaceAll && !options.manualEditAfterReplaceAll;
 }
+
+/**
+ * One document as the dirty markers see it.
+ *
+ * The results are an editor for the files they show, so a replace edits
+ * the file's Document and leaves it unsaved until the user saves it. The
+ * marker reads the same `Document.isModified` a document tab shows.
+ */
+export interface DocumentDirtiness {
+	/** URI of the file the document holds, or null when it has no file. */
+	uri: string | null;
+	isModified: boolean;
+}
+
+/** True when the document for one file the results show holds unsaved edits. */
+export function isResultFileDirty(uri: string, documents: readonly DocumentDirtiness[]): boolean {
+	return documents.some((doc) => doc.uri === uri && doc.isModified);
+}
+
+/**
+ * True when any file the results show holds unsaved edits.
+ *
+ * The tab keeps the marker for the whole result set: an operation across
+ * many files is one change the user has not saved yet, and the tab is
+ * where they can see that.
+ */
+export function hasDirtyResults(
+	uris: readonly string[],
+	documents: readonly DocumentDirtiness[]
+): boolean {
+	if (uris.length === 0) return false;
+	const dirty = new Set<string>();
+	for (const doc of documents) {
+		if (doc.isModified && doc.uri !== null) dirty.add(doc.uri);
+	}
+	return uris.some((uri) => dirty.has(uri));
+}

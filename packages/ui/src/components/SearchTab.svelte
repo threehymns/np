@@ -5,7 +5,6 @@
 		FileExcerptMap,
 		applyReplaceAll,
 		applyEditsToDocumentSession,
-		applyEditToFile,
 		buildExcerptMapForContent,
 		isExcerptMapStale,
 		undoReplaceAll,
@@ -18,7 +17,7 @@
 	import { EditorView, keymap, lineNumbers, Decoration, type DecorationSet } from '@codemirror/view';
 	import { EditorState, StateField, RangeSetBuilder } from '@codemirror/state';
 	import { history, historyKeymap, undoDepth } from '@codemirror/commands';
-	import { shouldUndoReplaceAllOperation } from './search-tab-behavior';
+	import { isResultFileDirty, shouldUndoReplaceAllOperation } from './search-tab-behavior';
 	import { getLanguageExtensions, editorTheme, LanguageSupport } from '../editor/index';
 
 	interface Props {
@@ -33,6 +32,16 @@
 
 	let replaceText = $state('');
 	let fileResults = $state<FileSearchResult[]>([]);
+
+	// The tab marks unsaved work the results carry. The files' origins live
+	// on the session, where the tab strip reads them, and both markers read
+	// the same `isModified` a document tab reads.
+	let documentDirtiness = $derived(
+		appState.documents.map((d) => ({
+			uri: d.origin ? toURI(d.origin) : null,
+			isModified: d.isModified
+		}))
+	);
 	let isSearching = $state(false);
 	let isReplacing = $state(false);
 	let isTruncated = $state(false);
@@ -76,6 +85,12 @@
 			if (!isExcerptMapStale(entry.getMap(), content)) continue;
 			entry.rebuild();
 		}
+	});
+
+	// The tab strip reads the files the results show from the session, so
+	// it can mark the tab without reaching into this component.
+	$effect(() => {
+		session.resultUris = fileResults.map((r) => toURI(r.origin));
 	});
 
 	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
@@ -152,7 +167,19 @@
 
 		try {
 			const backend = appState.workspace.project.searchBackend;
-			const stream = backend.search(query, { signal });
+			const stream = backend.search(query, {
+				signal,
+				// A file changed in the results is unsaved: its text lives in
+				// a Document, so the search reads that instead of the disk.
+				// The re-run after a replace has to describe the text the
+				// user is looking at.
+				liveContent: (origin) => {
+					const uri = toURI(origin);
+					return appState.workspace.documents.find(
+						(d) => d.origin && toURI(d.origin) === uri
+					)?.content;
+				}
+			});
 
 			for await (const result of stream) {
 				if (signal.aborted) break;
@@ -193,24 +220,37 @@
 		edit: SingleEdit,
 		contentBefore: string
 	): Promise<DocumentSession | null> {
-		// Match by exact URI only: a path-suffix fallback can resolve to a
-		// different file that happens to share the same filename.
+		// The results are the editor for the files they show, so the edit
+		// belongs to a Document: the open one, or a bound one with no tab.
+		// `contentBefore` is the text the excerpt was built from, so a
+		// Document created here starts from it and the edit's offsets keep
+		// their meaning.
+		const doc = await appState.workspace.getOrCreateBoundDocument(
+			fileResult.origin,
+			contentBefore
+		);
+		if (!doc) return null;
+		applyEditsToDocumentSession(doc, [edit], appState.workspace);
+		return doc;
+	}
+
+	/**
+	 * Saves the file an excerpt mirrors.
+	 *
+	 * A replace edits the file in memory and leaves it unsaved, and the
+	 * results have no save button: the file under the cursor is the one the
+	 * user is working in, so the save belongs to it, the way a buffer saves.
+	 */
+	async function saveExcerptFile(fileResult: FileSearchResult) {
 		const doc = appState.workspace.documents.find(
 			(d) => d.origin && toURI(d.origin) === toURI(fileResult.origin)
 		);
-		if (doc) {
-			applyEditsToDocumentSession(doc, [edit], appState.workspace);
-			return doc;
+		if (!doc || !doc.isModified) return;
+		try {
+			await appState.workspace.saveDocument(doc);
+		} catch (e) {
+			console.error('[SearchTab] Save failed:', e);
 		}
-		// The file is not open: write it. The results are the editor for the
-		// files they show, and a replace operation never opens a tab.
-		await applyEditToFile({
-			storage: appState.workspace.project.storage,
-			origin: fileResult.origin,
-			content: contentBefore,
-			edit
-		});
-		return null;
 	}
 
 	async function replaceAll() {
@@ -398,6 +438,16 @@
 					// took.
 					history(),
 					keymap.of([
+						{
+							key: 'Mod-s',
+							run: () => {
+								// A replace leaves the file dirty in memory; the
+								// results carry the save for the file the user
+								// is working in.
+								void saveExcerptFile(fileResult);
+								return true;
+							}
+						},
 						{
 							key: 'Mod-z',
 							run: () => {
@@ -706,6 +756,15 @@
 					>
 						{filepath}
 					</button>
+
+					{#if fileResult && isResultFileDirty(toURI(fileResult.origin), documentDirtiness)}
+						<span
+							class="size-1.5 rounded-full bg-foreground/40 shrink-0"
+							role="img"
+							aria-label="Unsaved changes"
+							title="Unsaved changes"
+						></span>
+					{/if}
 
 					<span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full font-mono">
 						{fileResult?.matches.length ?? 0}

@@ -12,7 +12,6 @@ import {
 	isExcerptMapStale,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
-	applyEditToFile,
 	applyReplaceAll,
 	undoReplaceAll
 } from "./excerpt";
@@ -43,6 +42,7 @@ function createMockStorage(files: Record<string, string> = {}) {
 		}),
 		readDirectory: mock(async () => []),
 		pickFile: mock(async () => null),
+		queryPermission: mock(async () => "granted"),
 		pickDirectory: mock(async () => null),
 		saveFile: mock(async (content: string, origin?: FileOrigin) => {
 			// A save with an origin writes that file in place.
@@ -403,13 +403,20 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		expect(res.modifiedFiles).toEqual(["fileA.ts", "fileB.ts"]);
 		expect(res.totalReplacements).toBe(3);
 
-		// A file that is not open is written. It does not become a document
-		// and it does not become a tab: a replace-all that opened a tab for
-		// every file it changed buried the user's window in tabs.
-		expect(workspace.documents.length).toBe(0);
+		// A file that is not open becomes a Document with no tab: the
+		// results are its editor, and replacing in them must not open a tab
+		// for every file it touches. The files stay dirty in memory until
+		// the user saves them, and nothing is written before that.
 		expect(workspace.tabs.length).toBe(0);
-		expect(files["/test-project/fileA.ts"]).toBe("const x = 'REPLACED';\nconst y = 'REPLACED';");
-		expect(files["/test-project/fileB.ts"]).toBe("console.log('REPLACED');");
+		expect(workspace.documents.length).toBe(2);
+		expect(workspace.documents.every((d) => d.isModified)).toBe(true);
+		const contentOf = (name: string) =>
+			workspace.documents.find((d) => d.origin?.name === name)?.content;
+		expect(contentOf("fileA.ts")).toBe("const x = 'REPLACED';\nconst y = 'REPLACED';");
+		expect(contentOf("fileB.ts")).toBe("console.log('REPLACED');");
+		expect(storage.saveFile).not.toHaveBeenCalled();
+		expect(files["/test-project/fileA.ts"]).toBe("const x = 'target';\nconst y = 'target';");
+		expect(files["/test-project/fileB.ts"]).toBe("console.log('target');");
 	});
 
 	it("replaces a match whose text differs from the query pattern", async () => {
@@ -452,7 +459,8 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		});
 
 		expect(res.totalReplacements).toBe(1);
-		expect(files["/test-project/regex.ts"]).toBe("const value = X;");
+		expect(workspace.documents[0]?.content).toBe("const value = X;");
+		expect(files["/test-project/regex.ts"]).toBe("const value = foo123bar;");
 	});
 
 	it("skips a match whose text no longer sits at the recorded offset", async () => {
@@ -497,30 +505,6 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		expect(files["/test-project/moved.ts"]).toBe("alpha XXXX gamma");
 	});
 
-	it("applies an edit to a file that is not open, without opening it", async () => {
-		// The results are the editor for the files they show, so an edit
-		// made there changes the file itself. A replace operation never
-		// opens a tab.
-		const files: Record<string, string> = {
-			"/test-project/closed.ts": "alpha target beta"
-		};
-		const storage = createMockStorage(files);
-		const origin: FileOrigin = {
-			scheme: "file",
-			path: "/test-project/closed.ts",
-			name: "closed.ts"
-		};
-
-		await applyEditToFile({
-			storage: storage as any,
-			origin,
-			content: files["/test-project/closed.ts"],
-			edit: { from: 6, to: 12, insert: "REPLACED" }
-		});
-
-		expect(files["/test-project/closed.ts"]).toBe("alpha REPLACED beta");
-	});
-
 	it("undo after replace-all puts every file the operation changed back", async () => {
 		const files: Record<string, string> = {
 			"/test-project/fileA.ts": "alpha target beta",
@@ -551,14 +535,19 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 			replacement: "replacement"
 		});
 
-		expect(files["/test-project/fileA.ts"]).toBe("alpha replacement beta");
-		expect(files["/test-project/fileB.ts"]).toBe("gamma replacement delta");
+		const contentOf = (name: string) =>
+			workspace.documents.find((d) => d.origin?.name === name)?.content;
+		expect(contentOf("fileA.ts")).toBe("alpha replacement beta");
+		expect(contentOf("fileB.ts")).toBe("gamma replacement delta");
 
-		// One undo puts every file the operation changed back.
+		// One undo puts every file the operation changed back. The files
+		// were never written, so the undo is an in-memory edit too.
 		await undoReplaceAll(res.undo, workspace);
 
-		expect(files["/test-project/fileA.ts"]).toBe("alpha target beta");
-		expect(files["/test-project/fileB.ts"]).toBe("gamma target delta");
+		expect(contentOf("fileA.ts")).toBe("alpha target beta");
+		expect(contentOf("fileB.ts")).toBe("gamma target delta");
+		expect(workspace.documents.every((d) => !d.isModified)).toBe(true);
+		expect(storage.saveFile).not.toHaveBeenCalled();
 	});
 
 	it("undo after replace-all puts an open document back the way it was", async () => {

@@ -463,10 +463,18 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 					progress.scannedFiles++;
 
-					// Read file content (from cache if valid, otherwise storage)
+					// Read file content: a live Document first, then the
+					// cache, then storage.
 					let content: string | null = null;
+					const live = options?.liveContent?.(file.origin);
 					const cached = this.fileCache.get(file.relativePath);
-					if (cached && cached.version === snapshot.version) {
+					if (live !== undefined) {
+						// A Document holds the file's text, so it is the truth
+						// while the file is dirty. It is not cached: the cache
+						// is keyed by the snapshot version, which does not move
+						// when a Document changes.
+						content = live;
+					} else if (cached && cached.version === snapshot.version) {
 						content = cached.content;
 					} else if (worktree.storage) {
 						try {

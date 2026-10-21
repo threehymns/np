@@ -60,6 +60,15 @@ export class SearchTabSession {
 	}
 
 	/**
+	 * URIs of the files the results show.
+	 *
+	 * The tab marks itself as holding unsaved changes from this list and
+	 * the workspace's documents, so the marker survives a tab switch
+	 * without the tab strip having to reach into the results component.
+	 */
+	resultUris: string[] = $state([]);
+
+	/**
 	 * The replace-all operations waiting to be undone, most recent last.
 	 *
 	 * They live with the tab rather than in the tab's component: the

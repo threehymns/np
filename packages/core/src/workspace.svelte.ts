@@ -744,6 +744,43 @@ export class Workspace {
 		return newDoc;
 	}
 
+	/**
+	 * The document for a file, whether or not the file has a tab.
+	 *
+	 * The results are an editor for the files they show, so an edit made
+	 * there needs a Document even when the file is not open. The Document
+	 * is created without a tab — the same bound Document a Diff Viewer's
+	 * working-copy pane uses (issue #272) — and `openFile` adopts it when
+	 * the file is opened later. A replace operation never opens a tab.
+	 *
+	 * `content` seeds a new Document with the text the caller is editing,
+	 * so the caller's offsets keep their meaning even when the file has
+	 * changed on disk since the caller read it.
+	 */
+	async getOrCreateBoundDocument(
+		origin: FileOrigin,
+		content?: string
+	): Promise<DocumentSession | null> {
+		const targetUri = toURI(origin);
+		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
+		if (existing) return existing;
+
+		let initialContent = content;
+		if (initialContent === undefined) {
+			try {
+				initialContent = await this.project.storage.readFile(origin);
+			} catch {
+				return null;
+			}
+		}
+
+		const doc = new DocumentSession(this.project.storage, initialContent, origin);
+		doc.refreshPermissionState(this.project.coversOrigin(origin));
+		this.documents.push(doc);
+		this.pluginHost?.emit('document:opened', { document: doc, origin: doc.origin });
+		return doc;
+	}
+
 private searchSessions = new Map<string, SearchTabSession>();
 
 	/**

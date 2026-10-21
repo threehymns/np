@@ -59,6 +59,15 @@ export interface SearchOptions {
 	maxMatches?: number;
 	contextLines?: number;
 	onMatch?: (result: FileSearchResult) => void;
+	/**
+	 * The live text of a file, when a Document holds it in memory.
+	 *
+	 * The results are an editor for the files they show, so a file changed
+	 * there is unsaved and its text lives in a Document rather than on
+	 * disk. A search that read the disk would report the file as it was
+	 * before the edit. `undefined` means the file's text is on disk.
+	 */
+	liveContent?: (origin: FileOrigin) => string | undefined;
 }
 
 export interface SearchResultStream extends AsyncIterable<FileSearchResult> {
@@ -95,16 +104,17 @@ export interface ReplaceAllFileChange {
 	/** The file the operation changed. */
 	origin: FileOrigin;
 	/**
-	 * The content the file held before the operation. A file that was not
-	 * open is put back exactly like this; an open document is put back
-	 * through its edits, so its editor state stays consistent.
+	 * The content the file held before the operation. The whole content is
+	 * put back on undo, because one replace-all is one operation: the edits
+	 * it made are not separable from what came after them.
 	 */
 	before: string;
 	/**
-	 * The open document the change was applied to, or null when the file was
-	 * not open and the change was written to the file itself.
+	 * The document the change went into. It has a tab when the file was
+	 * open, and no tab when it was not: the results are an editor for the
+	 * files they show, and a replace never opens a tab.
 	 */
-	doc: DocumentSession | null;
+	doc: DocumentSession;
 }
 
 /**

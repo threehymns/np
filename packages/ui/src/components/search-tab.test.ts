@@ -117,13 +117,43 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 
 	it("never opens a tab for an edit made in the results", () => {
 		// The results are the editor for the files they show: an edit in a
-		// file that is not open writes it. Opening a file is what a click on
-		// a match does, and it is not what an edit does.
+		// file that is not open changes a Document with no tab. Opening a
+		// file is what a click on a match does, and it is not what an edit
+		// does.
 		const start = SEARCH_TAB_SRC.indexOf("async function applyUserEditToFile");
 		const end = SEARCH_TAB_SRC.indexOf("async function ", start + 10);
 		const editPath = SEARCH_TAB_SRC.slice(start, end);
-		expect(editPath).toContain("applyEditToFile");
+		expect(editPath).toContain("getOrCreateBoundDocument");
 		expect(editPath).not.toContain("openFile");
+		// Nothing is written before the user saves: the file stays dirty in
+		// memory, the way an editor leaves a changed file dirty.
+		expect(editPath).not.toContain("saveFile");
+	});
+
+	it("marks unsaved work in the results on the file and on the tab", () => {
+		// The tab strip shows the search tab as holding unsaved changes when
+		// a file its results show is dirty, and each file's header shows its
+		// own dot. Both read the same Document.isModified a document tab
+		// reads.
+		expect(SEARCH_TAB_SRC).toContain("isResultFileDirty");
+		expect(SEARCH_TAB_SRC).toContain("session.resultUris");
+		expect(PANE_SRC).toContain("hasDirtyResults");
+		expect(PANE_SRC).toContain("searchSession.resultUris");
+	});
+
+	it("saves the file under the cursor from the results", () => {
+		// A replace leaves the file unsaved, and the results have no save
+		// button: Mod-s saves the file the user is working in.
+		expect(SEARCH_TAB_SRC).toContain("key: 'Mod-s'");
+		expect(SEARCH_TAB_SRC).toContain("saveExcerptFile");
+		expect(SEARCH_TAB_SRC).toContain("saveDocument");
+	});
+
+	it("searches the text the results show, not the disk", () => {
+		// A replace edits the file in memory, so the re-run after it has to
+		// read the Document. Reading the disk would show the replaced text
+		// as if the replace had not happened.
+		expect(SEARCH_TAB_SRC).toContain("liveContent");
 	});
 
 	it("keeps the replace-all operation as one undo step in the search tab", () => {

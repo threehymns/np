@@ -127,6 +127,36 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		expect(stream.progress.truncated).toBe(false);
 	});
 
+	it("searches the live text a Document holds, not the disk", async () => {
+		// A file changed in the results is unsaved: its text lives in a
+		// Document. The search reads that text, so the results describe
+		// what the user is looking at and a replace-all's re-run is not
+		// stale.
+		const storage = createMockStorage({
+			"/test-project/src/index.ts": "the file on disk"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const origin: FileOrigin = {
+			scheme: "file",
+			path: "/test-project/src/index.ts",
+			name: "index.ts"
+		};
+
+		const live = await engine.search(
+			{ pattern: "target" },
+			{ liveContent: (o) => (o.path === origin.path ? "alpha target beta" : undefined) }
+		).all();
+
+		expect(live).toHaveLength(1);
+		expect(live[0].matches[0].lineText).toBe("alpha target beta");
+
+		// The text on disk is not what the user sees, so it is not a match.
+		expect(await engine.search({ pattern: "disk" }).all()).toHaveLength(1);
+	});
+
 	it("the shared file matcher reports the same matches as the engine search", async () => {
 		const content = "line 1\nconst target = 'findme';\nline 3\nline 4";
 		const storage = createMockStorage({ "/test-project/src/index.ts": content });
