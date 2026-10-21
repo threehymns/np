@@ -1482,10 +1482,10 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 
 /**
  * The diagnostic pull, end to end: an edit asks the server for the file's
- * findings, and a server that does not offer the pull is never asked.
+ * diagnostics, and a server that does not offer the pull is never asked.
  *
  * The stub is the witness. It answers `textDocument/diagnostic` only when the
- * test asks it to (`--diagnostic-pull`), so the file's findings in the first
+ * test asks it to (`--diagnostic-pull`), so the file's diagnostics in the first
  * test can only have come from a pull, and the absence of a pull in the second
  * is the client's decision rather than the server's silence. The third stages
  * a server that does both — it pushes for every change and answers the pull —
@@ -1494,7 +1494,7 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 describe('the diagnostic pull on edit (#307)', () => {
 	const edited = 'export const a = 2;\n';
 
-	it('asks a server that offers the pull for the file findings, and files the answer', async () => {
+	it('asks a server that offers the pull for the file diagnostics, and files the answer', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
 		const { runtime, diagnostics } = await startRuntime({ script: ['--diagnostic-pull'] });
@@ -1516,7 +1516,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 			language: 'typescript'
 		});
 
-		// The stub pushes nothing, so the only finding the file can hold is the
+		// The stub pushes nothing, so the only diagnostic the file can hold is the
 		// one the pull answered with.
 		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
 		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
@@ -1561,7 +1561,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 	it('never asks a server that offers no pull', async () => {
 		// The control for the test above. The same edit against a server that
 		// advertises no `diagnosticProvider` has to produce no pull at all,
-		// and the findings the server pushed have to be the ones the file
+		// and the diagnostics the server pushed have to be the ones the file
 		// shows.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
@@ -1585,7 +1585,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 			language: 'typescript'
 		});
 
-		// The server is alive and answering: it pushed its findings for the
+		// The server is alive and answering: it pushed its diagnostics for the
 		// change. So the absence of a pull below is the client's decision and
 		// not the server's silence.
 		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pushed diagnostic' });
@@ -1601,7 +1601,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 	});
 
 	it('reports a failed pull, because a failed pull and a working one look the same', async () => {
-		// A pull that fails leaves the pushed findings alone (ADR 0029), so
+		// A pull that fails leaves the pushed diagnostics alone (ADR 0029), so
 		// from the outside the file looks exactly as it would if the pull had
 		// worked. The reason has to be somewhere the Logs tab can show it,
 		// the way a failed completion and a failed hover are.
@@ -1636,7 +1636,7 @@ describe('the diagnostic pull on edit (#307)', () => {
  * The workspace pull loop, end to end (spec #308).
  *
  * The stub is the witness again: it answers `workspace/diagnostic` only when
- * the test asks it to (`--workspace-diagnostics`), so the findings for a file
+ * the test asks it to (`--workspace-diagnostics`), so the diagnostics for a file
  * the editor never opened can only have come from the workspace pull, and the
  * absence of one in the control test is the client's decision rather than the
  * server's silence.
@@ -1678,7 +1678,7 @@ describe('the workspace pull loop (#308)', () => {
 		});
 		await waitForRunning(runtime, 1);
 
-		// The file the editor never opened. The only way it can hold findings
+		// The file the editor never opened. The only way it can hold diagnostics
 		// is the workspace pull: the stub pushes nothing, and the document
 		// pull is only ever asked about a file that was edited.
 		await waitFor(() => diagnostics.read(unopened).length > 0, {

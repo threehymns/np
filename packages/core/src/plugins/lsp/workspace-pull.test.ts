@@ -28,7 +28,7 @@ function runTestClock<A, E>(program: Effect.Effect<A, E>): Promise<A> {
 const server = 'typescript@/repo';
 const uri = 'file:///repo/src/a.ts';
 
-function finding(message: string) {
+function diagnostic(message: string) {
 	return {
 		range: { start: { line: 0, character: 0 }, end: { line: 0, character: 4 } },
 		severity: 1,
@@ -36,7 +36,7 @@ function finding(message: string) {
 	};
 }
 
-/** A workspace report that names one path and one finding on it. */
+/** A workspace report that names one path and one diagnostic on it. */
 function fullReport(message: string, resultId: string) {
 	return {
 		items: [
@@ -45,7 +45,7 @@ function fullReport(message: string, resultId: string) {
 				version: null,
 				kind: 'full',
 				resultId,
-				items: [finding(message)]
+				items: [diagnostic(message)]
 			}
 		]
 	};
@@ -83,7 +83,7 @@ describe('The workspace pull loop (#308)', () => {
 		const store = new LspDiagnosticsStore();
 		const coordinator = new WorkspacePullCoordinator({
 			store,
-			request: () => Effect.succeed(fullReport('workspace finding', 'r1'))
+			request: () => Effect.succeed(fullReport('workspace diagnostic', 'r1'))
 		});
 
 		await runTestClock(
@@ -95,7 +95,7 @@ describe('The workspace pull loop (#308)', () => {
 			)
 		);
 
-		expect(store.read(uri).map((d) => d.message)).toEqual(['workspace finding']);
+		expect(store.read(uri).map((d) => d.message)).toEqual(['workspace diagnostic']);
 	});
 
 	it('carries the previous result ids into the next pull', async () => {
@@ -104,7 +104,7 @@ describe('The workspace pull loop (#308)', () => {
 			store: new LspDiagnosticsStore(),
 			request: (_server, params) => {
 				requests.push(params);
-				return Effect.succeed(fullReport('workspace finding', 'r1'));
+				return Effect.succeed(fullReport('workspace diagnostic', 'r1'));
 			}
 		});
 

@@ -8,7 +8,7 @@ import { pullWithBackoff, WORKSPACE_PULL_REPULL_INTERVAL } from './pull-schedule
  * A server that answers `workspace/diagnostic` is asked about the whole
  * workspace rather than about the file the editor happens to have open, and it
  * answers with a report per path. That is the only way an unopened file gets
- * findings at all, and the loop is what keeps the answer current without
+ * diagnostics at all, and the loop is what keeps the answer current without
  * asking the server on every keystroke.
  *
  * The loop is per server, and it is owned by a scope: a server that stops
@@ -60,11 +60,11 @@ export interface WorkspacePullDependencies {
 		server: string,
 		params: WorkspaceDiagnosticParams
 	) => Effect.Effect<unknown, unknown>;
-	/** Where the findings are filed, one path at a time. */
+	/** Where the diagnostics are filed, one path at a time. */
 	readonly store: LspDiagnosticsStore;
 	/**
 	 * Called once when a pull fails, so the reason reaches the Logs tab. A
-	 * failed pull says nothing about the files, so the findings that are
+	 * failed pull says nothing about the files, so the diagnostics that are
 	 * already filed stay exactly as they are.
 	 */
 	readonly onFailure?: (server: string, error: unknown) => void;
@@ -360,7 +360,7 @@ export class WorkspacePullCoordinator {
 	/**
 	 * Files the report, one path at a time, and remembers the result ids.
 	 *
-	 * A path the server called unchanged keeps the findings that are already
+	 * A path the server called unchanged keeps the diagnostics that are already
 	 * filed for it: there is nothing new to say about it, which is not the
 	 * same as there being nothing wrong with it.
 	 */

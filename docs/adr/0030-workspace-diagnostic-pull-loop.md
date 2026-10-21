@@ -3,7 +3,7 @@
 A server that answers `workspace/diagnostic` is asked about the whole
 workspace rather than about the file the editor happens to have open, and it
 answers with a report per path. That is the only way a file nobody opened
-gets findings at all, and the loop is what keeps that answer current without
+gets diagnostics at all, and the loop is what keeps that answer current without
 asking the server on every keystroke.
 
 The loop is per server, not per workspace and not per document. One server
@@ -52,12 +52,14 @@ while the loop is on its way to the wire are the same request, asked once.
 
 ## Three answers about one path, and the order between them
 
-The store's rule from ADR 0029 gains a third source. The document pull is
-asked for right after the change, so the server computed it against at least
-the revision the editor last synced. A workspace pull is asked on an idle
-cadence and may describe the file as it is on disk. A push is whatever the
-server had when it sent it. So the document pull wins a path an open buffer
-owns, the workspace pull wins over a push, and a push never replaces a pull.
+Which of the three wins is ADR 0029's decision, not this one's. The protocol
+states the order — LSP 3.17, "Workspace Diagnostics" — and ADR 0029 follows
+it: the revision decides when two answers name one, and the source decides
+when they do not, with the source order the document pull, then the workspace
+pull, then the push. A workspace report names no revision, because the version
+it carries is the server's own rather than the editor's counter, so it is
+ordered against a document pull by source alone, and the document pull keeps a
+path an open buffer owns.
 
 Everything ADR 0029 says about a push against a pulled path still holds: the
 push is dropped, the revision does not move, and a view that re-reads on every
@@ -66,7 +68,7 @@ notification is not woken for a result it did not take.
 One edge follows from the clean-file rule ADR 0029 already had. A clean
 document pull clears that server's slice for the path, as a clean push always
 did, and a later workspace report may file that path again until the next edit
-re-pulls it. The findings on screen are then the workspace's, which is a
+re-pulls it. The diagnostics on screen are then the workspace's, which is a
 weaker answer than the buffer's, and the next edit puts the buffer's answer
 back.
 
@@ -87,7 +89,8 @@ waits forever.
   for the pull in flight, an answer of nothing taken as nothing to file, and a
   report the parser cannot use failing the pull rather than filing half of it.
 - `diagnostics.test.ts`: the three sources composed, the document pull kept
-  over a workspace pull in either order, a push refused against a
+  over a workspace pull in either order, a workspace report that does not
+  displace a document pull that names a revision, a push refused against a
   workspace-pulled path, and a clean workspace report clearing its own path
   and no other.
 - `client.test.ts`: the client's own declaration of the refresh, the refresh

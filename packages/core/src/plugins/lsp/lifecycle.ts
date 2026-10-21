@@ -116,7 +116,7 @@ export interface LspRuntimeOptions {
 	readonly pluginId: string;
 	readonly logs: LspLogStore;
 	/**
-	 * Where server findings are filed. Optional because a runtime with nowhere to
+	 * Where server diagnostics are filed. Optional because a runtime with nowhere to
 	 * put diagnostics is a working runtime: the notification is simply dropped.
 	 */
 	readonly diagnostics?: LspDiagnosticsStore;
@@ -318,7 +318,7 @@ export class LspRuntime
 	 *
 	 * A server that answers `workspace/diagnostic` is asked about the whole
 	 * workspace rather than about the file the editor happens to have open,
-	 * which is the only way a file nobody opened gets findings at all. The
+	 * which is the only way a file nobody opened gets diagnostics at all. The
 	 * loops live on the runtime's own scope, each in a child scope of its own,
 	 * so stopping one server ends its loop and disposing the runtime ends them
 	 * all.
@@ -354,7 +354,7 @@ export class LspRuntime
 								// Bounded like every other request the client makes. A
 								// server that never answers must not hold the pull
 								// open forever, and a pull that times out leaves the
-								// pushed findings alone (ADR 0029), so the cost of
+								// pushed diagnostics alone (ADR 0029), so the cost of
 								// the bound is a warning rather than a wrong answer.
 								DEFAULT_FETCH_TIMEOUT_MS
 							);
@@ -363,13 +363,13 @@ export class LspRuntime
 					}),
 				onFailure: (server, error) => {
 					// A failed pull says nothing about the file, so the pushed
-					// findings stay and the file looks exactly as it would if the
+					// diagnostics stay and the file looks exactly as it would if the
 					// pull had worked. That is the same blindness the completion
 					// and hover failures are logged for.
 					this.options.logs.appendServerNote(
 						server,
 						'warn',
-						`Diagnostic pull failed, so the findings the server pushed stay: ${describeError(error)}`
+						`Diagnostic pull failed, so the diagnostics the server pushed stay: ${describeError(error)}`
 					);
 				}
 			});
@@ -390,13 +390,13 @@ export class LspRuntime
 					}),
 				onFailure: (server, error) => {
 					// A failed workspace pull says nothing about any file, so
-					// the findings already filed stay. Reported once per failure
+					// the diagnostics already filed stay. Reported once per failure
 					// series rather than once per attempt, the way a failed
 					// document pull is.
 					this.options.logs.appendServerNote(
 						server,
 						'warn',
-						`Workspace diagnostic pull failed, so the findings already filed stay: ${describeError(error)}`
+						`Workspace diagnostic pull failed, so the diagnostics already filed stay: ${describeError(error)}`
 					);
 				}
 			});
@@ -1436,7 +1436,7 @@ export class LspRuntime
 
 	/**
 	 * Stops tracking one document, addressed by its URI because every map here is
-	 * keyed by URI: `didClose` to a server holding it, and its findings off the
+	 * keyed by URI: `didClose` to a server holding it, and its diagnostics off the
 	 * gutter.
 	 *
 	 * Not a server stop, on its own. The process is shared by every language its
