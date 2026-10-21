@@ -115,6 +115,20 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
 	});
 
+	it("keeps the replace-all operation as one undo step in the search tab", () => {
+		// A replace-all is one operation across every file it changed, so the
+		// search tab keeps it and undoes it as one step. A tab per changed
+		// file used to be the only place that undo could come from.
+		expect(SEARCH_TAB_SRC).toContain("replaceAllUndos");
+		expect(SEARCH_TAB_SRC).toContain("undoReplaceAll");
+		expect(SEARCH_TAB_SRC).toContain("shouldUndoReplaceAllOperation");
+		// The excerpt editors keep their own history, so a manual edit is
+		// undone one edit at a time.
+		expect(SEARCH_TAB_SRC).toContain("history()");
+		expect(SEARCH_TAB_SRC).toContain("historyKeymap");
+		expect(SEARCH_TAB_SRC).toContain("key: 'Mod-z'");
+	});
+
 	it("replaces across the session's query, not a component-local pattern", () => {
 		// The query lives in the workspace session, so replace-all works on
 		// the query the user typed, with the options that go with it.

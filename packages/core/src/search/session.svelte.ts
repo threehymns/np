@@ -1,4 +1,4 @@
-import type { SearchQuery } from './types';
+import type { SearchQuery, ReplaceAllUndoEntry } from './types';
 
 export interface SearchTabSessionOptions {
 	query?: string;
@@ -58,4 +58,16 @@ export class SearchTabSession {
 	toggleWholeWord(): void {
 		this.wholeWord = !this.wholeWord;
 	}
+
+	/**
+	 * The replace-all operations waiting to be undone, most recent last.
+	 *
+	 * They live with the tab rather than in the tab's component: the
+	 * component is mounted only while the tab is showing, and an operation
+	 * the user cannot undo after a tab switch is no undo at all.
+	 *
+	 * The stack is bounded: an operation holds the content of every file it
+	 * changed, so an unbounded stack would keep a lot of text alive.
+	 */
+	replaceAllUndos: ReplaceAllUndoEntry[] = [];
 }

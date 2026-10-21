@@ -12,7 +12,8 @@ import {
 	isExcerptMapStale,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
-	applyReplaceAll
+	applyReplaceAll,
+	undoReplaceAll
 } from "./excerpt";
 import { DocumentSession } from "../document.svelte";
 
@@ -42,7 +43,14 @@ function createMockStorage(files: Record<string, string> = {}) {
 		readDirectory: mock(async () => []),
 		pickFile: mock(async () => null),
 		pickDirectory: mock(async () => null),
-		saveFile: mock(async (content: string, origin?: FileOrigin) => origin ?? null),
+		saveFile: mock(async (content: string, origin?: FileOrigin) => {
+			// A save with an origin writes that file in place.
+			if (!origin) return null;
+			const uri = toURI(origin);
+			const key = uri in files ? uri : origin.path in files ? origin.path : uri;
+			files[key] = content;
+			return origin;
+		}),
 		createFile: mock(async () => {}),
 		createDirectory: mock(async () => {}),
 		deleteEntry: mock(async () => {}),
@@ -394,20 +402,23 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		expect(res.modifiedFiles).toEqual(["fileA.ts", "fileB.ts"]);
 		expect(res.totalReplacements).toBe(3);
 
-		const docA = workspace.documents.find((d) => d.origin?.path.endsWith("fileA.ts"))!;
-		const docB = workspace.documents.find((d) => d.origin?.path.endsWith("fileB.ts"))!;
-
-		expect(docA.content).toBe("const x = 'REPLACED';\nconst y = 'REPLACED';");
-		expect(docB.content).toBe("console.log('REPLACED');");
+		// A file that is not open is written. It does not become a document
+		// and it does not become a tab: a replace-all that opened a tab for
+		// every file it changed buried the user's window in tabs.
+		expect(workspace.documents.length).toBe(0);
+		expect(workspace.tabs.length).toBe(0);
+		expect(files["/test-project/fileA.ts"]).toBe("const x = 'REPLACED';\nconst y = 'REPLACED';");
+		expect(files["/test-project/fileB.ts"]).toBe("console.log('REPLACED');");
 	});
 
 	it("replaces a match whose text differs from the query pattern", async () => {
 		// A regular expression query matches text the pattern does not spell
 		// out. Replace-all works from the match itself, so the replacement
 		// lands on the matched text and not on the pattern.
-		const storage = createMockStorage({
+		const files: Record<string, string> = {
 			"/test-project/regex.ts": "const value = foo123bar;"
-		});
+		};
+		const storage = createMockStorage(files);
 		const workspace = createTestWorkspace(storage);
 
 		const origin: FileOrigin = {
@@ -440,16 +451,16 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		});
 
 		expect(res.totalReplacements).toBe(1);
-		const doc = workspace.documents.find((d) => d.origin?.path.endsWith("regex.ts"))!;
-		expect(doc.content).toBe("const value = X;");
+		expect(files["/test-project/regex.ts"]).toBe("const value = X;");
 	});
 
 	it("skips a match whose text no longer sits at the recorded offset", async () => {
 		// The document moved on since the search ran: the offset now points
 		// at other text, so the match is skipped instead of overwriting it.
-		const storage = createMockStorage({
+		const files: Record<string, string> = {
 			"/test-project/moved.ts": "alpha XXXX gamma"
-		});
+		};
+		const storage = createMockStorage(files);
 		const workspace = createTestWorkspace(storage);
 
 		const origin: FileOrigin = {
@@ -482,11 +493,10 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 		});
 
 		expect(res.totalReplacements).toBe(0);
-		const doc = workspace.documents.find((d) => d.origin?.path.endsWith("moved.ts"))!;
-		expect(doc.content).toBe("alpha XXXX gamma");
+		expect(files["/test-project/moved.ts"]).toBe("alpha XXXX gamma");
 	});
 
-	it("undo after replace-all works per file independently", async () => {
+	it("undo after replace-all puts every file the operation changed back", async () => {
 		const files: Record<string, string> = {
 			"/test-project/fileA.ts": "alpha target beta",
 			"/test-project/fileB.ts": "gamma target delta"
@@ -510,35 +520,52 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 			}
 		];
 
-		await applyReplaceAll({
+		const res = await applyReplaceAll({
 			workspace,
 			fileResults,
 			replacement: "replacement"
 		});
 
-		const docA = workspace.documents.find((d) => d.origin?.path.endsWith("fileA.ts"))!;
-		const docB = workspace.documents.find((d) => d.origin?.path.endsWith("fileB.ts"))!;
+		expect(files["/test-project/fileA.ts"]).toBe("alpha replacement beta");
+		expect(files["/test-project/fileB.ts"]).toBe("gamma replacement delta");
 
-		expect(docA.content).toBe("alpha replacement beta");
-		expect(docB.content).toBe("gamma replacement delta");
+		// One undo puts every file the operation changed back.
+		await undoReplaceAll(res.undo, workspace);
 
-		// Simulate undo on docA only:
-		const stateA = EditorState.fromJSON(docA.editorState, { extensions: [history()] }, { history: historyField });
-		expect(undoDepth(stateA)).toBe(1);
+		expect(files["/test-project/fileA.ts"]).toBe("alpha target beta");
+		expect(files["/test-project/fileB.ts"]).toBe("gamma target delta");
+	});
 
-		let undoneStateA: EditorState | null = null;
-		undo({
-			state: stateA,
-			dispatch: (tr) => {
-				undoneStateA = tr.state;
+	it("undo after replace-all puts an open document back the way it was", async () => {
+		const storage = createMockStorage({ "/test-project/open.ts": "alpha target beta" });
+		const workspace = createTestWorkspace(storage);
+
+		const origin: FileOrigin = { scheme: "file", path: "/test-project/open.ts", name: "open.ts" };
+		// The file is open, so the change belongs to its document.
+		const doc = new DocumentSession(storage, "alpha target beta", origin);
+		workspace.documents.push(doc);
+
+		const fileResults: FileSearchResult[] = [
+			{
+				filepath: "open.ts",
+				origin,
+				matches: [{ line: 1, column: 7, offset: 6, matchLength: 6, lineText: "alpha target beta", contextBefore: [], contextAfter: [] }]
 			}
+		];
+
+		const res = await applyReplaceAll({
+			workspace,
+			fileResults,
+			replacement: "replacement"
 		});
 
-		expect(undoneStateA).not.toBeNull();
-		expect(undoneStateA!.doc.toString()).toBe("alpha target beta");
+		expect(doc.content).toBe("alpha replacement beta");
+		// An open document is not written behind the user's back.
+		expect(storage.saveFile).not.toHaveBeenCalled();
 
-		// Verify docB is completely untouched by docA's undo
-		expect(docB.content).toBe("gamma replacement delta");
+		await undoReplaceAll(res.undo, workspace);
+
+		expect(doc.content).toBe("alpha target beta");
 	});
 
 	it("files with unsaved changes accept replace edits without warnings", async () => {

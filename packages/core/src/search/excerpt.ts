@@ -1,17 +1,20 @@
 import { EditorState, Transaction } from '@codemirror/state';
 import { history, historyField } from '@codemirror/commands';
-import type { SearchMatch, FileSearchResult, SearchQuery } from './types';
+import type {
+	SearchMatch,
+	FileSearchResult,
+	SearchQuery,
+	SingleEdit,
+	ReplaceAllFileChange,
+	ReplaceAllUndo
+} from './types';
 import type { FileOrigin } from '../storage';
 import { toURI } from '../storage';
 import { buildSearchRegex, findMatchesInContent } from './engine';
-import { DocumentSession } from '../document.svelte';
+import type { DocumentSession } from '../document.svelte';
 import type { Workspace } from '../workspace.svelte';
 
-export interface SingleEdit {
-	from: number;
-	to: number;
-	insert: string;
-}
+export type { SingleEdit, ReplaceAllFileChange, ReplaceAllUndo };
 
 export interface ExcerptSegment {
 	id: string;
@@ -509,47 +512,120 @@ export function applyEditsToDocumentSession(
 
 /**
  * Replaces all occurrences across all search results in one action.
- * Applies per-file transactions so each file can be independently undone.
- * Composes with unsaved changes without warnings or confirmation modals.
+ *
+ * A file that is open is changed in its document, the way a keystroke
+ * would: the user saves it, and the file's own history can undo it. A
+ * file that is not open is written, because a replace-all that opened a
+ * tab for every file it touched buried the user's window in tabs, and
+ * the tab was only ever there to host an undo the search tab now owns.
+ *
+ * The operation is returned as an undo record, so the search tab can
+ * undo the whole thing in one step.
  */
 export async function applyReplaceAll(options: {
 	workspace: Workspace;
 	fileResults: FileSearchResult[];
 	replacement: string;
-}): Promise<{ modifiedFiles: string[]; totalReplacements: number }> {
+}): Promise<{
+	modifiedFiles: string[];
+	totalReplacements: number;
+	undo: ReplaceAllUndo;
+}> {
 	const { workspace, fileResults, replacement } = options;
 	let totalReplacements = 0;
 	const modifiedFiles: string[] = [];
+	const changes: ReplaceAllFileChange[] = [];
 
 	for (const result of fileResults) {
 		if (result.matches.length === 0) continue;
 
-		// 1. Find or load DocumentSession. Match by exact URI only: a
-		// path-suffix fallback can resolve to a different file that happens
-		// to share the same filename.
-		let doc = workspace.documents.find((d) => d.origin && toURI(d.origin) === toURI(result.origin));
+		// 1. Find the open document. Match by exact URI only: a path-suffix
+		// fallback can resolve to a different file that happens to share
+		// the same filename.
+		const doc = workspace.documents.find(
+			(d) => d.origin && toURI(d.origin) === toURI(result.origin)
+		);
 
-		if (!doc) {
-			const content = await workspace.project.storage.readFile(result.origin);
-			doc = new DocumentSession(workspace.project.storage, content, result.origin);
-			if (typeof workspace.project.storage?.queryPermission === 'function') {
-				doc.refreshPermissionState(workspace.project.coversOrigin(result.origin));
-			} else {
-				doc.markPermissionGranted();
-			}
-			workspace.documents.push(doc);
-			workspace.tabs.push({ id: doc.id, type: 'document' });
-			workspace.pluginHost?.emit('document:opened', { document: doc, origin: doc.origin });
-		}
-
-		// 2. Compute non-overlapping edits for this file
-		const fileEdits = buildReplaceAllEditsForFile(result.matches, replacement, doc.content);
-		if (fileEdits.length > 0) {
+		if (doc) {
+			// 2. The file is open: the change belongs to its document.
+			const before = doc.content;
+			const fileEdits = buildReplaceAllEditsForFile(result.matches, replacement, doc.content);
+			if (fileEdits.length === 0) continue;
 			applyEditsToDocumentSession(doc, fileEdits, workspace);
 			totalReplacements += fileEdits.length;
 			modifiedFiles.push(result.filepath);
+			changes.push({ origin: result.origin, before, doc });
+			continue;
 		}
+
+		// 3. The file is not open: write it. The user's next visit to the
+		// file finds the replacement already in it.
+		let content: string;
+		try {
+			content = await workspace.project.storage.readFile(result.origin);
+		} catch {
+			// A file that cannot be read is left alone.
+			continue;
+		}
+		const fileEdits = buildReplaceAllEditsForFile(result.matches, replacement, content);
+		if (fileEdits.length === 0) continue;
+		try {
+			// saveFile with the file's own origin writes it in place: the
+			// picker is only for a file that has no origin yet.
+			await workspace.project.storage.saveFile(
+				applyEditsToText(content, fileEdits),
+				result.origin
+			);
+		} catch {
+			// A file that cannot be written is left alone.
+			continue;
+		}
+		totalReplacements += fileEdits.length;
+		modifiedFiles.push(result.filepath);
+		changes.push({ origin: result.origin, before: content, doc: null });
 	}
 
-	return { modifiedFiles, totalReplacements };
+	return { modifiedFiles, totalReplacements, undo: { changes } };
 }
+
+/**
+ * Undoes a replace-all operation: every file it changed goes back to what
+ * it held before, in the reverse order the operation changed them.
+ */
+export async function undoReplaceAll(undo: ReplaceAllUndo, workspace: Workspace): Promise<void> {
+	for (const change of [...undo.changes].reverse()) {
+		if (change.doc) {
+			// The change went into an open document: put the document back
+			// the way it was, through the same path the change took, so the
+			// editor's state and history follow. The whole content is
+			// restored, because one replace-all is one operation: the edits
+			// it made are not separable from what came after them.
+			const current = change.doc.content;
+			if (current === change.before) continue;
+			applyEditsToDocumentSession(
+				change.doc,
+				[{ from: 0, to: current.length, insert: change.before }],
+				workspace
+			);
+			continue;
+		}
+		try {
+			await workspace.project.storage.saveFile(change.before, change.origin);
+		} catch {
+			// A file that cannot be written back stays as it is.
+		}
+	}
+}
+
+/**
+ * Applies edits to text. The edits address the text as it was before
+ * them, so they are applied from the last one backwards.
+ */
+export function applyEditsToText(text: string, edits: SingleEdit[]): string {
+	let result = text;
+	for (const edit of [...edits].sort((a, b) => b.from - a.from)) {
+		result = result.slice(0, edit.from) + edit.insert + result.slice(edit.to);
+	}
+	return result;
+}
+

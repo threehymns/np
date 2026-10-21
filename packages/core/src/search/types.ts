@@ -1,4 +1,5 @@
 import type { FileOrigin } from '../storage';
+import type { DocumentSession } from '../document.svelte';
 import type { Worktree } from '../project/worktree.svelte';
 
 export interface SearchQuery {
@@ -76,4 +77,54 @@ export interface SearchBackend {
 	attachToWorktree?(worktree: Worktree | null): void;
 	/** Release the backend's resources (subscriptions, caches). */
 	dispose?(): void;
+}
+
+/**
+ * A single edit: a range of text replaced by another text.
+ */
+export interface SingleEdit {
+	from: number;
+	to: number;
+	insert: string;
+}
+
+/**
+ * One file's share of a replace-all operation.
+ */
+export interface ReplaceAllFileChange {
+	/** The file the operation changed. */
+	origin: FileOrigin;
+	/**
+	 * The content the file held before the operation. A file that was not
+	 * open is put back exactly like this; an open document is put back
+	 * through its edits, so its editor state stays consistent.
+	 */
+	before: string;
+	/**
+	 * The open document the change was applied to, or null when the file was
+	 * not open and the change was written to the file itself.
+	 */
+	doc: DocumentSession | null;
+}
+
+/**
+ * A replace-all operation, kept so it can be undone as one step.
+ */
+export interface ReplaceAllUndo {
+	/** The files the operation changed, in the order it changed them. */
+	changes: ReplaceAllFileChange[];
+}
+
+/**
+ * A replace-all operation waiting to be undone, with what the results held
+ * when it ran.
+ */
+export interface ReplaceAllUndoEntry {
+	/** The operation to undo. */
+	undo: ReplaceAllUndo;
+	/**
+	 * How many manual edits the results held when the operation ran. A
+	 * manual edit made after it is newer, so it is undone first.
+	 */
+	manualEdits: number;
 }

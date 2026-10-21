@@ -29,7 +29,6 @@ export {
 } from './session.svelte';
 
 export {
-	type SingleEdit,
 	type ExcerptSegment,
 	type ExcerptMapOptions,
 	type ExcerptMapBuild,
@@ -39,5 +38,14 @@ export {
 	buildExcerptMapForContent,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
-	applyReplaceAll
+	applyEditsToText,
+	applyReplaceAll,
+	undoReplaceAll
 } from './excerpt';
+
+export {
+	type SingleEdit,
+	type ReplaceAllFileChange,
+	type ReplaceAllUndo,
+	type ReplaceAllUndoEntry
+} from './types';
