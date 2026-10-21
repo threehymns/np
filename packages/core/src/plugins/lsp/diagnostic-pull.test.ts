@@ -63,7 +63,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('49 millis');
 					expect(calls).toHaveLength(0);
 					yield* TestClock.adjust('1 millis');
@@ -103,7 +103,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -123,7 +123,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -139,7 +139,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -228,7 +228,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -253,7 +253,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -284,7 +284,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('30 seconds');
 				})
 			)
@@ -319,7 +319,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('30 seconds');
 				})
 			)
@@ -345,7 +345,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('30 seconds');
 				})
 			)
@@ -374,7 +374,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 					yield* coordinator.forgetServer(server);
 					yield* TestClock.adjust('30 seconds');
@@ -399,7 +399,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('30 seconds');
 					// One initial attempt plus PULL_RETRY_LIMIT retries, then silence.
 					expect(calls).toHaveLength(PULL_RETRY_LIMIT + 1);
@@ -425,19 +425,19 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 					expect(calls).toHaveLength(1);
 					expect(calls[0].previousResultId).toBeUndefined();
 
 					// A pull still waiting out the debounce never requests after the forget.
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* coordinator.forgetServer(server);
 					yield* TestClock.adjust('1 second');
 					expect(calls).toHaveLength(1);
 
 					// The next pull starts clean: no previousResultId from the dead run.
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
@@ -462,7 +462,7 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 			Effect.gen(function* () {
 				const fiber = yield* Effect.scoped(
 					Effect.gen(function* () {
-						yield* coordinator.notifyEdit(uri, server);
+						yield* coordinator.armPull(uri, server);
 						yield* Effect.never;
 					})
 				).pipe(Effect.forkChild);
@@ -493,15 +493,108 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		await runTestClock(
 			Effect.scoped(
 				Effect.gen(function* () {
-					yield* coordinator.notifyEdit(uri, server);
-					yield* coordinator.notifyEdit(uri, server);
-					yield* coordinator.notifyEdit(uri, server);
+					yield* coordinator.armPull(uri, server);
+					yield* coordinator.armPull(uri, server);
+					yield* coordinator.armPull(uri, server);
 					yield* TestClock.adjust('50 millis');
 				})
 			)
 		);
 
 		expect(calls).toHaveLength(1);
+	});
+
+	it('a pull armed for a path replaces the pull already in flight for that path', async () => {
+		// The debounce collapses pulls that are armed before it elapses, but a
+		// pull that is already on the wire is a request the server is answering.
+		// The newer one has to replace it rather than race it, or the file
+		// ends up with whichever answer happened to land last.
+		const calls: RecordedCall[] = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: (srv, u, previousResultId) => {
+				calls.push({ server: srv, uri: u, previousResultId });
+				// The first pull answers late, so a race would show up as its
+				// answer landing after the newer pull's.
+				return calls.length === 1
+					? Effect.sleep('200 millis').pipe(
+							Effect.andThen(
+								Effect.succeed({
+									kind: 'full',
+									resultId: 'r1',
+									items: [
+										{
+											range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+											message: 'stale'
+										}
+									]
+								})
+							)
+						)
+					: Effect.succeed({
+							kind: 'full',
+							resultId: 'r2',
+							items: [
+								{
+									range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } },
+									message: 'fresh'
+								}
+							]
+						});
+			}
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.armPull(uri, server);
+					yield* TestClock.adjust('50 millis');
+					// The first pull is in flight: the request went out and the
+					// server has not answered it yet.
+					expect(calls).toHaveLength(1);
+
+					// A newer pull for the same path replaces the one in flight.
+					yield* coordinator.armPull(uri, server);
+					yield* TestClock.adjust('50 millis');
+					expect(calls).toHaveLength(2);
+
+					// The replaced pull's late answer never lands: it was
+					// interrupted, so the file keeps the newer pull's findings.
+					yield* TestClock.adjust('200 millis');
+				})
+			)
+		);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['fresh']);
+	});
+
+	it('a pull armed in a scope never goes out when the scope closes first', async () => {
+		// The scope is the runtime's own, and closing it is how a runtime that
+		// is being torn down stops asking a server anything. A pull still
+		// waiting out its debounce is interrupted rather than sent.
+		const calls: RecordedCall[] = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: (srv, u, previousResultId) => {
+				calls.push({ server: srv, uri: u, previousResultId });
+				return Effect.succeed({ kind: 'full', resultId: 'r1', items: [] });
+			}
+		});
+
+		await runTestClock(
+			Effect.gen(function* () {
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						yield* coordinator.armPull(uri, server);
+					})
+				);
+				yield* TestClock.adjust('1 second');
+			})
+		);
+
+		expect(calls).toHaveLength(0);
 	});
 
 	it('parses pull diagnostic reports and diagnostic pull support', () => {

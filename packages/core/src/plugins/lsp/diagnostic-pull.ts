@@ -100,12 +100,19 @@ export class DiagnosticPullCoordinator {
 
 	/**
 	 * Arms a debounced pull for one (uri, server), on the caller's Scope.
-	 * A newer edit interrupts the still-pending pull for the same key, so rapid
-	 * edits collapse to one request. Closing the scope interrupts everything,
-	 * including a pull sleeping mid-backoff: no further requests are issued.
-	 * Requires an ambient Scope (same contract as scopedPullLoop).
+	 *
+	 * What triggered it is the runtime's business: an open and a change both
+	 * mean the client may be missing what the server knows about the file, so
+	 * both arm the same pull.
+	 *
+	 * A newer trigger interrupts the still-pending pull for the same key, so
+	 * rapid edits collapse to one request and a pull already in flight is
+	 * replaced by the newer one rather than racing it. Closing the scope
+	 * interrupts everything, including a pull sleeping mid-backoff: no further
+	 * requests are issued. Requires an ambient Scope (same contract as
+	 * scopedPullLoop).
 	 */
-	notifyEdit(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
+	armPull(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
 		const self = this;
 		return Effect.uninterruptibleMask((restore) =>
 			Effect.gen(function* () {

@@ -776,6 +776,11 @@ export class LspRuntime
 	 * Sends the document's current text to one running server: `didOpen` the
 	 * first time, full-content `didChange` after that (ADR 0020).
 	 *
+	 * Both arm a pull for the file's findings. A server that answers
+	 * `textDocument/diagnostic` is asked on the open as well as on the change,
+	 * so the gutter is not empty while the editor waits for a push or for the
+	 * user to type.
+	 *
 	 * Identical text is not resent. Two paths reach this — the document lifecycle
 	 * event and a completion query — and a keystroke produces both, so without this
 	 * every keystroke would send the whole document twice and bump the version
@@ -795,7 +800,7 @@ export class LspRuntime
 				textDocument: { uri, version: existing.version },
 				contentChanges: [{ text: input.content }]
 			});
-			this.pullAfterEdit(uri, entry.server);
+			this.armPull(uri, entry.server);
 			return;
 		}
 		const document: OpenDocument = {
@@ -815,6 +820,7 @@ export class LspRuntime
 				text: document.content
 			}
 		});
+		this.armPull(uri, entry.server);
 	}
 
 	/**
@@ -956,20 +962,20 @@ export class LspRuntime
 	}
 
 	/**
-	 * Arms the debounced pull for an edited document on the runtime's own scope.
-	 * Guarded three ways: no coordinator without a diagnostics store, no pull
-	 * for a server that did not advertise diagnosticProvider, and no pull for a
-	 * server that is not running (its restart re-arms through a later edit).
-	 * Disposing the runtime closes the scope, which interrupts any pending or
-	 * in-flight pull.
+	 * Arms the debounced pull for one (uri, server) pair on the runtime's own
+	 * scope. Guarded three ways: no coordinator without a diagnostics store, no
+	 * pull for a server that did not advertise diagnosticProvider, and no pull
+	 * for a server that is not running (its restart re-arms through the re-open
+	 * that follows it). Disposing the runtime closes the scope, which interrupts
+	 * any pending or in-flight pull.
 	 */
-	private pullAfterEdit(uri: string, server: string): void {
+	private armPull(uri: string, server: string): void {
 		const coordinator = this.pullCoordinator;
 		const scope = this.pullScope;
 		if (!coordinator || !scope) return;
 		const entry = this.servers.get(server);
 		if (!entry || entry.state !== 'running' || !entry.pullSupported) return;
-		Effect.runFork(coordinator.notifyEdit(uri, server).pipe(Effect.provideService(Scope.Scope, scope)));
+		Effect.runFork(coordinator.armPull(uri, server).pipe(Effect.provideService(Scope.Scope, scope)));
 	}
 
 	private resolvePlatform(): LspPlatform | undefined {
@@ -1084,7 +1090,14 @@ export class LspRuntime
 		return entry;
 	}
 
-	/** Re-sends `didOpen` for every document bound to a server that just started. */
+	/**
+	 * Re-sends `didOpen` for every document bound to a server that just started,
+	 * and asks that server for those files' findings again.
+	 *
+	 * The new process knows nothing about the files it was handed, and the
+	 * findings the old one had went down with it, so a re-open is the moment to
+	 * pull them back rather than leave the file with no marks.
+	 */
 	private reopenDocumentsFor(server: string): void {
 		const entry = this.servers.get(server);
 		if (!entry?.client) return;
@@ -1099,6 +1112,7 @@ export class LspRuntime
 					text: document.content
 				}
 			});
+			this.armPull(uri, server);
 		}
 	}
 
