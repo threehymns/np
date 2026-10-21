@@ -154,6 +154,39 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(wt.version).toBe(0);
 		expect(wt.entries).toEqual([]);
 	});
+
+	it("publishes the whole project file set whatever triggered the scan", async () => {
+		const storage = createMockStorage({
+			"/test-project/a.txt": "a",
+			"/test-project/sub/b.txt": "b",
+			"/test-project/sub/deep/c.txt": "c"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		function filePaths(nodes: any[], prefix = ""): string[] {
+			const paths: string[] = [];
+			for (const node of nodes) {
+				if (node.kind === "directory") {
+					paths.push(...filePaths(node.children ?? [], `${prefix}${node.name}/`));
+				} else {
+					paths.push(`${prefix}${node.name}`);
+				}
+			}
+			return paths.sort();
+		}
+
+		// The file explorer's scan: it carries the tree's expansion state.
+		await wt.scan(rootOrigin, { isExpanded: () => false });
+
+		const afterTreeScan = filePaths(wt.entries);
+		expect(afterTreeScan).toEqual(["a.txt", "sub/b.txt", "sub/deep/c.txt"]);
+
+		// A watcher's rescan carries no options at all. It publishes the
+		// same file set: the snapshot never depends on who scanned.
+		await wt.scan();
+
+		expect(filePaths(wt.entries)).toEqual(afterTreeScan);
+	});
 });
 
 describe("Worktree subscription seam (ticket 2 / ticket 3 consumers)", () => {
