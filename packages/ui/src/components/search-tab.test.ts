@@ -306,7 +306,11 @@ describe("Project search 7: re-run the query when the file snapshot changes (Iss
 		// The tab subscribes to the worktree's snapshot, so a snapshot that
 		// moved on runs the query again.
 		expect(SEARCH_TAB_SRC).toContain("new SearchTabRunner");
-		expect(SEARCH_TAB_SRC).toContain("runner.attachToWorktree(appState.workspace.project.worktree)");
+		// The attach is untracked: the subscribe reads the snapshot's
+		// version, and a tracked attach would make this effect re-run on
+		// every snapshot change, disposing the runner that schedules the
+		// re-run.
+		expect(SEARCH_TAB_SRC).toContain("untrack(() => runner.attachToWorktree(worktree));");
 		expect(SEARCH_TAB_SRC).toContain("runner.results");
 		expect(SEARCH_TAB_SRC).toContain("runner.isSearching");
 		expect(SEARCH_TAB_SRC).toContain("runner.isTruncated");
