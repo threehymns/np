@@ -115,6 +115,17 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).not.toContain("window.alert");
 	});
 
+	it("never opens a tab for an edit made in the results", () => {
+		// The results are the editor for the files they show: an edit in a
+		// file that is not open writes it. Opening a file is what a click on
+		// a match does, and it is not what an edit does.
+		const start = SEARCH_TAB_SRC.indexOf("async function applyUserEditToFile");
+		const end = SEARCH_TAB_SRC.indexOf("async function ", start + 10);
+		const editPath = SEARCH_TAB_SRC.slice(start, end);
+		expect(editPath).toContain("applyEditToFile");
+		expect(editPath).not.toContain("openFile");
+	});
+
 	it("keeps the replace-all operation as one undo step in the search tab", () => {
 		// A replace-all is one operation across every file it changed, so the
 		// search tab keeps it and undoes it as one step. A tab per changed

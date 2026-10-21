@@ -5,6 +5,7 @@
 		FileExcerptMap,
 		applyReplaceAll,
 		applyEditsToDocumentSession,
+		applyEditToFile,
 		buildExcerptMapForContent,
 		isExcerptMapStale,
 		undoReplaceAll,
@@ -187,19 +188,28 @@
 		}
 	}
 
-	async function applyUserEditToFile(fileResult: FileSearchResult, edit: SingleEdit): Promise<DocumentSession | null> {
+	async function applyUserEditToFile(
+		fileResult: FileSearchResult,
+		edit: SingleEdit,
+		contentBefore: string
+	): Promise<DocumentSession | null> {
 		// Match by exact URI only: a path-suffix fallback can resolve to a
 		// different file that happens to share the same filename.
-		let doc = appState.workspace.documents.find(
+		const doc = appState.workspace.documents.find(
 			(d) => d.origin && toURI(d.origin) === toURI(fileResult.origin)
 		);
-		if (!doc) {
-			doc = await appState.workspace.openFile(fileResult.origin);
-		}
 		if (doc) {
 			applyEditsToDocumentSession(doc, [edit], appState.workspace);
 			return doc;
 		}
+		// The file is not open: write it. The results are the editor for the
+		// files they show, and a replace operation never opens a tab.
+		await applyEditToFile({
+			storage: appState.workspace.project.storage,
+			origin: fileResult.origin,
+			content: contentBefore,
+			edit
+		});
 		return null;
 	}
 
@@ -437,6 +447,9 @@
 								changes.sort((a, b) => b.from - a.from);
 								for (const excerptEdit of changes) {
 									const fileEdit = excerptMap.mapExcerptEditToFileEdit(excerptEdit);
+									// The file's content before this edit: a file that is
+									// not open is written from it.
+									const contentBefore = excerptMap.fileContent;
 									if (fileEdit) {
 										applyChain = applyChain
 											.then(async () => {
@@ -458,7 +471,7 @@
 													});
 													return;
 												}
-												const appliedDoc = await applyUserEditToFile(fileResult, fileEdit);
+												const appliedDoc = await applyUserEditToFile(fileResult, fileEdit, contentBefore);
 												if (appliedDoc) {
 													doc = appliedDoc;
 													mapRevision = appliedDoc.revision;

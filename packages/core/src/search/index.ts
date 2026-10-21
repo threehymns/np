@@ -39,6 +39,7 @@ export {
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
 	applyEditsToText,
+	applyEditToFile,
 	applyReplaceAll,
 	undoReplaceAll
 } from './excerpt';

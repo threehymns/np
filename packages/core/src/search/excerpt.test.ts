@@ -12,6 +12,7 @@ import {
 	isExcerptMapStale,
 	buildReplaceAllEditsForFile,
 	applyEditsToDocumentSession,
+	applyEditToFile,
 	applyReplaceAll,
 	undoReplaceAll
 } from "./excerpt";
@@ -494,6 +495,30 @@ describe("Replace-all across results with per-file undo (Issue #336)", () => {
 
 		expect(res.totalReplacements).toBe(0);
 		expect(files["/test-project/moved.ts"]).toBe("alpha XXXX gamma");
+	});
+
+	it("applies an edit to a file that is not open, without opening it", async () => {
+		// The results are the editor for the files they show, so an edit
+		// made there changes the file itself. A replace operation never
+		// opens a tab.
+		const files: Record<string, string> = {
+			"/test-project/closed.ts": "alpha target beta"
+		};
+		const storage = createMockStorage(files);
+		const origin: FileOrigin = {
+			scheme: "file",
+			path: "/test-project/closed.ts",
+			name: "closed.ts"
+		};
+
+		await applyEditToFile({
+			storage: storage as any,
+			origin,
+			content: files["/test-project/closed.ts"],
+			edit: { from: 6, to: 12, insert: "REPLACED" }
+		});
+
+		expect(files["/test-project/closed.ts"]).toBe("alpha REPLACED beta");
 	});
 
 	it("undo after replace-all puts every file the operation changed back", async () => {

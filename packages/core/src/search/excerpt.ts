@@ -8,7 +8,7 @@ import type {
 	ReplaceAllFileChange,
 	ReplaceAllUndo
 } from './types';
-import type { FileOrigin } from '../storage';
+import type { FileOrigin, Storage } from '../storage';
 import { toURI } from '../storage';
 import { buildSearchRegex, findMatchesInContent } from './engine';
 import type { DocumentSession } from '../document.svelte';
@@ -615,6 +615,26 @@ export async function undoReplaceAll(undo: ReplaceAllUndo, workspace: Workspace)
 			// A file that cannot be written back stays as it is.
 		}
 	}
+}
+
+/**
+ * Applies an edit to a file that is not open.
+ *
+ * The results are the editor for the files they show, so an edit made
+ * there changes the file itself. The file is written, not opened: a
+ * replace operation never opens a tab behind the user's back.
+ */
+export async function applyEditToFile(options: {
+	storage: Storage;
+	origin: FileOrigin;
+	/** The file's content before the edit. */
+	content: string;
+	edit: SingleEdit;
+}): Promise<void> {
+	await options.storage.saveFile(
+		applyEditsToText(options.content, [options.edit]),
+		options.origin
+	);
 }
 
 /**
