@@ -124,6 +124,24 @@
 			?.getAttribute('data-sha');
 		activeCommit = sha ? (commitsBySha.get(sha) ?? null) : null;
 	}
+
+	/**
+	 * The clock the relative timestamps are rendered against.
+	 *
+	 * A relative label ("3 minutes ago") is only true at the moment it is
+	 * rendered, and the list is virtualized: a row that stays on screen is
+	 * not re-rendered, so it would keep the age it had when it was created.
+	 * One shared clock, ticked once a minute, refreshes the visible labels
+	 * without recreating the rows.
+	 */
+	let now = $state(Date.now());
+
+	$effect(() => {
+		const timer = setInterval(() => {
+			now = Date.now();
+		}, 60_000);
+		return () => clearInterval(timer);
+	});
 </script>
 
 {#snippet historyRow(commit: GitHistoryCommit, index: number)}
@@ -189,7 +207,7 @@
 			</span>
 			<span class="opacity-40">·</span>
 			<span class="shrink-0 whitespace-nowrap">
-				{formatRelativeTime(commit.timestamp)}
+				{formatRelativeTime(commit.timestamp, now)}
 			</span>
 			<span class="opacity-40">·</span>
 			<span

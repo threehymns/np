@@ -37,6 +37,17 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(source).toContain("commit.shortSha");
 			expect(source).toContain("formatRelativeTime");
 		});
+
+		it("renders relative timestamps against a shared ticking clock, so visible labels refresh", () => {
+			const source = historyTabSource();
+			// One shared clock, ticked once a minute and cleaned up on unmount.
+			expect(source).toContain("let now = $state(Date.now())");
+			expect(source).toContain("setInterval");
+			expect(source).toContain("clearInterval");
+			// The rows render against that clock, so a row that stays on
+			// screen shows a current age without being recreated.
+			expect(source).toContain("formatRelativeTime(commit.timestamp, now)");
+		});
 	});
 
 	describe("2. GitPanel.svelte peer tab integration", () => {

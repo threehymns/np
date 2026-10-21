@@ -125,12 +125,14 @@ export class Repository {
 				} else {
 					this.historyCommits = [];
 				}
-			}
-
-			if (aheadRes.status === 'fulfilled' && typeof aheadRes.value === 'number') {
-				this.aheadCount = aheadRes.value;
-			} else {
-				this.aheadCount = 0;
+				// The ahead count rides along with the history fetch, so it
+				// belongs to the same generation: a stale refresh must not
+				// overwrite the count a newer history refresh published.
+				if (aheadRes.status === 'fulfilled' && typeof aheadRes.value === 'number') {
+					this.aheadCount = aheadRes.value;
+				} else {
+					this.aheadCount = 0;
+				}
 			}
 
 			// Ensure activeDiffFile points to a valid entry or reset it
@@ -158,8 +160,8 @@ export class Repository {
 			this.commits = [];
 			if (historyGen === this.historyGeneration) {
 				this.historyCommits = [];
+				this.aheadCount = 0;
 			}
-			this.aheadCount = 0;
 			this.uncommittedFiles = [];
 			this.isDirty = false;
 			this.activeDiffFile = null;

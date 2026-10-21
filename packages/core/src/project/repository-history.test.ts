@@ -217,8 +217,48 @@ describe("Repository history log integration (Ticket #345)", () => {
 		expect(repo.historyCommits).toEqual(freshCommits);
 	});
 
-	it("keeps fetched history when the ahead-count read fails", async () => {
-		const mockCommits: GitHistoryCommit[] = [
+	it("does not let a stale refresh() overwrite the ahead count a newer history refresh published", async () => {
+		let aheadCalls = 0;
+		let releaseStaleAhead: (() => void) | null = null;
+
+		const mockAdapter: VCSAdapter = {
+			detect: async () => true,
+			getCurrentBranch: async () => "main",
+			getBranches: async () => ["main"],
+			getStatus: async () => ({ isDirty: false, uncommittedFiles: [] }),
+			switchBranch: async () => ({ status: "noop" }),
+			getChanges: async () => [],
+			getCommits: async () => [],
+			getHistory: async () => [],
+			getAheadCount: mock(async () => {
+				aheadCalls++;
+				if (aheadCalls === 1) {
+					// The first read belongs to refresh(). Hold it so the
+					// refresh lands after the newer history refresh.
+					await new Promise<void>((resolve) => {
+						releaseStaleAhead = resolve;
+					});
+					return 1;
+				}
+				return 5;
+			})
+		};
+
+		const repo = new Repository(rootOrigin, () => mockAdapter);
+		const stale = repo.refresh();
+
+		// The history-only refresh runs while refresh() is still pending.
+		await repo.refreshHistory();
+		expect(repo.aheadCount).toBe(5);
+
+		releaseStaleAhead!();
+		await stale;
+
+		// The stale refresh must not overwrite the newer count.
+		expect(repo.aheadCount).toBe(5);
+	});
+
+	it("keeps fetched history when the ahead-count read fails", async () => {		const mockCommits: GitHistoryCommit[] = [
 			{
 				sha: "cccccccccccccccccccccccccccccccccccccccc",
 				shortSha: "ccccccc",
