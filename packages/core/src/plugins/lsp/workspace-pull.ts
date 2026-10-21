@@ -63,6 +63,14 @@ export interface WorkspacePullDependencies {
 	/** Where the diagnostics are filed, one path at a time. */
 	readonly store: LspDiagnosticsStore;
 	/**
+	 * Whether a URI may receive workspace-pulled diagnostics, mirroring the
+	 * `editor.lsp` gate the push path applies in `onNotification`. A URI the
+	 * gate rejects is skipped before its result id is recorded or its
+	 * diagnostics are filed, and any remembered result id for it is dropped
+	 * so a later pull starts clean.
+	 */
+	readonly accepts?: (uri: string) => boolean;
+	/**
 	 * Called once when a pull fails, so the reason reaches the Logs tab. A
 	 * failed pull says nothing about the files, so the diagnostics that are
 	 * already filed stay exactly as they are.
@@ -368,6 +376,10 @@ export class WorkspacePullCoordinator {
 	 */
 	private file(server: string, entries: readonly WorkspacePullEntry[], state: ServerLoop): void {
 		for (const entry of entries) {
+			if (this.deps.accepts && !this.deps.accepts(entry.uri)) {
+				state.resultIds.delete(entry.uri);
+				continue;
+			}
 			if (entry.resultId !== undefined) state.resultIds.set(entry.uri, entry.resultId);
 			if (entry.unchanged) continue;
 			this.deps.store.workspacePull({

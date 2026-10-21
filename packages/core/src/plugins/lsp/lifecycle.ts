@@ -375,6 +375,11 @@ export class LspRuntime
 			});
 			this.workspaceCoordinator = new WorkspacePullCoordinator({
 				store,
+				accepts: (uri) =>
+					this.gateFor({
+						path: fromFileUri(uri),
+						fileName: basenameOfUri(uri)
+					}).enabled,
 				request: (server, params) =>
 					Effect.tryPromise({
 						try: () => {
