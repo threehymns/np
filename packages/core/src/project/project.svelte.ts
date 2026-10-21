@@ -104,9 +104,7 @@ export class Project {
 		this.worktrees = [wt];
 		this.projectTree.attachToWorktree(wt);
 		void strategy.start?.(wt);
-		if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
-			(this._searchBackend as any).attachToWorktree(wt);
-		}
+		this._searchBackend?.attachToWorktree?.(wt);
 	}
 
 	get worktree(): Worktree | null {
@@ -128,10 +126,11 @@ export class Project {
 	}
 
 	set searchBackend(backend: SearchBackend) {
+		// The backend that is replaced may hold a subscription and a cache.
+		// Releasing it here keeps exactly one backend alive.
+		this._searchBackend?.dispose?.();
 		this._searchBackend = backend;
-		if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
-			(this._searchBackend as any).attachToWorktree(this.worktree);
-		}
+		this._searchBackend.attachToWorktree?.(this.worktree);
 	}
 
 	dispose(): void {
@@ -140,6 +139,8 @@ export class Project {
 		}
 		this.worktrees = [];
 		this.projectTree.attachToWorktree(null);
+		this._searchBackend?.dispose?.();
+		this._searchBackend = null;
 	}
 
 	/**

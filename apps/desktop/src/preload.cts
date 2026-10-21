@@ -89,11 +89,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			}
 		};
 		ipcRenderer.on('watcher:events', listener);
-		const startPromise = ipcRenderer.invoke('watcher:start', watchId, dirPath);
+		// The main process can refuse to start the watcher. Settle that
+		// here instead of letting it surface later: the unsubscribe must
+		// not rethrow a startup failure, and there is nothing to stop when
+		// the watcher never started.
+		const startPromise = ipcRenderer.invoke('watcher:start', watchId, dirPath).then(
+			() => ({ started: true }),
+			(error: unknown) => {
+				console.error('[watcher] Failed to start watching', dirPath, error);
+				return { started: false };
+			}
+		);
 		return async () => {
 			ipcRenderer.removeListener('watcher:events', listener);
-			await startPromise;
-			await ipcRenderer.invoke('watcher:stop', watchId);
+			const { started } = await startPromise;
+			if (started) {
+				await ipcRenderer.invoke('watcher:stop', watchId);
+			}
 		};
 	},
 	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools')

@@ -165,8 +165,17 @@ export class TypeScriptSearchEngine implements SearchBackend {
 	/**
 	 * Extract all candidate files strictly from snapshot entries in memory.
 	 * Never walks disk or calls readDirectory.
+	 *
+	 * The worktree is passed in rather than read from the engine: a search
+	 * runs across yields, and the project can switch roots while it runs.
+	 * The caller passes the worktree the snapshot came from, so the file
+	 * set and the ignore rules belong to the same root.
 	 */
-	collectFilesFromSnapshot(entries: TreeNode[], parentPath = ''): FlattenedFile[] {
+	collectFilesFromSnapshot(
+		entries: TreeNode[],
+		worktree: Worktree | null,
+		parentPath = ''
+	): FlattenedFile[] {
 		const files: FlattenedFile[] = [];
 
 		for (const node of entries) {
@@ -177,11 +186,11 @@ export class TypeScriptSearchEngine implements SearchBackend {
 				if (DEFAULT_IGNORED_DIRS.has(node.name)) {
 					continue;
 				}
-				if (this.worktree?.gitignore?.ignores(relPath)) {
+				if (worktree?.gitignore?.ignores(relPath)) {
 					continue;
 				}
 				if (node.children) {
-					files.push(...this.collectFilesFromSnapshot(node.children, relPath));
+					files.push(...this.collectFilesFromSnapshot(node.children, worktree, relPath));
 				}
 			} else if (node.kind === 'file') {
 				// Skip if path has any ignored directory component
@@ -189,7 +198,7 @@ export class TypeScriptSearchEngine implements SearchBackend {
 				if (parts.some((p) => DEFAULT_IGNORED_DIRS.has(p))) {
 					continue;
 				}
-				if (this.worktree?.gitignore?.ignores(relPath)) {
+				if (worktree?.gitignore?.ignores(relPath)) {
 					continue;
 				}
 				files.push({
@@ -210,16 +219,28 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 		return new SearchResultStream(
 			async function* (this: TypeScriptSearchEngine, signal: AbortSignal, progress: SearchProgress) {
-				if (!pattern || !this.worktree) {
+				// The worktree is captured once. A search spans yields, and
+				// the project can switch roots in between: reading the
+				// engine's current worktree mid-search would mix two roots
+				// (one root's file list with another's files).
+				const worktree = this.worktree;
+				if (!pattern || !worktree) {
 					return;
 				}
 
-				const snapshot: FileSnapshot = this.worktree.snapshot;
+				const snapshot: FileSnapshot = worktree.snapshot;
 				// The engine reads ONLY the Worktree snapshot — it never walks the disk itself
-				const files = this.collectFilesFromSnapshot(snapshot.entries);
+				const files = this.collectFilesFromSnapshot(snapshot.entries, worktree);
 
 				for (const file of files) {
 					if (signal.aborted) {
+						break;
+					}
+
+					// The project switched roots while the search ran. The
+					// results so far belong to the old root and the rest
+					// would belong to the new one, so the search stops.
+					if (this.worktree !== worktree) {
 						break;
 					}
 
@@ -237,10 +258,16 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					const cached = this.fileCache.get(file.relativePath);
 					if (cached && cached.version === snapshot.version) {
 						content = cached.content;
-					} else if (this.worktree.storage) {
+					} else if (worktree.storage) {
 						try {
-							content = await this.worktree.storage.readFile(file.origin);
-							this.cacheFileContent(file.relativePath, content, snapshot.version);
+							content = await worktree.storage.readFile(file.origin);
+							// Cache only while the worktree the content
+							// came from is still the current one: a
+							// switched root must not serve the old root's
+							// content from the cache.
+							if (this.worktree === worktree) {
+								this.cacheFileContent(file.relativePath, content, snapshot.version);
+							}
 						} catch {
 							// If file read fails (missing / permission), skip it
 							continue;

@@ -1,10 +1,14 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
-import { WatcherOwnership, type WatcherOwnerEvents } from './watcher-ownership';
+import {
+	WatcherOwnership,
+	type WatcherNavigationEvent,
+	type WatcherOwnerEvents
+} from './watcher-ownership';
 
 class FakeWebContents implements WatcherOwnerEvents {
 	readonly id: number;
 	destroyed = false;
-	private listeners = new Map<string, Set<() => void>>();
+	private listeners = new Map<string, Set<(...args: never[]) => void>>();
 	removedDidStartNavigation = 0;
 
 	constructor(id: number) {
@@ -12,10 +16,10 @@ class FakeWebContents implements WatcherOwnerEvents {
 	}
 
 	once(event: string, listener: () => void): void {
-		this.on(event, listener);
+		this.on(event, listener as (...args: never[]) => void);
 	}
 
-	on(event: string, listener: () => void): void {
+	on(event: string, listener: (...args: never[]) => void): void {
 		let set = this.listeners.get(event);
 		if (!set) {
 			set = new Set();
@@ -24,7 +28,7 @@ class FakeWebContents implements WatcherOwnerEvents {
 		set.add(listener);
 	}
 
-	removeListener(event: string, listener: () => void): void {
+	removeListener(event: string, listener: (...args: never[]) => void): void {
 		if (event === 'did-start-navigation') this.removedDidStartNavigation++;
 		this.listeners.get(event)?.delete(listener);
 	}
@@ -39,6 +43,17 @@ class FakeWebContents implements WatcherOwnerEvents {
 
 	emit(event: string): void {
 		for (const listener of [...(this.listeners.get(event) ?? [])]) listener();
+	}
+
+	/** Emit a navigation the way Electron does: an event carrying the details. */
+	emitNavigation(details: Partial<WatcherNavigationEvent> = {}): void {
+		const event: WatcherNavigationEvent = {
+			isSameDocument: details.isSameDocument ?? false,
+			isMainFrame: details.isMainFrame ?? true
+		};
+		for (const listener of [...(this.listeners.get('did-start-navigation') ?? [])]) {
+			(listener as unknown as (event: WatcherNavigationEvent) => void)(event);
+		}
 	}
 }
 
@@ -86,8 +101,22 @@ describe('WatcherOwnership', () => {
 	it('notifies when the owner navigates', () => {
 		const wc = contents(7);
 		ownership.track('a', wc);
-		wc.emit('did-start-navigation');
+		wc.emitNavigation();
 		expect(gone).toEqual([7]);
+	});
+
+	it('ignores an in-page navigation, which leaves the owner in place', () => {
+		const wc = contents(7);
+		ownership.track('a', wc);
+		wc.emitNavigation({ isSameDocument: true, isMainFrame: true });
+		expect(gone).toEqual([]);
+	});
+
+	it('ignores a subframe navigation, which is not the owner page', () => {
+		const wc = contents(7);
+		ownership.track('a', wc);
+		wc.emitNavigation({ isSameDocument: false, isMainFrame: false });
+		expect(gone).toEqual([]);
 	});
 
 	it('notifies when the owner is destroyed', () => {

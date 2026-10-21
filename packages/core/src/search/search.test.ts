@@ -245,6 +245,38 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		expect(storage.readFile.mock.calls.length).toBe(callsAfterFirst);
 	});
 
+	it("stops when the project switches roots mid-search, instead of mixing two roots", async () => {
+		const storageA = createMockStorage({
+			"/root-a/one.txt": "needle",
+			"/root-a/two.txt": "needle"
+		});
+		const storageB = createMockStorage({ "/root-b/other.txt": "needle" });
+		const wtA = new WorktreeClass({ scheme: "file", path: "/root-a", name: "root-a" }, { storage: storageA });
+		await wtA.scan();
+		const wtB = new WorktreeClass({ scheme: "file", path: "/root-b", name: "root-b" }, { storage: storageB });
+		await wtB.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wtA);
+		// The scan above already read the .gitignore of the second root.
+		const readsBeforeSearch = storageB.readFile.mock.calls.length;
+		const stream = engine.search(
+			{ pattern: "needle" },
+			{
+				onMatch: () => {
+					// The project switched roots while the search was running.
+					engine.attachToWorktree(wtB);
+				}
+			}
+		);
+		const results = await stream.all();
+
+		// The search stops on the switch: the rest of the file list belongs
+		// to the root the search started on, and reading it through the new
+		// root's storage would mix the two roots.
+		expect(results.map((r) => r.filepath)).toEqual(["one.txt"]);
+		expect(storageB.readFile.mock.calls.length).toBe(readsBeforeSearch);
+	});
+
 	it("supports abort signal to cancel search in flight", async () => {
 		const files: Record<string, string> = {};
 		for (let i = 1; i <= 20; i++) {

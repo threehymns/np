@@ -1,4 +1,5 @@
 import type { FileOrigin } from '../storage';
+import type { Worktree } from '../project/worktree.svelte';
 
 export interface SearchQuery {
 	/** Literal query string to search for */
@@ -57,4 +58,12 @@ export interface SearchResultStream extends AsyncIterable<FileSearchResult> {
 
 export interface SearchBackend {
 	search(query: SearchQuery, options?: SearchOptions): SearchResultStream;
+	/**
+	 * Hand the backend the worktree it reads the file set from. The project
+	 * calls it whenever the project root changes, so a backend that holds on
+	 * to a worktree can follow the root instead of searching a stale one.
+	 */
+	attachToWorktree?(worktree: Worktree | null): void;
+	/** Release the backend's resources (subscriptions, caches). */
+	dispose?(): void;
 }

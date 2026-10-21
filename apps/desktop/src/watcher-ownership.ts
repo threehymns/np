@@ -18,11 +18,25 @@
  * is unit-testable under bun.
  */
 
+/**
+ * The navigation event Electron emits for 'did-start-navigation'. The event
+ * object carries the navigation details: `isSameDocument` is true for an
+ * in-page navigation (a hash change, a same-document pushState) and
+ * `isMainFrame` is true when the navigation happens in the renderer's own
+ * page rather than in a subframe.
+ */
+export interface WatcherNavigationEvent {
+	/** True for a navigation that does not replace the document. */
+	isSameDocument: boolean;
+	/** True when the navigation happened in the main frame. */
+	isMainFrame: boolean;
+}
+
 export interface WatcherOwnerEvents {
 	readonly id: number;
 	once(event: 'destroyed', listener: () => void): void;
-	on(event: 'did-start-navigation', listener: () => void): void;
-	removeListener(event: 'did-start-navigation', listener: () => void): void;
+	on(event: 'did-start-navigation', listener: (event: WatcherNavigationEvent) => void): void;
+	removeListener(event: 'did-start-navigation', listener: (event: WatcherNavigationEvent) => void): void;
 	isDestroyed(): boolean;
 }
 
@@ -36,7 +50,7 @@ export interface WatcherOwnershipHooks {
 export class WatcherOwnership {
 	private watcherOwners = new Map<string, number>();
 	private ownerWatchIds = new Map<number, Set<string>>();
-	private ownerNavListeners = new Map<number, () => void>();
+	private ownerNavListeners = new Map<number, (event: WatcherNavigationEvent) => void>();
 	private pendingStarts = new Map<string, { senderId: number; token: symbol }>();
 
 	constructor(private hooks: WatcherOwnershipHooks) {}
@@ -50,7 +64,15 @@ export class WatcherOwnership {
 			ids = new Set();
 			this.ownerWatchIds.set(senderId, ids);
 			sender.once('destroyed', () => this.hooks.onOwnerGone(senderId));
-			const navListener = () => this.hooks.onOwnerGone(senderId);
+			const navListener = (event: WatcherNavigationEvent) => {
+				// An in-page navigation (a hash change) and a subframe
+				// navigation leave the owner's document in place, so the
+				// owner is not gone. Only a main-frame navigation that
+				// replaces the document means the renderer went away.
+				if (event.isSameDocument === true) return;
+				if (event.isMainFrame === false) return;
+				this.hooks.onOwnerGone(senderId);
+			};
 			this.ownerNavListeners.set(senderId, navListener);
 			sender.on('did-start-navigation', navListener);
 		}
