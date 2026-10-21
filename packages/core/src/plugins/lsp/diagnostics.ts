@@ -15,6 +15,11 @@
  * server's publish overwrite the first's, and make the first server stopping
  * erase everything the second still believes.
  *
+ * A report also carries the document version it was computed against, because
+ * a pull and a push for one file can be in flight at the same time and the one
+ * that lands last is not the one that was computed last. The store refuses a
+ * result that is older than the one it holds (ADR 0029).
+ *
  * The editor half is `diagnostic-decorations.ts`, because marks are the only
  * part that needs a CodeMirror import and the store has to stay testable on its
  * own. Neither half holds a view: the plugin may not touch it (ADR 0016), so the
@@ -55,6 +60,13 @@ export interface LspPublishDiagnostics {
 	 */
 	readonly server: string;
 	readonly diagnostics: readonly LspDiagnostic[];
+	/**
+	 * The document version the server computed these findings against, when the
+	 * protocol carried one. Absent means the server named no revision: it said
+	 * nothing about which text it looked at, and the store cannot tell which of
+	 * two such answers is the newer one (ADR 0029).
+	 */
+	readonly version?: number;
 }
 
 export type LspDiagnosticSource = 'push' | 'pull';
@@ -63,6 +75,12 @@ export interface LspPulledDiagnostics {
 	readonly uri: string;
 	readonly server: string;
 	readonly diagnostics: readonly LspDiagnostic[];
+	/**
+	 * The document version the pull was computed against: the version last
+	 * synced to that server. Absent means no revision was named, which is what
+	 * a pull with nothing to compare against carries.
+	 */
+	readonly version?: number;
 }
 
 /** Protocol severity codes. Anything outside this is left to the client. */
@@ -100,7 +118,7 @@ export function parsePublishDiagnostics(
 	server: string,
 	params: unknown
 ): LspPublishDiagnostics | null {
-	const payload = params as { uri?: unknown; diagnostics?: unknown } | null | undefined;
+	const payload = params as { uri?: unknown; diagnostics?: unknown; version?: unknown } | null | undefined;
 	if (!payload || typeof payload.uri !== 'string' || payload.uri.length === 0) return null;
 	const entries = Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
 	const diagnostics: LspDiagnostic[] = [];
@@ -108,7 +126,19 @@ export function parsePublishDiagnostics(
 		const diagnostic = parseDiagnostic(server, entry);
 		if (diagnostic) diagnostics.push(diagnostic);
 	}
-	return { uri: payload.uri, server, diagnostics };
+	return { uri: payload.uri, server, diagnostics, version: parseVersion(payload.version) };
+}
+
+/**
+ * The document version a publish was computed against.
+ *
+ * The protocol's `version` is optional, and a server that sends none has said
+ * nothing about which text it looked at — which is a different thing from a
+ * version of zero, so absent stays absent.
+ */
+function parseVersion(value: unknown): number | undefined {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	return undefined;
 }
 
 /**
@@ -168,6 +198,14 @@ function codeText(value: unknown): string | null {
 interface StoreDiagnosticSlice {
 	readonly diagnostics: readonly LspDiagnostic[];
 	readonly source: LspDiagnosticSource;
+	/**
+	 * The document version these findings were computed against, or undefined
+	 * when the result named no revision.
+	 *
+	 * Not the store's own `revision` counter: that one says "something changed
+	 * here", this one says "which text this answer is about".
+	 */
+	readonly version: number | undefined;
 }
 
 export class LspDiagnosticsStore {
@@ -183,7 +221,10 @@ export class LspDiagnosticsStore {
 	publish(report: LspPublishDiagnostics): void {
 		const existing = this.byUri.get(report.uri);
 		const current = existing?.get(report.server);
-		if (current?.source === 'pull') return;
+		// Refused before anything else, so a report the store does not take
+		// changes nothing: the slice stays as it is, the revision does not
+		// move, and a view that re-reads on every notification is not woken.
+		if (current && !this.accepts(current, report.version, 'push')) return;
 		if (report.diagnostics.length === 0) {
 			// Nothing filed and nothing to clear: not a change, so a view that
 			// re-reads on every notification is not woken for a file no server has
@@ -194,18 +235,24 @@ export class LspDiagnosticsStore {
 			return;
 		}
 		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
-		servers.set(report.server, { diagnostics: report.diagnostics, source: 'push' });
+		servers.set(report.server, {
+			diagnostics: report.diagnostics,
+			source: 'push',
+			version: report.version
+		});
 		this.byUri.set(report.uri, servers);
 		this.changed();
 	}
 
 	/**
 	 * Files diagnostics obtained via document pull (textDocument/diagnostic).
-	 * Fresh pull reports overwrite existing push or pull entries outright.
+	 * A fresh pull report takes the place of the push or pull entry it beats.
 	 * An empty diagnostics list clears that server's slice with clean-file semantics.
 	 */
 	pull(report: LspPulledDiagnostics): void {
 		const existing = this.byUri.get(report.uri);
+		const current = existing?.get(report.server);
+		if (current && !this.accepts(current, report.version, 'pull')) return;
 		if (report.diagnostics.length === 0) {
 			if (!existing?.delete(report.server)) return;
 			if (existing.size === 0) this.byUri.delete(report.uri);
@@ -213,7 +260,11 @@ export class LspDiagnosticsStore {
 			return;
 		}
 		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
-		servers.set(report.server, { diagnostics: report.diagnostics, source: 'pull' });
+		servers.set(report.server, {
+			diagnostics: report.diagnostics,
+			source: 'pull',
+			version: report.version
+		});
 		this.byUri.set(report.uri, servers);
 		this.changed();
 	}
@@ -285,6 +336,40 @@ export class LspDiagnosticsStore {
 		return () => {
 			this.listeners.delete(listener);
 		};
+	}
+
+	/**
+	 * Whether an incoming result may take the place of the one already held
+	 * for a path and a server.
+	 *
+	 * The document revision decides, because two results for one path and one
+	 * server are two answers to the same question about the same text, and the
+	 * one computed against the older text is the older answer. The source
+	 * cannot say which that is: a pull that was already in flight when the text
+	 * changed was computed against the text before the change, and it lands
+	 * last.
+	 *
+	 * A result that names no revision never displaces one that names a
+	 * revision, and is never displaced by one. A result with no revision says
+	 * nothing about which text the server looked at, so it cannot claim to be
+	 * the newer answer; and a result with a revision cannot claim to be newer
+	 * than one that names none, because "I looked at version 5" and "I looked
+	 * at some version" are not comparable.
+	 *
+	 * When neither names a revision, the source decides, as ADR 0029 decided:
+	 * a pull wins over a push for the same path and server, because a pull is
+	 * asked for after the change and a push may have been computed before it.
+	 */
+	private accepts(
+		held: StoreDiagnosticSlice,
+		incomingVersion: number | undefined,
+		incomingSource: LspDiagnosticSource
+	): boolean {
+		if (held.version !== undefined && incomingVersion !== undefined) {
+			return incomingVersion >= held.version;
+		}
+		if ((held.version === undefined) !== (incomingVersion === undefined)) return false;
+		return !(incomingSource === 'push' && held.source === 'pull');
 	}
 
 	private changed(): void {

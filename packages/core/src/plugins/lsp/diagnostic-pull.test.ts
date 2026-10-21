@@ -27,6 +27,20 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 	const uri = 'file:///repo/src/a.ts';
 	const server = 'typescript@/repo';
 
+	/** A push, computed against the given document version. */
+	function pushAt(version: number | undefined, message: string) {
+		return parsePublishDiagnostics(server, {
+			uri,
+			...(version === undefined ? {} : { version }),
+			diagnostics: [
+				{
+					range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } },
+					message
+				}
+			]
+		})!;
+	}
+
 	it('edit -> debounced pull -> fresh full report merges, and the pull entry wins over a prior push for the same (uri, server)', async () => {
 		const calls: RecordedCall[] = [];
 		const store = new LspDiagnosticsStore();
@@ -595,5 +609,86 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(store.revision).toBe(initialRev + 2);
 		expect(notifications).toBe(2);
 		expect(store.read(uri)).toHaveLength(0);
+	});
+
+	it('attributes a pull the version last synced to that server', async () => {
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			versionFor: () => 7,
+			request: () =>
+				Effect.succeed({
+					kind: 'full',
+					resultId: 'r1',
+					items: [
+						{
+							range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+							message: 'pulled'
+						}
+					]
+				})
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
+
+		// A push computed against the same revision is not older, so it lands.
+		// It could not land at all if the pull had named no revision, because a
+		// result that names a revision never displaces one that names none.
+		store.publish(pushAt(7, 'pushed at 7'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 7']);
+
+		// A push computed against an older revision is refused, and that is what
+		// pins the pull's revision at 7: at 6 the version-6 push would have
+		// landed, and at 8 the version-7 push would have been refused.
+		store.publish(pushAt(6, 'pushed at 6'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 7']);
+	});
+
+	it('reads the version when the pull is computed, not when it was armed', async () => {
+		let version = 3;
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			versionFor: () => version,
+			request: () =>
+				Effect.succeed({
+					kind: 'full',
+					resultId: 'r1',
+					items: [
+						{
+							range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+							message: 'pulled'
+						}
+					]
+				})
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					// The document moves on while the pull waits out its debounce.
+					version = 4;
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		// The pull was computed against version 4, so a push at 4 is not older
+		// and lands, and a push at 3 is older and is refused.
+		store.publish(pushAt(4, 'pushed at 4'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 4']);
+
+		store.publish(pushAt(3, 'pushed at 3'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 4']);
 	});
 });

@@ -307,6 +307,7 @@ export class LspRuntime
 			const store = options.diagnostics;
 			this.pullCoordinator = new DiagnosticPullCoordinator({
 				store,
+				versionFor: (server, uri) => this.syncedVersion(server, uri),
 				request: (server, uri, previousResultId) =>
 					Effect.tryPromise({
 						try: () => {
@@ -970,6 +971,25 @@ export class LspRuntime
 		const entry = this.servers.get(server);
 		if (!entry || entry.state !== 'running' || !entry.pullSupported) return;
 		Effect.runFork(coordinator.notifyEdit(uri, server).pipe(Effect.provideService(Scope.Scope, scope)));
+	}
+
+	/**
+	 * The document version last synced to one server.
+	 *
+	 * The runtime counts a version per document, and a document is served by
+	 * one server at a time, so the version the server holds is the one this
+	 * document has reached. A pull is computed against that version, and the
+	 * store needs it to tell a pull that is still fresh from one that was
+	 * already in flight when the text changed.
+	 *
+	 * Undefined when the document was never synced to that server, which
+	 * names no revision rather than a wrong one.
+	 */
+	private syncedVersion(server: string, uri: string): number | undefined {
+		const document = this.openDocuments.get(uri);
+		if (!document) return undefined;
+		if (this.documentServers.get(uri) !== server) return undefined;
+		return document.version;
 	}
 
 	private resolvePlatform(): LspPlatform | undefined {

@@ -2,7 +2,8 @@ import { describe, it, expect } from 'bun:test';
 import {
 	LspDiagnosticsStore,
 	parsePublishDiagnostics,
-	severityFromCode
+	severityFromCode,
+	type LspDiagnostic
 } from './diagnostics';
 import { toFileUri } from './root';
 
@@ -21,8 +22,20 @@ function range(line: number, from: number, to: number) {
 	return { start: { line, character: from }, end: { line, character: to } };
 }
 
-function report(uri: string, diagnostics: unknown[], server = 'typescript@/repo') {
-	return parsePublishDiagnostics(server, { uri, diagnostics });
+function report(uri: string, diagnostics: unknown[], server = 'typescript@/repo', version?: number) {
+	return parsePublishDiagnostics(server, { uri, diagnostics, version });
+}
+
+/** One finding, as a pull files it: the pull's answers are not protocol payloads. */
+function finding(server: string, message: string): LspDiagnostic {
+	return {
+		server,
+		range: range(0, 0, 1),
+		severity: 'error',
+		message,
+		source: null,
+		code: null
+	};
 }
 
 describe('publishDiagnostics payloads (#266)', () => {
@@ -91,6 +104,17 @@ describe('publishDiagnostics payloads (#266)', () => {
 
 	it('reads a clean report as an empty list rather than a failure', () => {
 		expect(report(A, [])).toEqual({ uri: A, server: 'typescript@/repo', diagnostics: [] });
+	});
+
+	it('keeps the document version the protocol carried, and names none when it carried none', () => {
+		expect(parsePublishDiagnostics('typescript@/repo', { uri: A, version: 7, diagnostics: [] })?.version).toBe(7);
+		expect(parsePublishDiagnostics('typescript@/repo', { uri: A, diagnostics: [] })?.version).toBeUndefined();
+		// A version that is not a number names no revision, rather than a
+		// revision of nonsense: the server said nothing about which text it
+		// looked at, and the store has to be able to tell that apart.
+		expect(
+			parsePublishDiagnostics('typescript@/repo', { uri: A, version: 'seven', diagnostics: [] })?.version
+		).toBeUndefined();
 	});
 });
 
@@ -178,5 +202,99 @@ describe('Diagnostics store (#266)', () => {
 		unsubscribe();
 		store.publish(report(A, [{ range: range(0, 0, 1), message: 'again' }])!);
 		expect(seen).toHaveLength(2);
+	});
+});
+
+/**
+ * The store orders two results for one path and one server by the document
+ * revision they were computed against (#353).
+ *
+ * A result that was already in flight when the text changed was computed
+ * against the text before the change, so it lands on top of a fresher answer
+ * and the file shows findings for text that is no longer there. The revision
+ * each result names is what tells the store which of the two is the newer
+ * word.
+ */
+describe('Diagnostics store, ordered by document revision (#353)', () => {
+	const server = 'typescript@/repo';
+
+	it('refuses a result computed against an older revision, and the newer one stays', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 3' }], server, 3)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('takes a result computed against a newer revision', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 3' }], server, 3)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('refuses a stale push against a fresh pull', () => {
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 3' }], server, 3)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('refuses a stale pull against a fresh push', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 5' }], server, 5)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 3')], version: 3 });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pushed at 5']);
+	});
+
+	it('a result that names no revision does not displace one that names a revision', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'no revision' }], server)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('a result that names a revision does not displace one that names no revision', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['no revision']);
+	});
+
+	it('a refused result leaves the store\'s revision unchanged, so a view is not woken', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		const revision = store.revision;
+		let woken = 0;
+		store.subscribe(() => {
+			woken++;
+		});
+
+		// A stale push and a stale pull are both refused, and a refused result
+		// is not a change.
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 3' }], server, 3)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 3')], version: 3 });
+
+		expect(store.revision).toBe(revision);
+		expect(woken).toBe(0);
+	});
+
+	it('a push-only server keeps the per-server slices it had', () => {
+		// A server that names no revision is unaffected by the rule: its next
+		// push replaces its own slice and leaves the other server's alone.
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'from ts' }], 'ts@/repo')!);
+		store.publish(report(A, [{ range: range(2, 0, 3), message: 'from lint' }], 'lint@/repo')!);
+
+		store.publish(report(A, [{ range: range(4, 0, 1), message: 'from ts again' }], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['from ts again', 'from lint']);
+
+		store.publish(report(A, [], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['from lint']);
 	});
 });
