@@ -70,7 +70,14 @@ export interface LspPublishDiagnostics {
 	readonly version?: number;
 }
 
-export type LspDiagnosticSource = 'push' | 'pull';
+/**
+ * Which answer about a path filled a slice.
+ *
+ * `pull` is the document pull (`textDocument/diagnostic`), `workspace-pull` is
+ * the workspace pull (`workspace/diagnostic`), and `push` is what the server
+ * sent unasked.
+ */
+export type LspDiagnosticSource = 'push' | 'pull' | 'workspace-pull';
 
 export interface LspPulledDiagnostics {
 	readonly uri: string;
@@ -214,6 +221,22 @@ interface DiagnosticOrderMeta {
 	readonly version: number | undefined;
 }
 
+/**
+ * The order the sources sit in, for the cases the revision cannot decide.
+ *
+ * A document pull is asked for right after the change, so the server computed
+ * it against at least the revision the editor last synced. A workspace pull is
+ * asked on an idle cadence and may describe the file as it is on disk. A push
+ * is whatever the server had when it sent it, and may predate the last edit
+ * entirely. So the order is the document pull, then the workspace pull, then
+ * the push, which is the order the protocol states (ADR 0029).
+ */
+const SOURCE_RANK: Record<LspDiagnosticSource, number> = {
+	push: 0,
+	'workspace-pull': 1,
+	pull: 2
+};
+
 export class LspDiagnosticsStore {
 	private readonly byUri = new Map<string, Map<string, StoreDiagnosticSlice>>();
 	private readonly orderMeta = new Map<string, Map<string, DiagnosticOrderMeta>>();
@@ -226,30 +249,7 @@ export class LspDiagnosticsStore {
 	 * second server serving the same file keeps its marks.
 	 */
 	publish(report: LspPublishDiagnostics): void {
-		const current = this.orderMeta.get(report.uri)?.get(report.server);
-		// Refused before anything else, so a report the store does not take
-		// changes nothing: the slice stays as it is, the revision does not
-		// move, and a view that re-reads on every notification is not woken.
-		if (current && !this.accepts(current, report.version, 'push')) return;
-		this.recordOrder(report.uri, report.server, 'push', report.version);
-		const existing = this.byUri.get(report.uri);
-		if (report.diagnostics.length === 0) {
-			// Nothing filed and nothing to clear: not a change, so a view that
-			// re-reads on every notification is not woken for a file no server has
-			// an opinion about.
-			if (!existing?.delete(report.server)) return;
-			if (existing.size === 0) this.byUri.delete(report.uri);
-			this.changed();
-			return;
-		}
-		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
-		servers.set(report.server, {
-			diagnostics: report.diagnostics,
-			source: 'push',
-			version: report.version
-		});
-		this.byUri.set(report.uri, servers);
-		this.changed();
+		this.file(report.uri, report.server, report.diagnostics, 'push', report.version);
 	}
 
 	/**
@@ -258,23 +258,63 @@ export class LspDiagnosticsStore {
 	 * An empty diagnostics list clears that server's slice with clean-file semantics.
 	 */
 	pull(report: LspPulledDiagnostics): void {
-		const current = this.orderMeta.get(report.uri)?.get(report.server);
-		if (current && !this.accepts(current, report.version, 'pull')) return;
-		this.recordOrder(report.uri, report.server, 'pull', report.version);
-		const existing = this.byUri.get(report.uri);
-		if (report.diagnostics.length === 0) {
-			if (!existing?.delete(report.server)) return;
-			if (existing.size === 0) this.byUri.delete(report.uri);
+		this.file(report.uri, report.server, report.diagnostics, 'pull', report.version);
+	}
+
+	/**
+	 * Files diagnostics obtained via workspace pull (workspace/diagnostic).
+	 *
+	 * The same shape as a document pull and the same store: a workspace report
+	 * covers many paths at once, so it arrives here one path at a time.
+	 *
+	 * A workspace report names no revision, and it says why. The protocol does
+	 * carry a version on a workspace report, but it is not the editor's
+	 * document version: for a path the editor has open the server names the
+	 * editor's own version, so the comparison would tie and decide nothing,
+	 * and for a path nobody opened the number is the server's own, so two
+	 * different counters would refuse a fresh report as stale. So a workspace
+	 * report is ordered against a document pull by source alone, and the
+	 * document pull keeps a path an open buffer owns (ADR 0029, #308).
+	 */
+	workspacePull(report: LspPulledDiagnostics): void {
+		this.file(report.uri, report.server, report.diagnostics, 'workspace-pull', undefined);
+	}
+
+	/**
+	 * Files one server's answer for one path, unless the slice it would replace
+	 * holds a newer word.
+	 *
+	 * A dropped report changes nothing: the revision does not move, so a view
+	 * that re-reads on every notification is not woken for a result it did not
+	 * take. A report that carries no diagnostics clears that server's slice and
+	 * nothing else, on the terms a clean push always had.
+	 */
+	private file(
+		uri: string,
+		server: string,
+		diagnostics: readonly LspDiagnostic[],
+		source: LspDiagnosticSource,
+		version: number | undefined
+	): void {
+		const current = this.orderMeta.get(uri)?.get(server);
+		// Refused before anything else, so a report the store does not take
+		// changes nothing: the slice stays as it is, the revision does not
+		// move, and a view that re-reads on every notification is not woken.
+		if (current && !this.accepts(current, version, source)) return;
+		this.recordOrder(uri, server, source, version);
+		const existing = this.byUri.get(uri);
+		if (diagnostics.length === 0) {
+			// Nothing filed and nothing to clear: not a change, so a view that
+			// re-reads on every notification is not woken for a file no server has
+			// an opinion about.
+			if (!existing?.delete(server)) return;
+			if (existing.size === 0) this.byUri.delete(uri);
 			this.changed();
 			return;
 		}
 		const servers = existing ?? new Map<string, StoreDiagnosticSlice>();
-		servers.set(report.server, {
-			diagnostics: report.diagnostics,
-			source: 'pull',
-			version: report.version
-		});
-		this.byUri.set(report.uri, servers);
+		servers.set(server, { diagnostics, source, version });
+		this.byUri.set(uri, servers);
 		this.changed();
 	}
 
@@ -373,11 +413,11 @@ export class LspDiagnosticsStore {
 	 *
 	 * Where the revisions cannot be compared — one of them names none, or
 	 * neither does — the source decides as well, and it decides whichever way
-	 * round the two sit: a pull is the newer word for a path and a push is
-	 * not, so a pull takes the slice from a push and a push never takes it
-	 * from a pull. The protocol's version is optional, so a server that sends
-	 * none has said nothing about which text it looked at, and the source
-	 * order is what says so.
+	 * round the two sit: a pull is the newer word for a path, a workspace pull
+	 * is the next, and a push is the oldest of the three, so a pull takes the
+	 * slice from a push and a push never takes it from a pull. The protocol's
+	 * version is optional, so a server that sends none has said nothing about
+	 * which text it looked at, and the source order is what says so.
 	 *
 	 * The cost is that a result that names no revision is not held back by
 	 * one that does: two pushes are ordered by arrival rather than by
@@ -423,9 +463,9 @@ export class LspDiagnosticsStore {
 			return incomingVersion > held.version;
 		}
 		// One of them names no revision, so the revisions cannot be compared and
-		// the source decides, as ADR 0029 decided: a pull is the newer word for a
-		// path, a push is not.
-		return !(incomingSource === 'push' && held.source === 'pull');
+		// the source decides, as ADR 0029 decided: the document pull is the newer
+		// word for a path, the workspace pull is next, and the push is the oldest.
+		return SOURCE_RANK[incomingSource] >= SOURCE_RANK[held.source];
 	}
 
 	private changed(): void {
