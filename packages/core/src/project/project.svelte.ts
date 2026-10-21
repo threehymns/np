@@ -84,9 +84,7 @@ export class Project {
 			this.worktrees[0]?.dispose();
 			this.worktrees = [];
 			this.projectTree.attachToWorktree(null);
-			if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
-				(this._searchBackend as any).attachToWorktree(null);
-			}
+			this._searchBackend?.attachToWorktree?.(null);
 			return;
 		}
 		const current = this.worktrees[0];
