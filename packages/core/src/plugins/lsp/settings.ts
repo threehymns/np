@@ -12,7 +12,7 @@ import type { LspDiagnosticSeverity } from './diagnostics';
  * where a user reading `editor` could not tell which keys the editor answers
  * for and which the language server does.
  *
- * What is here is about how findings are *shown*, not about whether a server
+ * What is here is about how diagnostics are *shown*, not about whether a server
  * runs: `editor.lsp` already decides that, per language, and it lives with the
  * editor because it is a question about the document rather than about the
  * plugin's own display. These two are the plugin's own display choices, and a
@@ -20,10 +20,10 @@ import type { LspDiagnosticSeverity } from './diagnostics';
  */
 export const LSP_SETTINGS_NAMESPACE = 'lsp';
 
-/** Whether findings are painted into the text. */
+/** Whether diagnostics are painted into the text. */
 export const INLINE_DIAGNOSTICS_SETTING = 'inline_diagnostics';
 
-/** The most severe finding any surface shows. */
+/** The most severe diagnostic any surface shows. */
 export const MAX_SEVERITY_SETTING = 'max_severity';
 
 /**
@@ -61,7 +61,7 @@ export const LSP_SCHEMA: SettingNamespaceSchema = {
 			default: true,
 			title: 'Inline Diagnostics',
 			description:
-				'Underline findings in the text. Off leaves the gutter marks and the diagnostics list untouched',
+				'Underline diagnostics in the text. Off leaves the gutter marks and the diagnostics list untouched',
 			control: 'toggle'
 		},
 		max_severity: {
@@ -69,7 +69,7 @@ export const LSP_SCHEMA: SettingNamespaceSchema = {
 			default: 'hint',
 			title: 'Maximum Severity',
 			description:
-				'The most severe finding shown, everywhere findings are shown. Hints show everything, errors show only errors',
+				'The most severe diagnostic shown, everywhere diagnostics are shown. Hints show everything, errors show only errors',
 			enum: DIAGNOSTIC_SEVERITIES,
 			control: 'select'
 		}

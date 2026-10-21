@@ -118,14 +118,14 @@ function readerFor(values: Record<string, unknown>): SettingsRead {
 
 /**
  * A gutter mark as the test reads it: the line, the severity, how many
- * findings it stands for, and what they say.
+ * diagnostics it stands for, and what they say.
  */
 function markOf(mark: DiagnosticGutterMark) {
 	return {
 		line: mark.line,
 		severity: mark.severity,
 		count: mark.count,
-		messages: mark.findings.map((finding) => finding.message)
+		messages: mark.findings.map((diagnostic) => diagnostic.message)
 	};
 }
 
@@ -444,7 +444,7 @@ describe('The display controls (#310)', () => {
 		const editor = editorFor(store, '/repo/a.ts', DOC, readerFor({ inline_diagnostics: false }));
 
 		expect(marksIn(editor.state)).toEqual([]);
-		// The gutter is its own surface: the toggle says whether findings are
+		// The gutter is its own surface: the toggle says whether diagnostics are
 		// painted into the text, and says nothing about the line markers.
 		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
 			{ line: 0, severity: 'error', count: 1, messages: ['a is broken'] }
@@ -493,7 +493,7 @@ describe('The display controls (#310)', () => {
 		expect(gutterMarksIn(editor.state).map((mark) => mark.severity)).toEqual(['error', 'hint']);
 	});
 
-	it('marks the line a finding is on, with the findings it stands for', () => {
+	it('marks the line a diagnostic is on, with the diagnostics it stands for', () => {
 		const store = new LspDiagnosticsStore();
 		publish(store, toFileUri('/repo/a.ts'), [
 			{ range: range(0, 0, 5), severity: 2, message: 'first' },
@@ -504,7 +504,7 @@ describe('The display controls (#310)', () => {
 		const editor = editorFor(store, '/repo/a.ts', DOC);
 
 		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
-			// The line's worst finding, and how many it carries.
+			// The line's worst diagnostic, and how many it carries.
 			{ line: 0, severity: 'error', count: 2, messages: ['first', 'second'] },
 			{ line: 1, severity: 'info', count: 1, messages: ['third'] }
 		]);
@@ -518,7 +518,7 @@ describe('The display controls (#310)', () => {
 		const editor = editorFor(store, '/repo/a.ts', DOC);
 		expect(gutterMarksIn(editor.state).map((mark) => mark.line)).toEqual([1]);
 
-		// A line typed above pushes the finding's line down. The mark follows
+		// A line typed above pushes the diagnostic's line down. The mark follows
 		// the text it described rather than staying on the number the server
 		// named, the same rule the inline marks follow (ADR 0022).
 		const inserted = 'let x = 0;\n';
@@ -532,7 +532,7 @@ describe('The display controls (#310)', () => {
 	it('shows what a push-only server said, unchanged', () => {
 		// A server that answers no pull publishes and nothing else. The display
 		// reads the merged store (ADR 0029) and the merged store holds exactly
-		// what the push carried, so the marks are the server's findings and not
+		// what the push carried, so the marks are the server's diagnostics and not
 		// a narrower version of them.
 		const store = new LspDiagnosticsStore();
 		publish(store, toFileUri('/repo/a.ts'), [

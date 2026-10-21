@@ -75,9 +75,9 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	host.provideService(HOVER_COORDINATOR_SERVICE_KEY, runtime);
 	host.provideService(COMPLETION_RESOLVE_SERVICE_KEY, runtime);
 
-	// The plugin's own settings namespace (ADR 0014, issue #310): how findings
+	// The plugin's own settings namespace (ADR 0014, issue #310): how diagnostics
 	// are shown, which is a question about this plugin's display rather than
-	// about the editor the findings are painted in.
+	// about the editor the diagnostics are painted in.
 	host.registerSettingSchema(manifest.id, LSP_SCHEMA);
 
 	// One closure for both events: opening a document and changing one are the
@@ -94,7 +94,7 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 		host.on('document:changed', syncDocumentEvent, manifest.id)
 	];
 
-	// The display reads the store, and the store is the only source of findings
+	// The display reads the store, and the store is the only source of diagnostics
 	// (ADR 0022). The settings reader is resolved per use rather than captured,
 	// so an app that publishes it after the plugin is active still gets it, and
 	// an app that publishes none gets the documented defaults.

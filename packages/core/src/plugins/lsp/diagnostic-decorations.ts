@@ -45,7 +45,7 @@ import type {
  * What is drawn is decided elsewhere, in `diagnostic-display.ts`: this file
  * turns a plan into marks. The split is the same one the store makes between
  * the protocol and the display (ADR 0022), one layer down — the plan says
- * which findings are painted and which the gutter carries, and this file knows
+ * which diagnostics are painted and which the gutter carries, and this file knows
  * only about offsets and classes.
  */
 export const LSP_DIAGNOSTIC_DECORATION_ID = 'lsp-diagnostics';
@@ -86,7 +86,7 @@ export interface DiagnosticGutterPlacement {
 	readonly offset: number;
 	readonly severity: LspDiagnosticSeverity;
 	readonly count: number;
-	/** The findings the mark stands for. */
+	/** The diagnostics the mark stands for. */
 	readonly findings: readonly LspDiagnostic[];
 }
 
@@ -98,7 +98,7 @@ export interface DiagnosticDisplay {
 	readonly stamp: string;
 	/** The inline marks. */
 	readonly marks: DecorationSet;
-	/** The gutter marks, one per line that carries a finding. */
+	/** The gutter marks, one per line that carries a diagnostic. */
 	readonly gutter: readonly DiagnosticGutterPlacement[];
 }
 
@@ -146,7 +146,7 @@ export function diagnosticGutterClass(severity: LspDiagnosticSeverity): string {
 }
 
 /**
- * The gutter marks the editor would draw, one per line that carries a finding.
+ * The gutter marks the editor would draw, one per line that carries a diagnostic.
  *
  * The line is read back from the offset the mark is anchored at, so a mark
  * that followed the text through an edit is reported on the line it is now on.
@@ -200,7 +200,7 @@ export function createDiagnosticEditorContribution(source: LspDiagnosticSource):
 }
 
 /**
- * The gutter half of the display: one mark per line that carries a finding.
+ * The gutter half of the display: one mark per line that carries a diagnostic.
  *
  * A separate contribution rather than another extension in the decoration one,
  * because the host keeps the two in different compartments and a gutter
@@ -246,10 +246,10 @@ const diagnosticGutterExtension = gutter({
 });
 
 /**
- * The mark for one line, or nothing when the line carries no finding.
+ * The mark for one line, or nothing when the line carries no diagnostic.
  *
  * Two marks can end up on one line when the text between them was deleted, so
- * the line shows its worst finding and the sum of its findings rather than
+ * the line shows its worst diagnostic and the sum of its diagnostics rather than
  * whichever mark happened to be first.
  */
 function markForLine(
@@ -273,7 +273,7 @@ function markForLine(
 
 /**
  * The mark in the gutter: a dot in the line's severity, carrying the
- * findings' messages as its tooltip.
+ * diagnostics' messages as its tooltip.
  */
 class LspDiagnosticGutterMarker extends GutterMarker {
 	readonly mark: DiagnosticGutterMark;
@@ -289,7 +289,7 @@ class LspDiagnosticGutterMarker extends GutterMarker {
 			other.mark.count === this.mark.count &&
 			other.mark.findings.length === this.mark.findings.length &&
 			other.mark.findings.every(
-				(finding, index) => finding === this.mark.findings[index]
+				(diagnostic, index) => diagnostic === this.mark.findings[index]
 			)
 		);
 	}
@@ -303,17 +303,17 @@ class LspDiagnosticGutterMarker extends GutterMarker {
 		span.className = diagnosticGutterClass(this.mark.severity);
 		span.textContent = gutterMarkText(this.mark);
 		// The same text the inline mark carries, because the two stand for the
-		// same finding: a user who reads one wants to read the other.
+		// same diagnostic: a user who reads one wants to read the other.
 		span.setAttribute(
 			'title',
-			this.mark.findings.map((finding) => diagnosticTitle(finding)).join('\n')
+			this.mark.findings.map((diagnostic) => diagnosticTitle(diagnostic)).join('\n')
 		);
 		return span;
 	}
 }
 
 /**
- * The text of the mark: a dot, and how many findings it stands for when there
+ * The text of the mark: a dot, and how many diagnostics it stands for when there
  * is more than one.
  */
 function gutterMarkText(mark: DiagnosticGutterMark): string {
@@ -357,10 +357,10 @@ function readDisplay(
 /**
  * The gutter marks, anchored at the line they stand for.
  *
- * A mark is anchored at the *start* of its line rather than at the finding's
+ * A mark is anchored at the *start* of its line rather than at the diagnostic's
  * first character, because a line start is a stable place: it moves with the
  * text above it and stays a line start when the text below it is edited. The
- * finding's own offset is not stable in the same way, and a mark that jumped
+ * diagnostic's own offset is not stable in the same way, and a mark that jumped
  * to a character the server never named is the bug the inline marks avoid by
  * mapping (ADR 0022).
  */
