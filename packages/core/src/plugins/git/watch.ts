@@ -20,8 +20,11 @@ import type { WorkspaceGitState } from './lifecycle';
  *
  * Push and fetch only move remote-tracking refs, so those are watched too —
  * otherwise the unpushed indicator would stay stale after a terminal push.
- * Staging churn (`index`), commit message drafts (`COMMIT_EDITMSG`), tags,
- * and object store writes are deliberately ignored.
+ * A tag created in the terminal writes only `refs/tags/<name>`, and the
+ * History tab shows a tag chip on the tagged commit, so loose tag refs are
+ * watched for the same reason.
+ * Staging churn (`index`), commit message drafts (`COMMIT_EDITMSG`), and
+ * object store writes are deliberately ignored.
  */
 function toRelativePath(eventPath: string, dir?: string): string {
 	const normEvent = eventPath.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -38,13 +41,14 @@ function isWorktreeHistoryPath(relPath: string): boolean {
 	return relPath === 'HEAD';
 }
 
-/** Shared-ref history signals: branch refs, packed refs, remote-tracking refs. */
+/** Shared-ref history signals: branch refs, packed refs, remote-tracking refs, tags. */
 function isSharedRefHistoryPath(relPath: string): boolean {
 	return (
 		relPath === 'packed-refs' ||
 		relPath === 'refs/heads' ||
 		relPath.startsWith('refs/heads/') ||
-		relPath.startsWith('refs/remotes/')
+		relPath.startsWith('refs/remotes/') ||
+		relPath.startsWith('refs/tags/')
 	);
 }
 
@@ -121,8 +125,9 @@ export interface StartGitWatcherOptions extends GitWatchClient {
  * watch the right directory, and additionally resolves `--git-common-dir`:
  * in a linked worktree the branch refs live in the common dir, not the
  * per-worktree dir, so both are subscribed when they differ. Filters events
- * to `HEAD`, `refs/heads/*`, `packed-refs`, and `refs/remotes/*`, coalescing
- * bursts through debouncing and invoking `onHistoryChange`.
+ * to `HEAD`, `refs/heads/*`, `packed-refs`, `refs/remotes/*`, and
+ * `refs/tags/*`, coalescing bursts through debouncing and invoking
+ * `onHistoryChange`.
  *
  * Guarded for desktop only: on web (where `window.electronAPI` is absent) this is
  * a safe no-op that returns null.

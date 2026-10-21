@@ -48,8 +48,14 @@ describe('isGitHistoryWatchedPath (Ticket #349 / ADR 0027)', () => {
 		expect(isGitHistoryWatchedPath('refs/remotes/origin/feature-x', gitDir)).toBe(true);
 	});
 
-	it('ignores non-branch refs and object store writes', () => {
-		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/tags/v1.0.0', gitDir)).toBe(false);
+	it('matches refs/tags so a tag created in the terminal refreshes the History tab', () => {
+		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/tags/v1.0.0', gitDir)).toBe(true);
+		expect(isGitHistoryWatchedPath('refs/tags/release/2024', gitDir)).toBe(true);
+	});
+
+	it('ignores refs that cannot change the History tab, and object store writes', () => {
+		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/stash', gitDir)).toBe(false);
+		expect(isGitHistoryWatchedPath('/home/user/project/.git/refs/notes/commits', gitDir)).toBe(false);
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904', gitDir)).toBe(false);
 		expect(isGitHistoryWatchedPath('/home/user/project/.git/logs/HEAD', gitDir)).toBe(false);
 	});
@@ -155,6 +161,34 @@ describe('startGitWatcher (Ticket #349 / ADR 0027)', () => {
 
 		await new Promise((r) => setTimeout(r, 50));
 		expect(changeCalls).toBe(0);
+
+		if (stop) await stop();
+	});
+
+	it('refreshes the history when a loose tag ref is written', async () => {
+		let eventCallback: any = null;
+		let changeCalls = 0;
+		const mockGitRun = async () => ({ code: 0, stdout: '.git\n', stderr: '' });
+		const mockWatch = (_dirPath: string, cb: any) => {
+			eventCallback = cb;
+			return () => {};
+		};
+
+		const stop = await startGitWatcher({
+			workingDir: '/workspace/project',
+			onHistoryChange: () => {
+				changeCalls++;
+			},
+			gitRun: mockGitRun,
+			watchDirectory: mockWatch,
+			debounceMs: 20
+		});
+
+		// `git tag v1.0.0` writes only .git/refs/tags/v1.0.0, and the History
+		// tab shows a tag chip on the tagged commit.
+		eventCallback([{ path: '/workspace/project/.git/refs/tags/v1.0.0', type: 'create' }]);
+		await new Promise((r) => setTimeout(r, 40));
+		expect(changeCalls).toBe(1);
 
 		if (stop) await stop();
 	});

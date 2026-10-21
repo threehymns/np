@@ -25,5 +25,8 @@ rejected too, because it leaves the views stale for the CLI commits that drive t
   directories are subscribed to when they differ.
 - Remote-tracking refs are watched too. A push or a fetch only moves `refs/remotes/*`, so
   without them the unpushed indicator would stay wrong after a terminal push.
+- Loose tag refs are watched too. A tag created in the terminal writes only
+  `refs/tags/<name>`, and the History tab shows a tag chip on the tagged commit, so without
+  them the chips would stay wrong after a terminal tag.
 - `packed-refs` churn on gc and `index` writes on staging also fire the watcher. Debouncing
   keeps the refetches cheap, and the filter drops the events that cannot change the history.
