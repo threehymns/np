@@ -86,7 +86,7 @@ A searchable dialog interface allowing the user to search and run registered act
 
 ## Diagnostics
 The diagnostics a Language Server reports about the project, gathered in one place.
-- **Diagnostic**: One problem a server reported: a severity, a message, a source and code, and a position in a file. Read out of the **Merged Diagnostics Store**, never from a server directly. _Avoid_: finding, problem
+- **Diagnostic**: One issue a server reported: a severity, a message, a source and code, and a position in a file. Read out of the **Merged Diagnostics Store**, never from a server directly. _Avoid_: finding, problem
 - **Severity**: How serious a Diagnostic is: error, warning, info, or hint. The order of the words is the order of the severity — the first is the most serious.
 - **Merged Diagnostics Store**: The LSP plugin's single store of Diagnostics, holding what every server reported, pushed or pulled, and what the editor's underlines read.
 - **Diagnostics Tab**: The project-wide view over the Merged Diagnostics Store: one section per file, each Diagnostic with the lines around it. A host-owned tab, not a Document.
