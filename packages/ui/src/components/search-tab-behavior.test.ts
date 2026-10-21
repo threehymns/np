@@ -4,6 +4,7 @@ import {
 	hasDirtyResults,
 	isResultFileDirty,
 	shouldFocusSearchInput,
+	shouldRerunSearchOnSnapshotChange,
 	shouldRunSearchOnKeydown,
 	shouldUndoReplaceAllOperation,
 	searchStatusText,
@@ -184,6 +185,48 @@ describe("Search tab truncation notice (Issue #337)", () => {
 	it("names the cap that was hit", () => {
 		expect(truncationCapText("files")).toBe("5,000 files");
 		expect(truncationCapText("matches")).toBe("10,000 matches");
+	});
+});
+
+describe("Search tab snapshot re-run decision (Issue #355)", () => {
+	it("re-runs the search when the file snapshot moved on", () => {
+		// The results describe the files as they were when the search ran, so
+		// a snapshot that moved on leaves them describing content the project
+		// no longer has.
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 4,
+				snapshotVersion: 5,
+				query: "needle"
+			})
+		).toBe(true);
+	});
+
+	it("does not re-run when the snapshot version did not change", () => {
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 5,
+				snapshotVersion: 5,
+				query: "needle"
+			})
+		).toBe(false);
+	});
+
+	it("does not re-run a search that has no query", () => {
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 4,
+				snapshotVersion: 5,
+				query: ""
+			})
+		).toBe(false);
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 4,
+				snapshotVersion: 5,
+				query: "   "
+			})
+		).toBe(false);
 	});
 });
 
