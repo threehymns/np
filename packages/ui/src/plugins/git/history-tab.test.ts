@@ -95,9 +95,10 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 
 		it("maintains strictly newest-first commit ordering without grouping unpushed commits", () => {
 			const source = historyTabSource();
-			// Ordering comes from the commits array as passed to the virtual list (#348);
+			// Ordering comes from the commits array as rendered (#348);
 			// the list must not partition or regroup unpushed commits.
 			expect(source).toContain("items={commits}");
+			expect(source).toContain("getKey={(commit) => commit.sha}");
 			expect(source).not.toContain("unpushedCommits");
 			expect(source).not.toContain("groupBy");
 		});
@@ -120,6 +121,17 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 			expect(source).toContain("Copy subject");
 			expect(source).toMatch(/copySha/);
 			expect(source).toMatch(/copySubject/);
+		});
+
+		it("uses one context menu for the whole list, not one per row", () => {
+			const source = historyTabSource();
+			// A trigger per row means one bits-ui menu tree per commit, which
+			// is most of the cost of rendering a long history. The shared menu
+			// resolves its target from the right-clicked row instead.
+			expect(source.match(/<ContextMenu\.Root>/g)?.length).toBe(1);
+			expect(source).toContain("activeCommit");
+			expect(source).toContain("resolveContextTarget");
+			expect(source).toContain("disabled={!activeCommit}");
 		});
 
 		it("reserves double-click and Enter as no-ops for v2 detail view", () => {
@@ -161,18 +173,32 @@ describe("HistoryTab Component & GitPanel Peer Tab (Ticket #345)", () => {
 		});
 	});
 
-	describe("5. Virtualized list & windowing behavior (Ticket #348)", () => {
+	describe("5. Virtual list module & windowing behavior (Ticket #348)", () => {
 		const virtualListSource = () => {
 			const filePath = resolve(__dirname, "./VirtualList.svelte");
 			return readFileSync(filePath, "utf-8");
 		};
 
-		it("HistoryTab.svelte delegates rendering to VirtualList rather than an unbounded each", () => {
+		it("HistoryTab.svelte renders the commits through the virtual list", () => {
 			const source = historyTabSource();
+			// The list is windowed: only the visible rows plus the overscan
+			// are in the DOM, which is what keeps a 10k-commit history
+			// responsive.
 			expect(source).toContain("VirtualList");
-			expect(source).not.toContain("{#each commits as commit (commit.sha)}");
+			expect(source).toContain("items={commits}");
+			expect(source).toContain("row={historyRow}");
 			expect(source).toContain('data-slot="history-list"');
 			expect(source).toContain('role="button"');
+		});
+
+		it("overscans far enough to cover a fast scroll", () => {
+			const source = historyTabSource();
+			// The compositor moves the pixels before the main thread updates
+			// the DOM, so the rendered window is always a frame behind the
+			// scroll position. The overscan is the only buffer covering that
+			// gap, and it has to be at least a frame's worth of scrolling.
+			expect(source).toContain("const OVERSCAN = 30");
+			expect(source).toContain("overscan={OVERSCAN}");
 		});
 
 		it("VirtualList renders only visible rows plus overscan for 10k items", async () => {
