@@ -1219,20 +1219,22 @@ export class LspRuntime
 		// revival path, where the stop is about to be followed by a start that should
 		// serve whatever is still waiting. The callers that mean it drops the waiters
 		// with the server say so themselves — see {@link LspRuntime.dropPending}.
-		// Whatever this server reported describes a process that is no longer
-		// watching, and a restart that kept them would look like it did nothing.
-		this.options.diagnostics?.dropServer(entry.server);
+		// The workspace loop goes with it, and before the process is told to
+		// go: a loop that was still running would ask a server that is on its
+		// way out about the workspace, which is the request the stop is meant
+		// to prevent. It also goes before the diagnostics are dropped, so a
+		// report that lands in the gap cannot repopulate a cleared store.
+		const workspace = this.workspaceCoordinator;
+		if (workspace) await Effect.runPromise(workspace.stop(entry.server));
 		// The pull side is forgotten with it: a restarted server must not get
 		// a previousResultId from the dead process, and a pending pull against
 		// the old process must not write after the stop.
 		const coordinator = this.pullCoordinator;
 		if (coordinator) await Effect.runPromise(coordinator.forgetServer(entry.server));
-		// The workspace loop goes with it, and before the process is told to
-		// go: a loop that was still running would ask a server that is on its
-		// way out about the workspace, which is the request the stop is meant
-		// to prevent.
-		const workspace = this.workspaceCoordinator;
-		if (workspace) await Effect.runPromise(workspace.stop(entry.server));
+		// Whatever this server reported describes a process that is no longer
+		// watching, and a restart that kept them would look like it did nothing.
+		// Dropped last, after every loop that could file is stopped.
+		this.options.diagnostics?.dropServer(entry.server);
 		this.statusChanged();
 		if (!client) return;
 		// The handshake is best-effort; a server that ignores `shutdown` is still
