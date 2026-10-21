@@ -385,6 +385,7 @@ export class AppState {
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
+	openSearchTab(query?: string) { return this.workspace.openSearchTab(query); }
 	async saveFile() {
 		// With a diff tab active there is no activeDocument; fall back to
 		// the focused diff pane's bound Document (#269). A real document

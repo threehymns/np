@@ -10,6 +10,8 @@ export interface DocumentViewState {
 	editorState?: any;
 	scrollPosition?: { top: number; left: number } | null;
 	pendingLineToScroll?: number | null;
+	pendingColumn?: number | null;
+	pendingMatchLength?: number | null;
 }
 
 export class DocumentSession {
@@ -71,6 +73,22 @@ export class DocumentSession {
 
 	set pendingLineToScroll(val: number | null) {
 		this.setViewState('default', { pendingLineToScroll: val });
+	}
+
+	get pendingColumn(): number | null {
+		return this.getViewState('default').pendingColumn ?? null;
+	}
+
+	set pendingColumn(val: number | null) {
+		this.setViewState('default', { pendingColumn: val });
+	}
+
+	get pendingMatchLength(): number | null {
+		return this.getViewState('default').pendingMatchLength ?? null;
+	}
+
+	set pendingMatchLength(val: number | null) {
+		this.setViewState('default', { pendingMatchLength: val });
 	}
 
 	private savedBaseline = $state('');
