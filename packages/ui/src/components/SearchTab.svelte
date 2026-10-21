@@ -728,14 +728,12 @@
 		<!-- Status and truncation bar -->
 		<div class="flex items-center justify-between text-xs px-0.5">
 			<div class="flex items-center gap-2">
-				{#if isSearching}
-					<span class="text-muted-foreground flex items-center gap-1.5" role="status">
+				<span class="text-muted-foreground flex items-center gap-1.5" role="status">
+					{#if isSearching}
 						<CircleNotchIcon class="size-3.5 animate-spin text-primary" />
-						<span>{searchStatus}</span>
-					</span>
-				{:else}
-					<span class="text-muted-foreground">{searchStatus}</span>
-				{/if}
+					{/if}
+					<span>{searchStatus}</span>
+				</span>
 			</div>
 
 			{#if isTruncated}
