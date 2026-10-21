@@ -92,6 +92,42 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(diagnostics[0].message).toBe('pulled');
 	});
 
+	it('a pull lands on a path the server pushed to without a version', async () => {
+		// The regression the middle branch introduced: a server that pushes
+		// without naming the text it looked at must not keep the file on its
+		// own answer, or the pull mechanism only works on the servers that
+		// happen to name a version on every publish.
+		const store = new LspDiagnosticsStore();
+		store.publish(pushAt(undefined, 'pushed without a version'));
+
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			versionFor: () => 7,
+			request: () =>
+				Effect.succeed({
+					kind: 'full',
+					resultId: 'r1',
+					items: [
+						{
+							range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } },
+							message: 'pulled'
+						}
+					]
+				})
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
+	});
+
 	it('unchanged report costs nothing and refreshes the result-id cache', async () => {
 		const calls: RecordedCall[] = [];
 		const store = new LspDiagnosticsStore();
@@ -640,17 +676,23 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 
 		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
 
-		// A push computed against the same revision is not older, so it lands.
-		// It could not land at all if the pull had named no revision, because a
-		// result that names a revision never displaces one that names none.
+		// A push computed against the same revision is refused, and so is one
+		// computed against an older revision: two answers about the same text
+		// are the same age rather than one older than the other, so the
+		// revision is a tie and the source decides — a push never replaces a
+		// pull.
 		store.publish(pushAt(7, 'pushed at 7'));
-		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 7']);
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
 
-		// A push computed against an older revision is refused, and that is what
-		// pins the pull's revision at 7: at 6 the version-6 push would have
-		// landed, and at 8 the version-7 push would have been refused.
 		store.publish(pushAt(6, 'pushed at 6'));
-		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 7']);
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
+
+		// A push computed against a newer revision takes the slice, and that
+		// is what pins the pull's revision at 7: a pull filed at 8 would have
+		// refused it, and a pull that named no revision at all would have
+		// refused it too, because a push never replaces a pull.
+		store.publish(pushAt(8, 'pushed at 8'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 8']);
 	});
 
 	it('reads the version when the pull is computed, not when it was armed', async () => {
@@ -683,12 +725,19 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 			)
 		);
 
-		// The pull was computed against version 4, so a push at 4 is not older
-		// and lands, and a push at 3 is older and is refused.
+		// The pull was computed against version 4: a push at 4 is the same
+		// revision, so the source decides and the push is refused, and a push
+		// at 3 is older and is refused too.
 		store.publish(pushAt(4, 'pushed at 4'));
-		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 4']);
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
 
 		store.publish(pushAt(3, 'pushed at 3'));
-		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 4']);
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pulled']);
+
+		// A push at a newer revision lands, and that is what pins the pull's
+		// revision at 4: a pull filed at 3 would have let the push at 4
+		// through, and a pull filed at 5 would have refused the push at 5.
+		store.publish(pushAt(5, 'pushed at 5'));
+		expect(store.read(uri).map((d) => d.message)).toEqual(['pushed at 5']);
 	});
 });

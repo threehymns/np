@@ -322,8 +322,11 @@ describe('Diagnostics in the editor through decoration contributions (#266)', ()
 				language: { name: 'TypeScript' }
 			}
 		});
+		// The method, not the bare name: the client's own initialize request
+		// names the publish capability it declares, so a loose match would
+		// find the handshake rather than the publish.
 		await waitFor(() => (host.getService<LspLogStore>(LSP_LOG_STORE_SERVICE_KEY)?.read({ kind: 'protocol' }) ?? [])
-			.some((entry) => entry.message.includes('publishDiagnostics')), {
+			.some((entry) => entry.message.includes('"method":"textDocument/publishDiagnostics"')), {
 			label: 'the server to publish diagnostics'
 		});
 

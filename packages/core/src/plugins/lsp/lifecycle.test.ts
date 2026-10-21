@@ -1487,7 +1487,9 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
  * The stub is the witness. It answers `textDocument/diagnostic` only when the
  * test asks it to (`--diagnostic-pull`), so the file's findings in the first
  * test can only have come from a pull, and the absence of a pull in the second
- * is the client's decision rather than the server's silence.
+ * is the client's decision rather than the server's silence. The third stages
+ * a server that does both — it pushes for every change and answers the pull —
+ * which is the case the store's rule is about.
  */
 describe('the diagnostic pull on edit (#307)', () => {
 	const edited = 'export const a = 2;\n';
@@ -1517,6 +1519,42 @@ describe('the diagnostic pull on edit (#307)', () => {
 		// The stub pushes nothing, so the only finding the file can hold is the
 		// one the pull answered with.
 		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+	});
+
+	it('a pull replaces a push that named no version, because the pull is the newer word', async () => {
+		// The server pushes for every change and names no version, so its
+		// diagnostics cannot be ordered against the pull's by revision. The
+		// source decides there (ADR 0029), and the pull is the newer word for
+		// the path: a server that says nothing about which text it looked at
+		// must not be able to keep the file on its own answer.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostics', '--diagnostic-pull']
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The server's own diagnostics arrived with the change and the pull
+		// answered after them, so the file shows the pull's answer and not the
+		// push that named no revision.
+		await waitFor(() => diagnostics.read(uri).some((d) => d.message === 'pulled diagnostic'), {
+			label: 'the pulled diagnostic'
+		});
 		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
 	});
 

@@ -61,10 +61,11 @@ export interface LspPublishDiagnostics {
 	readonly server: string;
 	readonly diagnostics: readonly LspDiagnostic[];
 	/**
-	 * The document version the server computed these findings against, when the
-	 * protocol carried one. Absent means the server named no revision: it said
-	 * nothing about which text it looked at, and the store cannot tell which of
-	 * two such answers is the newer one (ADR 0029).
+	 * The document version the server computed these diagnostics against, when
+	 * the protocol carried one. Absent means the server named no revision: it
+	 * said nothing about which text it looked at, so the revision cannot order
+	 * it against a result that names one, and the source does that instead
+	 * (ADR 0029).
 	 */
 	readonly version?: number;
 }
@@ -199,7 +200,7 @@ interface StoreDiagnosticSlice {
 	readonly diagnostics: readonly LspDiagnostic[];
 	readonly source: LspDiagnosticSource;
 	/**
-	 * The document version these findings were computed against, or undefined
+	 * The document version these diagnostics were computed against, or undefined
 	 * when the result named no revision.
 	 *
 	 * Not the store's own `revision` counter: that one says "something changed
@@ -342,33 +343,60 @@ export class LspDiagnosticsStore {
 	 * Whether an incoming result may take the place of the one already held
 	 * for a path and a server.
 	 *
-	 * The document revision decides, because two results for one path and one
-	 * server are two answers to the same question about the same text, and the
-	 * one computed against the older text is the older answer. The source
-	 * cannot say which that is: a pull that was already in flight when the text
-	 * changed was computed against the text before the change, and it lands
-	 * last.
+	 * The rule runs in the order the protocol states it: the revision decides
+	 * when both answers name one and they differ, and the source decides in
+	 * every other case.
 	 *
-	 * A result that names no revision never displaces one that names a
-	 * revision, and is never displaced by one. A result with no revision says
-	 * nothing about which text the server looked at, so it cannot claim to be
-	 * the newer answer; and a result with a revision cannot claim to be newer
-	 * than one that names none, because "I looked at version 5" and "I looked
-	 * at some version" are not comparable.
+	 * Two answers that name a revision are compared on it: the one computed
+	 * against the older text is the older answer, so the higher revision
+	 * takes the slice and the lower is refused. The source cannot say which
+	 * that is — a pull that was already in flight when the text changed was
+	 * computed against the text before the change, and it lands last.
 	 *
-	 * When neither names a revision, the source decides, as ADR 0029 decided:
-	 * a pull wins over a push for the same path and server, because a pull is
-	 * asked for after the change and a push may have been computed before it.
+	 * Two answers at the same revision are about the same text, so the
+	 * revision is a tie rather than a comparison, and the source decides: a
+	 * push never replaces a pull, and a pull replaces a push.
+	 *
+	 * Where the revisions cannot be compared — one of them names none, or
+	 * neither does — the source decides as well, and it decides whichever way
+	 * round the two sit: a pull is the newer word for a path and a push is
+	 * not, so a pull takes the slice from a push and a push never takes it
+	 * from a pull. The protocol's version is optional, so a server that sends
+	 * none has said nothing about which text it looked at, and the source
+	 * order is what says so.
+	 *
+	 * The cost is that a result that names no revision is not held back by
+	 * one that does: two pushes are ordered by arrival rather than by
+	 * revision, and a server that names a version on some publishes and not
+	 * on others gets the later one either way.
+	 *
+	 * The alternative — refusing a result that names no revision against one
+	 * that does, in either direction — was rejected because it makes the
+	 * pull inert for every server that pushes without a version: the push
+	 * names no revision, the pull does, neither displaces the other, the
+	 * slice stays revision-less, and every later revisioned result is
+	 * refused too. A server that says nothing about its text must not be
+	 * able to overwrite an answer that does, and the source order is what
+	 * says so.
 	 */
 	private accepts(
 		held: StoreDiagnosticSlice,
 		incomingVersion: number | undefined,
 		incomingSource: LspDiagnosticSource
 	): boolean {
-		if (held.version !== undefined && incomingVersion !== undefined) {
-			return incomingVersion >= held.version;
+		// Two answers that name a revision are compared on it: the one computed
+		// against the older text is the older answer. The same revision is not a
+		// comparison — both are about the same text — so the source decides there.
+		if (
+			held.version !== undefined &&
+			incomingVersion !== undefined &&
+			held.version !== incomingVersion
+		) {
+			return incomingVersion > held.version;
 		}
-		if ((held.version === undefined) !== (incomingVersion === undefined)) return false;
+		// One of them names no revision, so the revisions cannot be compared and
+		// the source decides, as ADR 0029 decided: a pull is the newer word for a
+		// path, a push is not.
 		return !(incomingSource === 'push' && held.source === 'pull');
 	}
 

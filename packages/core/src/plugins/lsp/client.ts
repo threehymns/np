@@ -297,6 +297,14 @@ export class LspClient {
 							// never names a related document, so the related
 							// half is false as well.
 							relatedDocumentSupport: false
+						},
+						publishDiagnostics: {
+							// The client reads the version a publish carries and
+							// orders the answers for one path by it (ADR 0029),
+							// so it says so: a server is entitled to leave the
+							// version out for a client that has not declared it
+							// reads one.
+							versionSupport: true
 						}
 						// No trigger-character declaration, for the same
 						// client-table reason from the other side: trigger

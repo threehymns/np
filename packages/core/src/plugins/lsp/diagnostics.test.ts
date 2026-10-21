@@ -250,20 +250,57 @@ describe('Diagnostics store, ordered by document revision (#353)', () => {
 		expect(store.read(A).map((d) => d.message)).toEqual(['pushed at 5']);
 	});
 
-	it('a result that names no revision does not displace one that names a revision', () => {
+	it('a result that names no revision does not displace a pull that names one', () => {
+		// The push says nothing about which text it looked at, and the source
+		// order says a push is not the newer word for a path a pull has spoken
+		// for.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('a result that names a revision displaces one that names no revision, when its source is the newer word', () => {
+		// The receipts for dropping the middle branch: a server that pushes
+		// without naming a version must not be able to keep the file on its own
+		// answer, or the pull mechanism only works on the servers that happen
+		// to name a version on every publish.
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('a push computed against the same revision as a pull is refused', () => {
+		// Two answers about the same text are the same age, not one older than
+		// the other, so the revision is a tie and the source decides: a push
+		// never replaces a pull.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 5' }], server, 5)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('two pushes are ordered by arrival, not by revision', () => {
+		// The cost of the rule: a result that names no revision is not held
+		// back by one that does, so two pushes are ordered by when they
+		// landed — as they were before the revision existed — and a server
+		// that names a version on some publishes and not on others gets the
+		// later one either way.
 		const store = new LspDiagnosticsStore();
 		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
 		store.publish(report(A, [{ range: range(1, 0, 1), message: 'no revision' }], server)!);
 
-		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
-	});
-
-	it('a result that names a revision does not displace one that names no revision', () => {
-		const store = new LspDiagnosticsStore();
-		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
-		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
-
 		expect(store.read(A).map((d) => d.message)).toEqual(['no revision']);
+
+		const other = new LspDiagnosticsStore();
+		other.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+		other.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
+
+		expect(other.read(A).map((d) => d.message)).toEqual(['at 5']);
 	});
 
 	it('a refused result leaves the store\'s revision unchanged, so a view is not woken', () => {
