@@ -77,6 +77,8 @@ describe('DesktopWatcherSnapshotStrategy', () => {
 
 		const storage = createMockStorage();
 		const wt = new WorktreeClass(rootOrigin, { storage, strategy });
+		// The Project starts the strategy when it sets the project root.
+		strategy.start(wt);
 
 		expect(mockClient).toHaveBeenCalled();
 		expect(watchedPath).toBe('/test-project');
@@ -104,6 +106,7 @@ describe('DesktopWatcherSnapshotStrategy', () => {
 		});
 
 		const wt = new WorktreeClass(rootOrigin, { storage, strategy });
+		strategy.start(wt);
 		await wt.scan();
 
 		expect(wt.entries.length).toBe(1);
@@ -142,6 +145,7 @@ describe('DesktopWatcherSnapshotStrategy', () => {
 		});
 
 		const wt = new WorktreeClass(rootOrigin, { storage, strategy });
+		strategy.start(wt);
 		let scanCount = 0;
 		const originalScan = wt.scan.bind(wt);
 		wt.scan = async (...args) => {
@@ -186,6 +190,7 @@ describe('DesktopWatcherSnapshotStrategy', () => {
 		});
 
 		const wt = new WorktreeClass(rootOrigin, { storage, strategy });
+		strategy.start(wt);
 
 		// Make scan take time
 		let slowScan = true;
