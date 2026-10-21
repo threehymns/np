@@ -127,6 +127,12 @@ export class AppState {
 	 * in the Plugins settings page instead of failing silently.
 	 */
 	pluginStartupError = $state<string | null>(null);
+	/**
+	 * The header's application-menu controller. Registered by the menu
+	 * component on mount so the command can toggle it without the core
+	 * knowing what the menu is made of.
+	 */
+	applicationMenu: { toggle(): void } | undefined;
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
