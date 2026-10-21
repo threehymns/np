@@ -11,6 +11,7 @@
 		children = row,
 		class: className = '',
 		'data-slot': dataSlot = 'history-list',
+		rowGroup = null,
 		containerEl = $bindable(null)
 	}: {
 		items?: T[];
@@ -21,6 +22,16 @@
 		children?: Snippet<[item: T, index: number]>;
 		class?: string;
 		'data-slot'?: string;
+		/**
+		 * Wraps the rendered rows.
+		 *
+		 * Some chrome has to sit *around* the rows rather than inside each of
+		 * them — a context menu shared by the whole list, for instance, which
+		 * cannot have a trigger per row. The caller supplies that wrapper and
+		 * is handed a snippet that renders the rows, so it never has to know
+		 * how the windowing works.
+		 */
+		rowGroup?: Snippet<[Snippet]> | null;
 		containerEl?: HTMLElement | null;
 	} = $props();
 
@@ -84,11 +95,19 @@
 	class={className}
 	data-slot={dataSlot}
 >
-	<div style="padding-top: {controller.topPadding}px; padding-bottom: {controller.bottomPadding}px; box-sizing: border-box;">
+	{#snippet renderRows()}
 		{#each rows as row (row.key)}
 			{#if children}
 				{@render children(row.item, row.index)}
 			{/if}
 		{/each}
+	{/snippet}
+
+	<div style="padding-top: {controller.topPadding}px; padding-bottom: {controller.bottomPadding}px; box-sizing: border-box;">
+		{#if rowGroup}
+			{@render rowGroup(renderRows)}
+		{:else}
+			{@render renderRows()}
+		{/if}
 	</div>
 </div>
