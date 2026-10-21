@@ -75,7 +75,19 @@
 		}
 	}
 
-	const ROW_HEIGHT = 48;
+	/**
+	 * The height of a history row, in rem.
+	 *
+	 * The band is in rem so it grows with the text size. A pixel height
+	 * stops containing the row's text as soon as the text grows — the
+	 * subject and the metadata line spill out of the row they belong to and
+	 * into its neighbours — while a rem band scales with the same text size
+	 * the row's own content is sized in.
+	 *
+	 * Three rem is 48px at the default text size, which is the nominal
+	 * height the list falls back to before it has measured the rows.
+	 */
+	const ROW_HEIGHT_REM = 3;
 
 	/**
 	 * How many rows beyond the viewport the list renders.
@@ -121,7 +133,7 @@
 		role="button"
 		tabindex="0"
 		class="group flex flex-col justify-center px-2 py-1.5 rounded hover:bg-muted/30 transition-colors cursor-pointer select-none text-left"
-		style="height: {ROW_HEIGHT}px; box-sizing: border-box;"
+		style="height: {ROW_HEIGHT_REM}rem; box-sizing: border-box;"
 		data-sha={commit.sha}
 		title={copiedSha === commit.sha ? copiedLabel[copiedAction] : 'Click to copy short SHA'}
 		onclick={() => handleRowClick(commit)}
@@ -252,7 +264,7 @@
 {:else}
 	<VirtualList
 		items={commits}
-		rowHeight={ROW_HEIGHT}
+		rowHeight={ROW_HEIGHT_REM * 16}
 		overscan={OVERSCAN}
 		bind:containerEl={scrollElement}
 		class="flex-1 overflow-y-auto p-1.5 select-none"

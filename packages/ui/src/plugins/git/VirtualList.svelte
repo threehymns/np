@@ -1,5 +1,6 @@
 <script lang="ts" generics="T">
 	import type { Snippet } from 'svelte';
+	import { untrack } from 'svelte';
 	import { VirtualListController, visibleRows } from './virtual-list.svelte';
 
 	let {
@@ -15,6 +16,14 @@
 		containerEl = $bindable(null)
 	}: {
 		items?: T[];
+		/**
+		 * The nominal height of a row, in pixels.
+		 *
+		 * The list measures the height the rows actually render at and
+		 * uses that instead, so a row sized in rem (three rem, say) keeps
+		 * the windowing right when the text size changes. This value is
+		 * what the list uses until the first measurement lands.
+		 */
 		rowHeight?: number;
 		overscan?: number;
 		getKey?: (item: T, index: number) => string | number;
@@ -37,9 +46,42 @@
 
 	const controller = new VirtualListController({
 		itemCount: () => items.length,
-		rowHeight: () => rowHeight,
+		rowHeight: () => measuredRowHeight ?? rowHeight,
 		overscan: () => overscan
 	});
+
+	/** The element the rendered rows live in. */
+	let rowsEl = $state<HTMLElement | null>(null);
+
+	/**
+	 * The height the rows actually render at, in pixels.
+	 *
+	 * The windowing needs a pixel height, and a row whose height comes from
+	 * the text size (three rem, say) is only a fixed number of pixels at
+	 * the text size the list happened to be built at. The rows are measured
+	 * instead of trusted, so the window follows the text size when it
+	 * changes. All the rows have to be the same height for the measurement
+	 * to mean anything, which is the rule the list already worked under.
+	 */
+	let measuredRowHeight = $state<number | null>(null);
+	let lastMeasuredHeight = 0;
+
+	function measureRowHeight() {
+		const el = rowsEl;
+		if (!el) return;
+		// The row count is read untracked: the effect that calls this must
+		// not depend on the window, or the watch would be torn down and
+		// rebuilt on every scroll.
+		const count = untrack(() => rows.length);
+		if (count === 0) return;
+		const height = el.getBoundingClientRect().height / count;
+		// A threshold keeps a fractional height from re-rendering the list
+		// on every measurement.
+		if (height > 0 && Math.abs(height - lastMeasuredHeight) > 0.5) {
+			lastMeasuredHeight = height;
+			measuredRowHeight = height;
+		}
+	}
 
 	// Preserve scroll position across item updates / re-renders.
 	// The restore target is clamped to the list's current maximum scroll
@@ -86,6 +128,28 @@
 		}
 	});
 
+	/**
+	 * Watch the rendered rows for a change in height.
+	 *
+	 * The rows' wrapper is watched rather than a row, because the wrapper
+	 * outlives the rows: a window that moves recycles the row elements, and
+	 * a watch on a row would follow the recycling instead of the height.
+	 * The wrapper's height only changes when the rows' height does, so the
+	 * watch stays quiet while the list scrolls.
+	 */
+	$effect(() => {
+		const el = rowsEl;
+		if (!el) return;
+
+		// Measure once up front, so the first frame is already right.
+		measureRowHeight();
+
+		if (typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(() => measureRowHeight());
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
 	let rows = $derived(visibleRows(items, controller.startIndex, controller.endIndex, getKey));
 </script>
 
@@ -104,10 +168,12 @@
 	{/snippet}
 
 	<div style="padding-top: {controller.topPadding}px; padding-bottom: {controller.bottomPadding}px; box-sizing: border-box;">
-		{#if rowGroup}
-			{@render rowGroup(renderRows)}
-		{:else}
-			{@render renderRows()}
-		{/if}
+		<div bind:this={rowsEl}>
+			{#if rowGroup}
+				{@render rowGroup(renderRows)}
+			{:else}
+				{@render renderRows()}
+			{/if}
+		</div>
 	</div>
 </div>
