@@ -76,7 +76,6 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Event**: A record that something happened, offered for observation only. Subscribers cannot mutate, veto, or fail the operation.
 - **Language Server**: An external process speaking the Language Server Protocol for one or more languages: completions, hover, diagnostics, navigation. Managed by the LSP plugin, never by the host directly.
 - **LSP Descriptor**: A plugin contribution describing how to start and scope a Language Server: its command, arguments, root markers, and the languages it serves. _Avoid_: Server Descriptor (unscoped; a future headless server will need the bare word).
-- **Severity Ceiling**: The most severe finding the diagnostics surfaces show, as one setting. It narrows every surface at once — the inline marks, the gutter marks, and the diagnostics list — so they never disagree about what is shown. _Avoid_: severity filter (a per-surface narrowing).
 - **Hook**: Participation in a running host operation through before/after phases. Before-hooks run sequentially in activation order and may modify inputs or cancel with a reason.
 - **Icon Registry**: A centralized registry that resolves icons for languages, files, and UI elements. Accepts pluggable icon providers so that custom icon packs or third-party extensions can override the visual representations.
 - **Snippet Pack**: A plugin's set of trigger/body/description records registered for one language, composed into the completion config by the host. Bodies are plain text — no placeholders, no snippet variables. _Avoid_: completion contribution, snippet contribution type, templates
@@ -93,6 +92,7 @@ The diagnostics a Language Server reports about the project, gathered in one pla
 - **Diagnostics Tab**: The project-wide view over the Merged Diagnostics Store: one section per file, each Diagnostic with the lines around it. A host-owned tab, not a Document.
 - **Diagnostics Session**: What one reader chose for one Diagnostics Tab: the **Severity Filter** and the sort order. Held on the Workspace, keyed by tab, so it survives switching tabs and is dropped when the tab closes.
 - **Severity Filter**: The one severity a reader narrowed to, or all of them. One at a time, not a set. A reader's choice in one tab, not a setting.
+- **Severity Ceiling**: The most severe Diagnostic the diagnostics surfaces show, as one setting. It narrows every surface at once — the inline marks, the gutter marks, and the diagnostics list — so they never disagree about what is shown. _Avoid_: severity filter (a per-tab narrowing).
 - **Surrounding Code**: The lines of a file around a Diagnostic — two on each side — read from the Document the editor has open. A file the workspace has no Document for has no Surrounding Code, and its Diagnostic is shown without it.
 
 ## Version Control
