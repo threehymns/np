@@ -2,6 +2,7 @@ import { test, expect } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
 import { installDiffTestRepo } from './helpers/mock-diff-repo';
+import { installDiffLoadCounter, settledDiffCallCount, waitForDiffReload } from './helpers/diff-load';
 
 test.describe('DiffViewer CodeMirror instances across a save', () => {
 	test.beforeEach(async ({ page }) => {
@@ -21,15 +22,7 @@ test.describe('DiffViewer CodeMirror instances across a save', () => {
 
 		// Count diff loads so the test can wait for the post-save reload
 		// instead of racing it.
-		await page.evaluate(() => {
-			const adapter = (window as any).appState.workspace.project.repository.adapter;
-			(window as any).__getFileDiffCalls = 0;
-			const original = adapter.getFileDiff.bind(adapter);
-			adapter.getFileDiff = async (...args: any[]) => {
-				(window as any).__getFileDiffCalls += 1;
-				return original(...args);
-			};
-		});
+		await installDiffLoadCounter(page);
 
 		await page.evaluate(() => {
 			(window as any).appState.commands.execute('git.openDiff');
@@ -48,7 +41,7 @@ test.describe('DiffViewer CodeMirror instances across a save', () => {
 			});
 		});
 
-		const callsBefore = await page.evaluate(() => (window as any).__getFileDiffCalls);
+		const callsBefore = await settledDiffCallCount(page);
 
 		// Save the Document the Working-copy pane is bound to.
 		const saveResult = await page.evaluate(async () => {
@@ -65,11 +58,7 @@ test.describe('DiffViewer CodeMirror instances across a save', () => {
 		expect(saveResult.saved).toBe(true);
 
 		// The save refreshes the repository, which reloads the diff.
-		await page.waitForFunction(
-			(n: number) => (window as any).__getFileDiffCalls > n,
-			callsBefore,
-			{ timeout: 20_000 }
-		);
+		await waitForDiffReload(page, callsBefore);
 		await expect(page.locator('#diff-file-README\\.md .cm-editor')).toHaveCount(2, { timeout: 20_000 });
 
 		// The save must not remount the CodeMirror instances: the repository

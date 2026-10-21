@@ -2,6 +2,7 @@ import { test, expect } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
 import { installDiffTestRepo } from './helpers/mock-diff-repo';
+import { installDiffLoadCounter, settledDiffCallCount, waitForDiffReload } from './helpers/diff-load';
 
 /**
  * The Diff Viewer's Working-copy pane must survive a save with the cursor
@@ -33,15 +34,7 @@ test.describe('DiffViewer cursor across a save', () => {
 		await page.evaluate(installDiffTestRepo);
 		// Count diff loads so the test can wait for the post-save reload
 		// instead of racing it.
-		await page.evaluate(() => {
-			const adapter = (window as any).appState.workspace.project.repository.adapter;
-			(window as any).__getFileDiffCalls = 0;
-			const original = adapter.getFileDiff.bind(adapter);
-			adapter.getFileDiff = async (...args: any[]) => {
-				(window as any).__getFileDiffCalls += 1;
-				return original(...args);
-			};
-		});
+		await installDiffLoadCounter(page);
 		await page.evaluate(() => {
 			(window as any).appState.commands.execute('git.openDiff');
 		});
@@ -49,6 +42,24 @@ test.describe('DiffViewer cursor across a save', () => {
 		// Split view: the working file's section mounts two CodeMirror
 		// editors (Original + Working-copy pane).
 		await expect(page.locator('#diff-file-README\\.md .cm-editor')).toHaveCount(2, { timeout: 20_000 });
+	}
+
+	/**
+	 * Stage README.md, so the change list holds a staged entry for it, and
+	 * wait for the viewer to reload the diff under the new scope.
+	 */
+	async function stageReadme(page: any) {
+		const callsBefore = await settledDiffCallCount(page);
+		await page.evaluate(async () => {
+			const appState = (window as any).appState;
+			const repository = appState.workspace.project.repository;
+			const git = (window as any).git;
+			const gitFs = (repository.adapter as any).fs;
+			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
+			await repository.refresh();
+		});
+		// Staging changes the file's diff scope, so the viewer reloads it.
+		await waitForDiffReload(page, callsBefore);
 	}
 
 	/**
@@ -82,7 +93,7 @@ test.describe('DiffViewer cursor across a save', () => {
 
 	/** Save the bound Document and wait for the post-save diff reload. */
 	async function saveAndSettle(page: any) {
-		const callsBefore = await page.evaluate(() => (window as any).__getFileDiffCalls);
+		const callsBefore = await settledDiffCallCount(page);
 		const saveResult = await page.evaluate(async () => {
 			const appState = (window as any).appState;
 			const bound = appState.workspace.diffBoundDocIds;
@@ -95,13 +106,8 @@ test.describe('DiffViewer cursor across a save', () => {
 		});
 		expect(saveResult.reason).toBeNull();
 		expect(saveResult.saved).toBe(true);
-		await page.waitForFunction(
-			(n: number) => (window as any).__getFileDiffCalls > n,
-			callsBefore,
-			{ timeout: 20_000 }
-		);
-		// Let the fresh snapshot land and be applied to the pane.
-		await page.waitForTimeout(500);
+		// The save refreshes the repository, which reloads the diff.
+		await waitForDiffReload(page, callsBefore);
 	}
 
 	/** The live state of the Working-copy pane after the save. */
@@ -129,15 +135,7 @@ test.describe('DiffViewer cursor across a save', () => {
 		await openDiff(page);
 
 		// Stage the file: the change list holds a staged entry for it.
-		await page.evaluate(async () => {
-			const appState = (window as any).appState;
-			const repository = appState.workspace.project.repository;
-			const git = (window as any).git;
-			const gitFs = (repository.adapter as any).fs;
-			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
-			await repository.refresh();
-		});
-		await page.waitForTimeout(500);
+		await stageReadme(page);
 
 		// Edit the working copy so the file ends up staged AND modified.
 		await pinCursor(page, 2, 5);
@@ -179,15 +177,7 @@ test.describe('DiffViewer cursor across a save', () => {
 		await page.locator('button[title="Inline View"]').click();
 		await expect(page.locator('#diff-file-README\\.md .cm-editor')).toHaveCount(1);
 
-		await page.evaluate(async () => {
-			const appState = (window as any).appState;
-			const repository = appState.workspace.project.repository;
-			const git = (window as any).git;
-			const gitFs = (repository.adapter as any).fs;
-			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
-			await repository.refresh();
-		});
-		await page.waitForTimeout(500);
+		await stageReadme(page);
 
 		await pinCursor(page, 2, 5, 0);
 		await page.keyboard.type('XY');
@@ -244,15 +234,7 @@ test.describe('DiffViewer cursor across a save', () => {
 
 		// Partially staged: the file has a staged change and further
 		// working-tree edits, so the save reports it as a combined change.
-		await page.evaluate(async () => {
-			const appState = (window as any).appState;
-			const repository = appState.workspace.project.repository;
-			const git = (window as any).git;
-			const gitFs = (repository.adapter as any).fs;
-			await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
-			await repository.refresh();
-		});
-		await page.waitForTimeout(500);
+		await stageReadme(page);
 
 		await page.locator('#diff-file-README\\.md .cm-editor').nth(1).locator('.cm-content').click();
 		const endOfLine = await page.evaluate(() => {
