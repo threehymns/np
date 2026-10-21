@@ -128,7 +128,7 @@
 
 {#snippet historyRow(commit: GitHistoryCommit, index: number)}
 	{@const tags = parseRefTags(commit.refDecoration)}
-	{@const isAhead = commit.isAhead ?? (aheadCount > 0 && index < aheadCount)}
+	{@const isAhead = commit.isAhead === true}
 	<div
 		role="button"
 		tabindex="0"
