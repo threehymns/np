@@ -194,6 +194,8 @@ export class WorkspacePullCoordinator {
 		const self = this;
 		return Effect.gen(function* () {
 			const parent = yield* Scope.Scope;
+			const previous = self.servers.get(server);
+			if (previous) yield* Scope.close(previous.scope, Exit.void);
 			const scope = yield* Scope.fork(parent);
 			const state: ServerLoop = {
 				scope,
