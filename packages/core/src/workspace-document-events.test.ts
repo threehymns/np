@@ -128,7 +128,7 @@ describe('the document lifecycle events (ADR 0013)', () => {
 			} as SerializedDocument
 		];
 		const persistence = new MemorySessionPersistence();
-		await persistence.saveOpenFiles(restored, '/repo');
+		await persistence.saveLegacyOpenFiles(restored, '/repo');
 		const { ws, opened } = await makeWorkspace(persistence);
 
 		await ws.loadFolderState('/repo');

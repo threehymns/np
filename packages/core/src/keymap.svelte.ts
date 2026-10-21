@@ -106,6 +106,14 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools",
+			"cmd+k right": "pane.splitRight",
+			"cmd+k left": "pane.splitLeft",
+			"cmd+k up": "pane.splitUp",
+			"cmd+k down": "pane.splitDown",
+			"cmd+k cmd+right": "pane.focusRight",
+			"cmd+k cmd+left": "pane.focusLeft",
+			"cmd+k cmd+up": "pane.focusUp",
+			"cmd+k cmd+down": "pane.focusDown",
 			"cmd+f8": "diff.nextHunk",
 			"cmd+shift+f8": "diff.prevHunk"
 		}

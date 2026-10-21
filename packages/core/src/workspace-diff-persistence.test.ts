@@ -2,7 +2,7 @@ import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
 import type { FileOrigin } from "./storage";
 import { createMockStorage } from "../../../tests/mock-storage";
-import { MemorySessionPersistence } from "./persistence";
+import { MemorySessionPersistence, SerializedWorkspace } from "./persistence";
 import { Repository } from "./project/repository.svelte";
 import type { VCSAdapter, GitChange } from "./project/vcs";
 import type { Workspace } from "./workspace.svelte";
@@ -80,7 +80,7 @@ describe("diff tab session persistence", () => {
 			false
 		);
 		const folderUri = "file:///projects/np";
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff" }],
 			folderUri
 		);
@@ -102,7 +102,7 @@ describe("diff tab session persistence", () => {
 
 		await ws.flushSaveOpenFiles();
 
-		const saved = await persistence.loadOpenFiles("");
+		const saved = (await persistence.loadOpenFiles("") as SerializedWorkspace).docs;
 		const diffEntry = saved.find(d => d.virtualTabType === "diff");
 		expect(diffEntry).toBeDefined();
 		expect(diffEntry?.diffFilepath).toBe("docs/b.md");
@@ -116,7 +116,7 @@ describe("diff tab session persistence", () => {
 		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[
 				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "docs/b.md", diffStaged: true }
 			],
@@ -139,7 +139,7 @@ describe("diff tab session persistence", () => {
 		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[
 				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "docs/b.md", diffStaged: true }
 			],
@@ -166,7 +166,7 @@ describe("diff tab session persistence", () => {
 		const ws = await makeWorkspace(storage, factory, persistence);
 
 		const folderUri = "file:///projects/np";
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[
 				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "docs/b.md", diffStaged: true },
 				{ id: "__project_diff_2__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "src/gone.ts", diffStaged: false }
@@ -203,7 +203,7 @@ describe("diff tab session persistence", () => {
 
 		const folderUri = "file:///projects/np";
 		await persistence.saveRootFolder(rootOrigin);
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[
 				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "docs/b.md", diffStaged: true }
 			],
@@ -239,7 +239,7 @@ describe("diff tab session persistence", () => {
 
 		const folderUri = "file:///projects/np";
 		await persistence.saveRootFolder(rootOrigin);
-		await persistence.saveOpenFiles(
+		await persistence.saveLegacyOpenFiles(
 			[
 				{ id: "__project_diff__", origin: null, isModified: false, virtualTabType: "diff", pluginId: "git", diffFilepath: "docs/b.md", diffStaged: true }
 			],
@@ -256,7 +256,7 @@ describe("diff tab session persistence", () => {
 		expect(ws.project.repository?.activeDiffFile).toBeNull();
 
 		await ws.flushSaveOpenFiles();
-		const saved = await persistence.loadOpenFiles(folderUri);
+		const saved = (await persistence.loadOpenFiles(folderUri) as SerializedWorkspace).docs;
 		const diffEntry = saved.find(d => d.virtualTabType === "diff");
 		expect(diffEntry?.diffFilepath).toBe("docs/b.md");
 		expect(diffEntry?.diffStaged).toBe(true);

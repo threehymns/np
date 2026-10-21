@@ -2,6 +2,7 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
+import type { SplitDirection, SplitMode, Rect } from './split-tree.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
@@ -152,6 +153,13 @@ export class AppState {
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.
 	activeDiffNavigator = $state<DiffHunkNavigator | undefined>(undefined);
+	/**
+	 * Hands the DOM focus to the editor of the active pane. The UI
+	 * publishes it and the pane commands consume it, the same way
+	 * `activeEditorView` is published and consumed: only the shell knows
+	 * which editor belongs to which pane.
+	 */
+	focusActivePaneEditor = $state<(() => void) | undefined>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
@@ -348,6 +356,17 @@ export class AppState {
 	set activeDocumentId(value: string) { this.workspace.activeDocumentId = value; }
 	get activeTabId() { return this.workspace.activeTabId; }
 	set activeTabId(value: string) { this.workspace.activeTabId = value; }
+	get activePane() { return this.workspace.activePane; }
+	get activePaneId() { return this.workspace.activePaneId; }
+	set activePaneId(value: string) { this.workspace.activePaneId = value; }
+
+	splitActivePane(direction: SplitDirection, mode?: SplitMode) {
+		return this.workspace.splitActivePane(direction, mode);
+	}
+
+	focusPaneInDirection(direction: SplitDirection, rectsMap?: Map<string, Rect>) {
+		return this.workspace.focusPaneInDirection(direction, rectsMap);
+	}
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
@@ -379,9 +398,9 @@ export class AppState {
 	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
-	closeTab(id: string) { this.workspace.closeTab(id); }
-	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
-		const closed = await this.workspace.finalizeClose(id, saveFirst);
+	closeTab(id: string, paneId?: string) { this.workspace.closeTab(id, paneId); }
+	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId);
 		if (!closed && this.workspace.lastSaveCancellationReason) {
 			if (this.dialogService?.alert) {
 				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);

@@ -53,6 +53,8 @@ second sense, which is why `vault` had been standing in for the first.
 
 ## Command Palette
 A searchable dialog interface allowing the user to search and run registered actions across the application.
+- **Command**: A registered action in the shared command registry, named by a unique Command ID, labelled for display, and filed under a category. The palette is a view over the registry, not a second list of what can be run.
+- **Command Keyword**: A word a Command answers to in the Command Palette's search besides its label, so a Command is findable by a word its title does not contain. A keyword is an alias, not display text: it never changes what the Command does and is never shown.
 - **Nested Palette (Sub-Commandbar)**: A temporary state of the Command Palette displaying a specific list of options (e.g. available languages) instead of the top-level commands, support back navigation via Backspace or a back button.
 
 ## Architecture

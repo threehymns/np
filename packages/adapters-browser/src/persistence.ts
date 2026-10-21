@@ -1,4 +1,4 @@
-import type { SessionPersistence, FileOrigin, SerializedDocument } from '@np/core';
+import type { SessionPersistence, FileOrigin, SerializedDocument, SerializedWorkspace } from '@np/core';
 
 const DB_NAME = 'np-storage';
 const STORE_NAME = 'handles';
@@ -34,19 +34,19 @@ export function openDB(): Promise<IDBDatabase> {
 }
 
 export class IndexedDBSessionPersistence implements SessionPersistence {
-	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
+	async saveOpenFiles(workspace: SerializedWorkspace, folderUri = ''): Promise<void> {
 		const key = folderUri ? `open-files:${folderUri}` : 'open-files';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {
 			const transaction = db.transaction(STORE_NAME, 'readwrite');
 			const store = transaction.objectStore(STORE_NAME);
-			const request = store.put(origins, key);
+			const request = store.put(workspace, key);
 			request.onsuccess = () => resolve();
 			request.onerror = () => reject(request.error);
 		});
 	}
 
-	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+	async loadOpenFiles(folderUri = ''): Promise<SerializedWorkspace | SerializedDocument[]> {
 		const key = folderUri ? `open-files:${folderUri}` : 'open-files';
 		const db = await openDB();
 		return new Promise((resolve, reject) => {

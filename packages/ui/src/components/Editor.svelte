@@ -5,7 +5,6 @@
 	import { historyField } from "@codemirror/commands";
 	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
-
 	import '../editor/styles/editor.css';
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
@@ -13,19 +12,36 @@
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
 	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
+	import { applyEditorWrap, claimEditorFocusedContext, claimEditorKeymapContexts } from "./editor-focus";
 
 	let {
 		doc,
 		active = true,
+		focused = true,
 		style = "",
 		wrap = true,
 		view = $bindable(),
+		paneId,
 	} = $props<{
 		doc: DocumentSession;
+		/**
+		 * Whether this editor is live: mounted, visible, and kept in sync with
+		 * its document. Every rendered editor is live, so a cloned view in
+		 * another pane shows the edits made in the pane that has focus.
+		 */
 		active?: boolean;
+		/**
+		 * Whether this editor is the one the user is typing in. The
+		 * focus-sensitive state (word wrap, vim mode, and the global keymap
+		 * contexts) belongs to the focused editor alone, because the keymap
+		 * contexts are global and a second owner would take the focused
+		 * editor's keybindings with it.
+		 */
+		focused?: boolean;
 		style?: string;
 		wrap?: boolean;
 		view?: EditorView;
+		paneId?: string;
 	}>();
 
 	const appState = useAppState();
@@ -109,14 +125,20 @@
 						}
 					}
 
-					if (update.selectionSet || update.docChanged) {
+					// The selection stats are global (the status bar reads
+					// them), so only the focused editor reports them. A
+					// clone in another pane syncs its content on every
+					// keystroke, and its cursor would otherwise take the
+					// status bar over from the editor the user is typing
+					// in.
+					if (focused && (update.selectionSet || update.docChanged)) {
 						syncSelectionStats(update.state);
 					}
 				}),
 			];
 
 			let startState: EditorState | undefined;
-			const savedState = untrack(() => doc.editorState);
+			const savedState = untrack(() => (paneId ? doc.getViewState(paneId).editorState : doc.editorState));
 			const currentContent = untrack(() => doc.content);
 			if (savedState) {
 				try {
@@ -150,15 +172,16 @@
 			appState.plugins?.attachEditorInternal(doc.id, {
 				getState: () => view!.state,
 				dispatch: (spec) => view!.dispatch(spec as any)
-			}, untrack(() => doc.language?.name));
+			}, untrack(() => doc.language?.name), paneId);
 
-			if (doc.scrollPosition) {
-				view.scrollDOM.scrollTop = doc.scrollPosition.top;
-				view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+			const initialScroll = paneId ? doc.getViewState(paneId).scrollPosition : doc.scrollPosition;
+			if (initialScroll) {
+				view.scrollDOM.scrollTop = initialScroll.top;
+				view.scrollDOM.scrollLeft = initialScroll.left;
 				requestAnimationFrame(() => {
-					if (view && doc.scrollPosition) {
-						view.scrollDOM.scrollTop = doc.scrollPosition.top;
-						view.scrollDOM.scrollLeft = doc.scrollPosition.left;
+					if (view && initialScroll) {
+						view.scrollDOM.scrollTop = initialScroll.top;
+						view.scrollDOM.scrollLeft = initialScroll.left;
 					}
 				});
 			}
@@ -166,23 +189,34 @@
 
 		return () => {
 			isDestroyed = true;
-			appState.plugins?.detachEditorInternal(doc.id);
+			appState.plugins?.detachEditorInternal(doc.id, paneId);
 			if (view) {
-				doc.editorState = view.state.toJSON({ history: historyField });
-				doc.scrollPosition = {
+				const serialized = view.state.toJSON({ history: historyField });
+				const scroll = {
 					top: view.scrollDOM.scrollTop,
 					left: view.scrollDOM.scrollLeft,
 				};
+				if (paneId) {
+					doc.setViewState(paneId, {
+						editorState: serialized,
+						scrollPosition: scroll,
+					});
+				} else {
+					doc.editorState = serialized;
+					doc.scrollPosition = scroll;
+				}
 				view.destroy();
 				view = undefined;
 			}
 		};
 	});
 
-	// Sync active state and layout (status bar isn't refreshed by the
-	// updateListener on remount, since creating a view fires no update event)
+	// Sync the focused editor's layout and selection stats (the status bar
+	// isn't refreshed by the updateListener on remount, since creating a view
+	// fires no update event). Only the focused editor owns the stats: they
+	// describe the editor the user is in.
 	$effect(() => {
-		if (view && active) {
+		if (view && focused) {
 			view.requestMeasure();
 			syncSelectionStats(view.state);
 		}
@@ -190,19 +224,16 @@
 
 	// Sync wrap setting
 	$effect(() => {
-		if (view && active) {
-			view.dispatch({
-				effects: wrapCompartment.reconfigure(
-					wrap ? EditorView.lineWrapping : [],
-				),
-			});
-		}
+		applyEditorWrap(view, { focused, wrap, compartment: wrapCompartment });
 	});
 
-	// Sync vim setting
+	// Sync vim setting. Only the focused editor runs vim mode: the vim
+	// extension keeps its own state (the mode, the registers), so it is
+	// installed as the focus moves rather than left running in a pane the
+	// user is not typing in.
 	$effect(() => {
 		const vimEnabled = appState.prefs.vimMode;
-		if (view && active) {
+		if (view && focused) {
 			view.dispatch({
 				effects: vimCompartment.reconfigure(
 					vimEnabled ? vim() : [],
@@ -228,88 +259,41 @@
 		view.dispatch({ effects });
 	});
 
-	// Sync keymap context
+	// Sync keymap context. The contexts are global, so only the focused
+	// editor claims them: an editor in another pane of a split claims
+	// nothing, because it would clear the focused editor's contexts when it
+	// let go.
 	$effect(() => {
-		if (!active) return;
-
-		appState.keymaps.setContext("editor", true);
-		
-		if (!appState.prefs.vimMode) {
-			appState.keymaps.setContext("vim_mode", undefined);
-			return () => {
-				appState.keymaps.setContext("editor", undefined);
-				appState.keymaps.setContext("vim_mode", undefined);
-			};
-		}
-
-		// Initial set
-		appState.keymaps.setContext("vim_mode", "normal");
-		
-		if (!view) {
-			return () => {
-				appState.keymaps.setContext("editor", undefined);
-				appState.keymaps.setContext("vim_mode", undefined);
-			};
-		}
-
-		const cm = getCM(view);
-		if (!cm) {
-			return () => {
-				appState.keymaps.setContext("editor", undefined);
-				appState.keymaps.setContext("vim_mode", undefined);
-			};
-		}
-
-		const updateMode = (args: any) => {
-			appState.keymaps.setContext("vim_mode", args.mode);
-		};
-
-		cm.on("vim-mode-change", updateMode);
-		
-		return () => {
-			cm.off("vim-mode-change", updateMode);
-			appState.keymaps.setContext("editor", undefined);
-			appState.keymaps.setContext("vim_mode", undefined);
-		};
+		return claimEditorKeymapContexts(appState.keymaps, {
+			focused,
+			vimEnabled: appState.prefs.vimMode,
+			cm: view ? getCM(view) : null,
+		});
 	});
 
-	// Focus-scoped keymap context for the clipboard bindings: `editor` stays
-	// true for the whole active tab, but cut/copy/paste must only fire when
-	// the editor truly has focus. A hover tooltip never takes focus, so a
-	// tooltip text selection reads here as "unfocused" and falls through to
-	// native copy instead of being hijacked into edit.copy of a collapsed
-	// editor selection. Movement within the editor (content to search panel)
-	// keeps the context: only leaving the editor root clears it.
+	// Sync the editorFocused context: the editor truly has focus. A hover
+	// tooltip never takes focus, so a tooltip text selection reads here as
+	// "unfocused" and falls through to native copy instead of being hijacked
+	// into edit.copy of a collapsed editor selection. Movement within the
+	// editor (content to search panel) keeps the context: only leaving the
+	// editor root clears it.
+	//
+	// Only the focused editor owns this context, the same way it owns the
+	// "editor" and "vim_mode" contexts. In a split, every pane renders a live
+	// editor, and a second owner would clear the focused editor's context the
+	// moment it let go.
 	$effect(() => {
-		if (!active || !view) return;
-		const root = view.dom;
-		const syncFocus = () => {
-			if (typeof document === "undefined") return;
-			if (root.contains(document.activeElement)) {
-				appState.keymaps.setContext("editorFocused", true);
-			} else {
-				appState.keymaps.setContext("editorFocused", undefined);
-			}
-		};
-		const onFocusIn = () => {
-			appState.keymaps.setContext("editorFocused", true);
-		};
-		const onFocusOut = (e: FocusEvent) => {
-			if (e.relatedTarget instanceof Node && root.contains(e.relatedTarget)) return;
-			appState.keymaps.setContext("editorFocused", undefined);
-		};
-		syncFocus();
-		root.addEventListener("focusin", onFocusIn);
-		root.addEventListener("focusout", onFocusOut);
-		return () => {
-			root.removeEventListener("focusin", onFocusIn);
-			root.removeEventListener("focusout", onFocusOut);
-			appState.keymaps.setContext("editorFocused", undefined);
-		};
+		return claimEditorFocusedContext(appState.keymaps, {
+			focused,
+			root: view?.dom,
+			activeElement: () =>
+				typeof document === "undefined" ? null : document.activeElement,
+		});
 	});
+
 	// Also sync mode when view changes or vim is toggled
 	$effect(() => {
-		if (view && active && appState.prefs.vimMode) {
+		if (view && focused && appState.prefs.vimMode) {
 			const cm = getCM(view);
 			if (cm) {
 				appState.keymaps.setContext("vim_mode", (cm as any).state.vim?.insertMode ? "insert" : (cm as any).state.vim?.visualMode ? "visual" : "normal");
@@ -441,10 +425,10 @@
 		}
 	});
 
-	// Sync content from outside (e.g. file open or disk reload)
+	// Sync content from outside (e.g. file open or disk reload).
+	// Runs for inactive panes too so cloned views stay live.
 	$effect(() => {
 		const c = doc.content; // Track content
-		if (!active) return;
 
 		untrack(() => {
 			if (view) {
@@ -471,12 +455,16 @@
 		});
 	});
 
-	// Handle pending line scroll
+	// Handle pending line scroll. Only the focused editor follows it: the
+	// jump is the user's, and it lands in the editor they are looking at.
 	$effect(() => {
-		const lineNum = doc.pendingLineToScroll;
-		if (view && active && lineNum !== null) {
+		const lineNum = (paneId ? doc.peekViewState(paneId)?.pendingLineToScroll : null) ?? doc.pendingLineToScroll;
+		if (view && focused && lineNum !== null) {
 			const targetView = view;
 			untrack(() => {
+				if (paneId) {
+					doc.setViewState(paneId, { pendingLineToScroll: null });
+				}
 				doc.pendingLineToScroll = null;
 			});
 			const gen = ++pendingScrollGen;

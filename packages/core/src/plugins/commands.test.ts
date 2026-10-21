@@ -5,6 +5,7 @@ import { PluginHost } from './host.svelte';
 import {
 	CORE_COMMANDS_OWNER,
 	DuplicateCommandIdError,
+	commandSearchText,
 	createAddCommandsTransform,
 	rebuildCommands,
 	type PluginCommand
@@ -25,6 +26,20 @@ function idsOf(commands: readonly { id: string }[]): string[] {
 }
 
 describe('Command registry on transforms (#196)', () => {
+	describe('search text', () => {
+		it('is the label when a command has no keywords', () => {
+			expect(commandSearchText(makeCommand('file.new'))).toBe('file.new');
+		});
+
+		it('appends the keywords as aliases of the label', () => {
+			expect(commandSearchText({ label: 'Pane: Split Right', keywords: ['pane'] })).toBe('Pane: Split Right pane');
+		});
+
+		it('leaves the label alone when the keyword list is empty', () => {
+			expect(commandSearchText({ label: 'Pane: Split Right', keywords: [] })).toBe('Pane: Split Right');
+		});
+	});
+
 	describe('pure replay', () => {
 		it('replays transforms in order from an empty initial value', () => {
 			const built = rebuildCommands([
