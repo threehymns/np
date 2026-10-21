@@ -129,6 +129,26 @@ describe("workspace project lifecycle (ticket #188)", () => {
 		expect(ws.documents.map((d) => d.content)).toContain("Root draft");
 	});
 
+	it("rescans the restored root after a failed open, so the worktree is not left empty", async () => {
+		const harness = await makeWorkspace();
+		const ws = harness.ws;
+		await ws.openDirectory(rootOrigin);
+
+		const persistence = ws.project.persistence as MemorySessionPersistence;
+		persistence.loadOpenFiles = mock(async () => {
+			throw new Error("load failed");
+		});
+
+		expect(await ws.openDirectory(otherOrigin)).toBe(false);
+
+		// The rollback puts the previous root back, and the Project builds a
+		// fresh Worktree for it. A fresh Worktree starts with an empty
+		// snapshot, so the restored root has to be rescanned for the project
+		// that is still open to publish its files again.
+		expect(ws.project.worktree?.root.path).toBe(rootOrigin.path);
+		expect(ws.project.worktree?.version).toBeGreaterThan(0);
+	});
+
 	it("rolls the settings attachment and the recent folders back when the destination fails to load", async () => {
 		const harness = await makeWorkspace();
 		const ws = harness.ws;

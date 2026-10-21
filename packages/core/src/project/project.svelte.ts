@@ -1,7 +1,7 @@
 import type { FileOrigin, Storage } from '../storage';
 import type { SerializedDocument, SerializedWorkspace, SessionPersistence } from '../persistence';
 import type { VCSAdapter } from './vcs';
-import { Worktree } from './worktree.svelte';
+import { Worktree, type WorktreeSnapshotStrategy, PolledSnapshotStrategy } from './worktree.svelte';
 import { ProjectTree } from './tree.svelte';
 import type { Repository } from './repository.svelte';
 
@@ -34,16 +34,19 @@ export class Project {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
 	persistence: SessionPersistence;
+	snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy;
 	projectTree: ProjectTree;
 
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: SessionPersistence
+		persistence: SessionPersistence,
+		snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
+		this.snapshotStrategyFactory = snapshotStrategyFactory;
 		this.projectTree = new ProjectTree(this);
 	}
 
@@ -76,14 +79,26 @@ export class Project {
 
 	set rootOrigin(origin: FileOrigin | null) {
 		if (!origin) {
+			this.worktrees[0]?.dispose();
 			this.worktrees = [];
+			this.projectTree.attachToWorktree(null);
 			return;
 		}
 		const current = this.worktrees[0];
 		if (current && current.root.scheme === origin.scheme && current.root.path === origin.path) {
 			return;
 		}
-		this.worktrees = [new Worktree(origin)];
+		current?.dispose();
+		const strategy: WorktreeSnapshotStrategy = this.snapshotStrategyFactory
+			? this.snapshotStrategyFactory(origin, this.storage)
+			: new PolledSnapshotStrategy();
+		const wt = new Worktree(origin, {
+			storage: this.storage,
+			strategy
+		});
+		this.worktrees = [wt];
+		this.projectTree.attachToWorktree(wt);
+		void strategy.start?.(wt);
 	}
 
 	get worktree(): Worktree | null {
