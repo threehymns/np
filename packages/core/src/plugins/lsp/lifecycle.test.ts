@@ -1402,7 +1402,10 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 		const [pid] = harness.platform.pids;
-		expect(harness.settingsListeners()).toBe(1);
+		// The plugin holds two subscriptions: the runtime's gate, and the
+		// display's own repaint (issue #310 — a setting that changes has to
+		// reach the editor while it sits idle). Both are the plugin's.
+		expect(harness.settingsListeners()).toBe(2);
 
 		await harness.host.deactivate(lspRegistration.manifest.id);
 		await waitFor(() => !isProcessAlive(pid), { label: 'the disabled plugin to leave no orphan' });

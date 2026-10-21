@@ -66,6 +66,32 @@ export {
 } from './lsp/commands';
 export { LSP_UI_COMPONENTS_KEY, getLspUIComponents } from './lsp/ui';
 export type { LspUIComponents } from './lsp/ui';
+// The diagnostics display plan (issue #310). A surface that shows findings —
+// the diagnostics list of #309, which is a UI component and so can only reach
+// the core through this package — reads the same narrowing the editor's own
+// surfaces read, so that a severity ceiling means one thing in all of them.
+// The module is plain: it reads findings, never the protocol, and knows
+// nothing about the editor.
+export {
+	DEFAULT_DIAGNOSTIC_DISPLAY_SETTINGS,
+	isDiagnosticSeverity,
+	isMoreSevere,
+	planDiagnosticDisplay,
+	readDiagnosticDisplaySettings,
+	visibleDiagnostics
+} from './lsp/diagnostic-display';
+export type {
+	DiagnosticDisplayPlan,
+	DiagnosticDisplaySettings,
+	DiagnosticGutterMark
+} from './lsp/diagnostic-display';
+export {
+	DIAGNOSTIC_SEVERITIES,
+	INLINE_DIAGNOSTICS_SETTING,
+	LSP_SCHEMA,
+	LSP_SETTINGS_NAMESPACE,
+	MAX_SEVERITY_SETTING
+} from './lsp/settings';
 export type { ServerCompletionItemKind, ServerCompletionList } from './lsp/completions';
 export type {
 	LspServerState,

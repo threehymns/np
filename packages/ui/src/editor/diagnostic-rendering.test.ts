@@ -95,6 +95,28 @@ function installDom(): void {
 		remove() {
 			this.parentNode = null;
 		}
+		/**
+		 * The class attribute, kept where the walker reads it.
+		 *
+		 * CodeMirror writes a gutter's class with `className` and a decoration's
+		 * with `setAttribute`, and the walker below reads one place for both.
+		 */
+		get className(): string {
+			return this.attrs.class ?? "";
+		}
+		set className(value: string) {
+			this.setAttribute("class", value);
+		}
+		/** The first child, as the gutter walks its markers through the DOM. */
+		get firstChild(): unknown {
+			return this.childNodes[0] ?? null;
+		}
+		get nextSibling(): unknown {
+			const parent = this.parentNode as MockElement | null;
+			if (!parent || !Array.isArray(parent.childNodes)) return null;
+			const index = parent.childNodes.indexOf(this);
+			return index === -1 ? null : (parent.childNodes[index + 1] ?? null);
+		}
 		addEventListener() {}
 		removeEventListener() {}
 		contains() {
@@ -177,8 +199,36 @@ function diagnosticSpans(): Array<{ className: string; title: string }> {
 	const found: Array<{ className: string; title: string }> = [];
 	const walk = (node: any) => {
 		const className = node?.attrs?.class;
-		if (typeof className === "string" && className.includes("cm-lsp-diagnostic")) {
+		// The inline mark's own class, not the gutter's: the gutter element
+		// carries a class that starts with the same words.
+		if (typeof className === "string" && className.split(" ").includes("cm-lsp-diagnostic")) {
 			found.push({ className, title: node.attrs.title ?? "" });
+		}
+		for (const child of node?.childNodes ?? []) walk(child);
+	};
+	if (view) walk(view.dom);
+	return found;
+}
+
+/**
+ * Every gutter mark the plugin's diagnostics produced.
+ *
+ * The gutter's own element carries the `cm-lsp-diagnostic-gutter` class, so
+ * the marks are the ones that also carry a severity class under it.
+ */
+function gutterMarks(): Array<{ className: string; text: string; title: string }> {
+	const found: Array<{ className: string; text: string; title: string }> = [];
+	const walk = (node: any) => {
+		const className = node?.attrs?.class;
+		if (
+			typeof className === "string" &&
+			className.split(" ").some((name: string) => name.startsWith("cm-lsp-diagnostic-gutter-"))
+		) {
+			found.push({
+				className,
+				text: node.textContent ?? "",
+				title: node.attrs.title ?? "",
+			});
 		}
 		for (const child of node?.childNodes ?? []) walk(child);
 	};
@@ -295,6 +345,21 @@ describe("Server diagnostics on screen (#266)", () => {
 			},
 			{
 				className: "cm-lsp-diagnostic cm-lsp-diagnostic-warning",
+				title: "stub: stub server: unused variable",
+			},
+		]);
+
+		// The gutter is its own surface (issue #310): one mark per line, in the
+		// line's worst severity, carrying the same text the underline carries.
+		expect(gutterMarks()).toEqual([
+			{
+				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-error",
+				text: "●",
+				title: "stub: (2304) stub server: cannot find name",
+			},
+			{
+				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-warning",
+				text: "●",
 				title: "stub: stub server: unused variable",
 			},
 		]);

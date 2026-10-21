@@ -6,9 +6,22 @@ import { dirname, join } from 'node:path';
 import { EditorState } from '@codemirror/state';
 import { composeEditorContributions, reconfigureEditorContributions } from '../editor';
 import { PluginHost } from '../host.svelte';
-import { WORKSPACE_SERVICE_KEY, LSP_PLATFORM_SERVICE_KEY, type WorkspaceLike } from '../services';
+import {
+	WORKSPACE_SERVICE_KEY,
+	LSP_PLATFORM_SERVICE_KEY,
+	SETTINGS_READER_SERVICE_KEY,
+	type SettingsRead,
+	type WorkspaceLike
+} from '../services';
 import { lspRegistration } from './registration';
-import { createDiagnosticEditorContribution, lspDiagnosticField } from './diagnostic-decorations';
+import {
+	createDiagnosticEditorContribution,
+	gutterMarksIn,
+	lspDiagnosticField
+} from './diagnostic-decorations';
+import type { DiagnosticGutterMark } from './diagnostic-display';
+import { SettingsResolver } from '../settings';
+import { LSP_SCHEMA } from './settings';
 import { LspDiagnosticsStore, parsePublishDiagnostics } from './diagnostics';
 import { createRepaintScheduler } from './index';
 import { LSP_LOG_STORE_SERVICE_KEY, type LspLogStore } from './logs';
@@ -76,12 +89,14 @@ const DOC = 'const a = 1;\nconst b = 2;\n';
 function editorFor(
 	store: LspDiagnosticsStore,
 	path: string | null,
-	doc = DOC
+	doc = DOC,
+	read?: SettingsRead
 ): TestEditor {
 	let shown = path;
 	const contribution = createDiagnosticEditorContribution({
 		currentUri: () => (shown === null ? null : toFileUri(shown)),
-		store
+		store,
+		read
 	});
 	let state = EditorState.create({ doc, extensions: [contribution.extension] });
 	return {
@@ -93,6 +108,24 @@ function editorFor(
 			state = state.update({}).state;
 			return state;
 		}
+	};
+}
+
+/** A reader over the `lsp` namespace, as the app's own reader would be. */
+function readerFor(values: Record<string, unknown>): SettingsRead {
+	return (namespace, key) => (namespace === 'lsp' ? values[key] : undefined);
+}
+
+/**
+ * A gutter mark as the test reads it: the line, the severity, how many
+ * findings it stands for, and what they say.
+ */
+function markOf(mark: DiagnosticGutterMark) {
+	return {
+		line: mark.line,
+		severity: mark.severity,
+		count: mark.count,
+		messages: mark.findings.map((finding) => finding.message)
 	};
 }
 
@@ -390,5 +423,196 @@ describe('Diagnostics in the editor through decoration contributions (#266)', ()
 		schedule();
 		await Promise.resolve();
 		expect(repaints).toBe(2);
+	});
+});
+
+/**
+ * The display controls (issue #310).
+ *
+ * The inline marks, the gutter marks, and the settings that narrow them. The
+ * settings are read through the same resolver the app uses, so what is pinned
+ * here is the whole path a user's answer travels: stored value, resolver,
+ * display layer.
+ */
+describe('The display controls (#310)', () => {
+	it('paints nothing inline when the inline toggle is off, and leaves the gutter marks', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'a is broken' }
+		]);
+
+		const editor = editorFor(store, '/repo/a.ts', DOC, readerFor({ inline_diagnostics: false }));
+
+		expect(marksIn(editor.state)).toEqual([]);
+		// The gutter is its own surface: the toggle says whether findings are
+		// painted into the text, and says nothing about the line markers.
+		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
+			{ line: 0, severity: 'error', count: 1, messages: ['a is broken'] }
+		]);
+	});
+
+	it('narrows the marks and the gutter marks to the maximum severity', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'broken' },
+			{ range: range(1, 0, 5), severity: 2, message: 'suspicious' },
+			{ range: range(2, 0, 5), severity: 3, message: 'a note' }
+		]);
+
+		const editor = editorFor(store, '/repo/a.ts', DOC, readerFor({ max_severity: 'warning' }));
+
+		expect(marksIn(editor.state).map((mark) => mark.title)).toEqual(['broken', 'suspicious']);
+		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
+			{ line: 0, severity: 'error', count: 1, messages: ['broken'] },
+			{ line: 1, severity: 'warning', count: 1, messages: ['suspicious'] }
+		]);
+	});
+
+	it('takes the ceiling from the settings resolver, not from a value in hand', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'broken' },
+			{ range: range(1, 0, 5), severity: 4, message: 'a hint' }
+		]);
+
+		// The layered resolver the app resolves against: a user value, overridden
+		// by the workspace.
+		const resolver = new SettingsResolver(
+			() => LSP_SCHEMA,
+			() => ({ lsp: { max_severity: 'error' } }),
+			() => ({ lsp: { max_severity: 'hint' } })
+		);
+		const editor = editorFor(
+			store,
+			'/repo/a.ts',
+			DOC,
+			(namespace, key) => resolver.get(namespace, key)
+		);
+
+		expect(marksIn(editor.state).map((mark) => mark.title)).toEqual(['broken', 'a hint']);
+		expect(gutterMarksIn(editor.state).map((mark) => mark.severity)).toEqual(['error', 'hint']);
+	});
+
+	it('marks the line a finding is on, with the findings it stands for', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 2, message: 'first' },
+			{ range: range(0, 6, 7), severity: 1, message: 'second' },
+			{ range: range(1, 0, 5), severity: 3, message: 'third' }
+		]);
+
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+
+		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
+			// The line's worst finding, and how many it carries.
+			{ line: 0, severity: 'error', count: 2, messages: ['first', 'second'] },
+			{ line: 1, severity: 'info', count: 1, messages: ['third'] }
+		]);
+	});
+
+	it('keeps the gutter mark on the line it described after an edit', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(1, 0, 5), severity: 1, message: 'later line' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+		expect(gutterMarksIn(editor.state).map((mark) => mark.line)).toEqual([1]);
+
+		// A line typed above pushes the finding's line down. The mark follows
+		// the text it described rather than staying on the number the server
+		// named, the same rule the inline marks follow (ADR 0022).
+		const inserted = 'let x = 0;\n';
+		const edited = editor.state.update({
+			changes: { from: 0, to: 0, insert: inserted }
+		}).state;
+
+		expect(gutterMarksIn(edited).map((mark) => mark.line)).toEqual([2]);
+	});
+
+	it('shows what a push-only server said, unchanged', () => {
+		// A server that answers no pull publishes and nothing else. The display
+		// reads the merged store (ADR 0029) and the merged store holds exactly
+		// what the push carried, so the marks are the server's findings and not
+		// a narrower version of them.
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'a is broken' },
+			{ range: range(1, 0, 5), severity: 2, message: 'b is suspicious' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+
+		expect(marksIn(editor.state).map((mark) => mark.title)).toEqual([
+			'a is broken',
+			'b is suspicious'
+		]);
+		expect(gutterMarksIn(editor.state).map(markOf)).toEqual([
+			{ line: 0, severity: 'error', count: 1, messages: ['a is broken'] },
+			{ line: 1, severity: 'warning', count: 1, messages: ['b is suspicious'] }
+		]);
+	});
+
+	it('paints differently as soon as the setting changes', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'a is broken' }
+		]);
+
+		let inline: unknown = true;
+		const editor = editorFor(store, '/repo/a.ts', DOC, (namespace, key) =>
+			namespace === 'lsp' && key === 'inline_diagnostics' ? inline : undefined
+		);
+		expect(marksIn(editor.state)).toHaveLength(1);
+
+		// The display reads the settings when it re-reads, so a switch is one
+		// transaction away — the plugin asks for that re-read rather than
+		// waiting for the next keystroke.
+		inline = false;
+		expect(marksIn(editor.state.update({}).state)).toHaveLength(0);
+	});
+});
+
+/**
+ * The plugin's own settings, wired into the host (issue #310).
+ *
+ * The namespace is the plugin's (ADR 0014), and a setting that changes has to
+ * reach the editor while it sits idle: a switch that only takes effect on the
+ * next keystroke is a switch a user has learned to distrust.
+ */
+describe('The plugin owns its display settings (#310)', () => {
+	it('registers its own namespace with the two keys and their defaults', async () => {
+		const host = new PluginHost({ platform: 'desktop' });
+		host.register(lspRegistration);
+		await host.activate('lsp');
+		cleanups.push(async () => {
+			if (host.isPluginActive('lsp')) await host.deactivate('lsp');
+		});
+
+		const schema = host.getSettingSchema('lsp');
+		expect(schema?.properties.inline_diagnostics?.default).toBe(true);
+		expect(schema?.properties.max_severity?.default).toBe('hint');
+	});
+
+	it('asks the editor to re-read the display when a setting changes', async () => {
+		const host = new PluginHost({ platform: 'desktop' });
+		const listeners: Array<() => void> = [];
+		host.provideService(SETTINGS_READER_SERVICE_KEY, {
+			read: () => undefined,
+			subscribe: (listener: () => void) => {
+				listeners.push(listener);
+				return () => {};
+			}
+		});
+		host.register(lspRegistration);
+		await host.activate('lsp');
+		cleanups.push(async () => {
+			if (host.isPluginActive('lsp')) await host.deactivate('lsp');
+		});
+
+		expect(listeners.length).toBeGreaterThan(0);
+		const before = host.editorRevision;
+		for (const listener of listeners) listener();
+		// The repaint is coalesced per tick, so it lands after the microtask.
+		await Promise.resolve();
+		expect(host.editorRevision).toBeGreaterThan(before);
 	});
 });
