@@ -51,7 +51,7 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	host.registerLspDescriptors(manifest.id, LSP_DESCRIPTORS);
 	host.provideService(LSP_LOG_STORE_SERVICE_KEY, logs);
 	// The merged store is published for the diagnostics tab (#309), which reads
-	// it as a view over the findings and never over the protocol that filed
+	// it as a view over the diagnostics and never over the protocol that filed
 	// them. Publishing the same instance the decorations read is what keeps the
 	// tab and the editor's underlines from telling different stories.
 	host.provideService(LSP_DIAGNOSTICS_STORE_SERVICE_KEY, diagnostics);

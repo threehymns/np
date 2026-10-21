@@ -81,12 +81,12 @@ export type LspDiagnosticSource = 'push' | 'pull' | 'workspace-pull';
 
 /**
  * Key the LSP plugin publishes its diagnostics store under, so the diagnostics
- * tab (#309) reads the merged findings without importing plugin state.
+ * tab (#309) reads the merged diagnostics without importing plugin state.
  *
  * The same arrangement the log store uses for the Logs tab (ADR 0008): a key is
  * a string convention, and the value behind it is owned by the pair that
  * publishes and consumes it. The tab reads the store's public surface — the
- * findings per URI, the URIs it has an opinion about, and the change counter —
+ * diagnostics per URI, the URIs it has an opinion about, and the change counter —
  * and never the protocol that filled it.
  */
 export const LSP_DIAGNOSTICS_STORE_SERVICE_KEY = 'lsp:diagnostics-store';

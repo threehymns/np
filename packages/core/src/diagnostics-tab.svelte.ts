@@ -3,14 +3,14 @@
  *
  * The tab is a view over the merged diagnostics store: the workspace owns the
  * tab and the session behind it — the severity filter and the sort order the
- * reader chose — while the findings themselves come from the store the LSP
+ * reader chose — while the diagnostics themselves come from the store the LSP
  * plugin publishes (ADR 0008, ADR 0022, ADR 0029). Nothing here knows the
- * protocol: the severity levels below are the four a tab shows a finding
+ * protocol: the severity levels below are the four a tab shows a diagnostic
  * under, and the plugin maps its own codes onto them.
  */
 
 /**
- * How serious a finding is.
+ * How serious a diagnostic is.
  *
  * The order of the words is the order of the severity: the first is the most
  * serious. It is the order the tab sorts by when the reader asks for severity,
@@ -19,7 +19,7 @@
 export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
 
 /**
- * The severity filter, or `all` for every finding.
+ * The severity filter, or `all` for every diagnostic.
  *
  * One severity at a time rather than a set: a reader narrows to what they are
  * looking for, and a set would have to say what "everything but hints" means
@@ -28,7 +28,7 @@ export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
 export type DiagnosticsSeverityFilter = 'all' | DiagnosticSeverity;
 
 /**
- * The order the tab shows findings in.
+ * The order the tab shows diagnostics in.
  *
  * `severity` puts the most serious first, then the file, then the position in
  * it. `path` reads the project as a tree of files, in the order the files come.

@@ -12,7 +12,7 @@ import type { Workspace } from "./workspace.svelte";
  *
  * The workspace owns the tab and the session behind it: the severity filter
  * and the sort order the reader chose belong to the tab, so switching away and
- * back has to find them again. The findings themselves are not here — they
+ * back has to find them again. The diagnostics themselves are not here — they
  * come from the merged store the LSP plugin publishes, and the tab's decisions
  * about them are asserted where they are made.
  */

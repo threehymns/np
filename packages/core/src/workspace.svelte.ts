@@ -745,7 +745,7 @@ export class Workspace {
 	 *
 	 * Idempotent, because the tab is reachable from the command palette and
 	 * from a keybinding, and asking twice for the same tab must not stack two
-	 * of them. The findings are not read here: the tab is a view over the
+	 * of them. The diagnostics are not read here: the tab is a view over the
 	 * merged store the LSP plugin publishes, and the store is the only source
 	 * of what it shows.
 	 */

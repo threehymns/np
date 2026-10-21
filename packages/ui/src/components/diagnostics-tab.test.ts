@@ -15,7 +15,7 @@ import { diagnosticsView, type DiagnosticsView } from './diagnostics-tab';
  *
  * The store is the one the plugin publishes and the editor's underlines read,
  * so what the tab shows and what the editor paints cannot drift apart. The
- * findings arrive the way they arrive in the app: one file pushed by a server,
+ * diagnostics arrive the way they arrive in the app: one file pushed by a server,
  * one file pulled from it, and the tab reads both out of the same place.
  */
 
@@ -43,7 +43,7 @@ const BETA = 'file:///repo/src/beta.ts';
 const ALPHA_TEXT = ['line one', 'line two', 'line three', 'line four', 'line five'].join('\n');
 const BETA_TEXT = ['alpha', 'beta', 'gamma'].join('\n');
 
-function finding(
+function diagnostic(
 	severity: LspDiagnostic['severity'],
 	line: number,
 	message: string
@@ -66,12 +66,12 @@ async function seededStore(): Promise<LspDiagnosticsStore> {
 	store.publish({
 		uri: ALPHA,
 		server: 'ts@/repo',
-		diagnostics: [finding('error', 2, "Type 'x' is missing."), finding('warning', 0, 'Unused variable.')]
+		diagnostics: [diagnostic('error', 2, "Type 'x' is missing."), diagnostic('warning', 0, 'Unused variable.')]
 	});
 	store.pull({
 		uri: BETA,
 		server: 'ts@/repo',
-		diagnostics: [finding('info', 1, 'Prefer const.')]
+		diagnostics: [diagnostic('info', 1, 'Prefer const.')]
 	});
 	return store;
 }
@@ -96,7 +96,7 @@ function messages(v: DiagnosticsView): string[] {
 }
 
 describe('the diagnostics tab over the merged store', () => {
-	it('shows every finding the store holds, the most serious first', async () => {
+	it('shows every diagnostic the store holds, the most serious first', async () => {
 		const store = await seededStore();
 
 		expect(messages(view(store))).toEqual([
@@ -106,7 +106,7 @@ describe('the diagnostics tab over the merged store', () => {
 		]);
 	});
 
-	it('groups the findings of one file under that file', async () => {
+	it('groups the diagnostics of one file under that file', async () => {
 		const store = await seededStore();
 
 		const sections = view(store).sections;
@@ -117,7 +117,7 @@ describe('the diagnostics tab over the merged store', () => {
 		]);
 	});
 
-	it('narrows the findings to one severity', async () => {
+	it('narrows the diagnostics to one severity', async () => {
 		const store = await seededStore();
 
 		const errors = diagnosticsView(store, { filter: 'error', sort: 'severity', readText });
@@ -135,7 +135,7 @@ describe('the diagnostics tab over the merged store', () => {
 		]);
 	});
 
-	it('carries the lines around each finding', async () => {
+	it('carries the lines around each diagnostic', async () => {
 		const store = await seededStore();
 
 		const excerpt = view(store).entries[0]!.excerpt;
@@ -150,7 +150,7 @@ describe('the diagnostics tab over the merged store', () => {
 		expect(excerpt?.map((line) => line.flagged)).toEqual([false, false, true, false, false]);
 	});
 
-	it('still lists a finding whose file has no text to show', async () => {
+	it('still lists a diagnostic whose file has no text to show', async () => {
 		const store = await seededStore();
 
 		const withoutText = diagnosticsView(store, { filter: 'all', sort: 'severity' });

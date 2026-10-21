@@ -11,7 +11,7 @@ import { lspRegistration } from './registration';
  * the tab importing plugin internals: it is published under a service key, the
  * way the log store is published for the Logs tab (ADR 0008). What is pinned
  * here is that the published store is the one the editor's marks read — a tab
- * pointed at a second store would show findings the editor does not paint.
+ * pointed at a second store would show diagnostics the editor does not paint.
  */
 
 const hosts: PluginHost[] = [];

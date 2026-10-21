@@ -17,9 +17,9 @@
 	 * The project-wide diagnostics tab (spec #309, issue #309).
 	 *
 	 * A view over the merged diagnostics store the LSP plugin publishes
-	 * (ADR 0008, ADR 0022, ADR 0029): the tab reads the findings the store
+	 * (ADR 0008, ADR 0022, ADR 0029): the tab reads the diagnostics the store
 	 * holds, never the protocol that filled them, and shows them on the
-	 * reusable multibuffer — one section per file, each finding with the lines
+	 * reusable multibuffer — one section per file, each diagnostic with the lines
 	 * around it.
 	 *
 	 * What the tab shows is `diagnostics-tab`'s decision; this is the markup
@@ -148,7 +148,7 @@
 						{...props}
 						type="button"
 						class="flex max-w-56 items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground/80 hover:bg-accent/50"
-						aria-label="Sort findings"
+						aria-label="Sort diagnostics"
 					>
 						<span class="truncate">{SORT_LABELS[session.sort]}</span>
 						<CaretDownIcon class="size-3 opacity-70" />
@@ -200,7 +200,7 @@
 			<span class="truncate font-bold text-foreground">{section.filepath}</span>
 			<span class="shrink-0 text-[9px] text-muted-foreground">
 				{section.entries.length}
-				{section.entries.length === 1 ? 'finding' : 'findings'}
+				{section.entries.length === 1 ? 'diagnostic' : 'diagnostics'}
 			</span>
 		</div>
 	{/if}
