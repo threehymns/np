@@ -217,6 +217,50 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(stageAll).toHaveBeenCalled();
 		});
 
+		it('keeps the repository active diff file when the diff tab opens without a filepath', async () => {
+			// The panel's "Uncommitted Changes" button opens the tab without
+			// a path. Clearing the active file there left the Diff Viewer
+			// with no active file: every file expanded, none highlighted.
+			const { host, workspace } = await makeHarness();
+
+			const repo = new Repository(
+				rootOrigin,
+				createMockVcsFactory({
+					changes: async () => [
+						{ filepath: 'a.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false }
+					]
+				})
+			);
+			workspace.project.repository = repo;
+			await repo.refresh();
+			expect(repo.activeDiffFile?.filepath).toBe('a.md');
+
+			await host.executeCommand('git.openDiff');
+
+			expect(workspace.tabs.some((t) => t.id === '__project_diff__')).toBe(true);
+			expect(repo.activeDiffFile?.filepath).toBe('a.md');
+		});
+
+		it('moves the active diff file when the diff tab opens with a filepath', async () => {
+			const { host, workspace } = await makeHarness();
+
+			const repo = new Repository(
+				rootOrigin,
+				createMockVcsFactory({
+					changes: async () => [
+						{ filepath: 'a.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false },
+						{ filepath: 'b.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false }
+					]
+				})
+			);
+			workspace.project.repository = repo;
+			await repo.refresh();
+
+			await host.executeCommand('git.openDiff', 'b.md');
+
+			expect(repo.activeDiffFile?.filepath).toBe('b.md');
+		});
+
 		it('refreshes the repository through the afterSave hook on successful save', async () => {
 			const { host, workspace } = await makeHarness();
 

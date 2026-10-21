@@ -1,69 +1,24 @@
 import { test, expect } from './helpers/e2e-debug';
 import { mockIconThemes } from './helpers/mock-network';
 import { installMockFS } from './helpers/mock-fs';
+import { installDiffTestRepo } from './helpers/mock-diff-repo';
 
 test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test.beforeEach(async ({ page }) => {
 		await mockIconThemes(page);
 		await page.goto('/');
 
-		// The git plugin registers its commands when it activates, which happens
-		// after the app boots. A command that is not registered yet is a silent
-		// no-op, so wait for it before the spec uses it.
-		await page.waitForFunction(() => !!(window as any).appState?.commands?.get('git.openDiff'));
-
 		// Inject mock repo setup
 		await page.evaluate(installMockFS);
-		await page.evaluate(() => {
-
-			// The diff viewer expands the active diff file and collapses the rest,
-			// so a file has to be active for a collapsed file to exist at all.
-			// Opening the diff for a file is what the Git panel does.
-			(window as any).openDiffFor = (filepath: string) => {
-				(window as any).appState.commands.execute('git.openDiff', filepath);
-			};
-
-			(window as any).setupDiffTestRepo = async () => {
-				const appState = (window as any).appState;
-				const git = (window as any).git;
-				const RepositoryClass = (window as any).Repository;
-
-				const root = new (window as any).MockDirectoryHandle('diff-test-project');
-				const origin = { scheme: 'browser', path: root.name, name: root.name };
-				await (window as any).browserHandleRegistry.register(`browser://${root.name}`, root);
-				const repository = new RepositoryClass(origin, appState.workspace.project.vcsFactory);
-				const adapter = repository.adapter;
-
-				await root.getDirectoryHandle('.git', { create: true });
-				await repository.refresh();
-				const gitFs = (adapter as any).fs;
-
-				await git.init({ fs: gitFs, dir: '/repo', defaultBranch: 'main' });
-				await gitFs.promises.writeFile('/repo/README.md', 'Line 1\nLine 2\nLine 3\n');
-				await gitFs.promises.writeFile('/repo/hello.ts', 'const a = 1;\nconst b = 2;\n');
-				await git.add({ fs: gitFs, dir: '/repo', filepath: 'README.md' });
-				await git.add({ fs: gitFs, dir: '/repo', filepath: 'hello.ts' });
-				await git.commit({
-					fs: gitFs,
-					dir: '/repo',
-					message: 'Initial commit',
-					author: { name: 'Test User', email: 'test@example.com' }
-				});
-
-				// Modify files to generate diffs
-				await gitFs.promises.writeFile('/repo/README.md', 'Line 1\nLine 2 modified\nLine 3\nLine 4 added\n');
-				await gitFs.promises.writeFile('/repo/hello.ts', 'const a = 100;\nconst b = 2;\n');
-
-				await repository.refresh();
-
-				appState.workspace.project.rootOrigin = origin;
-				appState.workspace.rootHandle = root;
-				appState.workspace.project.hasRootPermission = true;
-				appState.workspace.project.repository = repository;
-
-				return { repository, changes: repository.changes };
-			};
-		});
+		// The Git plugin activates asynchronously (its module is imported
+		// lazily), so its commands are registered a tick or two after
+		// AppState exists. Every test here drives `git.openDiff`, which
+		// silently does nothing until the command exists.
+		await page.waitForFunction(
+			() => !!(window as any).appState?.commands?.get('git.openDiff'),
+			undefined,
+			{ timeout: 15_000 }
+		);
 	});
 
 	test('CodeMirror diff viewer instances should mount and load when opening diff tab', async ({ page }) => {
@@ -71,14 +26,15 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 
 		// Initialize repo with modified files
-		const setupResult = await page.evaluate(async () => {
-			return await (window as any).setupDiffTestRepo();
-		});
+		const setupResult = await page.evaluate(installDiffTestRepo);
 
 		expect(setupResult.changes.length).toBeGreaterThan(0);
 
-		// Open uncommitted changes diff tab for one file
-		await page.evaluate(() => (window as any).openDiffFor('README.md'));
+		// Open uncommitted changes diff tab
+		await page.evaluate(() => {
+			const appState = (window as any).appState;
+			appState.commands.execute('git.openDiff');
+		});
 
 		// Verify diff tab is active
 		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
@@ -98,8 +54,8 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test('loads diffs on demand: collapsed files skip loading until expanded', async ({ page }) => {
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 
-		await page.evaluate(async () => {
-			await (window as any).setupDiffTestRepo();
+		await page.evaluate(installDiffTestRepo);
+		await page.evaluate(() => {
 			const adapter = (window as any).appState.workspace.project.repository.adapter;
 			(window as any).__getFileDiffCalls = 0;
 			const original = adapter.getFileDiff.bind(adapter);
@@ -109,7 +65,9 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 			};
 		});
 
-		await page.evaluate(() => (window as any).openDiffFor('README.md'));
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
 
 		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
 		const fileHeaders = page.locator('[id^="diff-header-"]');
@@ -140,11 +98,11 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test('arrow traversal across files stays correct when toggling view mode mid-navigation', async ({ page }) => {
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 
-		await page.evaluate(async () => {
-			await (window as any).setupDiffTestRepo();
-		});
+		await page.evaluate(installDiffTestRepo);
 
-		await page.evaluate(() => (window as any).openDiffFor('README.md'));
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
 
 		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
 		const fileHeaders = page.locator('[id^="diff-header-"]');
@@ -174,12 +132,14 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test('hunk navigation via ]c / [c keybindings in vim normal mode', async ({ page }) => {
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 
-		await page.evaluate(async () => {
-			await (window as any).setupDiffTestRepo();
+		await page.evaluate(installDiffTestRepo);
+		await page.evaluate(() => {
 			(window as any).appState.prefs.vimMode = true;
 		});
 
-		await page.evaluate(() => (window as any).openDiffFor('README.md'));
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
 
 		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
 		const fileHeaders = page.locator('[id^="diff-header-"]');
@@ -200,8 +160,10 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 				return 'unknown';
 			});
 
-		// Focus the first diff editor (vim normal mode persists from prefs)
-		await page.locator('.cm-editor').first().click();
+		// Focus the first diff editor (vim normal mode persists from prefs).
+		// The second editor of the section is the Working-copy pane: the
+		// Original pane is read-only and non-focusable since #268.
+		await page.locator('.cm-editor').nth(1).click();
 		await page.keyboard.press('Escape');
 		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
 
@@ -229,11 +191,11 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 	test('diff cursor syncs Git panel active entry', async ({ page }) => {
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 
-		await page.evaluate(async () => {
-			await (window as any).setupDiffTestRepo();
-		});
+		await page.evaluate(installDiffTestRepo);
 
-		await page.evaluate(() => (window as any).openDiffFor('README.md'));
+		await page.evaluate(() => {
+			(window as any).appState.commands.execute('git.openDiff');
+		});
 
 		await expect(page.locator('button[role="tab"]:has-text("Uncommitted Changes")')).toBeVisible({ timeout: 5000 });
 		const fileHeaders = page.locator('[id^="diff-header-"]');
@@ -255,13 +217,15 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		const activeRow = (name: string) =>
 			page.locator('.bg-sidebar-accent.border-border', { hasText: name });
 
-		// Focusing another file's diff editor moves the panel highlight
-		await page.locator('[id="diff-file-hello.ts"] .cm-editor').first().click();
+		// Focusing another file's diff editor moves the panel highlight.
+		// The second editor of the section is the Working-copy pane: the
+		// Original pane is read-only and non-focusable since #268.
+		await page.locator('[id="diff-file-hello.ts"] .cm-editor').nth(1).click();
 		await waitForActiveFile('hello.ts');
 		await expect(activeRow('hello.ts')).toBeVisible();
 
 		// And back again
-		await page.locator('[id="diff-file-README.md"] .cm-editor').first().click();
+		await page.locator('[id="diff-file-README.md"] .cm-editor').nth(1).click();
 		await waitForActiveFile('README.md');
 		await expect(activeRow('README.md')).toBeVisible();
 

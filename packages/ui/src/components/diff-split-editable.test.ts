@@ -1,0 +1,102 @@
+import { describe, it, expect } from "bun:test";
+import pathlib from "node:path";
+
+const SRC = pathlib.join(import.meta.dir, "DiffViewer.svelte");
+const src: string = await Bun.file(SRC).text();
+
+// Structural coverage for the split Working-copy pane binding (#269):
+// the logic lives inside the Svelte component, so these source invariants
+// lock the wiring seams; behavior is covered by diff-split-binding.test.ts
+// (helpers), state-diff-save.test.ts (save routing), and the Playwright
+// diff-viewer spec.
+describe("DiffViewer split Working-copy pane binding", () => {
+	it("keeps the Original (a) pane read-only in split mode", () => {
+		// Exactly one unconditional readOnly remains: the a-pane. The
+		// b-pane moved to a compartment driven by the editable flag, and
+		// inline mode passes readOnly through its own option.
+		const bare = src.match(/EditorState\.readOnly\.of\(true\)/g) ?? [];
+		expect(bare.length).toBe(1);
+		expect(src).toContain("readOnlyCompartmentB.of(EditorState.readOnly.of(!currentOptions.editable))");
+	});
+
+	it("wires the b-pane change seam to the shared Document", () => {
+		expect(src).toContain("onDocChange: (text) => handleDiffDocChange(fileChange.filepath, text)");
+		expect(src).toContain("appState.workspace.updateDocumentContent(doc, text)");
+	});
+
+	it("drives the b-pane from Document content instead of the git snapshot", () => {
+		expect(src).toContain("resolveSplitRightContent(splitDoc, diff.modifiedContent)");
+	});
+
+	it("tags external Document syncs so they never echo back or pollute undo", () => {
+		expect(src).toContain("tr.annotation(splitSyncAnnotation)");
+		expect(src).toContain("Transaction.addToHistory.of(false)");
+	});
+
+	it("shows a dirty indicator in the diff file header from Document state", () => {
+		expect(src).toContain("isDiffHeaderDirty(headerDoc)");
+		expect(src).toContain('aria-label="Unsaved changes"');
+	});
+
+	it("no longer pins inline mode read-only (ticket #270 made it editable)", () => {
+		expect(src).not.toContain("readOnly: true,");
+		expect(src).not.toContain("EditorState.readOnly.of(currentOptions.readOnly)");
+	});
+
+	it("binds staged-only files too (typing creates an unstaged modification, #268 story 11)", () => {
+		// Regression lock: the binding effect once skipped staged-only
+		// entries, leaving their Working-copy panes permanently read-only
+		// with no bound Document to type into.
+		expect(src).not.toContain("if (file.staged && !file.combined) continue;");
+	});
+
+	it("invalidates cached diff snapshots inside the binding effect, before ensureSplitDocument", () => {
+		// Regression lock: loadedDiffs was once cleared in a separate
+		// $effect declared AFTER the binding effect, so the binding effect
+		// ran first and could read a stale snapshot. After a save (Document
+		// clean), syncCleanSnapshot would then revert the just-saved
+		// Document to the pre-save snapshot. The invalidation must live at
+		// the top of the binding effect itself.
+		const bindingEffectIdx = src.indexOf("ensureSplitDocument(scope, boundIds, file,");
+		expect(bindingEffectIdx).toBeGreaterThan(-1);
+		const invalidationIdx = src.indexOf("if (currentChanges !== lastChangesRef)");
+		expect(invalidationIdx).toBeGreaterThan(-1);
+		expect(invalidationIdx).toBeLessThan(bindingEffectIdx);
+		// No standalone invalidation effect may remain: exactly one
+		// lastChangesRef comparison guards the ordering.
+		const matches = src.match(/if \(currentChanges !== lastChangesRef\)/g) ?? [];
+		expect(matches.length).toBe(1);
+	});
+
+	it("applies a diff snapshot to a bound Document once", () => {
+		// Regression lock: the binding effect re-runs whenever the bound
+		// Document changes - on every keystroke, and on the save that
+		// makes it clean again. Re-applying the cached snapshot on every
+		// run reverted a just-saved Document to the pre-save snapshot: the
+		// Working-copy pane's content jumped back, and the cursor with it
+		// (from the end of the saved edit to before it). A snapshot is
+		// applied once per snapshot; a newer one still reloads the
+		// Document, and the map is cleared with the cache when the
+		// repository replaces the change list.
+		expect(src).toContain("const appliedSnapshots = new Map<string, CachedDiffDetail>();");
+		expect(src).toContain("appliedSnapshots.clear();");
+		expect(src).toContain("ensureSplitDocument(scope, boundIds, file, content, !alreadyApplied);");
+		expect(src).toContain("appliedSnapshots.set(file.filepath, detail);");
+		// The bookkeeping is cleared where the snapshot cache is, so both
+		// share one generation.
+		const invalidation = src.slice(
+			src.indexOf("if (currentChanges !== lastChangesRef)"),
+			src.indexOf("const files = activeChanges;")
+		);
+		expect(invalidation).toContain("loadedDiffs = {}");
+		expect(invalidation).toContain("appliedSnapshots.clear();");
+	});
+
+	it("prunes binding-owned Documents using cross-pane tab counts", () => {
+		// Regression lock: the prune check once used workspace.tabs (active
+		// pane only), so a clean Document open in another pane looked
+		// tab-less and was pruned, leaving a dangling tab.
+		expect(src).toContain("shouldPruneBoundDocument(");
+		expect(src).not.toContain("workspace.tabs.some((t) => t.id === doc.id)");
+	});
+});
