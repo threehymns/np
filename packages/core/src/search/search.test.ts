@@ -731,7 +731,7 @@ describe("Search tab session and toggle persistence (Issue #335)", () => {
 		session.includePattern = "src/**";
 		session.excludePattern = "dist/**";
 
-		const serialized = (ws as any).serializeTabs();
+		const serialized = (ws as any).serializeWorkspace().docs;
 		expect(serialized.length).toBe(1);
 		expect(serialized[0].virtualTabType).toBe("search");
 		expect(serialized[0].searchQuery).toBe("findSomething");

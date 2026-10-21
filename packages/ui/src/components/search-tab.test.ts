@@ -40,8 +40,13 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 		// The pane shell owns tab rendering (MainLayout only hosts the split
 		// tree), so the search tab is rendered per pane.
 		expect(PANE_SRC).toContain("tab.type === 'search'");
-		expect(PANE_SRC).toContain("<SearchTab />");
 		expect(MAIN_LAYOUT_SRC).toContain("<SplitTree");
+	});
+
+	it("the pane passes the search tab its id, so the tab reads its own session", () => {
+		// A search tab can be the active tab of a pane that is not the
+		// active one, so the tab id is what identifies its session.
+		expect(PANE_SRC).toContain("<SearchTab tabId={tab.id} />");
 	});
 
 	it("defaultKeymap binds cmd+shift+f and space / to edit.findInFiles", () => {
