@@ -822,6 +822,20 @@ export class Workspace {
 				this.project.repository = previous.repository;
 				this.project.repositoryOwnerId = previous.repositoryOwnerId;
 				this.project.hasRootPermission = previous.permission;
+				// The restored root gets a fresh Worktree, and a fresh
+				// Worktree publishes an empty snapshot. Rescan the restored
+				// root so the project that is still open publishes its files
+				// again instead of an empty set. The scan runs before the
+				// tree's own state is put back, so the tree keeps the
+				// content the open started from.
+				if (previous.root && previous.permission) {
+					try {
+						await this.project.projectTree.scan(previous.root);
+					} catch {
+						// The open failure is the reason to report. A failure
+						// to rescan the restored root does not change it.
+					}
+				}
 				this.documents = previous.documents;
 				this.layout = previous.layout;
 				this.activePaneId = previous.activePaneId;
