@@ -115,6 +115,10 @@
 		const focusNonce = appState.workspace.searchTabFocusNonce;
 		const activeTabId = appState.activeTabId;
 		if (!inputRef) return;
+		// Only the search tab the user is looking at takes the focus. A
+		// search tab in another pane stays mounted, and it must not take
+		// the focus away from the pane the user is in.
+		if (activeTabId !== (tabId ?? SEARCH_TAB_ID)) return;
 		if (!shouldFocusSearchInput({ focusNonce, activeTabId, searchTabId: SEARCH_TAB_ID })) return;
 		inputRef.focus();
 		inputRef.select();

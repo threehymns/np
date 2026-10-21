@@ -237,6 +237,12 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		expect(SEARCH_TAB_SRC).toContain("inputRef.select();");
 	});
 
+	it("only the search tab the user is looking at takes the focus", () => {
+		// A search tab in another pane stays mounted, so it must not take
+		// the focus away from the pane the user is in.
+		expect(SEARCH_TAB_SRC).toContain("if (activeTabId !== (tabId ?? SEARCH_TAB_ID)) return;");
+	});
+
 	it("in-progress searches show streaming state and live match/file counts", () => {
 		expect(SEARCH_TAB_SRC).toContain("isSearching");
 		expect(SEARCH_TAB_SRC).toContain("CircleNotchIcon");
