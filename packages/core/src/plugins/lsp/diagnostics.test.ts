@@ -365,3 +365,104 @@ describe('Diagnostics store, ordered by document revision (#353)', () => {
 		expect(store.read(A).map((d) => d.message)).toEqual(['after clear']);
 	});
 });
+
+/**
+ * The workspace pull and the document pull answer the same question about one
+ * path, and the store has to say which of them is the word (#308, ADR 0029).
+ *
+ * A workspace report names no revision, so it is ordered against a document
+ * pull by source alone: the document pull is the newer word for a path, and a
+ * path an open buffer owns keeps the document pull's answer. A push is the
+ * oldest word of the three and never replaces a pull.
+ */
+describe('The merged store composes a workspace pull with a document pull (#308)', () => {
+	const server = 'typescript@/repo';
+
+	function diagnostic(message: string) {
+		return {
+			server,
+			range: range(0, 0, 5),
+			severity: 'error' as const,
+			message,
+			source: null,
+			code: null
+		};
+	}
+
+	it('lands a workspace report per URI', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace a')] });
+		store.workspacePull({ uri: B, server, diagnostics: [diagnostic('workspace b')] });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['workspace a']);
+		expect(store.read(B).map((d) => d.message)).toEqual(['workspace b']);
+		expect(store.uris().sort()).toEqual([A, B].sort());
+	});
+
+	it('keeps the document pull over a workspace pull for the same path, in either order', () => {
+		const store = new LspDiagnosticsStore();
+
+		// The workspace pull lands first and the document pull replaces it: the
+		// document pull is the newer word for a path the editor owns.
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		store.pull({ uri: A, server, diagnostics: [diagnostic('document')] });
+		expect(store.read(A).map((d) => d.message)).toEqual(['document']);
+
+		// And the other way round: the workspace pull does not replace what the
+		// document pull filed, and the report it dropped changes nothing.
+		const revision = store.revision;
+		let notifications = 0;
+		store.subscribe(() => {
+			notifications++;
+		});
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace again')] });
+		expect(store.read(A).map((d) => d.message)).toEqual(['document']);
+		expect(store.revision).toBe(revision);
+		expect(notifications).toBe(0);
+	});
+
+	it('a workspace report does not displace a document pull that names a revision', () => {
+		// The case the rule exists for. The document pull names the revision it
+		// was computed against and the workspace report names none, so the two
+		// revisions cannot be compared and the source decides — and the
+		// document pull is the newer word for a path an open buffer owns.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [diagnostic('document at 5')], version: 5 });
+		const revision = store.revision;
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['document at 5']);
+		expect(store.revision).toBe(revision);
+
+		// And the other way round: the document pull takes the path from the
+		// workspace report, because the source order says so.
+		const other = new LspDiagnosticsStore();
+		other.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		other.pull({ uri: A, server, diagnostics: [diagnostic('document at 5')], version: 5 });
+
+		expect(other.read(A).map((d) => d.message)).toEqual(['document at 5']);
+	});
+
+	it('refuses a push against a workspace-pulled path, as it does against a pulled one', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		const revision = store.revision;
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed' }])!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['workspace']);
+		expect(store.revision).toBe(revision);
+	});
+
+	it('clears a workspace-pulled path with a clean workspace report, and no other', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		store.workspacePull({ uri: B, server, diagnostics: [diagnostic('other')] });
+		store.workspacePull({ uri: A, server, diagnostics: [] });
+
+		expect(store.read(A)).toEqual([]);
+		expect(store.read(B).map((d) => d.message)).toEqual(['other']);
+	});
+});
