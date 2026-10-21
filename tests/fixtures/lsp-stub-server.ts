@@ -45,6 +45,13 @@ import { basename, dirname } from 'node:path';
  *                   a workspace and reports on files it was not asked about —
  *                   which is how a report reaches a client whose `lsp` is off for
  *                   that file's language
+ *   --diagnostic-pull  advertise `diagnosticProvider` and answer
+ *                   `textDocument/diagnostic`, so the server is one that serves
+ *                   a file by pull rather than by push. Off by default, and
+ *                   deliberately: a server that offers the pull is asked for it
+ *                   on every edit, so a stub that offered it by default would
+ *                   put a pull on the wire in tests that are about something
+ *                   else
  *   --log-file <path>  append every message the stub received, so a test can
  *                   assert what actually arrived on the wire. The protocol trace
  *                   deliberately does not retain document bodies, so this is the
@@ -60,6 +67,9 @@ import { basename, dirname } from 'node:path';
  *                   failure path is reachable while completions still answer
  *   --mode stall-resolve  never answer `completionItem/resolve` at all, so the
  *                   wedged-resolve path is reachable
+ *   --mode fail-diagnostic-pull  advertise `diagnosticProvider` and then
+ *                   refuse every `textDocument/diagnostic`, so the pull failure
+ *                   path is reachable on a server that *is* running
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
  * without making the suite slow: a `textDocument/completion` that arrives later
@@ -77,6 +87,7 @@ const MODES = [
 	'fail-hover',
 	'fail-resolve',
 	'stall-resolve',
+	'fail-diagnostic-pull',
 	'gated'
 ] as const;
 type StubMode = (typeof MODES)[number];
@@ -88,6 +99,8 @@ interface StubOptions {
 	echoText: boolean;
 	diagnostics: boolean;
 	diagnosticUri: string | null;
+	/** Whether the server answers `textDocument/diagnostic` at all. */
+	diagnosticPull: boolean;
 	logFile: string | null;
 	gateFile: string | null;
 }
@@ -100,13 +113,17 @@ function readOption(argv: string[], name: string): string | undefined {
 function parseOptions(argv: string[]): StubOptions {
 	const mode = readOption(argv, 'mode');
 	const delay = readOption(argv, 'delay-ms');
+	const resolvedMode = MODES.find((known) => known === mode) ?? 'answer';
 	return {
-		mode: MODES.find((known) => known === mode) ?? 'answer',
+		mode: resolvedMode,
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text'),
 		diagnostics: argv.includes('--diagnostics'),
 		diagnosticUri: readOption(argv, 'diagnostic-uri') ?? null,
+		// The mode that refuses pulls still has to offer them, or the client
+		// would never ask and the failure would not be reachable.
+		diagnosticPull: argv.includes('--diagnostic-pull') || resolvedMode === 'fail-diagnostic-pull',
 		logFile: readOption(argv, 'log-file') ?? null,
 		gateFile: readOption(argv, 'gate-file') ?? null
 	};
@@ -304,7 +321,13 @@ function handle(message: JsonRpcMessage): void {
 							// one that answers completions and would need a resolve
 							// round trip for documentation.
 							completionProvider: { resolveProvider: true, triggerCharacters: ['.', '"', '/', "'"] },
-							hoverProvider: true
+							hoverProvider: true,
+							// Only when the test asks for it. A server that advertises
+							// the pull is asked for it on every edit, so the default
+							// stub stays a push-only server.
+							...(options.diagnosticPull
+								? { diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false } }
+								: {})
 						},
 						serverInfo: { name: 'stub-ls', version: '0.0.0' },
 						// Echoed so a test can read the resolved root straight out of the
@@ -348,6 +371,41 @@ function handle(message: JsonRpcMessage): void {
 		if (message.method === 'textDocument/didOpen') {
 			process.stderr.write(`stub server: opened a document of ${document?.text?.length ?? 0} chars\n`);
 		}
+		return;
+	}
+	if (message.method === 'textDocument/diagnostic') {
+		if (options.mode === 'fail-diagnostic-pull') {
+			// A running server that offers the pull and then refuses it: the
+			// JSON-RPC error path, which is a different failure from a server
+			// that never started.
+			delayed(() =>
+				send({
+					id: message.id,
+					error: { code: -32603, message: 'stub server: diagnostics are unavailable' }
+				})
+			);
+			return;
+		}
+		// A full report, the shape the client files: one finding and a result
+		// id, so the next pull can be answered with "unchanged" instead of
+		// another full report. The message says "pulled" so a test can tell
+		// this finding apart from one the server pushed.
+		delayed(() =>
+			send({
+				id: message.id,
+				result: {
+					kind: 'full',
+					resultId: 'stub-pull-1',
+					items: [
+						{
+							range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+							severity: 1,
+							message: 'pulled diagnostic'
+						}
+					]
+				}
+			})
+		);
 		return;
 	}
 	if (message.method === 'textDocument/completion') {

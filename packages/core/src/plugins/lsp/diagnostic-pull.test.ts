@@ -329,6 +329,62 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(store.revision).toBe(revAfterPush);
 	});
 
+	it('reports a failed pull once, after the retries are spent', async () => {
+		// A failed pull leaves the pushed findings alone, so from the outside it
+		// looks exactly like a pull that worked. The reason has to reach the
+		// Logs tab, or a server that cannot answer pulls is indistinguishable
+		// from a server that was never asked.
+		const failures: Array<{ server: string; error: unknown }> = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: () => Effect.fail(new Error('boom')),
+			onFailure: (failedServer, error) => failures.push({ server: failedServer, error })
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('30 seconds');
+				})
+			)
+		);
+
+		// Once, not once per attempt: the retries are the same failure.
+		expect(failures).toHaveLength(1);
+		expect(failures[0].server).toBe(server);
+		expect((failures[0].error as Error).message).toBe('boom');
+	});
+
+	it('does not report an interrupted pull as a failure', async () => {
+		// A server that stopped while a pull was in flight has failed nothing,
+		// and neither has an edit that replaced the pull with a newer one. A
+		// warning for either would be a lie about a server that did its job.
+		const failures: string[] = [];
+		const store = new LspDiagnosticsStore();
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			// A request that never settles, so the pull is in flight rather than
+			// finished: the position the interruption actually happens in.
+			request: () => Effect.never,
+			onFailure: (failedServer) => failures.push(failedServer)
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* coordinator.notifyEdit(uri, server);
+					yield* TestClock.adjust('50 millis');
+					yield* coordinator.forgetServer(server);
+					yield* TestClock.adjust('30 seconds');
+				})
+			)
+		);
+
+		expect(failures).toEqual([]);
+	});
+
 	it('retries are bounded: a permanently failing server gives up instead of retrying forever', async () => {
 		const calls: RecordedCall[] = [];
 		const store = new LspDiagnosticsStore();

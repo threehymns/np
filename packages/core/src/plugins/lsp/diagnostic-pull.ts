@@ -70,6 +70,12 @@ export interface DiagnosticPullRequest {
 export interface DiagnosticPullDependencies {
 	readonly request: DiagnosticPullRequest;
 	readonly store: LspDiagnosticsStore;
+	/**
+	 * Called once when a pull ends in failure, so the reason reaches the Logs
+	 * tab. A failed pull leaves the pushed findings alone, which from the
+	 * outside is indistinguishable from a pull that worked.
+	 */
+	readonly onFailure?: (server: string, error: unknown) => void;
 }
 
 /**
@@ -139,9 +145,23 @@ export class DiagnosticPullCoordinator {
 		// instead of hammering it forever, and Effect.ignore handles that
 		// terminal failure explicitly, so the error channel needs no cast.
 		// The next edit re-arms a pull.
+		//
+		// The failure is reported once, after the last attempt, rather than once
+		// per attempt: the retries are one failure, not six.
+		//
+		// An interruption is not a failure and is not reported: a server that
+		// stopped mid-pull, or an edit that replaced this pull with a newer
+		// one, has failed nothing and must not leave a warning behind.
 		return Effect.sleep(DIAGNOSTIC_PULL_DEBOUNCE).pipe(
 			Effect.flatMap(() =>
-				this.pullOnce(uri, server).pipe(Effect.retry(boundedPullRetrySchedule))
+				this.pullOnce(uri, server).pipe(
+					Effect.retry(boundedPullRetrySchedule),
+					Effect.tapError((error) =>
+						Effect.sync(() => {
+							this.deps.onFailure?.(server, error);
+						})
+					)
+				)
 			),
 			Effect.ignore
 		);

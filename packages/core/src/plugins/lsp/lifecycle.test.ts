@@ -1479,3 +1479,117 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 		).toEqual(['.', '"']);
 	});
 });
+
+/**
+ * The diagnostic pull, end to end: an edit asks the server for the file's
+ * findings, and a server that does not offer the pull is never asked.
+ *
+ * The stub is the witness. It answers `textDocument/diagnostic` only when the
+ * test asks it to (`--diagnostic-pull`), so the file's findings in the first
+ * test can only have come from a pull, and the absence of a pull in the second
+ * is the client's decision rather than the server's silence.
+ */
+describe('the diagnostic pull on edit (#307)', () => {
+	const edited = 'export const a = 2;\n';
+
+	it('asks a server that offers the pull for the file findings, and files the answer', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ['--diagnostic-pull'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The edit: the same file with new text, so the runtime sends
+		// `didChange` and arms the pull that follows it.
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The stub pushes nothing, so the only finding the file can hold is the
+		// one the pull answered with.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+	});
+
+	it('never asks a server that offers no pull', async () => {
+		// The control for the test above. The same edit against a server that
+		// advertises no `diagnosticProvider` has to produce no pull at all,
+		// and the findings the server pushed have to be the ones the file
+		// shows.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const wireLog = join(root, 'wire.log');
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostics', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The server is alive and answering: it pushed its findings for the
+		// change. So the absence of a pull below is the client's decision and
+		// not the server's silence.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pushed diagnostic' });
+
+		// Long enough for the debounce to have elapsed and the pull to have
+		// gone out, had one been armed. An absence cannot be waited for
+		// exactly, so this is the window the assertion is made in.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join('\n');
+		expect(wire).toContain('textDocument/didChange');
+		expect(wire).not.toContain('textDocument/diagnostic');
+	});
+
+	it('reports a failed pull, because a failed pull and a working one look the same', async () => {
+		// A pull that fails leaves the pushed findings alone (ADR 0029), so
+		// from the outside the file looks exactly as it would if the pull had
+		// worked. The reason has to be somewhere the Logs tab can show it,
+		// the way a failed completion and a failed hover are.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const { runtime, logs } = await startRuntime({ script: ['--mode', 'fail-diagnostic-pull'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+		// The retries are bounded and back off, so the failure is reported
+		// after them rather than at once: the window is the whole schedule.
+		await waitFor(() => logs.read({ level: 'warn' }).length > 0, {
+			label: 'the pull failure to be reported',
+			timeoutMs: 20000
+		});
+		expect(logs.read({ level: 'warn' })[0].message).toContain('Diagnostic pull failed');
+	});
+});

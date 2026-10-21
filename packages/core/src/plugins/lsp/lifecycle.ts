@@ -312,15 +312,35 @@ export class LspRuntime
 						try: () => {
 							const client = this.servers.get(server)?.client;
 							if (!client) throw new Error(`Server "${server}" is not running, so its diagnostics cannot be pulled.`);
-							return client.request('textDocument/diagnostic', {
-								textDocument: { uri },
-								// identifier is omitted: it comes from dynamic registration
-								// tracking, which this ticket does not build.
-								...(previousResultId !== undefined ? { previousResultId } : {})
-							});
+							return client.request(
+								'textDocument/diagnostic',
+								{
+									textDocument: { uri },
+									// identifier is omitted: it comes from dynamic registration
+									// tracking, which this ticket does not build.
+									...(previousResultId !== undefined ? { previousResultId } : {})
+								},
+								// Bounded like every other request the client makes. A
+								// server that never answers must not hold the pull
+								// open forever, and a pull that times out leaves the
+								// pushed findings alone (ADR 0029), so the cost of
+								// the bound is a warning rather than a wrong answer.
+								DEFAULT_FETCH_TIMEOUT_MS
+							);
 						},
 						catch: (error) => error
-					})
+					}),
+				onFailure: (server, error) => {
+					// A failed pull says nothing about the file, so the pushed
+					// findings stay and the file looks exactly as it would if the
+					// pull had worked. That is the same blindness the completion
+					// and hover failures are logged for.
+					this.options.logs.appendServerNote(
+						server,
+						'warn',
+						`Diagnostic pull failed, so the findings the server pushed stay: ${describeError(error)}`
+					);
+				}
 			});
 		} else {
 			this.pullScope = null;
