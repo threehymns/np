@@ -283,6 +283,20 @@ export class LspClient {
 							// resolve path.
 							dynamicRegistration: false,
 							contentFormat: ['markdown']
+						},
+						diagnostic: {
+							// The client asks a server for a document's findings
+							// by pull (`textDocument/diagnostic`, see
+							// diagnostic-pull.ts), so it says so. Declaring
+							// nothing while asking anyway is the protocol
+							// error the completion block above describes, and
+							// this table is where the client's own support is
+							// declared (ADR 0028).
+							dynamicRegistration: false,
+							// The pull asks about one document at a time and
+							// never names a related document, so the related
+							// half is false as well.
+							relatedDocumentSupport: false
 						}
 						// No trigger-character declaration, for the same
 						// client-table reason from the other side: trigger

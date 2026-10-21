@@ -236,6 +236,22 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		expect(hover.contentFormat).toEqual(['markdown']);
 	});
 
+	it('declares the diagnostic pull the client asks for, and no dynamic registration', async () => {
+		// The client asks a server for a document's findings by pull
+		// (`textDocument/diagnostic`, #307), so it declares that support. The
+		// dynamic half is false because the client never asks a server to
+		// register a diagnostic provider: the server's own `diagnosticProvider`
+		// is what says it answers pulls. Asking for the answers while declaring
+		// nothing is the protocol error the completion block above describes.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const diagnostic = (capabilities.textDocument as Record<string, unknown>).diagnostic as Record<
+			string,
+			unknown
+		>;
+		expect(diagnostic.dynamicRegistration).toBe(false);
+		expect(diagnostic.relatedDocumentSupport).toBe(false);
+	});
+
 	it('sends client-capability names, never the server ones they replaced', async () => {
 		// The defect these cover was invisible from inside the client and fatal to
 		// it: `textDocumentSync` and `completionProvider` are ServerCapabilities,
