@@ -5,7 +5,8 @@
 	import * as Tooltip from './ui/tooltip';
 	import Icon from './Icon.svelte';
 	import { Empty } from './ui/empty';
-	import { XIcon } from 'phosphor-svelte';
+	import { XIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
+	import SearchTab from './SearchTab.svelte';
 	import { flip } from 'svelte/animate';
 	import type { EditorView } from '@codemirror/view';
 	import type EditorComponent from './Editor.svelte';
@@ -26,7 +27,9 @@
 	let isActive = $derived(appState.workspace.activePaneId === pane.id);
 	let allPanes = $derived(appState.workspace.getAllPanes());
 	let isSplit = $derived(allPanes.length > 1);
-	let showTabBar = $derived(isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId));
+	let showTabBar = $derived(
+		isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId || t.type === 'search')
+	);
 
 	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof XIcon {
 		return (icon ?? XIcon) as unknown as typeof XIcon;
@@ -107,7 +110,7 @@
 					{#each pane.tabs as tab (tab.id)}
 						{@const tabDocument = appState.documents.find(d => d.id === (tab.docId ?? tab.id))}
 						{@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
-						{@const title = tabContent?.title ?? tabDocument?.fileName ?? 'Untitled'}
+						{@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? 'Untitled')}
 						{@const isModified = tabDocument?.isModified}
 						{@const deletedOnDisk = tabDocument?.deletedOnDisk}
 						<div
@@ -128,7 +131,9 @@
 										onclick={handleActivate}
 										class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
 									>
-										{#if tabContent?.icon}
+										{#if tab.type === 'search'}
+											<MagnifyingGlassIcon class="size-3.5 opacity-90 text-primary shrink-0" />
+										{:else if tabContent?.icon}
 											{@const TabIcon = toPhosphorIcon(tabContent.icon)}
 											<TabIcon class="size-3.5 opacity-90 text-primary shrink-0" />
 										{:else}
@@ -142,7 +147,9 @@
 									</Tabs.Trigger>
 								</Tooltip.Trigger>
 								<Tooltip.Content side="bottom">
-									{deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path}
+									{tab.type === 'search'
+										? 'Project Search'
+										: (deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path)}
 								</Tooltip.Content>
 							</Tooltip.Root>
 
@@ -184,7 +191,9 @@
 				{@const viewKey = paneEditorKey(pane.id, tab.id)}
 				<Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full min-h-0">
 					{#if pane.activeTabId === tab.id}
-						{#if tab.pluginId && tabContent}
+						{#if tab.type === 'search'}
+							<SearchTab />
+						{:else if tab.pluginId && tabContent}
 							{@const TabComponent = tabContent.component}
 							<TabComponent {...(tabContent.props ?? {})} />
 						{:else if Editor}

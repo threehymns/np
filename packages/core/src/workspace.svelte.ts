@@ -302,7 +302,13 @@ export class Workspace {
 		for (const pane of this.getAllPanes()) {
 			for (const tab of pane.tabs) {
 				if (serializedMap.has(tab.id)) continue;
-				if (tab.type === 'diff') {
+				if (tab.type === 'search') {
+					serializedMap.set(tab.id, {
+						id: tab.id,
+						origin: null,
+						virtualTabType: 'search'
+					});
+				} else if (tab.type === 'diff') {
 					const serialized: SerializedDocument = {
 						id: tab.id,
 						origin: null,
@@ -708,6 +714,32 @@ export class Workspace {
 		// is on disk rather than as an empty shell it has to wait on.
 		this.pluginHost?.emit('document:opened', { document: newDoc, origin: newDoc.origin });
 		return newDoc;
+	}
+
+	/**
+	 * Open the project-wide search tab.
+	 *
+	 * The search tab is a singleton: the project has one search surface, so
+	 * asking for it again focuses the existing tab instead of stacking a
+	 * second one. It is a virtual tab, so it lives in a pane like any other
+	 * tab but carries no document behind it.
+	 */
+	openSearchTab(_query?: string): string {
+		const SEARCH_TAB_ID = '__project_search__';
+		const existing = this.getAllTabs().find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
+		if (existing) {
+			// The tab may live in another pane, so focus that pane rather than
+			// pointing the active pane at a tab it does not hold.
+			const pane = findPaneWithTab(this.layout, existing.id);
+			if (pane) {
+				this.activePaneId = pane.id;
+				pane.activeTabId = existing.id;
+			}
+			return existing.id;
+		}
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search' });
+		this.activeTabId = SEARCH_TAB_ID;
+		return SEARCH_TAB_ID;
 	}
 
 	/**
@@ -1213,6 +1245,13 @@ export class Workspace {
 					}
 
 					let doc: DocumentSession | null = null;
+					if (serialized.virtualTabType === 'search') {
+						restoredTabs.push({
+							id: serialized.id,
+							type: 'search'
+						});
+						continue;
+					}
 					if (serialized.virtualTabType === 'diff') {
 						if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
 							continue;
