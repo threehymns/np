@@ -6,7 +6,7 @@ export const WORKSPACE_PERSISTENCE_VERSION = 1;
 
 export interface WorkspaceTab {
 	id: string;
-	type: 'document' | 'diff';
+	type: 'document' | 'diff' | 'search';
 	pluginId?: string;
 	canSplit?: boolean;
 	docId?: string;
@@ -115,7 +115,9 @@ export function findPaneWithTab(root: LayoutNode, tabId: string): Pane | null {
 export function canSplitTab(tab?: WorkspaceTab | null): boolean {
 	if (!tab) return false;
 	if (tab.canSplit !== undefined) return tab.canSplit;
-	if (tab.type === 'diff') return false;
+	// Virtual tabs carry no document, so splitting one would duplicate a
+	// surface the project owns (the project has a single search tab).
+	if (tab.type === 'diff' || tab.type === 'search') return false;
 	if (tab.id === '__lsp_logs__' || tab.id === '__project_diff__') return false;
 	return true;
 }

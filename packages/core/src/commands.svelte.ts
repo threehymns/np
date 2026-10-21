@@ -729,6 +729,14 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'edit.findInFiles',
+		label: 'Find in Project...',
+		category: 'Edit',
+		action: () => appState.workspace.openSearchTab(),
+		isEnabled: () => true
+	});
+
+	coreCommands.push({
 		id: 'edit.addInternalLink',
 		label: 'Add internal link',
 		category: 'Edit',
