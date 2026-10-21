@@ -36,15 +36,15 @@ to be answered now rather than after the interval is up.
 
 `workspace/diagnostic/refresh` is a request, not a notification: the client
 owes the server an answer. The client sends that answer first and acts on the
-refresh afterwards, and the order is the whole of the deadlock it avoids. The
+refresh afterward, and the order is the whole of the deadlock it avoids. The
 client's reaction to a refresh is a pull, and a server that is waiting for the
 refresh reply will not answer the pull until the reply is on the wire.
 
 The refresh re-arms the workspace pull and the document pull of every open
-buffer the server serves. Both, because the workspace pull does not cover a
-path an open buffer owns: that path is answered by the document pull, so a
-refresh that only re-armed the workspace pull would leave the open buffers
-stale.
+buffer the server serves. Both, because the document pull keeps a path an
+open buffer owns: the workspace pull may name it too, but the document pull's
+answer stands, so a refresh that only re-armed the workspace pull would leave
+the open buffers stale.
 
 A storm of refreshes is one repull. The signal is a latch rather than a
 queue, and the loop yields before it pulls again, so the signals that arrive
