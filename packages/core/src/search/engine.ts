@@ -119,7 +119,13 @@ export function globToRegex(glob: string): RegExp {
 	// Strip trailing slashes: "src/" names the same directory as "src"
 	p = p.replace(/\/+$/, '');
 
+	// An empty normalized pattern ("./", "/") selects the project root and everything in it.
+	if (!p) return /(?:)/;
+
 	const hasSlash = p.includes('/');
+	// Only a literal path names a directory. A glob with wildcards keeps its
+	// single-segment meaning, so "src/*" must not match "src/a/b.ts".
+	const isDirectoryGlob = !/[*?]/.test(p);
 
 	let regexStr = '';
 	let i = 0;
@@ -150,9 +156,11 @@ export function globToRegex(glob: string): RegExp {
 
 	if (!hasSlash) {
 		// A glob that names a directory also selects the paths below it.
-		return new RegExp(`(?:^|/)${regexStr}(?:/.*)?$`, 'i');
+		const tail = isDirectoryGlob ? '(?:/.*)?' : '';
+		return new RegExp(`(?:^|/)${regexStr}${tail}$`, 'i');
 	} else {
-		return new RegExp(`^${regexStr}(?:/.*)?$`, 'i');
+		const tail = isDirectoryGlob ? '(?:/.*)?' : '';
+		return new RegExp(`^${regexStr}${tail}$`, 'i');
 	}
 }
 
