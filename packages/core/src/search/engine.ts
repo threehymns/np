@@ -178,6 +178,90 @@ export function parseGlobs(input?: string[] | string): RegExp[] {
 		.map((g) => globToRegex(g));
 }
 
+export interface FileMatchScan {
+	/** Matches found in the content, in file order. */
+	matches: SearchMatch[];
+	/** True when the match budget ran out before the content was fully scanned. */
+	truncated: boolean;
+}
+
+/**
+ * Finds every match of `searchRegex` in `content`, carrying the surrounding
+ * context lines the search results report.
+ *
+ * The engine and the search tab's excerpt view share this matcher, so a
+ * rebuilt excerpt reports the same match positions a fresh search would.
+ */
+export function findMatchesInContent(
+	content: string,
+	searchRegex: RegExp,
+	contextLines: number,
+	maxMatches: number,
+	signal?: AbortSignal
+): FileMatchScan {
+	// Split while keeping the separators: charOffset must advance by the
+	// actual separator length (CRLF is 2 chars, LF is 1) so match offsets
+	// stay correct in files with Windows line endings.
+	const parts = content.split(/(\r?\n)/);
+	const lineCount = Math.ceil(parts.length / 2);
+	const lineTextAt = (idx: number): string => parts[idx * 2];
+	const matches: SearchMatch[] = [];
+	let charOffset = 0;
+	let truncated = false;
+
+	for (let lineIdx = 0; lineIdx < lineCount; lineIdx++) {
+		if (signal?.aborted) break;
+		const lineText = lineTextAt(lineIdx);
+		const separator = parts[lineIdx * 2 + 1] ?? '';
+		searchRegex.lastIndex = 0;
+		let match: RegExpExecArray | null;
+
+		while ((match = searchRegex.exec(lineText)) !== null) {
+			if (match[0].length === 0) {
+				if (searchRegex.lastIndex <= match.index) {
+					searchRegex.lastIndex = match.index + 1;
+				}
+				continue;
+			}
+
+			// Check if matches cap would be reached
+			if (matches.length >= maxMatches) {
+				truncated = true;
+				break;
+			}
+
+			// Build context lines
+			const contextBefore: SearchMatchContextLine[] = [];
+			for (let b = Math.max(0, lineIdx - contextLines); b < lineIdx; b++) {
+				contextBefore.push({ line: b + 1, text: lineTextAt(b) });
+			}
+
+			const contextAfter: SearchMatchContextLine[] = [];
+			for (let a = lineIdx + 1; a <= Math.min(lineCount - 1, lineIdx + contextLines); a++) {
+				contextAfter.push({ line: a + 1, text: lineTextAt(a) });
+			}
+
+			matches.push({
+				line: lineIdx + 1,
+				column: match.index + 1,
+				offset: charOffset + match.index,
+				matchLength: match[0].length,
+				lineText,
+				contextBefore,
+				contextAfter
+			});
+		}
+
+		charOffset += lineText.length + separator.length;
+
+		if (truncated) {
+			break;
+		}
+	}
+
+	return { matches, truncated };
+}
+
 /**
  * Hand-rolled Zed-style TypeScript search engine behind the SearchBackend seam (ADR 0026).
  *
@@ -379,10 +463,18 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 					progress.scannedFiles++;
 
-					// Read file content (from cache if valid, otherwise storage)
+					// Read file content: a live Document first, then the
+					// cache, then storage.
 					let content: string | null = null;
+					const live = options?.liveContent?.(file.origin);
 					const cached = this.fileCache.get(file.relativePath);
-					if (cached && cached.version === snapshot.version) {
+					if (live !== undefined) {
+						// A Document holds the file's text, so it is the truth
+						// while the file is dirty. It is not cached: the cache
+						// is keyed by the snapshot version, which does not move
+						// when a Document changes.
+						content = live;
+					} else if (cached && cached.version === snapshot.version) {
 						content = cached.content;
 					} else if (worktree.storage) {
 						try {
@@ -423,63 +515,17 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					}
 
 					// Phase 2: Full match only on files with hits
-					const lines = content.split(/\r?\n/);
-					const fileMatches: SearchMatch[] = [];
-					let charOffset = 0;
-
-					for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-						if (signal.aborted) break;
-
-						const lineText = lines[lineIdx];
-						searchRegex.lastIndex = 0;
-						let match: RegExpExecArray | null;
-
-						while ((match = searchRegex.exec(lineText)) !== null) {
-							if (match[0].length === 0) {
-								if (searchRegex.lastIndex <= match.index) {
-									searchRegex.lastIndex = match.index + 1;
-								}
-								continue;
-							}
-
-							// Check if matches cap would be reached
-							if (progress.totalMatches + fileMatches.length >= maxMatches) {
-								progress.truncated = true;
-								progress.truncationReason = 'matches';
-								break;
-							}
-
-							// Build context lines
-							const contextBefore: SearchMatchContextLine[] = [];
-							for (let b = Math.max(0, lineIdx - contextLines); b < lineIdx; b++) {
-								contextBefore.push({ line: b + 1, text: lines[b] });
-							}
-
-							const contextAfter: SearchMatchContextLine[] = [];
-							for (let a = lineIdx + 1; a <= Math.min(lines.length - 1, lineIdx + contextLines); a++) {
-								contextAfter.push({ line: a + 1, text: lines[a] });
-							}
-
-							fileMatches.push({
-								line: lineIdx + 1,
-								column: match.index + 1,
-								offset: charOffset + match.index,
-								matchLength: match[0].length,
-								lineText,
-								contextBefore,
-								contextAfter
-							});
-
-							if (progress.truncated) {
-								break;
-							}
-						}
-
-						charOffset += lineText.length + 1;
-
-						if (progress.truncated) {
-							break;
-						}
+					const scan = findMatchesInContent(
+						content,
+						searchRegex,
+						contextLines,
+						Math.max(0, maxMatches - progress.totalMatches),
+						signal
+					);
+					const fileMatches = scan.matches;
+					if (scan.truncated) {
+						progress.truncated = true;
+						progress.truncationReason = 'matches';
 					}
 
 					if (fileMatches.length > 0) {

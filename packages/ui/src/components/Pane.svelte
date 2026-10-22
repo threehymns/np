@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Pane as PaneType } from '@np/core';
-	import { useAppState, cn, type UIContributionIcon } from '@np/core';
+	import { useAppState, cn, toURI, type UIContributionIcon } from '@np/core';
 	import * as Tabs from './ui/tabs/index';
 	import * as Tooltip from './ui/tooltip';
 	import Icon from './Icon.svelte';
@@ -11,6 +11,7 @@
 	import type { EditorView } from '@codemirror/view';
 	import type EditorComponent from './Editor.svelte';
 	import { paneEditorKey } from './pane-focus';
+	import { hasDirtyResults } from './search-tab-behavior';
 
 	let {
 		pane,
@@ -29,6 +30,16 @@
 	let isSplit = $derived(allPanes.length > 1);
 	let showTabBar = $derived(
 		isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId || t.type === 'search')
+	);
+
+	// A search tab holds unsaved work when a file its results show is
+	// dirty: the results are an editor for those files, so the tab carries
+	// the same modified marker a document tab carries.
+	let documentDirtiness = $derived(
+		appState.documents.map(d => ({
+			uri: d.origin ? toURI(d.origin) : null,
+			isModified: d.isModified
+		}))
 	);
 
 	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof XIcon {
@@ -111,7 +122,10 @@
 						{@const tabDocument = appState.documents.find(d => d.id === (tab.docId ?? tab.id))}
 						{@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
 						{@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? 'Untitled')}
-						{@const isModified = tabDocument?.isModified}
+						{@const searchSession = tab.type === 'search' ? tab.searchSession : undefined}
+						{@const isModified = searchSession
+							? hasDirtyResults(searchSession.resultUris, documentDirtiness)
+							: tabDocument?.isModified}
 						{@const deletedOnDisk = tabDocument?.deletedOnDisk}
 						<div
 							animate:flip={{ duration: 150 }}
