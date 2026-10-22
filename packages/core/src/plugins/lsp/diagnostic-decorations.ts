@@ -123,7 +123,7 @@ export const lspDiagnosticField = StateField.define<DiagnosticDisplay>({
 						marks: value.marks.map(transaction.changes),
 						gutter: value.gutter.map((placement) => ({
 							...placement,
-							offset: transaction.changes.mapPos(placement.offset, -1)
+							offset: transaction.changes.mapPos(placement.offset, 1)
 						}))
 					}
 				: value;

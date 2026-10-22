@@ -529,6 +529,24 @@ describe('The display controls (#310)', () => {
 		expect(gutterMarksIn(edited).map((mark) => mark.line)).toEqual([2]);
 	});
 
+	it('moves the gutter mark with the diagnostic line when a newline is inserted at its start', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(1, 0, 5), severity: 1, message: 'later line' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+		expect(gutterMarksIn(editor.state).map((mark) => mark.line)).toEqual([1]);
+
+		// Inserting a newline at the start of that line moves the gutter mark
+		// with the original diagnostic line to the next line.
+		const lineStart = editor.state.doc.line(2).from;
+		const edited = editor.state.update({
+			changes: { from: lineStart, to: lineStart, insert: '\n' }
+		}).state;
+
+		expect(gutterMarksIn(edited).map((mark) => mark.line)).toEqual([2]);
+	});
+
 	it('shows what a push-only server said, unchanged', () => {
 		// A server that answers no pull publishes and nothing else. The display
 		// reads the merged store (ADR 0029) and the merged store holds exactly
