@@ -171,6 +171,7 @@ async function startRuntime(
 		settings?: Record<string, Record<string, unknown>>;
 		/** Replaces the platform, for a test that has to count what it asks. */
 		platform?: RealProcessPlatform;
+		languages?: readonly string[];
 	}
 ): Promise<{
 	runtime: LspRuntime;
@@ -188,7 +189,7 @@ async function startRuntime(
 				command: 'vtsls',
 				args: ['--stdio'],
 				rootMarkers: ['tsconfig.json'],
-				languages: ['typescript']
+				languages: options.languages ? [...options.languages] : ['typescript']
 			});
 		}
 	});
@@ -1372,6 +1373,53 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(diagnostics.read(uri)).toEqual([]);
 	});
 
+	it('uses the open document language when clearing diagnostics on settings change', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/unopened.ts': 'export const b = 2;\n'
+		});
+		const settings: Record<string, Record<string, unknown>> = {};
+		const { runtime, diagnostics, setSetting } = await startRuntime({
+			script: ['--diagnostics'],
+			languages: ['typescript', 'TSX'],
+			settings
+		});
+		const openUri = `file://${join(root, 'src/a.ts')}`;
+		const unopenedUri = `file://${join(root, 'src/unopened.ts')}`;
+
+		diagnostics.workspacePull({
+			server: 'ts',
+			uri: unopenedUri,
+			diagnostics: [
+				{
+					message: 'unopened finding',
+					severity: 'warning',
+					source: 'ts',
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }
+				}
+			]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			language: 'TSX',
+			content: 'export const a = 1;\n'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(openUri).length > 0, { label: 'the open diagnostic' });
+		expect(diagnostics.read(openUri)).toHaveLength(2);
+		expect(diagnostics.read(unopenedUri)).toHaveLength(1);
+
+		setSetting('editor', 'languages', { TypeScript: { lsp: false } });
+
+		await waitFor(() => diagnostics.read(unopenedUri).length === 0, {
+			label: 'unopened diagnostic to clear'
+		});
+		expect(diagnostics.read(openUri)).toHaveLength(2);
+	});
+
 	it('keeps the runtime serving every language when no settings reader is published', async () => {
 		// The absence has to be the documented default. A runtime that read `lsp` as
 		// off because nothing published settings would silently serve nothing, and
@@ -1482,10 +1530,10 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 
 /**
  * The diagnostic pull, end to end: an edit asks the server for the file's
- * findings, and a server that does not offer the pull is never asked.
+ * diagnostics, and a server that does not offer the pull is never asked.
  *
  * The stub is the witness. It answers `textDocument/diagnostic` only when the
- * test asks it to (`--diagnostic-pull`), so the file's findings in the first
+ * test asks it to (`--diagnostic-pull`), so the file's diagnostics in the first
  * test can only have come from a pull, and the absence of a pull in the second
  * is the client's decision rather than the server's silence. The third stages
  * a server that does both — it pushes for every change and answers the pull —
@@ -1494,7 +1542,7 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 describe('the diagnostic pull on edit (#307)', () => {
 	const edited = 'export const a = 2;\n';
 
-	it('asks a server that offers the pull for the file findings, and files the answer', async () => {
+	it('asks a server that offers the pull for the file diagnostics, and files the answer', async () => {
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
 		const { runtime, diagnostics } = await startRuntime({ script: ['--diagnostic-pull'] });
@@ -1516,7 +1564,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 			language: 'typescript'
 		});
 
-		// The stub pushes nothing, so the only finding the file can hold is the
+		// The stub pushes nothing, so the only diagnostic the file can hold is the
 		// one the pull answered with.
 		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
 		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
@@ -1561,7 +1609,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 	it('never asks a server that offers no pull', async () => {
 		// The control for the test above. The same edit against a server that
 		// advertises no `diagnosticProvider` has to produce no pull at all,
-		// and the findings the server pushed have to be the ones the file
+		// and the diagnostics the server pushed have to be the ones the file
 		// shows.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
@@ -1585,7 +1633,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 			language: 'typescript'
 		});
 
-		// The server is alive and answering: it pushed its findings for the
+		// The server is alive and answering: it pushed its diagnostics for the
 		// change. So the absence of a pull below is the client's decision and
 		// not the server's silence.
 		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pushed diagnostic' });
@@ -1601,7 +1649,7 @@ describe('the diagnostic pull on edit (#307)', () => {
 	});
 
 	it('reports a failed pull, because a failed pull and a working one look the same', async () => {
-		// A pull that fails leaves the pushed findings alone (ADR 0029), so
+		// A pull that fails leaves the pushed diagnostics alone (ADR 0029), so
 		// from the outside the file looks exactly as it would if the pull had
 		// worked. The reason has to be somewhere the Logs tab can show it,
 		// the way a failed completion and a failed hover are.
@@ -1629,5 +1677,182 @@ describe('the diagnostic pull on edit (#307)', () => {
 			timeoutMs: 20000
 		});
 		expect(logs.read({ level: 'warn' })[0].message).toContain('Diagnostic pull failed');
+	});
+});
+
+/**
+ * The workspace pull loop, end to end (spec #308).
+ *
+ * The stub is the witness again: it answers `workspace/diagnostic` only when
+ * the test asks it to (`--workspace-diagnostics`), so the diagnostics for a file
+ * the editor never opened can only have come from the workspace pull, and the
+ * absence of one in the control test is the client's decision rather than the
+ * server's silence.
+ */
+describe('the workspace pull loop (#308)', () => {
+	/** The workspace pulls the stub was asked for, counted off the wire. */
+	function workspacePulls(wireLog: string): number {
+		return received({ wireLog }).filter((line) => line.includes('"method":"workspace/diagnostic"')).length;
+	}
+
+	async function startWorkspaceServer(
+		root: string,
+		wireLog: string
+	): Promise<{ runtime: LspRuntime; diagnostics: LspDiagnosticsStore }> {
+		const started = await startRuntime({
+			script: ['--workspace-diagnostics', '--log-file', wireLog]
+		});
+		await started.runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(started.runtime, 1);
+		return started;
+	}
+
+	it('asks a server that offers the workspace pull about the whole workspace, and files the answer', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const unopened = `file://${join(root, 'unopened.ts')}`;
+		const streamed = `file://${join(root, 'partial.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ['--workspace-diagnostics'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The file the editor never opened. The only way it can hold diagnostics
+		// is the workspace pull: the stub pushes nothing, and the document
+		// pull is only ever asked about a file that was edited.
+		await waitFor(() => diagnostics.read(unopened).length > 0, {
+			label: 'the workspace diagnostic'
+		});
+		expect(diagnostics.read(unopened).map((d) => d.message)).toEqual([
+			'stub server: workspace diagnostic'
+		]);
+
+		// And the report the server streamed while it worked, which arrives as
+		// a progress notification under the token the pull asked for.
+		await waitFor(() => diagnostics.read(streamed).length > 0, {
+			label: 'the streamed workspace diagnostic'
+		});
+		expect(diagnostics.read(streamed).map((d) => d.message)).toEqual([
+			'stub server: partial workspace diagnostic'
+		]);
+	});
+
+	it('never asks a server that offers no workspace pull', async () => {
+		// The control. A server that does not announce
+		// `diagnosticProvider.workspaceDiagnostics` is never asked about the
+		// workspace, so the single-root workspace it serves behaves exactly as
+		// it did before the loop existed.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startRuntime({
+			script: ['--diagnostic-pull', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The first pull is immediate, so a window shorter than the repull
+		// interval is enough to see one had it been asked for.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join('\n');
+		expect(wire).toContain('textDocument/didOpen');
+		expect(wire).not.toContain('"method":"workspace/diagnostic"');
+	});
+
+	it('ends the loop when the server stops, with no further request', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startWorkspaceServer(root, wireLog);
+		await waitFor(() => workspacePulls(wireLog) === 1, { label: 'the first workspace pull' });
+
+		expect(await runtime.stopServer(lspServerKey('ts', root))).toBe(true);
+
+		// Longer than the repull interval: a loop that was still running would
+		// have pulled again by now.
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		expect(workspacePulls(wireLog)).toBe(1);
+	});
+
+	it('ends the loop when the runtime is disposed, with no further request', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startWorkspaceServer(root, wireLog);
+		await waitFor(() => workspacePulls(wireLog) === 1, { label: 'the first workspace pull' });
+
+		await runtime.dispose();
+
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		expect(workspacePulls(wireLog)).toBe(1);
+	});
+
+	it('re-arms the workspace pull and the open buffers when the server asks for a refresh', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startRuntime({
+			script: [
+				'--diagnostic-pull',
+				'--workspace-diagnostics',
+				'--workspace-refresh',
+				'--log-file',
+				wireLog
+			]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The stub asks for the refresh right after it answered the first
+		// workspace pull, and the client answers it — with a null, the spec's
+		// own answer for a request with no result.
+		await waitFor(() => received({ wireLog }).some((line) => line.includes('"id":9000')), {
+			label: 'the refresh to be answered'
+		});
+		const answer = received({ wireLog }).find((line) => line.includes('"id":9000'))!;
+		expect(JSON.parse(answer).result).toBeNull();
+
+		// The document pull is armed by the refresh: the document was opened
+		// and never edited, so nothing else could have asked for it.
+		await waitFor(
+			() =>
+				received({ wireLog }).some((line) => line.includes('"method":"textDocument/diagnostic"')),
+			{ label: 'the re-armed document pull' }
+		);
+
+		// And the workspace pull is not left waiting out the interval: the
+		// second one is asked for at once, well before the two seconds are up.
+		await waitFor(() => workspacePulls(wireLog) === 2, {
+			label: 'the re-armed workspace pull',
+			timeoutMs: 1500
+		});
+
+		// The second pull carries the result ids the first one gave, in the
+		// protocol's own shape, so the server can answer "unchanged".
+		const second = received({ wireLog }).filter((line) =>
+			line.includes('"method":"workspace/diagnostic"')
+		)[1];
+		expect(JSON.parse(second).params.previousResultIds).toEqual([
+			{ uri: `file://${join(root, 'partial.ts')}`, value: 'stub-workspace-partial' },
+			{ uri: `file://${join(root, 'unopened.ts')}`, value: 'stub-workspace-1' }
+		]);
 	});
 });
