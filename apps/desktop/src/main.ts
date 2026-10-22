@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, webContents } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CONFIG_CONTENT } from './defaultConfig.js';
 import { ConfigWatcher } from './ConfigWatcher.js';
+import { DesktopWatcher } from './DesktopWatcher.js';
+import { WatcherOwnership } from './watcher-ownership.js';
 import { SessionPersistenceEngine } from './SessionPersistenceEngine.js';
 import {
 	isValidBundledCommand,
@@ -81,6 +83,48 @@ async function readProcessMemoryBytes(pid: number): Promise<number | null> {
 		return Number(match[1]) * 1024;
 	} catch {
 		return null;
+	}
+}
+
+const activeWatchers = new Map<string, DesktopWatcher>();
+// Ownership bookkeeping for watcher cleanup on renderer reload/navigation.
+// The registry keeps one did-start-navigation listener per WebContents and
+// tracks in-flight starts so a renderer going away mid-start can't orphan a
+// native subscription.
+const watcherOwnership = new WatcherOwnership({
+	onOwnerGone: (senderId) => {
+		void closeWatchersForSender(senderId);
+	},
+	getOwner: (senderId) => webContents.fromId(senderId) ?? undefined,
+});
+
+async function closeWatcher(id: string): Promise<void> {
+	const watcher = activeWatchers.get(id);
+	if (!watcher) return;
+	activeWatchers.delete(id);
+	watcherOwnership.release(id);
+	try {
+		await watcher.close();
+	} catch (e) {
+		console.error(`[main] Failed to close watcher ${id}:`, e);
+	}
+}
+
+async function closeWatchersForSender(senderId: number): Promise<void> {
+	for (const id of watcherOwnership.idsFor(senderId)) {
+		await closeWatcher(id);
+	}
+	watcherOwnership.cancelStartsFor(senderId);
+}
+
+async function killAllWatchers(): Promise<void> {
+	for (const [id, watcher] of [...activeWatchers.entries()]) {
+		activeWatchers.delete(id);
+		try {
+			await watcher.close();
+		} catch (e) {
+			console.error(`[main] Failed to close watcher ${id}:`, e);
+		}
 	}
 }
 
@@ -197,6 +241,7 @@ app.on('before-quit', (e) => {
 		} finally {
 			sessionPersistence.flushSync();
 			killAllLspProcesses();
+			await killAllWatchers();
 			if (configWatcher) {
 				configWatcher.close();
 				configWatcher = null;
@@ -598,6 +643,44 @@ function registerIpcHandlers() {
 		if (mainWindow) {
 			mainWindow.webContents.toggleDevTools();
 		}
+	});
+
+	ipcMain.handle('watcher:start', async (event, watchId: string, dirPath: string) => {
+		await closeWatcher(watchId);
+		const watcher = new DesktopWatcher({
+			dirPath,
+			onEvents: (events) => {
+				sendToRenderer('watcher:events', { watchId, events });
+			}
+		});
+		// Register ownership before the async subscribe so a renderer that
+		// navigates or is destroyed mid-start is observed.
+		const startToken = watcherOwnership.beginStart(watchId, event.sender);
+		try {
+			await watcher.start();
+		} catch (e) {
+			watcherOwnership.release(watchId);
+			throw e;
+		}
+		if (watcherOwnership.finishStart(watchId, startToken) || event.sender.isDestroyed()) {
+			// Owner went away mid-start (or a newer start superseded this
+			// one): shut the fresh subscription down without registering it.
+			watcherOwnership.release(watchId);
+			try {
+				await watcher.close();
+			} catch (e) {
+				console.error(`[main] Failed to close orphaned watcher ${watchId}:`, e);
+			}
+			return { success: true };
+		}
+		activeWatchers.set(watchId, watcher);
+		return { success: true };
+	});
+
+	ipcMain.handle('watcher:stop', async (_, watchId: string) => {
+		await closeWatcher(watchId);
+		watcherOwnership.cancelStart(watchId);
+		return { success: true };
 	});
 }
 

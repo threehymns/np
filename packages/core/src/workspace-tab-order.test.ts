@@ -2,7 +2,7 @@ import "../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
 import type { FileOrigin } from "./storage";
 import { createMockStorage } from "../../../tests/mock-storage";
-import { MemorySessionPersistence } from "./persistence";
+import { MemorySessionPersistence, SerializedWorkspace } from "./persistence";
 import type { VCSAdapter } from "./project/vcs";
 import type { Workspace, WorkspaceTab } from "./workspace.svelte";
 
@@ -43,7 +43,7 @@ describe("tab ordering stays in lockstep", () => {
 		expect(docTabs(ws.tabs)).toEqual([third!.id, first.id, second!.id]);
 
 		await ws.flushSaveOpenFiles();
-		const saved = await persistence.loadOpenFiles('');
+		const saved = (await persistence.loadOpenFiles('') as SerializedWorkspace).docs;
 		expect(saved.map(s => s.id)).toEqual(ws.tabs.map(t => t.id));
 	});
 

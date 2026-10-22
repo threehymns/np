@@ -51,6 +51,9 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e y": "edit.copy",
 			"space e p": "edit.paste",
 			"space e f": "edit.find",
+			"space /": "edit.findInFiles",
+			"space f f": "edit.findInFiles",
+			"space s": "edit.findInFiles",
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's vim-mode `]c` / `[c`
@@ -67,6 +70,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+z": "edit.undo",
 			"cmd+shift+z": "edit.redo",
 			"cmd+f": "edit.find",
+			"cmd+shift+f": "edit.findInFiles",
 			"cmd+a": "edit.selectAll",
 			"cmd+k m": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
@@ -93,10 +97,12 @@ export const defaultKeymap: KeymapBinding[] = [
 	{
 		// Global bindings
 		bindings: {
+			"f10": "applicationMenu.toggle",
 			"cmd+n": "file.new",
 			"cmd+o": "file.open",
 			"cmd+s": "file.save",
 			"cmd+shift+s": "file.saveAs",
+			"cmd+shift+f": "edit.findInFiles",
 			"cmd+shift+p": "commandPalette.toggle",
 			"cmd+\\": "view.toggleSidebar",
 			"cmd++": "view.zoomIn",
@@ -106,6 +112,14 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+shift+,": "settings.openConfigJson",
 			"cmd+alt+i": "window.toggleDevTools",
 			"ctrl+shift+i": "window.toggleDevTools",
+			"cmd+k right": "pane.splitRight",
+			"cmd+k left": "pane.splitLeft",
+			"cmd+k up": "pane.splitUp",
+			"cmd+k down": "pane.splitDown",
+			"cmd+k cmd+right": "pane.focusRight",
+			"cmd+k cmd+left": "pane.focusLeft",
+			"cmd+k cmd+up": "pane.focusUp",
+			"cmd+k cmd+down": "pane.focusDown",
 			"cmd+f8": "diff.nextHunk",
 			"cmd+shift+f8": "diff.prevHunk"
 		}
@@ -396,7 +410,7 @@ export class KeymapRegistry {
 		const isStandardInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
 		const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
 
-		if (isStandardInput && !hasModifier) {
+		if (isStandardInput && !hasModifier && e.key !== 'F10') {
 			return false;
 		}
 

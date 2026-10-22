@@ -2,7 +2,8 @@ import { describe, it, expect } from 'bun:test';
 import {
 	LspDiagnosticsStore,
 	parsePublishDiagnostics,
-	severityFromCode
+	severityFromCode,
+	type LspDiagnostic
 } from './diagnostics';
 import { toFileUri } from './root';
 
@@ -21,8 +22,20 @@ function range(line: number, from: number, to: number) {
 	return { start: { line, character: from }, end: { line, character: to } };
 }
 
-function report(uri: string, diagnostics: unknown[], server = 'typescript@/repo') {
-	return parsePublishDiagnostics(server, { uri, diagnostics });
+function report(uri: string, diagnostics: unknown[], server = 'typescript@/repo', version?: number) {
+	return parsePublishDiagnostics(server, { uri, diagnostics, version });
+}
+
+/** One finding, as a pull files it: the pull's answers are not protocol payloads. */
+function finding(server: string, message: string): LspDiagnostic {
+	return {
+		server,
+		range: range(0, 0, 1),
+		severity: 'error',
+		message,
+		source: null,
+		code: null
+	};
 }
 
 describe('publishDiagnostics payloads (#266)', () => {
@@ -91,6 +104,17 @@ describe('publishDiagnostics payloads (#266)', () => {
 
 	it('reads a clean report as an empty list rather than a failure', () => {
 		expect(report(A, [])).toEqual({ uri: A, server: 'typescript@/repo', diagnostics: [] });
+	});
+
+	it('keeps the document version the protocol carried, and names none when it carried none', () => {
+		expect(parsePublishDiagnostics('typescript@/repo', { uri: A, version: 7, diagnostics: [] })?.version).toBe(7);
+		expect(parsePublishDiagnostics('typescript@/repo', { uri: A, diagnostics: [] })?.version).toBeUndefined();
+		// A version that is not a number names no revision, rather than a
+		// revision of nonsense: the server said nothing about which text it
+		// looked at, and the store has to be able to tell that apart.
+		expect(
+			parsePublishDiagnostics('typescript@/repo', { uri: A, version: 'seven', diagnostics: [] })?.version
+		).toBeUndefined();
 	});
 });
 
@@ -178,5 +202,267 @@ describe('Diagnostics store (#266)', () => {
 		unsubscribe();
 		store.publish(report(A, [{ range: range(0, 0, 1), message: 'again' }])!);
 		expect(seen).toHaveLength(2);
+	});
+});
+
+/**
+ * The store orders two results for one path and one server by the document
+ * revision they were computed against (#353).
+ *
+ * A result that was already in flight when the text changed was computed
+ * against the text before the change, so it lands on top of a fresher answer
+ * and the file shows findings for text that is no longer there. The revision
+ * each result names is what tells the store which of the two is the newer
+ * word.
+ */
+describe('Diagnostics store, ordered by document revision (#353)', () => {
+	const server = 'typescript@/repo';
+
+	it('refuses a result computed against an older revision, and the newer one stays', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 3' }], server, 3)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('takes a result computed against a newer revision', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 3' }], server, 3)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('refuses a stale push against a fresh pull', () => {
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 3' }], server, 3)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('refuses a stale pull against a fresh push', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 5' }], server, 5)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 3')], version: 3 });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pushed at 5']);
+	});
+
+	it('a result that names no revision does not displace a pull that names one', () => {
+		// The push says nothing about which text it looked at, and the source
+		// order says a push is not the newer word for a path a pull has spoken
+		// for.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('a result that names a revision displaces one that names no revision, when its source is the newer word', () => {
+		// The receipts for dropping the middle branch: a server that pushes
+		// without naming a version must not be able to keep the file on its own
+		// answer, or the pull mechanism only works on the servers that happen
+		// to name a version on every publish.
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('a push computed against the same revision as a pull is refused', () => {
+		// Two answers about the same text are the same age, not one older than
+		// the other, so the revision is a tie and the source decides: a push
+		// never replaces a pull.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 5')], version: 5 });
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed at 5' }], server, 5)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['pulled at 5']);
+	});
+
+	it('two pushes are ordered by arrival, not by revision', () => {
+		// The cost of the rule: a result that names no revision is not held
+		// back by one that does, so two pushes are ordered by when they
+		// landed — as they were before the revision existed — and a server
+		// that names a version on some publishes and not on others gets the
+		// later one either way.
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'no revision' }], server)!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['no revision']);
+
+		const other = new LspDiagnosticsStore();
+		other.publish(report(A, [{ range: range(0, 0, 1), message: 'no revision' }], server)!);
+		other.publish(report(A, [{ range: range(1, 0, 1), message: 'at 5' }], server, 5)!);
+
+		expect(other.read(A).map((d) => d.message)).toEqual(['at 5']);
+	});
+
+	it('a refused result leaves the store\'s revision unchanged, so a view is not woken', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'at 5' }], server, 5)!);
+		const revision = store.revision;
+		let woken = 0;
+		store.subscribe(() => {
+			woken++;
+		});
+
+		// A stale push and a stale pull are both refused, and a refused result
+		// is not a change.
+		store.publish(report(A, [{ range: range(1, 0, 1), message: 'at 3' }], server, 3)!);
+		store.pull({ uri: A, server, diagnostics: [finding(server, 'pulled at 3')], version: 3 });
+
+		expect(store.revision).toBe(revision);
+		expect(woken).toBe(0);
+	});
+
+	it('a push-only server keeps the per-server slices it had', () => {
+		// A server that names no revision is unaffected by the rule: its next
+		// push replaces its own slice and leaves the other server's alone.
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'from ts' }], 'ts@/repo')!);
+		store.publish(report(A, [{ range: range(2, 0, 3), message: 'from lint' }], 'lint@/repo')!);
+
+		store.publish(report(A, [{ range: range(4, 0, 1), message: 'from ts again' }], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['from ts again', 'from lint']);
+
+		store.publish(report(A, [], 'ts@/repo')!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['from lint']);
+	});
+
+	it('a newer empty pull followed by an older push leaves diagnostics absent', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'error at 1' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['error at 1']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		expect(store.read(A)).toEqual([]);
+
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'stale error at 1' }], server, 1)!);
+		expect(store.read(A)).toEqual([]);
+	});
+
+	it('clearing metadata allows subsequent reports after dropServer, dropUri, and clear', () => {
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.dropServer(server);
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after dropServer' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after dropServer']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.dropUri(A);
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after dropUri' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after dropUri']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.clear();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after clear' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after clear']);
+	});
+});
+
+/**
+ * The workspace pull and the document pull answer the same question about one
+ * path, and the store has to say which of them is the word (#308, ADR 0029).
+ *
+ * A workspace report names no revision, so it is ordered against a document
+ * pull by source alone: the document pull is the newer word for a path, and a
+ * path an open buffer owns keeps the document pull's answer. A push is the
+ * oldest word of the three and never replaces a pull.
+ */
+describe('The merged store composes a workspace pull with a document pull (#308)', () => {
+	const server = 'typescript@/repo';
+
+	function diagnostic(message: string) {
+		return {
+			server,
+			range: range(0, 0, 5),
+			severity: 'error' as const,
+			message,
+			source: null,
+			code: null
+		};
+	}
+
+	it('lands a workspace report per URI', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace a')] });
+		store.workspacePull({ uri: B, server, diagnostics: [diagnostic('workspace b')] });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['workspace a']);
+		expect(store.read(B).map((d) => d.message)).toEqual(['workspace b']);
+		expect(store.uris().sort()).toEqual([A, B].sort());
+	});
+
+	it('keeps the document pull over a workspace pull for the same path, in either order', () => {
+		const store = new LspDiagnosticsStore();
+
+		// The workspace pull lands first and the document pull replaces it: the
+		// document pull is the newer word for a path the editor owns.
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		store.pull({ uri: A, server, diagnostics: [diagnostic('document')] });
+		expect(store.read(A).map((d) => d.message)).toEqual(['document']);
+
+		// And the other way round: the workspace pull does not replace what the
+		// document pull filed, and the report it dropped changes nothing.
+		const revision = store.revision;
+		let notifications = 0;
+		store.subscribe(() => {
+			notifications++;
+		});
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace again')] });
+		expect(store.read(A).map((d) => d.message)).toEqual(['document']);
+		expect(store.revision).toBe(revision);
+		expect(notifications).toBe(0);
+	});
+
+	it('a workspace report does not displace a document pull that names a revision', () => {
+		// The case the rule exists for. The document pull names the revision it
+		// was computed against and the workspace report names none, so the two
+		// revisions cannot be compared and the source decides — and the
+		// document pull is the newer word for a path an open buffer owns.
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [diagnostic('document at 5')], version: 5 });
+		const revision = store.revision;
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['document at 5']);
+		expect(store.revision).toBe(revision);
+
+		// And the other way round: the document pull takes the path from the
+		// workspace report, because the source order says so.
+		const other = new LspDiagnosticsStore();
+		other.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		other.pull({ uri: A, server, diagnostics: [diagnostic('document at 5')], version: 5 });
+
+		expect(other.read(A).map((d) => d.message)).toEqual(['document at 5']);
+	});
+
+	it('refuses a push against a workspace-pulled path, as it does against a pulled one', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		const revision = store.revision;
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'pushed' }])!);
+
+		expect(store.read(A).map((d) => d.message)).toEqual(['workspace']);
+		expect(store.revision).toBe(revision);
+	});
+
+	it('clears a workspace-pulled path with a clean workspace report, and no other', () => {
+		const store = new LspDiagnosticsStore();
+
+		store.workspacePull({ uri: A, server, diagnostics: [diagnostic('workspace')] });
+		store.workspacePull({ uri: B, server, diagnostics: [diagnostic('other')] });
+		store.workspacePull({ uri: A, server, diagnostics: [] });
+
+		expect(store.read(A)).toEqual([]);
+		expect(store.read(B).map((d) => d.message)).toEqual(['other']);
 	});
 });

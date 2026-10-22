@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Command from './ui/command';
-	import { useAppState } from '@np/core';
+	import { useAppState, commandSearchText } from '@np/core';
 	import { ArrowLeft } from "phosphor-svelte";
 	import Icon from './Icon.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -35,6 +35,8 @@
 	// Palette is a view over the shared command registry (ADR 0015):
 	// categories derive from registered visible commands so plugin
 	// contributions (e.g. Git's Source Control) appear without hardcoding.
+	// Each entry is matched against its search text rather than its label,
+	// so a command is still findable by a word its title does not contain.
 	let paletteCategories = $derived.by(() => {
 		const cats = new SvelteSet<string>();
 		for (const c of appState.commands.getAll()) {
@@ -83,6 +85,7 @@
 			{/if}
 			{#each appState.commandPalette.items as item}
 				<Command.Item
+					value={commandSearchText(item)}
 					onSelect={() => {
 						item.action();
 						inputValue = "";
@@ -112,6 +115,7 @@
 				<Command.Group heading={category}>
 					{#each visibleCommandsFor(category) as command (command.id)}
 						<Command.Item
+							value={commandSearchText(command)}
 							onSelect={() => executeCommand(command.id)}
 							disabled={command.isEnabled && !command.isEnabled()}
 						>

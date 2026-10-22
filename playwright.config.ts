@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// E2E_PORT lets a run pick a free port (another dev server may already
+// hold the default one) without editing this file.
+const PORT = process.env.E2E_PORT ?? '5173';
+const BASE_URL = `http://127.0.0.1:${PORT}`;
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -15,7 +20,7 @@ export default defineConfig({
   // remains Playwright's standard 5s so non-editor assertions fail fast.
   timeout: 60_000,
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: BASE_URL,
     // With retries disabled, retain traces only for failures so a red run
     // still leaves actionable artifacts without per-retry trace overhead.
     trace: 'retain-on-failure',
@@ -27,8 +32,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run dev:web',
-    url: 'http://127.0.0.1:5173',
+    command: `bun run dev:web -- --port ${PORT}`,
+    url: BASE_URL,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,
   },

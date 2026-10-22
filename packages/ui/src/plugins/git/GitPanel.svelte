@@ -10,6 +10,7 @@
 	import Icon from '../../components/Icon.svelte';
 	import GitFileItem from './GitFileItem.svelte';
 	import GitStatusChip from './GitStatusChip.svelte';
+	import HistoryTab from './HistoryTab.svelte';
 	import * as Tooltip from '../../components/ui/tooltip/index';
 	import * as ContextMenu from '../../components/ui/context-menu';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
@@ -31,7 +32,16 @@
 		initController.reset();
 	});
 
-	let commitMessage = $state('');
+	// The commit draft belongs to the project it was written in: it is
+	// stored per project URI and follows the current project, so switching
+	// away and back finds the draft again and a draft never shows up under
+	// a different project.
+	const projectUri = $derived(appState.workspace.projectUri);
+	let commitMessage = $derived(appState.workspace.commitDrafts[projectUri] ?? '');
+
+	function setCommitMessage(value: string) {
+		appState.workspace.commitDrafts[projectUri] = value;
+	}
 	let commitTextareaEl = $state<HTMLTextAreaElement | null>(null);
 	let commitIsOverflowing = $state(false);
 
@@ -59,6 +69,30 @@
 	let stagedExpanded = $state(true);
 	let changesExpanded = $state(true);
 	let untrackedExpanded = $state(true);
+
+	// Peer tabs: Changes or History
+	let activeTab = $state<'changes' | 'history'>('changes');
+	let changesScrollEl = $state<HTMLElement | null>(null);
+	let historyScrollEl = $state<HTMLElement | null>(null);
+	let changesScrollTop = 0;
+	let historyScrollTop = 0;
+
+	function switchTab(newTab: 'changes' | 'history') {
+		if (activeTab === newTab) return;
+		if (activeTab === 'changes' && changesScrollEl) {
+			changesScrollTop = changesScrollEl.scrollTop;
+		} else if (activeTab === 'history' && historyScrollEl) {
+			historyScrollTop = historyScrollEl.scrollTop;
+		}
+		activeTab = newTab;
+		queueMicrotask(() => {
+			if (newTab === 'changes' && changesScrollEl) {
+				changesScrollEl.scrollTop = changesScrollTop;
+			} else if (newTab === 'history' && historyScrollEl) {
+				historyScrollEl.scrollTop = historyScrollTop;
+			}
+		});
+	}
 
 	// View mode: list or tree
 	let viewMode = $state<'list' | 'tree'>('list');
@@ -266,9 +300,13 @@
 			message = `${message}\n\nSigned-off-by: ${userConfig.name} <${userConfig.email}>`;
 		}
 
+		// The identity is captured at the moment of the commit, so a commit
+		// that lands after the user switched projects does not clear the
+		// draft of the project it was not written for.
+		const target = appState.workspace.captureProject();
 		const success = await appState.commands.execute('git.commit', message, { amend: isAmend });
-		if (success) {
-			commitMessage = '';
+		if (success && appState.workspace.isCurrentProject(target)) {
+			setCommitMessage('');
 			isAmend = false;
 		}
 	}
@@ -315,7 +353,10 @@
 			Promise.resolve(repo.refresh()).catch(err => {
 				console.error("[GitPanel] Failed to refresh repository:", err);
 			});
-			repo.adapter.getUserConfig?.().then(cfg => { userConfig = cfg || null; }).catch(() => {});
+			const target = appState.workspace.captureProject();
+			repo.adapter.getUserConfig?.().then(cfg => {
+				if (appState.workspace.isCurrentProject(target)) userConfig = cfg || null;
+			}).catch(() => {});
 		}
 	});
 </script>
@@ -371,9 +412,46 @@
 	</div>
 {:else}
 	<div class="flex flex-col h-full bg-sidebar border-r border-border select-none relative font-sans text-xs">
-		<!-- File List / Main Area -->
-		<Tooltip.Provider delayDuration={400}>
-		<div class="flex-1 overflow-y-auto p-2 space-y-4">
+		<!-- Peer Tabs Header: Changes / History -->
+		<div class="flex items-center border-b border-border px-2 py-1.5 shrink-0 bg-sidebar">
+			<div class="inline-flex items-center bg-muted/60 p-0.5 rounded-md text-xs font-medium text-muted-foreground w-full" role="tablist">
+				<button
+					type="button"
+					role="tab"
+					id="git-panel-tab-changes"
+					aria-controls="git-panel-panel-changes"
+					aria-selected={activeTab === 'changes'}
+					onclick={() => switchTab('changes')}
+					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'changes' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
+				>
+					Changes
+				</button>
+				<button
+					type="button"
+					role="tab"
+					id="git-panel-tab-history"
+					aria-controls="git-panel-panel-history"
+					aria-selected={activeTab === 'history'}
+					onclick={() => switchTab('history')}
+					class="flex-1 py-1 px-2 rounded-sm text-center transition-all cursor-pointer {activeTab === 'history' ? 'bg-background text-foreground shadow-sm font-semibold' : 'hover:text-foreground'}"
+				>
+					History
+				</button>
+			</div>
+		</div>
+
+		<!-- CHANGES TAB BODY -->
+		<div
+			class="flex-1 flex flex-col min-h-0 {activeTab === 'changes' ? '' : 'hidden'}"
+			role="tabpanel"
+			id="git-panel-panel-changes"
+			aria-labelledby="git-panel-tab-changes"
+			aria-hidden={activeTab !== 'changes'}
+			data-slot="changes-tab-body"
+		>
+			<!-- File List / Main Area -->
+			<Tooltip.Provider delayDuration={400}>
+			<div bind:this={changesScrollEl} class="flex-1 overflow-y-auto p-2 space-y-4">
 			<!-- Commit View Actions -->
 			<div class="flex items-center justify-between px-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
 			<button
@@ -590,10 +668,6 @@
 		</div>
 		</Tooltip.Provider>
 
-		<!-- Footer -->
-		<div class="p-2">
-  		<BranchSelectButton />
-		</div>
 		<!-- Commit Input -->
 		<div class="border-t border-border shrink-0 bg-background flex flex-col relative">
  			{#snippet commitButton()}
@@ -645,7 +719,7 @@
   			<textarea
 				bind:this={commitTextareaEl}
 				placeholder={commitPlaceholder}
-				bind:value={commitMessage}
+				bind:value={() => commitMessage, setCommitMessage}
 				onkeydown={handleTextareaKeydown}
 				class="w-full min-h-[64px] max-h-28 bg-transparent p-2 text-xs text-foreground placeholder-muted-foreground/60 focus:outline-none resize-y overflow-y-auto font-sans border-b rounded-t-md"
 				class:border-transparent={!commitIsOverflowing}
@@ -658,7 +732,7 @@
   						<Tooltip.Root>
  							<Tooltip.Trigger>
   								{#snippet child({ props })}
- 									<Dialog.Trigger {...props} class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
+									<Dialog.Trigger {...props} aria-label="Open Commit Modal" class={buttonVariants({ variant: "ghost", size: "icon-xs" })}>
   										<CornersOutIcon />
  									</Dialog.Trigger>
   								{/snippet}
@@ -668,7 +742,7 @@
  							</Tooltip.Content>
   						</Tooltip.Root>
   						<Dialog.Content showCloseButton={false} class="sm:max-w-xl p-2 top-65">
- 							<Textarea bind:value={commitMessage} onkeydown={handleTextareaKeydown} class="h-80 focus-visible:ring-0 focus-visible:border-border border-input" />
+ 							<Textarea bind:value={() => commitMessage, setCommitMessage} onkeydown={handleTextareaKeydown} class="h-80 focus-visible:ring-0 focus-visible:border-border border-input" />
  							<div class="absolute bottom-4 inset-x-4 flex gap-3 items-center">
   								<BranchSelectButton class="hover:bg-muted" />
   								<div class="flex-1"></div>
@@ -686,6 +760,22 @@
  			<div class="p-1 flex items-center justify-end gap-1.5">
 				{@render commitButton()}
  			</div>
+		</div>
+		</div>
+
+		<!-- HISTORY TAB BODY -->
+		<div
+			class="flex-1 flex flex-col min-h-0 {activeTab === 'history' ? '' : 'hidden'}"
+			role="tabpanel"
+			id="git-panel-panel-history"
+			aria-labelledby="git-panel-tab-history"
+			aria-hidden={activeTab !== 'history'}
+			data-slot="history-tab-body"
+		>
+			<HistoryTab commits={repo.historyCommits} aheadCount={repo.aheadCount} isLoading={!repo.historyLoaded} bind:scrollElement={historyScrollEl} />
+			<div class="p-2 border-t border-border shrink-0">
+				<BranchSelectButton />
+			</div>
 		</div>
 	</div>
 {/if}

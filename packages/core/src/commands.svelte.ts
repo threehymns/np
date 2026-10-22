@@ -8,6 +8,7 @@ import { transformer } from "./transformer";
 import { getActiveLanguages } from "./editor/language.svelte";
 import { parseURI, toURI, type FileOrigin } from "./storage";
 import { DEFAULT_DIFF_CONFIG } from "./project/vcs";
+import type { SplitDirection } from "./split-tree.svelte";
 import {
 	CORE_COMMANDS_OWNER,
 	createAddCommandsTransform,
@@ -466,6 +467,22 @@ function toggleFootnoteFormat(appState: AppState) {
 	view.focus();
 }
 
+/**
+ * Move the focus to the pane in the given direction.
+ *
+ * The DOM focus follows the pane, but only when the interaction that
+ * started the move came from an editor: a command run from the palette or
+ * from a toolbar leaves the keyboard where it is, so the palette keeps
+ * the text the user is typing into. The `editorFocused` context is what
+ * says the editor holds the focus right now.
+ */
+function focusPaneInDirection(appState: AppState, direction: SplitDirection): void {
+	const fromEditor = appState.keymaps.context['editorFocused'] === true;
+	const moved = appState.workspace.focusPaneInDirection(direction);
+	if (!moved || !fromEditor) return;
+	appState.focusActivePaneEditor?.();
+}
+
 // Core command contributions, registered as one replayable transform (ADR 0012).
 // The host replays registered transforms in order from an empty initial value
 // on every rebuild; removing a plugin rebuilds without its commands and a
@@ -535,6 +552,72 @@ export function registerCoreCommands(appState: AppState) {
 		label: 'Save As...',
 		category: 'File',
 		action: () => appState.saveFileAs()
+	});
+
+	coreCommands.push({
+		id: 'pane.splitRight',
+		label: 'Pane: Split Right',
+		category: 'View',
+		// The keyword states the alias outright, so the commands answer to
+		// "pane" however the title is worded.
+		keywords: ['pane'],
+		action: () => { appState.workspace.splitActivePane('right', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitLeft',
+		label: 'Pane: Split Left',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.splitActivePane('left', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitUp',
+		label: 'Pane: Split Up',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.splitActivePane('up', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.splitDown',
+		label: 'Pane: Split Down',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.splitActivePane('down', 'clone'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusLeft',
+		label: 'Pane: Focus Left',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { focusPaneInDirection(appState, 'left'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusRight',
+		label: 'Pane: Focus Right',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { focusPaneInDirection(appState, 'right'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusUp',
+		label: 'Pane: Focus Up',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { focusPaneInDirection(appState, 'up'); }
+	});
+
+	coreCommands.push({
+		id: 'pane.focusDown',
+		label: 'Pane: Focus Down',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { focusPaneInDirection(appState, 'down'); }
 	});
 
 	coreCommands.push({
@@ -646,6 +729,14 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'edit.findInFiles',
+		label: 'Find in Project...',
+		category: 'Edit',
+		action: () => appState.workspace.openSearchTab(),
+		isEnabled: () => true
+	});
+
+	coreCommands.push({
 		id: 'edit.addInternalLink',
 		label: 'Add internal link',
 		category: 'Edit',
@@ -724,6 +815,14 @@ export function registerCoreCommands(appState: AppState) {
 				}
 			}
 		}
+	});
+
+	coreCommands.push({
+		id: 'applicationMenu.toggle',
+		label: 'Toggle Application Menu',
+		category: 'View',
+		action: () => appState.applicationMenu?.toggle(),
+		isEnabled: () => !!appState.applicationMenu
 	});
 
   coreCommands.push({

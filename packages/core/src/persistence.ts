@@ -1,9 +1,19 @@
 import type { FileOrigin } from './storage';
 
+/** Versioned wrapper for the persisted open-files list. The version survives
+ *  serialization (unlike an expando property on the array) so a future shape
+ *  change can be detected and the workspace can start fresh instead of
+ *  choking on stale state. */
+export interface SerializedWorkspace {
+	version: number;
+	docs: SerializedDocument[];
+}
+
 export interface SerializedDocument {
 	id: string;
 	origin: FileOrigin | null;
 	untitledTitle?: string;
+	version?: number;
 	/**
 	 * Unsaved editor content, present only for modified or untitled documents
 	 * so a draft can be restored without the file on disk having been touched.
@@ -13,7 +23,7 @@ export interface SerializedDocument {
 	 * Tab kind for tabs that are not plain file-backed documents, e.g. `'diff'`
 	 * for git-computed diff views. Omitted on ordinary document tabs.
 	 */
-	virtualTabType?: 'diff' | 'document';
+	virtualTabType?: 'diff' | 'document' | 'search';
 	pluginId?: string;
 	/**
 	 * For diff tabs: filepath of the change selected when the session was
@@ -29,6 +39,22 @@ export interface SerializedDocument {
 	 * Whether the file was deleted on disk while the tab remained open.
 	 */
 	deletedOnDisk?: boolean;
+	/**
+	 * Whether this entry is a tab-less bound Document (e.g. a Diff Viewer
+	 * Working-copy pane binding for a file with no open tab, issue #272).
+	 * Restored as a Document without creating a tab, so unsaved pane edits
+	 * survive a restart exactly as tab drafts do.
+	 */
+	tabless?: boolean;
+	/**
+	 * For search tabs: persisted query and toggle options.
+	 */
+	searchQuery?: string;
+	searchIsRegex?: boolean;
+	searchCaseSensitive?: boolean;
+	searchWholeWord?: boolean;
+	searchIncludePattern?: string;
+	searchExcludePattern?: string;
 }
 
 /**
@@ -47,8 +73,8 @@ export interface SerializedDocument {
  * logic reads back (see each implementation for the exact keys).
  */
 export interface SessionPersistence {
-	saveOpenFiles(origins: SerializedDocument[], folderUri?: string): Promise<void>;
-	loadOpenFiles(folderUri?: string): Promise<SerializedDocument[]>;
+	saveOpenFiles(workspace: SerializedWorkspace, folderUri?: string): Promise<void>;
+	loadOpenFiles(folderUri?: string): Promise<SerializedWorkspace | SerializedDocument[]>;
 	saveRootFolder(origin: FileOrigin | null): Promise<void>;
 	loadRootFolder(): Promise<FileOrigin | null>;
 	saveRecentFolders(origins: FileOrigin[]): Promise<void>;
@@ -63,7 +89,7 @@ export interface SessionPersistence {
 export type WorkspacePersistence = SessionPersistence;
 export class MemorySessionPersistence implements SessionPersistence {
 	private states = new Map<string, {
-		openFiles: SerializedDocument[];
+		openFiles: SerializedWorkspace | SerializedDocument[];
 		activeDocumentId: string | null;
 		expandedPaths: string[];
 	}>();
@@ -112,11 +138,16 @@ export class MemorySessionPersistence implements SessionPersistence {
 		return map;
 	}
 
-	async saveOpenFiles(origins: SerializedDocument[], folderUri = ''): Promise<void> {
-		this.getOrCreateState(folderUri).openFiles = origins;
+	async saveOpenFiles(workspace: SerializedWorkspace, folderUri = ''): Promise<void> {
+		this.getOrCreateState(folderUri).openFiles = workspace;
 	}
 
-	async loadOpenFiles(folderUri = ''): Promise<SerializedDocument[]> {
+	/** Test-only: seed a bare-array payload to simulate pre-versioning state. */
+	async saveLegacyOpenFiles(docs: SerializedDocument[], folderUri = ''): Promise<void> {
+		this.getOrCreateState(folderUri).openFiles = docs;
+	}
+
+	async loadOpenFiles(folderUri = ''): Promise<SerializedWorkspace | SerializedDocument[]> {
 		return this.getOrCreateState(folderUri).openFiles;
 	}
 

@@ -27,8 +27,28 @@ export interface PluginCommand {
 	label: string;
 	category: string;
 	action: (...args: any[]) => any;
+	/**
+	 * Alternate terms the Command Palette matches a query against, so a
+	 * command is findable by a word its label does not contain. They are
+	 * aliases, not display text — the palette still shows the label, and a
+	 * keyword never changes what the command does.
+	 */
+	keywords?: string[];
 	isVisible?: () => boolean;
 	isEnabled?: () => boolean;
+}
+
+/**
+ * The text a palette entry is matched against: its label, with its keywords
+ * appended as aliases.
+ *
+ * The keyword is the answer to a word the label does not contain, so the
+ * search text is the only place the two meet. The palette matches a query
+ * against this string, which is why the rule lives here rather than in the
+ * view: a command that answers to "pane" answers to it everywhere.
+ */
+export function commandSearchText(entry: { label: string; keywords?: string[] }): string {
+	return entry.keywords?.length ? `${entry.label} ${entry.keywords.join(' ')}` : entry.label;
 }
 
 /**

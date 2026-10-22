@@ -53,6 +53,8 @@ second sense, which is why `vault` had been standing in for the first.
 
 ## Command Palette
 A searchable dialog interface allowing the user to search and run registered actions across the application.
+- **Command**: A registered action in the shared command registry, named by a unique Command ID, labelled for display, and filed under a category. The palette is a view over the registry, not a second list of what can be run.
+- **Command Keyword**: A word a Command answers to in the Command Palette's search besides its label, so a Command is findable by a word its title does not contain. A keyword is an alias, not display text: it never changes what the Command does and is never shown.
 - **Nested Palette (Sub-Commandbar)**: A temporary state of the Command Palette displaying a specific list of options (e.g. available languages) instead of the top-level commands, support back navigation via Backspace or a back button.
 
 ## Architecture
@@ -65,6 +67,8 @@ A searchable dialog interface allowing the user to search and run registered act
 - **Plugin**: An application feature with an explicit lifecycle that contributes behavior or presentation to np. Distinct from an Editor Extension, which changes editing behavior.
 - **Core Plugin**: A Plugin shipped with np rather than installed separately. Optional Core Plugins can be disabled while the basic editor remains usable. _Avoid_: external plugin, Core (when referring to a bundled feature rather than the headless application layer).
 - **Git Plugin**: The Core Plugin containing np's Git functionality. Its purpose is to make Git optional and exercise the Plugin model; it does not imply a parent VCS Plugin.
+- **History tab**: The Git panel tab listing the current branch's commits, newest first. Peer to the Changes tab, which shows the working copy.
+  _Avoid_: log tab
 - **Settings Namespace**: A plugin-owned section of the settings tree (for example `git` or `editor`), with its own schema and defaults. Setting names follow Zed's conventions wherever they fit.
 - **Transform**: A function a Plugin registers to describe its change to a shared registry. The host replays transforms in order from an empty initial value on every rebuild.
 - **Reload**: Rebuilding a registry from its current transforms, for example after a plugin refreshes its underlying data.
