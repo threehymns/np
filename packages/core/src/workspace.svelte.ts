@@ -44,13 +44,23 @@ export class Workspace {
 	layout = $state<LayoutNode>(new Pane());
 	activePaneId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
+	pendingCloseQueue = $state<{ tabId: string; paneId?: string }[]>([]);
 	/**
 	 * Closed tabs awaiting reopen, most recent last, paired with the pane
 	 * that held them so `reopenClosedTab` puts a tab back where it was.
 	 * Session-scoped: the top of the stack answers the reopen command, and
 	 * a restart forgets the history.
 	 */
-	closedTabs = $state<{ tab: WorkspaceTab; paneId: string }[]>([]);
+	closedTabs = $state<{ tab: WorkspaceTab; paneId: string; doc?: DocumentSession }[]>([]);
+
+	get otherPendingCloseCount(): number {
+		return this.pendingCloseQueue.length;
+	}
+
+	cancelPendingClose(): void {
+		this.pendingCloseId = null;
+		this.pendingCloseQueue = [];
+	}
 	/**
 	 * Upper bound on the closed-tab history; an unbounded stack of closed
 	 * tabs would keep their tab records alive for the whole session.
@@ -961,7 +971,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 			// Load new folder state
 			await this.loadFolderState(toURI(origin), true);
-			this.pendingCloseId = null;
+			this.cancelPendingClose();
 			return true;
 		} catch (error) {
 			if (changed) {
@@ -1063,20 +1073,26 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 		// The save/discard prompt fires only when the last tab referencing a session closes.
 		// Closing a cloned tab while the session lives on elsewhere closes silently.
-		if (totalDocTabs <= 1 && tab.type === 'document') {
+	if (totalDocTabs <= 1 && tab.type === 'document') {
 			const doc = this.documents.find(d => d.id === docId);
 			if (doc && doc.isModified) {
+				this.pendingCloseQueue = [];
 				this.pendingCloseId = id;
 				return;
 			}
 		}
 
-		this.finalizeClose(id, false, targetPane.id).catch((err) => {
+		await this.finalizeClose(id, false, targetPane.id).catch((err) => {
 			console.error('[Workspace] Failed to close tab', err);
 		});
 	}
 
-	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
+	async finalizeClose(
+		id: string,
+		saveFirst = false,
+		paneId?: string,
+		applyToRemaining = false
+	): Promise<boolean> {
 		const targetPane = paneId
 			? this.findPane(paneId)
 			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
@@ -1088,76 +1104,141 @@ private searchSessions = new Map<string, SearchTabSession>();
 		const docId = tab.docId ?? tab.id;
 		const totalDocTabs = this.countTabsForDocument(docId);
 
+		if (applyToRemaining) {
+			const queue = [...this.pendingCloseQueue];
+			this.pendingCloseQueue = [];
+			this.pendingCloseId = null;
+
+			const allClosing = [{ tabId: id, paneId: targetPane.id }, ...queue];
+
+			if (saveFirst) {
+				const docsToSave = new Set<DocumentSession>();
+				for (const item of allClosing) {
+					const itemPane = item.paneId ? this.findPane(item.paneId) : this.findPaneWithTab(item.tabId);
+					const itemTab = itemPane?.tabs.find(t => t.id === item.tabId);
+					if (itemTab && itemTab.type === 'document') {
+						const itemDocId = itemTab.docId ?? itemTab.id;
+						const itemDoc = this.documents.find(d => d.id === itemDocId);
+						if (itemDoc && itemDoc.isModified) {
+							docsToSave.add(itemDoc);
+						}
+					}
+				}
+				for (const doc of docsToSave) {
+					try {
+						await this.saveDocument(doc);
+					} catch (err) {
+						console.error('[Workspace] Save before close failed for queued tab', err);
+					}
+				}
+			}
+
+			await this.performCloseBatch(allClosing);
+			return true;
+		}
+
+		let saved = true;
 		if (totalDocTabs <= 1 && tab.type === 'document') {
 			const doc = this.documents.find(d => d.id === docId);
 			if (doc && saveFirst) {
 				try {
-					const saved = await this.saveDocument(doc);
-					if (saved) await this.performClose(id, targetPane.id);
-					return saved;
+					saved = await this.saveDocument(doc);
+					if (!saved) {
+						this.cancelPendingClose();
+						return false;
+					}
 				} catch (err) {
 					console.error('[Workspace] Save before close failed', err);
+					this.cancelPendingClose();
 					return false;
-				} finally {
-					this.pendingCloseId = null;
 				}
 			}
 		}
 
 		await this.performClose(id, targetPane.id);
-		this.pendingCloseId = null;
+
+		if (this.pendingCloseQueue.length > 0) {
+			const next = this.pendingCloseQueue.shift()!;
+			this.pendingCloseId = next.tabId;
+		} else {
+			this.pendingCloseId = null;
+		}
+
 		return true;
 	}
 
 	/**
-	 * Close a tab without asking, in the pane that holds it.
+	 * Close multiple tabs across panes in a single batch update.
 	 *
-	 * This is the unconditional close: the tab leaves its pane, the document
-	 * leaves the workspace when no tab references it any more, and a pane
-	 * whose last tab closed dies with it. It does not ask about unsaved
-	 * changes, so a caller that has not already asked must use `closeTab`,
-	 * which prompts, or `finalizeClose`, which is the answer to that prompt.
+	 * Avoids intermediate activeTabId churn and per-tab reactive updates
+	 * by filtering closed tabs and documents in bulk and setting activeTabId
+	 * only once per affected pane.
 	 */
-	async performClose(id: string, paneId?: string) {
-		const targetPane = paneId
-			? this.findPane(paneId)
-			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
-		if (!targetPane) return;
+	async performCloseBatch(items: { tabId: string; paneId?: string }[]) {
+		if (items.length === 0) return;
 
-		const tabIndex = targetPane.tabs.findIndex(t => t.id === id);
-		if (tabIndex === -1) return;
+		const itemsByPane = new Map<Pane, string[]>();
+		for (const item of items) {
+			const targetPane = item.paneId
+				? this.findPane(item.paneId)
+				: (this.activePane.tabs.some(t => t.id === item.tabId) ? this.activePane : this.findPaneWithTab(item.tabId));
+			if (!targetPane) continue;
+			let list = itemsByPane.get(targetPane);
+			if (!list) {
+				list = [];
+				itemsByPane.set(targetPane, list);
+			}
+			list.push(item.tabId);
+		}
 
-		const tab = targetPane.tabs[tabIndex];
-		const docId = tab.docId ?? tab.id;
+		if (itemsByPane.size === 0) return;
 
-		// Feed the reopen history before the tab leaves, remembering the
-		// pane that held it. Bounded so a long session of closes cannot grow
-		// the stack without limit.
-		this.closedTabs.push({ tab, paneId: targetPane.id });
+		for (const [pane, tabIds] of itemsByPane) {
+			const idSet = new Set(tabIds);
+			for (const tab of pane.tabs) {
+				if (!idSet.has(tab.id)) continue;
+				const docId = tab.docId ?? tab.id;
+				const doc = tab.type === 'document' ? this.documents.find(d => d.id === docId) : undefined;
+				this.closedTabs.push({ tab, paneId: pane.id, doc });
+				if (tab.type === 'search') {
+					this.searchSessions.delete(tab.id);
+				}
+			}
+		}
+
 		if (this.closedTabs.length > Workspace.MAX_CLOSED_TABS) {
 			this.closedTabs.splice(0, this.closedTabs.length - Workspace.MAX_CLOSED_TABS);
 		}
 
-		targetPane.tabs.splice(tabIndex, 1);
+		const deadPanes: Pane[] = [];
+		for (const [pane, tabIds] of itemsByPane) {
+			const idSet = new Set(tabIds);
+			const activeIndex = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+			const activeIsClosed = idSet.has(pane.activeTabId);
 
-		const totalDocTabs = this.countTabsForDocument(docId);
-		if (totalDocTabs === 0 && tab.type === 'document') {
-			const docIndex = this.documents.findIndex(doc => doc.id === docId);
-			if (docIndex !== -1) {
-				this.documents.splice(docIndex, 1);
+			pane.tabs = pane.tabs.filter(t => !idSet.has(t.id));
+
+			if (pane.tabs.length > 0) {
+				if (activeIsClosed || !pane.activeTabId) {
+					const newIndex = Math.min(pane.tabs.length - 1, Math.max(0, activeIndex - 1));
+					pane.activeTabId = pane.tabs[newIndex]?.id ?? '';
+				}
+			} else {
+				deadPanes.push(pane);
 			}
-		} else if (tab.type === 'search') {
-			this.searchSessions.delete(id);
 		}
 
-		if (targetPane.tabs.length > 0) {
-			if (targetPane.activeTabId === id) {
-				targetPane.activeTabId = targetPane.tabs[Math.max(0, tabIndex - 1)].id;
+		const remainingDocIds = new Set<string>();
+		for (const p of this.getAllPanes()) {
+			for (const t of p.tabs) {
+				remainingDocIds.add(t.docId ?? t.id);
 			}
-		} else {
+		}
+		this.documents = this.documents.filter(d => remainingDocIds.has(d.id));
+
+		for (const targetPane of deadPanes) {
 			const allPanes = this.getAllPanes();
 			if (allPanes.length > 1) {
-				// Implicit death: a pane whose last tab closes is removed, tree collapses, focus falls back to a neighbor
 				const result = removePane(this.layout, targetPane.id);
 				if (result) {
 					this.layout = result.newRoot;
@@ -1166,12 +1247,18 @@ private searchSessions = new Map<string, SearchTabSession>();
 					}
 				}
 			} else {
-				// Last pane is guarded and survives as an empty pane
 				targetPane.activeTabId = '';
 			}
 		}
 
 		this.debouncedSaveOpenFiles();
+	}
+
+	/**
+	 * Close a tab without asking, in the pane that holds it.
+	 */
+	async performClose(id: string, paneId?: string) {
+		await this.performCloseBatch([{ tabId: id, paneId }]);
 	}
 
 	/**
@@ -1206,17 +1293,60 @@ private searchSessions = new Map<string, SearchTabSession>();
 		return !doc?.isModified;
 	}
 
+	private async closeTabsBatch(tabs: WorkspaceTab[], paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+
+		const cleanTabs: WorkspaceTab[] = [];
+		const dirtyTabs: WorkspaceTab[] = [];
+
+		for (const tab of tabs) {
+			if (this.isTabClean(tab)) {
+				cleanTabs.push(tab);
+			} else {
+				dirtyTabs.push(tab);
+			}
+		}
+
+		if (cleanTabs.length > 0) {
+			await this.performCloseBatch(cleanTabs.map(t => ({ tabId: t.id, paneId: pane.id })));
+		}
+
+		const uniqueDirtyTabs: WorkspaceTab[] = [];
+		const duplicateTabs: { tabId: string; paneId: string }[] = [];
+		const seenDocIds = new Set<string>();
+
+		for (const tab of dirtyTabs) {
+			const docId = tab.docId ?? tab.id;
+			if (seenDocIds.has(docId)) {
+				duplicateTabs.push({ tabId: tab.id, paneId: pane.id });
+			} else {
+				seenDocIds.add(docId);
+				uniqueDirtyTabs.push(tab);
+			}
+		}
+
+		if (duplicateTabs.length > 0) {
+			await this.performCloseBatch(duplicateTabs);
+		}
+
+		if (uniqueDirtyTabs.length === 0) {
+			return;
+		}
+
+		this.pendingCloseId = uniqueDirtyTabs[0].id;
+		this.pendingCloseQueue = uniqueDirtyTabs.slice(1).map((t) => ({ tabId: t.id, paneId: pane.id }));
+	}
+
 	/**
 	 * Close every tab of a pane (default: the active pane). Each tab goes
 	 * through the normal ask/close path, so a dirty Document that is the last
 	 * tab referencing its session still asks before discarding.
 	 */
 	async closeAllTabs(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		for (const tab of [...pane.tabs]) {
-			await this.closeTab(tab.id, pane.id);
-		}
+		await this.closeTabsBatch(pane.tabs, pane.id);
 	}
 
 	/**
@@ -1225,12 +1355,10 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 * while dirty.
 	 */
 	async closeOtherTabs(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		for (const tab of [...pane.tabs]) {
-			if (tab.id === pane.activeTabId) continue;
-			await this.closeTab(tab.id, pane.id);
-		}
+		const tabs = pane.tabs.filter((t) => t.id !== pane.activeTabId);
+		await this.closeTabsBatch(tabs, pane.id);
 	}
 
 	/**
@@ -1238,12 +1366,10 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 * dirty ones: closing is never a reason to lose unsaved work.
 	 */
 	async closeCleanTabs(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		for (const tab of [...pane.tabs]) {
-			if (!this.isTabClean(tab)) continue;
-			await this.closeTab(tab.id, pane.id);
-		}
+		const clean = pane.tabs.filter((t) => this.isTabClean(t));
+		await this.performCloseBatch(clean.map((t) => ({ tabId: t.id, paneId: pane.id })));
 	}
 
 	/**
@@ -1251,12 +1377,10 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 * and the LSP log view — in a pane (default: the active pane).
 	 */
 	async closeMultibufferTabs(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		for (const tab of [...pane.tabs]) {
-			if (tab.type !== 'diff' && tab.type !== 'search') continue;
-			await this.closeTab(tab.id, pane.id);
-		}
+		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search');
+		await this.performCloseBatch(multi.map((t) => ({ tabId: t.id, paneId: pane.id })));
 	}
 
 	/**
@@ -1265,14 +1389,12 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 * later half.
 	 */
 	async closeTabsToLeft(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		const tabs = [...pane.tabs];
-		const activeIndex = tabs.findIndex((t) => t.id === pane.activeTabId);
+		const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
 		if (activeIndex === -1) return;
-		for (let i = 0; activeIndex > i; i++) {
-			await this.closeTab(tabs[i].id, pane.id);
-		}
+		const tabs = pane.tabs.slice(0, activeIndex);
+		await this.closeTabsBatch(tabs, pane.id);
 	}
 
 	/**
@@ -1280,14 +1402,12 @@ private searchSessions = new Map<string, SearchTabSession>();
 	 * active pane).
 	 */
 	async closeTabsToRight(paneId?: string): Promise<void> {
-		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		const tabs = [...pane.tabs];
-		const activeIndex = tabs.findIndex((t) => t.id === pane.activeTabId);
+		const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
 		if (activeIndex === -1) return;
-		for (let i = tabs.length - 1; activeIndex < i; i--) {
-			await this.closeTab(tabs[i].id, pane.id);
-		}
+		const tabs = pane.tabs.slice(activeIndex + 1);
+		await this.closeTabsBatch(tabs, pane.id);
 	}
 
 	/**
@@ -1299,6 +1419,15 @@ private searchSessions = new Map<string, SearchTabSession>();
 		if (!entry) return false;
 		const pane = this.findPane(entry.paneId) ?? this.activePane;
 		if (!pane) return false;
+
+		if (entry.doc && !this.documents.some((d) => d.id === entry.doc!.id)) {
+			this.documents.push(entry.doc);
+			this.pluginHost?.emit('document:opened', { document: entry.doc, origin: entry.doc.origin });
+		}
+		if (entry.tab.type === 'search' && entry.tab.searchSession) {
+			this.searchSessions.set(entry.tab.id, entry.tab.searchSession);
+		}
+
 		pane.tabs.push(entry.tab);
 		pane.activeTabId = entry.tab.id;
 		this.debouncedSaveOpenFiles();

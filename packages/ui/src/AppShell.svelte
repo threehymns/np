@@ -14,6 +14,7 @@
 		if (open) picker = null;
 	}
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
+	import { Checkbox } from "./components/ui/checkbox";
 	import favicon from "./assets/favicon.png";
 	import { SidebarIcon, FolderOpenIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
@@ -34,6 +35,7 @@
 	let { children }: { children: Snippet; } = $props();
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
+	let applyToRemaining = $state(false);
 
 	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof SidebarIcon {
 		return (icon ?? SidebarIcon) as unknown as typeof SidebarIcon;
@@ -291,7 +293,12 @@
 	<SettingsModal bind:open={appState.settingsOpen} />
 {/if}
 
-<AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>
+<AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => {
+	if (!open) {
+		appState.workspace.cancelPendingClose();
+		applyToRemaining = false;
+	}
+}}>
 	<AlertDialog.Content>
 		<AlertDialog.Header>
 			<AlertDialog.Title>Do you want to save changes to {pendingDoc?.fileName}?</AlertDialog.Title>
@@ -299,12 +306,20 @@
 				Your changes will be lost if you don't save them.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
+		{#if appState.workspace.otherPendingCloseCount > 0}
+			<div class="flex items-center space-x-2 py-2">
+				<Checkbox id="apply-to-remaining-tabs" bind:checked={applyToRemaining} />
+				<label for="apply-to-remaining-tabs" class="text-sm font-medium leading-none cursor-pointer select-none">
+					Also apply for {appState.workspace.otherPendingCloseCount} other {appState.workspace.otherPendingCloseCount === 1 ? 'tab' : 'tabs'}
+				</label>
+			</div>
+		{/if}
 		<AlertDialog.Footer>
-			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, false)} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+			<AlertDialog.Cancel onclick={() => { appState.workspace.cancelPendingClose(); applyToRemaining = false; }}>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={() => { const apply = applyToRemaining; applyToRemaining = false; appState.finalizeClose(appState.workspace.pendingCloseId!, false, undefined, apply); }} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
 				Don't Save
 			</AlertDialog.Action>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, true)}>
+			<AlertDialog.Action onclick={() => { const apply = applyToRemaining; applyToRemaining = false; appState.finalizeClose(appState.workspace.pendingCloseId!, true, undefined, apply); }}>
 				Save
 			</AlertDialog.Action>
 		</AlertDialog.Footer>

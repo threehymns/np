@@ -428,8 +428,8 @@ export class AppState {
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string, paneId?: string) { this.workspace.closeTab(id, paneId); }
-	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
-		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId);
+	async finalizeClose(id: string, saveFirst = false, paneId?: string, applyToRemaining = false): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId, applyToRemaining);
 		if (!closed && this.workspace.lastSaveCancellationReason) {
 			if (this.dialogService?.alert) {
 				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -439,7 +439,7 @@ export class AppState {
 		}
 		return closed;
 	}
-	closeAllTabs(paneId?: string) { this.workspace.closeAllTabs(paneId); }
+	async closeAllTabs(paneId?: string): Promise<void> { return await this.workspace.closeAllTabs(paneId); }
 	async closeOtherTabs(paneId?: string): Promise<void> { return await this.workspace.closeOtherTabs(paneId); }
 	async closeCleanTabs(paneId?: string): Promise<void> { return await this.workspace.closeCleanTabs(paneId); }
 	async closeMultibufferTabs(paneId?: string): Promise<void> { return await this.workspace.closeMultibufferTabs(paneId); }
