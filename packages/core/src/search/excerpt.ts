@@ -572,7 +572,7 @@ export async function applyReplaceAll(options: {
 		applyEditsToDocumentSession(doc, fileEdits, workspace);
 		totalReplacements += fileEdits.length;
 		modifiedFiles.push(result.filepath);
-		changes.push({ origin: result.origin, before, doc });
+		changes.push({ origin: result.origin, before, after: doc.content, doc });
 	}
 
 	return { modifiedFiles, totalReplacements, undo: { changes } };
@@ -591,6 +591,7 @@ export async function undoReplaceAll(undo: ReplaceAllUndo, workspace: Workspace)
 		// after them.
 		const current = change.doc.content;
 		if (current === change.before) continue;
+		if (change.after !== undefined && current !== change.after) continue;
 		applyEditsToDocumentSession(
 			change.doc,
 			[{ from: 0, to: current.length, insert: change.before }],

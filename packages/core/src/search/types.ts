@@ -110,6 +110,10 @@ export interface ReplaceAllFileChange {
 	 */
 	before: string;
 	/**
+	 * The content the file held immediately after the operation.
+	 */
+	after?: string;
+	/**
 	 * The document the change went into. It has a tab when the file was
 	 * open, and no tab when it was not: the results are an editor for the
 	 * files they show, and a replace never opens a tab.
@@ -136,5 +140,5 @@ export interface ReplaceAllUndoEntry {
 	 * How many manual edits the results held when the operation ran. A
 	 * manual edit made after it is newer, so it is undone first.
 	 */
-	manualEdits: number;
+	manualEdits?: number;
 }

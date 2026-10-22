@@ -407,6 +407,103 @@ describe("Excerpt-to-file offset mapping (Issue #336)", () => {
 });
 
 describe("Replace-all across results with per-file undo (Issue #336)", () => {
+	it("records each document post-replace content in the change record", async () => {
+		const files: Record<string, string> = {
+			"/test-project/record.ts": "const x = 'old';"
+		};
+		const storage = createMockStorage(files);
+		const workspace = createTestWorkspace(storage);
+		const origin: FileOrigin = { scheme: "file", path: "/test-project/record.ts", name: "record.ts" };
+		const fileResults: FileSearchResult[] = [
+			{
+				filepath: "record.ts",
+				origin,
+				matches: [{ line: 1, column: 12, offset: 11, matchLength: 3, lineText: "const x = 'old';", contextBefore: [], contextAfter: [] }]
+			}
+		];
+
+		const res = await applyReplaceAll({
+			workspace,
+			fileResults,
+			replacement: "new"
+		});
+
+		expect(res.undo.changes[0]?.before).toBe("const x = 'old';");
+		expect(res.undo.changes[0]?.after).toBe("const x = 'new';");
+	});
+
+	it("skips restoration when document content no longer matches recorded post-replace state", async () => {
+		const files: Record<string, string> = {
+			"/test-project/fileA.ts": "alpha target beta",
+			"/test-project/fileB.ts": "gamma target delta"
+		};
+		const storage = createMockStorage(files);
+		const workspace = createTestWorkspace(storage);
+
+		const originA: FileOrigin = { scheme: "file", path: "/test-project/fileA.ts", name: "fileA.ts" };
+		const originB: FileOrigin = { scheme: "file", path: "/test-project/fileB.ts", name: "fileB.ts" };
+
+		const fileResults: FileSearchResult[] = [
+			{
+				filepath: "fileA.ts",
+				origin: originA,
+				matches: [{ line: 1, column: 7, offset: 6, matchLength: 6, lineText: "alpha target beta", contextBefore: [], contextAfter: [] }]
+			},
+			{
+				filepath: "fileB.ts",
+				origin: originB,
+				matches: [{ line: 1, column: 7, offset: 6, matchLength: 6, lineText: "gamma target delta", contextBefore: [], contextAfter: [] }]
+			}
+		];
+
+		const res = await applyReplaceAll({
+			workspace,
+			fileResults,
+			replacement: "replacement"
+		});
+
+		const docA = workspace.documents.find((d) => d.origin?.name === "fileA.ts")!;
+		const docB = workspace.documents.find((d) => d.origin?.name === "fileB.ts")!;
+
+		// Simulate subsequent edit in fileA only
+		docA.content = "alpha replacement beta with additional edits";
+
+		// Undo replace-all
+		await undoReplaceAll(res.undo, workspace);
+
+		// fileA had newer edits, so restoration was skipped and newer edits preserved
+		expect(docA.content).toBe("alpha replacement beta with additional edits");
+		// fileB was untouched, so it was restored to its before state
+		expect(docB.content).toBe("gamma target delta");
+	});
+
+	it("preserves restoration for records without an after field and skips already-restored files", async () => {
+		const storage = createMockStorage();
+		const workspace = createTestWorkspace(storage);
+		const originA: FileOrigin = { scheme: "file", path: "/test-project/a.ts", name: "a.ts" };
+		const docA = new DocumentSession(storage, "modified content", originA);
+		workspace.documents.push(docA);
+
+		// Record without optional after field
+		const legacyUndo = {
+			changes: [
+				{
+					origin: originA,
+					before: "initial content",
+					doc: docA
+				}
+			]
+		};
+
+		await undoReplaceAll(legacyUndo, workspace);
+		expect(docA.content).toBe("initial content");
+
+		// If current content is already before, running undo again is a no-op
+		const docAUpdateSpy = mock(() => {});
+		workspace.updateDocumentContent = docAUpdateSpy;
+		await undoReplaceAll(legacyUndo, workspace);
+		expect(docAUpdateSpy).not.toHaveBeenCalled();
+	});
 	it("replaces all occurrences across multiple files in one action", async () => {
 		const files: Record<string, string> = {
 			"/test-project/fileA.ts": "const x = 'target';\nconst y = 'target';",
