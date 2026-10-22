@@ -1,5 +1,5 @@
 import "../../../tests/contract/rune-setup";
-import { describe, it, expect, beforeAll } from "bun:test";
+import { describe, it, expect, mock, beforeAll } from "bun:test";
 import { createMockStorage } from "../../../tests/mock-storage";
 import { CommandRegistry, registerCoreCommands } from "./commands.svelte";
 import { defaultKeymap } from "./keymap.svelte";
@@ -64,6 +64,51 @@ describe("the diagnostics tab in the workspace", () => {
 		ws.openDiagnosticsTab();
 
 		expect(ws.tabs.filter((t) => t.type === "diagnostics")).toHaveLength(1);
+	});
+
+	it("drops the diagnostics session when the folder changes", async () => {
+		const ws = makeWorkspace();
+		await ws.restoreSession();
+
+		ws.openDiagnosticsTab();
+		const tabId = ws.activeTabId;
+		ws.getDiagnosticsSession(tabId).filter = "error";
+
+		ws.project.storage.pickDirectory = mock(async () => ({
+			scheme: "file",
+			path: "/projects/other",
+			name: "other"
+		}));
+		ws.project.storage.verifyPermission = mock(async () => true);
+
+		expect(await ws.openDirectory()).toBe(true);
+		// The old layout's tabs were replaced, not closed: a fresh session
+		// is created on next ask, so the old folder's filter is gone.
+		expect(ws.getDiagnosticsSession(tabId).filter).toBe("all");
+	});
+
+	it("keeps the diagnostics session when the folder change fails", async () => {
+		const ws = makeWorkspace();
+		await ws.restoreSession();
+
+		ws.openDiagnosticsTab();
+		const tabId = ws.activeTabId;
+		ws.getDiagnosticsSession(tabId).filter = "error";
+
+		ws.project.storage.pickDirectory = mock(async () => ({
+			scheme: "file",
+			path: "/projects/other",
+			name: "other"
+		}));
+		ws.project.storage.verifyPermission = mock(async () => true);
+		const persistence = ws.project.persistence as MemorySessionPersistence;
+		persistence.loadOpenFiles = mock(async () => {
+			throw new Error("load failed");
+		});
+
+		expect(await ws.openDirectory()).toBe(false);
+		// The old layout was restored, so the reader's filter survives.
+		expect(ws.getDiagnosticsSession(tabId).filter).toBe("error");
 	});
 });
 
