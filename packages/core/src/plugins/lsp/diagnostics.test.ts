@@ -334,4 +334,34 @@ describe('Diagnostics store, ordered by document revision (#353)', () => {
 		store.publish(report(A, [], 'ts@/repo')!);
 		expect(store.read(A).map((d) => d.message)).toEqual(['from lint']);
 	});
+
+	it('a newer empty pull followed by an older push leaves diagnostics absent', () => {
+		const store = new LspDiagnosticsStore();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'error at 1' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['error at 1']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		expect(store.read(A)).toEqual([]);
+
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'stale error at 1' }], server, 1)!);
+		expect(store.read(A)).toEqual([]);
+	});
+
+	it('clearing metadata allows subsequent reports after dropServer, dropUri, and clear', () => {
+		const store = new LspDiagnosticsStore();
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.dropServer(server);
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after dropServer' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after dropServer']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.dropUri(A);
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after dropUri' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after dropUri']);
+
+		store.pull({ uri: A, server, diagnostics: [], version: 2 });
+		store.clear();
+		store.publish(report(A, [{ range: range(0, 0, 1), message: 'after clear' }], server, 1)!);
+		expect(store.read(A).map((d) => d.message)).toEqual(['after clear']);
+	});
 });

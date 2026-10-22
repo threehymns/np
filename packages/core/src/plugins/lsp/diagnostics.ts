@@ -209,8 +209,14 @@ interface StoreDiagnosticSlice {
 	readonly version: number | undefined;
 }
 
+interface DiagnosticOrderMeta {
+	readonly source: LspDiagnosticSource;
+	readonly version: number | undefined;
+}
+
 export class LspDiagnosticsStore {
 	private readonly byUri = new Map<string, Map<string, StoreDiagnosticSlice>>();
+	private readonly orderMeta = new Map<string, Map<string, DiagnosticOrderMeta>>();
 	private readonly listeners = new Set<() => void>();
 	private sequence = 0;
 
@@ -220,12 +226,13 @@ export class LspDiagnosticsStore {
 	 * second server serving the same file keeps its marks.
 	 */
 	publish(report: LspPublishDiagnostics): void {
-		const existing = this.byUri.get(report.uri);
-		const current = existing?.get(report.server);
+		const current = this.orderMeta.get(report.uri)?.get(report.server);
 		// Refused before anything else, so a report the store does not take
 		// changes nothing: the slice stays as it is, the revision does not
 		// move, and a view that re-reads on every notification is not woken.
 		if (current && !this.accepts(current, report.version, 'push')) return;
+		this.recordOrder(report.uri, report.server, 'push', report.version);
+		const existing = this.byUri.get(report.uri);
 		if (report.diagnostics.length === 0) {
 			// Nothing filed and nothing to clear: not a change, so a view that
 			// re-reads on every notification is not woken for a file no server has
@@ -251,9 +258,10 @@ export class LspDiagnosticsStore {
 	 * An empty diagnostics list clears that server's slice with clean-file semantics.
 	 */
 	pull(report: LspPulledDiagnostics): void {
-		const existing = this.byUri.get(report.uri);
-		const current = existing?.get(report.server);
+		const current = this.orderMeta.get(report.uri)?.get(report.server);
 		if (current && !this.accepts(current, report.version, 'pull')) return;
+		this.recordOrder(report.uri, report.server, 'pull', report.version);
+		const existing = this.byUri.get(report.uri);
 		if (report.diagnostics.length === 0) {
 			if (!existing?.delete(report.server)) return;
 			if (existing.size === 0) this.byUri.delete(report.uri);
@@ -304,6 +312,10 @@ export class LspDiagnosticsStore {
 			if (servers.size === 0) this.byUri.delete(uri);
 			dropped = true;
 		}
+		for (const [uri, servers] of [...this.orderMeta]) {
+			if (!servers.delete(server)) continue;
+			if (servers.size === 0) this.orderMeta.delete(uri);
+		}
 		if (dropped) this.changed();
 	}
 
@@ -317,11 +329,13 @@ export class LspDiagnosticsStore {
 	 * because neither is still serving the file.
 	 */
 	dropUri(uri: string): void {
+		this.orderMeta.delete(uri);
 		if (!this.byUri.delete(uri)) return;
 		this.changed();
 	}
 
 	clear(): void {
+		this.orderMeta.clear();
 		if (this.byUri.size === 0) return;
 		this.byUri.clear();
 		this.changed();
@@ -379,8 +393,22 @@ export class LspDiagnosticsStore {
 	 * able to overwrite an answer that does, and the source order is what
 	 * says so.
 	 */
+	private recordOrder(
+		uri: string,
+		server: string,
+		source: LspDiagnosticSource,
+		version: number | undefined
+	): void {
+		let servers = this.orderMeta.get(uri);
+		if (!servers) {
+			servers = new Map();
+			this.orderMeta.set(uri, servers);
+		}
+		servers.set(server, { source, version });
+	}
+
 	private accepts(
-		held: StoreDiagnosticSlice,
+		held: DiagnosticOrderMeta,
 		incomingVersion: number | undefined,
 		incomingSource: LspDiagnosticSource
 	): boolean {
