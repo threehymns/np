@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
-import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey, parseTriggerCharacters } from './lifecycle';
+import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, formatMemoryBytes, lspServerKey, parseServerVersion, parseTriggerCharacters } from './lifecycle';
 import { LspDiagnosticsStore } from './diagnostics';
 import {
 	LSP_PLATFORM_SERVICE_KEY,
@@ -35,6 +35,18 @@ import {
  */
 
 const cleanups: Array<() => Promise<void> | void> = [];
+
+/**
+ * A memory reading that is the same on every machine.
+ *
+ * The platform's real reader is `/proc`, which only Linux has: anywhere else
+ * it answers nothing and the row's figure stays a dash for ever. A test that
+ * pins the figure the runtime publishes needs a reader that answers the same
+ * everywhere, so this one stands in for it — and the reading is a real one
+ * the runtime has to carry, not a dash it can pass through.
+ */
+const FIXED_MEMORY_BYTES = 412 * 1024 * 1024;
+const fixedMemory = async (): Promise<number> => FIXED_MEMORY_BYTES;
 
 afterEach(async () => {
 	while (cleanups.length > 0) await cleanups.pop()!();
@@ -116,14 +128,19 @@ function settingsReader(store: Record<string, Record<string, unknown>>): {
 
 async function startPlugin(
 	script: readonly string[] = [],
-	settings: Record<string, Record<string, unknown>> = {}
+	settings: Record<string, Record<string, unknown>> = {},
+	/** Replaces the platform's memory reader, for a test that pins the figure. */
+	processMemory?: (pid: number) => Promise<number | null>
 ): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
 	const wireLog = join(makeProject({}), 'wire.log');
 	// Always on: the stub is the only witness to what the client sent, and a
 	// suite where some tests have one and some do not is a suite where the
 	// difference is invisible.
-	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
+	const platform = createRealProcessPlatform({
+		script: [...script, '--log-file', wireLog],
+		...(processMemory ? { processMemory } : {})
+	});
 	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	const settingsAccess = settingsReader(settings);
 	host.provideService(SETTINGS_READER_SERVICE_KEY, {
@@ -355,17 +372,152 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			initialize.params.capabilities.textDocument.hover?.contentFormat
 		).toEqual(['markdown']);
 
-		expect(harness.runtime.getStatusRows()).toEqual([
-			{
-				server: lspServerKey('typescript', root),
-				descriptorId: 'typescript',
-				root,
-				marker: 'tsconfig.json',
-				state: 'running',
-				pid: harness.platform.pids[0],
-				details: []
-			}
+		expect(harness.runtime.getStatusRows()).toHaveLength(1);
+		const [statusRow] = harness.runtime.getStatusRows();
+		expect(statusRow).toMatchObject({
+			server: lspServerKey('typescript', root),
+			descriptorId: 'typescript',
+			root,
+			marker: 'tsconfig.json',
+			state: 'running',
+			pid: harness.platform.pids[0]
+		});
+		expect(statusRow.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
+		const memoryFigure = statusRow.details.find((detail) => detail.label === 'memory')!;
+		expect(memoryFigure.value).toMatch(/^(\d+ (KiB|MiB)|—)$/);
+		expect(memoryFigure.value).not.toBe('0 MiB');
+	});
+
+	it('fills the status details slot with the version the server reported (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin();
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+
+		const row = harness.runtime.getStatusRows()[0];
+		expect(row.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
+	});
+
+	it('fills the status details slot with the memory the platform observed (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin([], {}, fixedMemory);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+
+		// The figure is the platform's reading carried through, so the wait is
+		// for the read to land rather than for a number to turn up: a dash
+		// means the platform has not answered yet.
+		await waitFor(
+			() =>
+				(harness.runtime.getStatusRows()[0]?.details ?? []).some(
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
+				),
+			{ label: 'the memory figure' }
+		);
+		const memory = harness.runtime
+			.getStatusRows()[0]
+			.details.find((detail) => detail.label === 'memory')!;
+		expect(memory.value).toBe('412 MiB');
+	});
+
+	it('shows a dash when the platform cannot report a memory figure (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		// The platform's own reader reads `/proc`, which only Linux has: off
+		// Linux it answers nothing at all. A reader that answers null stands in
+		// for that platform on every machine, so the case is pinned everywhere
+		// rather than only where a runner happens to have a `/proc`.
+		let asked = 0;
+		const harness = await startPlugin([], {}, async () => {
+			asked++;
+			return null;
+		});
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		await waitFor(() => asked > 0, { label: 'the platform to be asked for the figure' });
+
+		// A dash and not a zero: a server that has reported nothing says so.
+		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
+			label: 'memory',
+			value: '—'
+		});
+	});
+
+	it('shows dashes while the handshake is still in flight (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
+
+		expect(harness.runtime.getStatusRows()[0].details).toEqual([
+			{ label: 'version', value: 'v—' },
+			{ label: 'memory', value: '—' }
 		]);
+
+		gate.release();
+		await waitForRunning(harness.runtime, 1);
+		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
+			label: 'version',
+			value: 'v0.0.0'
+		});
+	});
+
+	it('clears the figures when the server stops and re-reports them on restart (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin([], {}, fixedMemory);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		const key = lspServerKey('typescript', root);
+		const [pid] = harness.platform.pids;
+
+		expect(await harness.runtime.stopServer(key)).toBe(true);
+		await waitFor(() => !isProcessAlive(pid), { label: 'the stopped server to exit' });
+		expect(harness.runtime.getStatusRows().find((server) => server.server === key)?.details).toEqual(
+			[]
+		);
+
+		expect(await harness.runtime.restartServer(key)).toBe(true);
+		await waitForRunning(harness.runtime, 1);
+		expect(
+			harness.runtime.getStatusRows().find((server) => server.server === key)?.details
+		).toContainEqual({ label: 'version', value: 'v0.0.0' });
+		await waitFor(
+			() =>
+				(harness.runtime
+					.getStatusRows()
+					.find((server) => server.server === key)
+					?.details ?? []).some(
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
+				),
+			{ label: 'the re-reported memory figure' }
+		);
+	});
+
+	describe('status figure formatting (#282)', () => {
+		it('reads the version off serverInfo and nothing else', () => {
+			expect(parseServerVersion({ serverInfo: { name: 'stub-ls', version: '0.0.0' } })).toBe(
+				'0.0.0'
+			);
+			expect(parseServerVersion({ serverInfo: { name: 'stub-ls' } })).toBeNull();
+			expect(parseServerVersion({ serverInfo: { version: '' } })).toBeNull();
+			expect(parseServerVersion({ serverInfo: { version: 42 } })).toBeNull();
+			expect(parseServerVersion({})).toBeNull();
+			expect(parseServerVersion(null)).toBeNull();
+		});
+
+		it('formats bytes as whole MiB past one mebibyte and whole KiB below', () => {
+			expect(formatMemoryBytes(412 * 1024 * 1024)).toBe('412 MiB');
+			expect(formatMemoryBytes(1536 * 1024)).toBe('2 MiB');
+			expect(formatMemoryBytes(512 * 1024)).toBe('512 KiB');
+		});
+
+		it('never formats a blank or a zero figure', () => {
+			expect(formatMemoryBytes(0)).toBe('1 KiB');
+			expect(formatMemoryBytes(100)).toBe('1 KiB');
+		});
 	});
 
 	it('syncs each served language with the protocol id its server answers to', async () => {

@@ -83,7 +83,7 @@ export interface LspStatusRowView {
 	 * saying without being asked.
 	 */
 	readonly stateNote: string | null;
-	/** Empty until the version and memory follow-ups land, passed through as-is. */
+	/** Version and memory figures, passed through as-is. */
 	readonly details: readonly LspStatusDetail[];
 	readonly actions: LspStatusRowActions;
 }

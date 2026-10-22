@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 		ipcRenderer.send('lsp:write', processId, chunk),
 	endLspServer: (processId: string) => ipcRenderer.send('lsp:end', processId),
 	killLspServer: (processId: string) => ipcRenderer.invoke('lsp:kill', processId),
+	lspMemory: (processId: string) => ipcRenderer.invoke('lsp:memory', processId),
 	onLspServerData: (handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;

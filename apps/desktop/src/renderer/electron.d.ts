@@ -41,6 +41,7 @@ export interface ElectronAPI {
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
+	lspMemory(processId: string): Promise<number | null>;
 	onLspServerData(handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;

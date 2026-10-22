@@ -35,6 +35,7 @@ interface ElectronLspBridge {
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
+	lspMemory(processId: string): Promise<number | null>;
 	onLspServerData(handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;
@@ -216,6 +217,14 @@ class ProcessRouter {
 		this.processes.delete(processId);
 		process?.reportExit(code, signal, error);
 	}
+
+	/** Scanned, not indexed: servers are few, and an exited server is already deleted. */
+	processIdForPid(pid: number): string | null {
+		for (const [id, process] of this.processes) {
+			if (process.pid === pid) return id;
+		}
+		return null;
+	}
 }
 
 /**
@@ -246,6 +255,16 @@ export function createElectronLspPlatform(host: LspBridgeHost = defaultBridgeHos
 
 	return {
 		fileExists: (path) => bridge.fileExists(path),
+		processMemory: async (pid: number): Promise<number | null> => {
+			const id = router.processIdForPid(pid);
+			if (!id) return null;
+			try {
+				const bytes = await bridge.lspMemory(id);
+				return typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : null;
+			} catch {
+				return null;
+			}
+		},
 		spawn(options): LspProcess {
 			const process = new IpcLspProcess(bridge, router);
 			// The declared command is resolved first: `vtsls` is a name, and the
