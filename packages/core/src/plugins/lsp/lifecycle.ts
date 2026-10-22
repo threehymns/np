@@ -1407,7 +1407,8 @@ export class LspRuntime
 		if (diagnostics) {
 			for (const uri of diagnostics.uris()) {
 				const fileName = basenameOfUri(uri);
-				if (!this.gateFor({ path: fromFileUri(uri), fileName }).enabled) {
+				const language = this.openDocuments.get(uri)?.language;
+				if (!this.gateFor({ path: fromFileUri(uri), fileName, language }).enabled) {
 					diagnostics.dropUri(uri);
 				}
 			}

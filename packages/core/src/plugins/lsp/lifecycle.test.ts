@@ -171,6 +171,7 @@ async function startRuntime(
 		settings?: Record<string, Record<string, unknown>>;
 		/** Replaces the platform, for a test that has to count what it asks. */
 		platform?: RealProcessPlatform;
+		languages?: readonly string[];
 	}
 ): Promise<{
 	runtime: LspRuntime;
@@ -188,7 +189,7 @@ async function startRuntime(
 				command: 'vtsls',
 				args: ['--stdio'],
 				rootMarkers: ['tsconfig.json'],
-				languages: ['typescript']
+				languages: options.languages ? [...options.languages] : ['typescript']
 			});
 		}
 	});
@@ -1370,6 +1371,53 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		).toBeNull();
 		expect(platform.pids).toHaveLength(1);
 		expect(diagnostics.read(uri)).toEqual([]);
+	});
+
+	it('uses the open document language when clearing diagnostics on settings change', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/unopened.ts': 'export const b = 2;\n'
+		});
+		const settings: Record<string, Record<string, unknown>> = {};
+		const { runtime, diagnostics, setSetting } = await startRuntime({
+			script: ['--diagnostics'],
+			languages: ['typescript', 'TSX'],
+			settings
+		});
+		const openUri = `file://${join(root, 'src/a.ts')}`;
+		const unopenedUri = `file://${join(root, 'src/unopened.ts')}`;
+
+		diagnostics.workspacePull({
+			server: 'ts',
+			uri: unopenedUri,
+			diagnostics: [
+				{
+					message: 'unopened finding',
+					severity: 'warning',
+					source: 'ts',
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }
+				}
+			]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			language: 'TSX',
+			content: 'export const a = 1;\n'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(openUri).length > 0, { label: 'the open diagnostic' });
+		expect(diagnostics.read(openUri)).toHaveLength(2);
+		expect(diagnostics.read(unopenedUri)).toHaveLength(1);
+
+		setSetting('editor', 'languages', { TypeScript: { lsp: false } });
+
+		await waitFor(() => diagnostics.read(unopenedUri).length === 0, {
+			label: 'unopened diagnostic to clear'
+		});
+		expect(diagnostics.read(openUri)).toHaveLength(2);
 	});
 
 	it('keeps the runtime serving every language when no settings reader is published', async () => {
