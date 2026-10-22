@@ -362,6 +362,48 @@ describe("Excerpt-to-file offset mapping (Issue #336)", () => {
 		applyEditsToDocumentSession(doc, edits, workspace);
 		expect(doc.content).toBe("const sum = add(bar, bar);");
 	});
+
+	it("computes next document text and notifies workspace before assigning doc.content", () => {
+		const fileContent = "const x = 'hello';";
+		const storage = createMockStorage({ "/test.ts": fileContent });
+		const workspace = createTestWorkspace(storage);
+		const origin: FileOrigin = { scheme: "file", path: "/test.ts", name: "test.ts" };
+		const doc = new DocumentSession(storage, fileContent, origin);
+		doc.markPermissionGranted();
+		workspace.documents.push(doc);
+
+		const initialRevision = doc.revision;
+		let contentObservedInWorkspaceUpdate = "";
+		let docContentDuringUpdate = "";
+		const originalUpdateDocContent = workspace.updateDocumentContent.bind(workspace);
+		workspace.updateDocumentContent = mock((d: any, content: string) => {
+			contentObservedInWorkspaceUpdate = content;
+			docContentDuringUpdate = d.content;
+			originalUpdateDocContent(d, content);
+		});
+
+		applyEditsToDocumentSession(doc, [{ from: 11, to: 16, insert: "world" }], workspace);
+
+		expect(workspace.updateDocumentContent).toHaveBeenCalled();
+		expect(contentObservedInWorkspaceUpdate).toBe("const x = 'world';");
+		expect(docContentDuringUpdate).toBe(fileContent);
+		expect(doc.content).toBe("const x = 'world';");
+		expect(doc.revision).toBeGreaterThan(initialRevision);
+	});
+
+	it("assigns computed text directly when no workspace exists and increments revision", () => {
+		const fileContent = "const x = 'hello';";
+		const storage = createMockStorage({ "/test.ts": fileContent });
+		const origin: FileOrigin = { scheme: "file", path: "/test.ts", name: "test.ts" };
+		const doc = new DocumentSession(storage, fileContent, origin);
+		doc.markPermissionGranted();
+
+		const initialRevision = doc.revision;
+		applyEditsToDocumentSession(doc, [{ from: 11, to: 16, insert: "world" }]);
+
+		expect(doc.content).toBe("const x = 'world';");
+		expect(doc.revision).toBeGreaterThan(initialRevision);
+	});
 });
 
 describe("Replace-all across results with per-file undo (Issue #336)", () => {

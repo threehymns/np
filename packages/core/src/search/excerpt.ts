@@ -502,12 +502,12 @@ export function applyEditsToDocumentSession(
 
 	const tr = baseState.update({ changes: sorted });
 	doc.editorState = tr.state.toJSON({ history: historyField });
-	doc.content = tr.state.doc.toString();
-	doc.incrementRevision();
-
+	const next = tr.state.doc.toString();
 	if (workspace) {
-		workspace.updateDocumentContent(doc, doc.content);
+		workspace.updateDocumentContent(doc, next);
 	}
+	doc.content = next;
+	doc.incrementRevision();
 }
 
 /**
