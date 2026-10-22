@@ -1004,6 +1004,13 @@ private searchSessions = new Map<string, SearchTabSession>();
 			// Load new folder state
 			await this.loadFolderState(toURI(origin), true);
 			this.pendingCloseId = null;
+			// The outgoing layout's tabs were replaced, not closed, so the
+			// diagnostics session outlives them. Drop it now that the folder
+			// change has succeeded: a filter the reader set in the old
+			// folder must not hide diagnostics in the new one. A failed
+			// open restores the old layout from `previous`, so the session
+			// is only dropped on the success path.
+			this.diagnosticsSessions.delete(DIAGNOSTICS_TAB_ID);
 			return true;
 		} catch (error) {
 			if (changed) {
