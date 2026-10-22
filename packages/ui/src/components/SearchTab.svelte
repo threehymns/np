@@ -50,13 +50,6 @@
 	let currentAbortController: AbortController | null = null;
 	const collapsedPaths = new SvelteSet<string>();
 
-	/**
-	 * How many manual edits the excerpt editors have made. A replace-all
-	 * records the count it happened at, so a manual edit made after it is
-	 * undone first, by the editor's own history.
-	 */
-	let manualEditCount = 0;
-
 	/** How many replace-all operations the tab keeps for undo. */
 	const MAX_UNDO_OPERATIONS = 10;
 
@@ -269,7 +262,7 @@
 			if (result.undo.changes.length > 0) {
 				// The operation is one undo step: the search tab keeps it, so
 				// one undo puts every file it changed back.
-				session.replaceAllUndos.push({ undo: result.undo, manualEdits: manualEditCount });
+				session.replaceAllUndos.push({ undo: result.undo });
 				// The stack is bounded: an operation holds the content of
 				// every file it changed.
 				while (session.replaceAllUndos.length > MAX_UNDO_OPERATIONS) {
@@ -456,10 +449,17 @@
 								// step. A manual edit made after it is newer, and
 								// the editor's own history undoes that one first.
 								const pending = session.replaceAllUndos[session.replaceAllUndos.length - 1];
+								const currentChange = pending?.undo.changes.find(
+									(c) => toURI(c.origin) === uri
+								);
+								const manualEditAfterReplaceAll = currentChange
+									? currentChange.after !== undefined &&
+									  (doc?.content ?? currentChange.doc.content) !== currentChange.after
+									: (view ? undoDepth(view.state) > 0 : false);
 								if (
 									!shouldUndoReplaceAllOperation({
 										hasPendingReplaceAll: pending !== undefined,
-										manualEditAfterReplaceAll: manualEditCount > (pending?.manualEdits ?? 0)
+										manualEditAfterReplaceAll
 									})
 								) {
 									return false;
@@ -476,16 +476,6 @@
 					]),
 					EditorView.updateListener.of((update) => {
 						if (update.docChanged) {
-							// A manual edit is an undo step of its own. The
-							// history's depth tells an edit from an undo of one,
-							// so the count follows what the user can still undo.
-							const depthBefore = undoDepth(update.startState);
-							const depthAfter = undoDepth(update.state);
-							if (depthAfter > depthBefore) {
-								manualEditCount++;
-							} else if (depthAfter < depthBefore) {
-								manualEditCount--;
-							}
 							update.transactions.forEach((tr) => {
 								// iterChanges reports pre-transaction coordinates, so
 								// handle the latest change first: each edit then still

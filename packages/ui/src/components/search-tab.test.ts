@@ -170,6 +170,11 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		expect(SEARCH_TAB_SRC).toContain("key: 'Mod-z'");
 	});
 
+	it("makes replace-all undo guard state-based rather than using manualEditCount", () => {
+		expect(SEARCH_TAB_SRC).not.toContain("manualEditCount");
+		expect(SEARCH_TAB_SRC).toContain("currentChange.after");
+	});
+
 	it("replaces across the session's query, not a component-local pattern", () => {
 		// The query lives in the workspace session, so replace-all works on
 		// the query the user typed, with the options that go with it.
