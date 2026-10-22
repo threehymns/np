@@ -634,6 +634,47 @@ describe("Query options: regex, case-sensitivity, whole-word, and globs (Issue #
 		const multiPaths = multiInclude.map((r) => r.filepath);
 		expect(multiPaths.sort()).toEqual(["docs/readme.md", "package.json"].sort());
 	});
+
+	it("directory-style globs select the paths below the directory", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/app.ts": "const token = 'xyz';",
+			"/test-project/src/app.test.ts": "const token = 'xyz';",
+			"/test-project/src/utils.ts": "const token = 'xyz';",
+			"/test-project/docs/readme.md": "token documentation",
+			"/test-project/package.json": '{"token": "xyz"}'
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// Bare directory name includes everything below it
+		const srcOnly = await engine.search({
+			pattern: "token",
+			includeGlobs: ["src"]
+		}).all();
+		expect(srcOnly.map((r) => r.filepath).sort()).toEqual(
+			["src/app.test.ts", "src/app.ts", "src/utils.ts"].sort()
+		);
+
+		// Trailing-slash form names the same directory
+		const srcSlash = await engine.search({
+			pattern: "token",
+			includeGlobs: ["src/"]
+		}).all();
+		expect(srcSlash.map((r) => r.filepath).sort()).toEqual(
+			["src/app.test.ts", "src/app.ts", "src/utils.ts"].sort()
+		);
+
+		// Excluding a directory drops everything below it
+		const noDocs = await engine.search({
+			pattern: "token",
+			excludeGlobs: ["docs/"]
+		}).all();
+		expect(noDocs.map((r) => r.filepath).sort()).toEqual(
+			["package.json", "src/app.test.ts", "src/app.ts", "src/utils.ts"].sort()
+		);
+	});
 });
 
 describe("Search tab session and toggle persistence (Issue #335)", () => {

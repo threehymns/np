@@ -116,6 +116,8 @@ export function globToRegex(glob: string): RegExp {
 	p = p.replace(/\\/g, '/');
 	// Strip leading ./ or /
 	p = p.replace(/^(\.\/|\/)/, '');
+	// Strip trailing slashes: "src/" names the same directory as "src"
+	p = p.replace(/\/+$/, '');
 
 	const hasSlash = p.includes('/');
 
@@ -147,9 +149,10 @@ export function globToRegex(glob: string): RegExp {
 	}
 
 	if (!hasSlash) {
-		return new RegExp(`(?:^|/)${regexStr}$`, 'i');
+		// A glob that names a directory also selects the paths below it.
+		return new RegExp(`(?:^|/)${regexStr}(?:/.*)?$`, 'i');
 	} else {
-		return new RegExp(`^${regexStr}$`, 'i');
+		return new RegExp(`^${regexStr}(?:/.*)?$`, 'i');
 	}
 }
 
