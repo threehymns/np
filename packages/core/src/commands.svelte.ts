@@ -621,6 +621,70 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'pane.closeAllTabs',
+		label: 'Pane: Close All Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeAllTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeOtherTabs',
+		label: 'Pane: Close Other Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeOtherTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeCleanTabs',
+		label: 'Pane: Close Clean Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeCleanTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeActiveTab',
+		label: 'Pane: Close Active Tab',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.closeTab(appState.workspace.activeTabId, appState.workspace.activePaneId); }
+	});
+
+	coreCommands.push({
+		id: 'pane.reopenClosedTab',
+		label: 'Pane: Reopen Closed Tab',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.reopenClosedTab(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeMultibufferTabs',
+		label: 'Pane: Close Multibuffer Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeMultibufferTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeTabsToLeft',
+		label: 'Pane: Close Tabs to the Left',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeTabsToLeft(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeTabsToRight',
+		label: 'Pane: Close Tabs to the Right',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeTabsToRight(); }
+	});
+
+	coreCommands.push({
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',
