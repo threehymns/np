@@ -1399,6 +1399,19 @@ export class LspRuntime
 		if (this.disposed) return;
 		const read = this.options.readSettings ?? this.publishedSettingsReader();
 		if (!read) return;
+		// Workspace-pulled diagnostics for URIs the gate now rejects are not open
+		// documents, so the detach loop below never sees them — and the workspace
+		// pull skips them from now on without clearing what is already stored.
+		// Drop them here so a disabled language leaves nothing behind.
+		const diagnostics = this.options.diagnostics;
+		if (diagnostics) {
+			for (const uri of diagnostics.uris()) {
+				const fileName = basenameOfUri(uri);
+				if (!this.gateFor({ path: fromFileUri(uri), fileName }).enabled) {
+					diagnostics.dropUri(uri);
+				}
+			}
+		}
 		// Collected before the detach: detaching is what forgets which server a
 		// document belonged to.
 		const affected = new Set<string>();
