@@ -675,6 +675,55 @@ describe("Query options: regex, case-sensitivity, whole-word, and globs (Issue #
 			["package.json", "src/app.test.ts", "src/app.ts", "src/utils.ts"].sort()
 		);
 	});
+
+	it("root globs select the project root and all files", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/app.ts": "const token = 'xyz';",
+			"/test-project/docs/readme.md": "token documentation",
+			"/test-project/package.json": '{"token": "xyz"}'
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const allFiles = ["docs/readme.md", "package.json", "src/app.ts"].sort();
+
+		for (const rootGlob of ["./", "/"]) {
+			const results = await engine.search({
+				pattern: "token",
+				includeGlobs: [rootGlob]
+			}).all();
+			expect(results.map((r) => r.filepath).sort()).toEqual(allFiles);
+		}
+	});
+
+	it("wildcard globs stay within a single path segment", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/app.ts": "const token = 'xyz';",
+			"/test-project/src/nested/deep.ts": "const token = 'xyz';",
+			"/test-project/package.json": '{"token": "xyz"}'
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// "src/*" matches files directly in src/, not nested paths
+		const shallow = await engine.search({
+			pattern: "token",
+			includeGlobs: ["src/*"]
+		}).all();
+		expect(shallow.map((r) => r.filepath).sort()).toEqual(["src/app.ts"]);
+
+		// The same holds for exclude globs
+		const notNested = await engine.search({
+			pattern: "token",
+			excludeGlobs: ["src/*"]
+		}).all();
+		expect(notNested.map((r) => r.filepath).sort()).toEqual(
+			["package.json", "src/nested/deep.ts"].sort()
+		);
+	});
 });
 
 describe("Search tab session and toggle persistence (Issue #335)", () => {
