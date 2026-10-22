@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
 	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
+	import { SEARCH_TAB_ID } from '@np/core';
 	import {
 		FileExcerptMap,
 		applyReplaceAll,
@@ -12,13 +13,19 @@
 	} from '@np/core';
 	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
 	import Icon from './Icon.svelte';
-	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
+	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon, CircleNotchIcon, WarningIcon } from 'phosphor-svelte';
 	import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 	import { EditorView, keymap, lineNumbers, Decoration, type DecorationSet } from '@codemirror/view';
 	import { EditorState, StateField, RangeSetBuilder } from '@codemirror/state';
 	import { history, historyKeymap, undoDepth } from '@codemirror/commands';
 	import { isResultFileDirty, shouldUndoReplaceAllOperation } from './search-tab-behavior';
 	import { getLanguageExtensions, editorTheme, LanguageSupport } from '../editor/index';
+	import {
+		searchStatusText,
+		shouldFocusSearchInput,
+		shouldRunSearchOnKeydown,
+		truncationCapText
+	} from './search-tab-behavior';
 
 	interface Props {
 		tabId?: string;
@@ -30,6 +37,7 @@
 	const activeId = $derived(tabId ?? appState.workspace.activeTabId);
 	const session = $derived(appState.workspace.getSearchSession(activeId));
 
+	let inputRef = $state<HTMLInputElement | null>(null);
 	let replaceText = $state('');
 	let fileResults = $state<FileSearchResult[]>([]);
 
@@ -87,6 +95,14 @@
 	});
 
 	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
+	let searchStatus = $derived(
+		searchStatusText({
+			isSearching,
+			totalMatches,
+			fileCount: fileResults.length,
+			isQueryEmpty: !session.query
+		})
+	);
 
 	let sections = $derived<MultibufferSection[]>(
 		fileResults.map((r) => ({
@@ -94,6 +110,19 @@
 			key: r.filepath
 		}))
 	);
+
+	$effect(() => {
+		const focusNonce = appState.workspace.searchTabFocusNonce;
+		const activeTabId = appState.activeTabId;
+		if (!inputRef) return;
+		// Only the search tab the user is looking at takes the focus. A
+		// search tab in another pane stays mounted, and it must not take
+		// the focus away from the pane the user is in.
+		if (activeTabId !== (tabId ?? SEARCH_TAB_ID)) return;
+		if (!shouldFocusSearchInput({ focusNonce, activeTabId, searchTabId: SEARCH_TAB_ID })) return;
+		inputRef.focus();
+		inputRef.select();
+	});
 
 	function toggleCollapse(filepath: string) {
 		if (collapsedPaths.has(filepath)) {
@@ -124,6 +153,17 @@
 
 	function toggleRegex() {
 		session.toggleRegex();
+		runSearch();
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		// Enter during IME composition confirms the composition candidate,
+		// not the query: don't fire a search on the partial text.
+		if (!shouldRunSearchOnKeydown({ key: e.key, isComposing: e.isComposing })) return;
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+			searchTimeout = null;
+		}
 		runSearch();
 	}
 
@@ -177,6 +217,10 @@
 			for await (const result of stream) {
 				if (signal.aborted) break;
 				fileResults = [...fileResults, result];
+				if (stream.progress.truncated) {
+					isTruncated = true;
+					truncationReason = stream.progress.truncationReason;
+				}
 			}
 
 			if (!signal.aborted) {
@@ -581,8 +625,10 @@
 			<MagnifyingGlassIcon class="absolute left-2.5 size-4 text-muted-foreground pointer-events-none" />
 			<input
 				type="text"
+				bind:this={inputRef}
 				bind:value={session.query}
 				oninput={handleInput}
+				onkeydown={handleKeydown}
 				placeholder="Search project..."
 				class="w-full bg-background border border-input rounded-md pl-9 pr-24 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				aria-label="Search query"
@@ -673,29 +719,48 @@
 			</button>
 		</div>
 
+		{#if isSearching}
+			<div class="h-0.5 w-full bg-muted overflow-hidden relative rounded-full" role="progressbar" aria-label="Searching project">
+				<div class="h-full bg-primary animate-pulse w-full"></div>
+			</div>
+		{/if}
+
 		<!-- Status and truncation bar -->
 		<div class="flex items-center justify-between text-xs px-0.5">
 			<div class="flex items-center gap-2">
-				{#if isSearching}
-					<span class="text-muted-foreground animate-pulse">Searching...</span>
-				{:else if !session.query}
-					<span class="text-muted-foreground">Type a query to search</span>
-				{:else if fileResults.length === 0}
-					<span class="text-muted-foreground">No results found</span>
-				{:else}
-					<span class="text-muted-foreground">
-						{totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {fileResults.length} {fileResults.length === 1 ? 'file' : 'files'}
-					</span>
-				{/if}
+				<span class="text-muted-foreground flex items-center gap-1.5" role="status">
+					{#if isSearching}
+						<CircleNotchIcon class="size-3.5 animate-spin text-primary" />
+					{/if}
+					<span>{searchStatus}</span>
+				</span>
 			</div>
 
 			{#if isTruncated}
-				<div class="text-amber-500 font-medium" role="status">
-					Results truncated: capped at {truncationReason === 'files' ? '5,000 files' : '10,000 matches'}
+				<!-- Plain text: the alert banner below is the sole live-region cap announcement -->
+				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
+					<WarningIcon class="size-3.5 text-amber-500 shrink-0" />
+					<span>Results truncated: capped at {truncationCapText(truncationReason)}</span>
 				</div>
 			{/if}
 		</div>
 	</div>
+
+	<!-- Unmissable truncation notice banner when caps are hit -->
+	{#if isTruncated}
+		<div
+			class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-3.5 py-2 text-xs flex items-center justify-between gap-2 shrink-0 font-medium"
+			role="alert"
+			aria-live="assertive"
+		>
+			<div class="flex items-center gap-2">
+				<WarningIcon class="size-4 text-amber-500 shrink-0" />
+				<span>
+					<strong>Results truncated:</strong> capped at {truncationCapText(truncationReason)}. Refine your query to see more specific matches.
+				</span>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Grouped results below using MultiBuffer -->
 	<div class="flex-1 overflow-hidden flex flex-col">
@@ -787,7 +852,12 @@
 
 			{#snippet emptyState()}
 				<div class="flex-1 flex flex-col items-center justify-center p-8 text-muted-foreground text-sm">
-					{#if session.query.trim()}
+					{#if isSearching}
+						<div class="flex flex-col items-center gap-2">
+							<CircleNotchIcon class="size-6 animate-spin text-primary" />
+							<p>Searching project...</p>
+						</div>
+					{:else if session.query.trim()}
 						<p>No results found for &ldquo;{session.query}&rdquo;</p>
 					{:else}
 						<p>Type a query above to search the project.</p>

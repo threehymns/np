@@ -1,12 +1,49 @@
 /**
- * The decisions the project search tab makes about its keyboard, its
- * focus, and what its status line says.
+ * The decisions the project search tab makes about the keyboard, the focus,
+ * the undo, and what its status line says.
  *
  * They live here, next to the component but outside it, so they can be
  * exercised at runtime. The component only renders what these functions
  * decide, so a test that calls them is a test of what the tab does, not of
  * what its source text says.
  */
+
+/** Why the result set was capped, or undefined when it was not capped. */
+export type TruncationReason = 'files' | 'matches' | undefined;
+
+/** The part of a keyboard event the search tab reacts to. */
+export interface SearchKeyEvent {
+	key: string;
+	/** True while an IME composition is active. */
+	isComposing?: boolean;
+}
+
+/**
+ * True when the keystroke should run the search now.
+ *
+ * Enter confirms the candidate an IME is composing, so it must not start a
+ * search on the partial text.
+ */
+export function shouldRunSearchOnKeydown(event: SearchKeyEvent): boolean {
+	return event.key === 'Enter' && !event.isComposing;
+}
+
+/**
+ * True when the query input should take the focus.
+ *
+ * The workspace bumps the focus nonce every time the search tab is opened,
+ * and the project search tab takes the focus whenever it is the active tab.
+ */
+export function shouldFocusSearchInput(options: {
+	/** How many times the search tab has been opened. */
+	focusNonce: number;
+	/** The tab that is active right now. */
+	activeTabId: string;
+	/** The id of the project search tab. */
+	searchTabId: string;
+}): boolean {
+	return options.focusNonce > 0 || options.activeTabId === options.searchTabId;
+}
 
 /**
  * True when the next undo in the search tab should undo the whole
@@ -61,4 +98,40 @@ export function hasDirtyResults(
 		if (doc.isModified && doc.uri !== null) dirty.add(doc.uri);
 	}
 	return uris.some((uri) => dirty.has(uri));
+}
+
+/** The state the search status line reports. */
+export interface SearchStatus {
+	/** True while a search is running. */
+	isSearching: boolean;
+	/** The number of matches found so far. */
+	totalMatches: number;
+	/** The number of files that hold a match. */
+	fileCount: number;
+	/** True when the query is empty. */
+	isQueryEmpty: boolean;
+}
+
+/**
+ * The text of the search status line: what the search is doing, or what it
+ * found.
+ */
+export function searchStatusText(status: SearchStatus): string {
+	if (status.isSearching) {
+		if (status.fileCount === 0) return 'Searching...';
+		return `Searching... ${countText(status.totalMatches, 'match', 'matches')} across ${countText(status.fileCount, 'file', 'files')}`;
+	}
+	if (status.isQueryEmpty) return 'Type a query to search';
+	if (status.fileCount === 0) return 'No results found';
+	return `${countText(status.totalMatches, 'match', 'matches')} across ${countText(status.fileCount, 'file', 'files')}`;
+}
+
+/** The cap the result set hit. */
+export function truncationCapText(reason: TruncationReason): string {
+	return reason === 'files' ? '5,000 files' : '10,000 matches';
+}
+
+/** "1 match" and "2 matches". */
+export function countText(count: number, singular: string, plural: string): string {
+	return `${count} ${count === 1 ? singular : plural}`;
 }
