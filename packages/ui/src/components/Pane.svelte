@@ -192,7 +192,13 @@
 				<Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full min-h-0">
 					{#if pane.activeTabId === tab.id}
 						{#if tab.type === 'search'}
-							<SearchTab />
+							<!--
+								The tab id identifies the tab's own query session. A
+								search tab can sit in a pane that is not the active
+								one, so the workspace's active tab is not necessarily
+								this tab.
+							-->
+							<SearchTab tabId={tab.id} />
 						{:else if tab.pluginId && tabContent}
 							{@const TabComponent = tabContent.component}
 							<TabComponent {...(tabContent.props ?? {})} />
