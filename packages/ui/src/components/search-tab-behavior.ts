@@ -131,6 +131,36 @@ export function truncationCapText(reason: TruncationReason): string {
 	return reason === 'files' ? '5,000 files' : '10,000 matches';
 }
 
+/**
+ * The state the search tab is in when the file snapshot changes.
+ */
+export interface SnapshotRerunState {
+	/** The version of the snapshot the tab last saw. */
+	lastSnapshotVersion: number;
+	/** The version of the snapshot that just arrived. */
+	snapshotVersion: number;
+	/** The pattern the tab would search for. */
+	query: string;
+}
+
+/**
+ * True when a change of the file snapshot should run the search again.
+ *
+ * The results describe the files as they were when the search ran, so a
+ * snapshot that moved on leaves them describing content the project no
+ * longer has: a file edited in a terminal, a branch checked out. A snapshot
+ * that did not move changes nothing about the results, and a search without
+ * a pattern has nothing to re-run.
+ *
+ * The re-run itself uses the session's query and the options that go with
+ * it, so the tab never searches for a pattern of its own.
+ */
+export function shouldRerunSearchOnSnapshotChange(state: SnapshotRerunState): boolean {
+	if (state.snapshotVersion === state.lastSnapshotVersion) return false;
+	if (state.query.trim().length === 0) return false;
+	return true;
+}
+
 /** "1 match" and "2 matches". */
 export function countText(count: number, singular: string, plural: string): string {
 	return `${count} ${count === 1 ? singular : plural}`;

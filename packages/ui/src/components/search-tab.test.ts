@@ -10,6 +10,10 @@ import {
 } from "./search-tab-behavior";
 
 const SEARCH_TAB_SRC = fs.readFileSync(path.join(__dirname, "SearchTab.svelte"), "utf-8");
+const SEARCH_TAB_RUNNER_SRC = fs.readFileSync(
+	path.join(__dirname, "search-tab-runner.svelte.ts"),
+	"utf-8"
+);
 const PANE_SRC = fs.readFileSync(path.join(__dirname, "Pane.svelte"), "utf-8");
 const MAIN_LAYOUT_SRC = fs.readFileSync(path.join(__dirname, "MainLayout.svelte"), "utf-8");
 
@@ -27,7 +31,7 @@ describe("Search tab UI contract and template audit (Issue #334)", () => {
 		expect(SEARCH_TAB_SRC).toContain("Results truncated: capped at");
 		// The cap numbers live in the behaviour module, so the component
 		// renders what that module decides.
-		expect(SEARCH_TAB_SRC).toContain("truncationCapText(truncationReason)");
+		expect(SEARCH_TAB_SRC).toContain("truncationCapText(runner.truncationReason)");
 		expect(truncationCapText("files")).toBe("5,000 files");
 		expect(truncationCapText("matches")).toBe("10,000 matches");
 	});
@@ -161,7 +165,8 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		// A replace edits the file in memory, so the re-run after it has to
 		// read the Document. Reading the disk would show the replaced text
 		// as if the replace had not happened.
-		expect(SEARCH_TAB_SRC).toContain("liveContent");
+		expect(SEARCH_TAB_SRC).toContain("getLiveContent");
+		expect(SEARCH_TAB_RUNNER_SRC).toContain("liveContent");
 	});
 
 	it("keeps the replace-all operation as one undo step in the search tab", () => {
@@ -275,7 +280,7 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		expect(SEARCH_TAB_SRC).toContain('aria-live="assertive"');
 		expect(SEARCH_TAB_SRC).toContain("WarningIcon");
 		expect(SEARCH_TAB_SRC).toContain("<strong>Results truncated:</strong> capped at");
-		expect(SEARCH_TAB_SRC).toContain("truncationCapText(truncationReason)");
+		expect(SEARCH_TAB_SRC).toContain("truncationCapText(runner.truncationReason)");
 		expect(SEARCH_TAB_SRC).toContain("Refine your query");
 		expect(truncationCapText("files")).toBe("5,000 files");
 		expect(truncationCapText("matches")).toBe("10,000 matches");
@@ -298,5 +303,32 @@ describe("Project search 6: keybinding, streaming, counts, and truncation polish
 		const allFindInFiles = Object.entries(globalBindings).filter(([_, cmd]) => cmd === "edit.findInFiles");
 		expect(allFindInFiles.length).toBe(1);
 		expect(allFindInFiles[0][0]).toBe("cmd+shift+f");
+	});
+});
+
+describe("Project search 7: re-run the query when the file snapshot changes (Issue #355)", () => {
+	it("follows the worktree snapshot and renders what the runner holds", () => {
+		// The tab subscribes to the worktree's snapshot, so a snapshot that
+		// moved on runs the query again.
+		expect(SEARCH_TAB_SRC).toContain("new SearchTabRunner");
+		// The attach is untracked: the subscribe reads the snapshot's
+		// version, and a tracked attach would make this effect re-run on
+		// every snapshot change, disposing the runner that schedules the
+		// re-run.
+		expect(SEARCH_TAB_SRC).toContain("untrack(() => runner.attachToWorktree(worktree));");
+		expect(SEARCH_TAB_SRC).toContain("runner.results");
+		expect(SEARCH_TAB_SRC).toContain("runner.isSearching");
+		expect(SEARCH_TAB_SRC).toContain("runner.isTruncated");
+	});
+
+	it("re-runs the session's query, not a pattern of the component's own", () => {
+		expect(SEARCH_TAB_SRC).toContain("getSession: () => session");
+		expect(SEARCH_TAB_SRC).not.toContain("queryText");
+	});
+
+	it("registers the excerpt views with the runner so a re-run rebuilds them", () => {
+		expect(SEARCH_TAB_SRC).toContain("runner.registerExcerptView");
+		expect(SEARCH_TAB_SRC).toContain("runner.unregisterExcerptView");
+		expect(SEARCH_TAB_SRC).toContain("runner.excerptViews");
 	});
 });

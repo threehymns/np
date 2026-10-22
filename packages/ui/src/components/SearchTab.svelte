@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { useAppState } from '@np/core/state.svelte';
+import { untrack } from 'svelte';
 	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
 	import { SEARCH_TAB_ID } from '@np/core';
 	import {
@@ -14,7 +15,7 @@
 	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
 	import Icon from './Icon.svelte';
 	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon, CircleNotchIcon, WarningIcon } from 'phosphor-svelte';
-	import { SvelteSet, SvelteMap } from 'svelte/reactivity';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { EditorView, keymap, lineNumbers, Decoration, type DecorationSet } from '@codemirror/view';
 	import { EditorState, StateField, RangeSetBuilder } from '@codemirror/state';
 	import { history, historyKeymap, undoDepth } from '@codemirror/commands';
@@ -26,6 +27,7 @@
 		shouldRunSearchOnKeydown,
 		truncationCapText
 	} from './search-tab-behavior';
+	import { SearchTabRunner, type SearchExcerptView } from './search-tab-runner.svelte';
 
 	interface Props {
 		tabId?: string;
@@ -39,7 +41,19 @@
 
 	let inputRef = $state<HTMLInputElement | null>(null);
 	let replaceText = $state('');
-	let fileResults = $state<FileSearchResult[]>([]);
+	let isReplacing = $state(false);
+	let searchTimeout: any = null;
+	const collapsedPaths = new SvelteSet<string>();
+
+	/** How many replace-all operations the tab keeps for undo. */
+	const MAX_UNDO_OPERATIONS = 10;
+
+	interface ExcerptViewEntry extends SearchExcerptView {
+		view: EditorView;
+		/** URI of the document the excerpt mirrors. */
+		uri: string;
+		getMap: () => FileExcerptMap;
+	}
 
 	// The tab marks unsaved work the results carry. The files' origins live
 	// on the session, where the tab strip reads them, and both markers read
@@ -50,26 +64,40 @@
 			isModified: d.isModified
 		}))
 	);
-	let isSearching = $state(false);
-	let isReplacing = $state(false);
-	let isTruncated = $state(false);
-	let truncationReason = $state<'files' | 'matches' | undefined>(undefined);
-	let searchTimeout: any = null;
-	let currentAbortController: AbortController | null = null;
-	const collapsedPaths = new SvelteSet<string>();
 
-	/** How many replace-all operations the tab keeps for undo. */
-	const MAX_UNDO_OPERATIONS = 10;
+	// The tab renders what the runner holds. The runner owns the search: it
+	// runs it with the session's query, replaces the results, and re-runs
+	// the query when the file snapshot moves on.
+	const runner = new SearchTabRunner<ExcerptViewEntry>({
+		getBackend: () => appState.workspace.project.searchBackend,
+		getSession: () => session,
+		// A file changed in the results is unsaved: its text lives in a
+		// Document, so the search reads that instead of the disk. A
+		// replace-all re-runs the search, and the counts it shows have to
+		// describe the text the user is looking at.
+		getLiveContent: (origin) => {
+			const uri = toURI(origin);
+			return appState.workspace.documents.find((d) => d.origin && toURI(d.origin) === uri)
+				?.content;
+		}
+	});
 
-	interface ExcerptViewEntry {
-		view: EditorView;
-		/** URI of the document the excerpt mirrors. */
-		uri: string;
-		getMap: () => FileExcerptMap;
-		/** Rebuild the view from the document's current content. */
-		rebuild: () => void;
-	}
-	const activeExcerptViews = new SvelteMap<string, ExcerptViewEntry>();
+	// The search reads the files the worktree's snapshot holds, so the tab
+	// follows that snapshot: a snapshot that moved on means the files the
+	// results describe are no longer the files the project has.
+	//
+	// The attach is untracked on purpose. Worktree.subscribe calls its
+	// listener straight away, and the listener reads the snapshot's
+	// version, so a tracked call would make this effect re-run on every
+	// snapshot change. The cleanup would then dispose the runner, which
+	// cancels the re-run that was just scheduled and aborts the search in
+	// flight. Only the worktree itself is tracked here, so the effect
+	// re-runs when the project changes, not when its files change.
+	$effect(() => {
+		const worktree = appState.workspace.project.worktree;
+		untrack(() => runner.attachToWorktree(worktree));
+		return () => runner.dispose();
+	});
 
 	// An excerpt mirrors a live document. When that document changes outside
 	// its excerpt view, for example an edit in the main editor, the map's
@@ -79,7 +107,7 @@
 	// happens, so the map always describes the content it edits.
 	$effect(() => {
 		const documents = appState.workspace.documents;
-		for (const entry of activeExcerptViews.values()) {
+		for (const entry of runner.excerptViews.values()) {
 			const doc = documents.find((d) => d.origin && toURI(d.origin) === entry.uri);
 			if (!doc) continue;
 			const content = doc.content;
@@ -88,28 +116,26 @@
 		}
 	});
 
-	// The tab strip reads the files the results show from the session, so
-	// it can mark the tab without reaching into this component.
-	$effect(() => {
-		session.resultUris = fileResults.map((r) => toURI(r.origin));
-	});
-
-	let totalMatches = $derived(fileResults.reduce((sum, r) => sum + r.matches.length, 0));
+	let totalMatches = $derived(runner.results.reduce((sum, r) => sum + r.matches.length, 0));
 	let searchStatus = $derived(
 		searchStatusText({
-			isSearching,
+			isSearching: runner.isSearching,
 			totalMatches,
-			fileCount: fileResults.length,
+			fileCount: runner.results.length,
 			isQueryEmpty: !session.query
 		})
 	);
 
 	let sections = $derived<MultibufferSection[]>(
-		fileResults.map((r) => ({
+		runner.results.map((r) => ({
 			filepath: r.filepath,
 			key: r.filepath
 		}))
 	);
+
+	$effect(() => {
+		session.resultUris = runner.results.map((r) => toURI(r.origin));
+	});
 
 	$effect(() => {
 		const focusNonce = appState.workspace.searchTabFocusNonce;
@@ -137,23 +163,23 @@
 			clearTimeout(searchTimeout);
 		}
 		searchTimeout = setTimeout(() => {
-			runSearch();
+			void runner.run();
 		}, 150);
 	}
 
 	function toggleCaseSensitive() {
 		session.toggleCaseSensitive();
-		runSearch();
+		void runner.run();
 	}
 
 	function toggleWholeWord() {
 		session.toggleWholeWord();
-		runSearch();
+		void runner.run();
 	}
 
 	function toggleRegex() {
 		session.toggleRegex();
-		runSearch();
+		void runner.run();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -164,78 +190,7 @@
 			clearTimeout(searchTimeout);
 			searchTimeout = null;
 		}
-		runSearch();
-	}
-
-	async function runSearch() {
-		if (currentAbortController) {
-			currentAbortController.abort();
-			currentAbortController = null;
-		}
-
-		if (session.regexError) {
-			fileResults = [];
-			isSearching = false;
-			isTruncated = false;
-			truncationReason = undefined;
-			return;
-		}
-
-		const query = session.toQuery();
-		if (!query.pattern) {
-			fileResults = [];
-			isSearching = false;
-			isTruncated = false;
-			truncationReason = undefined;
-			return;
-		}
-
-		currentAbortController = new AbortController();
-		const signal = currentAbortController.signal;
-
-		fileResults = [];
-		isSearching = true;
-		isTruncated = false;
-		truncationReason = undefined;
-
-		try {
-			const backend = appState.workspace.project.searchBackend;
-			const stream = backend.search(query, {
-				signal,
-				// A file changed in the results is unsaved: its text lives in
-				// a Document, so the search reads that instead of the disk.
-				// The re-run after a replace has to describe the text the
-				// user is looking at.
-				liveContent: (origin) => {
-					const uri = toURI(origin);
-					return appState.workspace.documents.find(
-						(d) => d.origin && toURI(d.origin) === uri
-					)?.content;
-				}
-			});
-
-			for await (const result of stream) {
-				if (signal.aborted) break;
-				fileResults = [...fileResults, result];
-				if (stream.progress.truncated) {
-					isTruncated = true;
-					truncationReason = stream.progress.truncationReason;
-				}
-			}
-
-			if (!signal.aborted) {
-				isTruncated = stream.progress.truncated;
-				truncationReason = stream.progress.truncationReason;
-			}
-		} catch (e) {
-			if (!signal.aborted) {
-				console.error('[SearchTab] Search failed:', e);
-			}
-		} finally {
-			if (currentAbortController?.signal === signal) {
-				isSearching = false;
-			}
-		}
+		void runner.run();
 	}
 
 	async function openFile(result?: FileSearchResult) {
@@ -291,7 +246,7 @@
 	}
 
 	async function replaceAll() {
-		if (fileResults.length === 0 || !session.query || isReplacing) return;
+		if (runner.results.length === 0 || !session.query || isReplacing) return;
 		isReplacing = true;
 
 		try {
@@ -300,7 +255,7 @@
 			// Dirty files accept replace edits without warnings.
 			const result = await applyReplaceAll({
 				workspace: appState.workspace,
-				fileResults,
+				fileResults: runner.results,
 				replacement: replaceText
 			});
 			if (result.undo.changes.length > 0) {
@@ -320,7 +275,7 @@
 			// computed against the post-replacement content. Reusing the old match
 			// offsets would misalign excerpts whenever the replacement length
 			// differs from the match length.
-			await runSearch();
+			await runner.run();
 			isReplacing = false;
 		}
 	}
@@ -512,7 +467,7 @@
 								if (!entry) return false;
 								void undoReplaceAll(entry.undo, appState.workspace)
 									.catch((e) => console.error('[SearchTab] Undo replace all failed:', e))
-									.then(() => runSearch());
+									.then(() => runner.run());
 								return true;
 							}
 						},
@@ -580,7 +535,7 @@
 				parent: node
 			});
 
-			activeExcerptViews.set(fileResult.filepath, {
+			runner.registerExcerptView(fileResult.filepath, {
 				view,
 				uri,
 				getMap: () => excerptMap,
@@ -609,7 +564,7 @@
 			},
 			destroy() {
 				disposed = true;
-				activeExcerptViews.delete(fileResult.filepath);
+				runner.unregisterExcerptView(fileResult.filepath);
 				view?.destroy();
 				view = undefined;
 			}
@@ -711,7 +666,7 @@
 			<button
 				type="button"
 				onclick={replaceAll}
-				disabled={fileResults.length === 0 || !session.query || isReplacing}
+				disabled={runner.results.length === 0 || !session.query || isReplacing}
 				class="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
 				aria-label="Replace all"
 			>
@@ -719,7 +674,7 @@
 			</button>
 		</div>
 
-		{#if isSearching}
+		{#if runner.isSearching}
 			<div class="h-0.5 w-full bg-muted overflow-hidden relative rounded-full" role="progressbar" aria-label="Searching project">
 				<div class="h-full bg-primary animate-pulse w-full"></div>
 			</div>
@@ -728,26 +683,28 @@
 		<!-- Status and truncation bar -->
 		<div class="flex items-center justify-between text-xs px-0.5">
 			<div class="flex items-center gap-2">
-				<span class="text-muted-foreground flex items-center gap-1.5" role="status">
-					{#if isSearching}
+				{#if runner.isSearching}
+					<span class="text-muted-foreground flex items-center gap-1.5" role="status">
 						<CircleNotchIcon class="size-3.5 animate-spin text-primary" />
-					{/if}
-					<span>{searchStatus}</span>
-				</span>
+						<span>{searchStatus}</span>
+					</span>
+				{:else}
+					<span class="text-muted-foreground">{searchStatus}</span>
+				{/if}
 			</div>
 
-			{#if isTruncated}
+			{#if runner.isTruncated}
 				<!-- Plain text: the alert banner below is the sole live-region cap announcement -->
 				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
 					<WarningIcon class="size-3.5 text-amber-500 shrink-0" />
-					<span>Results truncated: capped at {truncationCapText(truncationReason)}</span>
+					<span>Results truncated: capped at {truncationCapText(runner.truncationReason)}</span>
 				</div>
 			{/if}
 		</div>
 	</div>
 
 	<!-- Unmissable truncation notice banner when caps are hit -->
-	{#if isTruncated}
+	{#if runner.isTruncated}
 		<div
 			class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-3.5 py-2 text-xs flex items-center justify-between gap-2 shrink-0 font-medium"
 			role="alert"
@@ -756,7 +713,7 @@
 			<div class="flex items-center gap-2">
 				<WarningIcon class="size-4 text-amber-500 shrink-0" />
 				<span>
-					<strong>Results truncated:</strong> capped at {truncationCapText(truncationReason)}. Refine your query to see more specific matches.
+					<strong>Results truncated:</strong> capped at {truncationCapText(runner.truncationReason)}. Refine your query to see more specific matches.
 				</span>
 			</div>
 		</div>
@@ -770,7 +727,7 @@
 			idPrefix="search-"
 		>
 			{#snippet header(filepath: string)}
-				{@const fileResult = fileResults.find((r) => r.filepath === filepath)}
+				{@const fileResult = runner.results.find((r) => r.filepath === filepath)}
 				<div
 					class="flex items-center gap-2 py-1 px-2 hover:bg-muted/30 rounded cursor-pointer select-none"
 					onclick={() => toggleCollapse(filepath)}
@@ -828,7 +785,7 @@
 			{/snippet}
 
 			{#snippet content(filepath: string)}
-				{@const fileResult = fileResults.find((r) => r.filepath === filepath)}
+				{@const fileResult = runner.results.find((r) => r.filepath === filepath)}
 				{#if fileResult}
 					<!-- Editable excerpt multibuffer for this file -->
 					<div class="search-excerpt-editor flex flex-col py-1 border-t border-border/20">
@@ -852,7 +809,7 @@
 
 			{#snippet emptyState()}
 				<div class="flex-1 flex flex-col items-center justify-center p-8 text-muted-foreground text-sm">
-					{#if isSearching}
+					{#if runner.isSearching}
 						<div class="flex flex-col items-center gap-2">
 							<CircleNotchIcon class="size-6 animate-spin text-primary" />
 							<p>Searching project...</p>
