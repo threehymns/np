@@ -263,12 +263,17 @@ describe("Server diagnostics on screen (#266)", () => {
 				language: { name: "TypeScript" },
 			},
 		});
+		// The method, not the bare name: the client's own initialize request
+		// names the publish capability it declares, so a loose match would
+		// find the handshake rather than the publish.
 		await waitFor(
 			() =>
 				host
 					.getService<{ read(): Array<{ message: string }> }>("lsp:log-store")
 					?.read()
-					.some((entry) => entry.message.includes("publishDiagnostics")) ?? false,
+					.some((entry) =>
+						entry.message.includes('"method":"textDocument/publishDiagnostics"'),
+					) ?? false,
 			{ label: "the server to publish diagnostics" },
 		);
 

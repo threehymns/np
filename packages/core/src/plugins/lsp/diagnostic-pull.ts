@@ -71,6 +71,16 @@ export interface DiagnosticPullDependencies {
 	readonly request: DiagnosticPullRequest;
 	readonly store: LspDiagnosticsStore;
 	/**
+	 * The document version last synced to that server, or undefined when the
+	 * document has not been synced to it.
+	 *
+	 * Read when the pull is issued rather than when it is armed, because that
+	 * is the text the server computes its answer against, and the store needs
+	 * the revision to tell a pull that is still fresh from one that was already
+	 * in flight when the text changed.
+	 */
+	readonly versionFor?: (server: string, uri: string) => number | undefined;
+	/**
 	 * Called once when a pull ends in failure, so the reason reaches the Logs
 	 * tab. A failed pull leaves the pushed findings alone, which from the
 	 * outside is indistinguishable from a pull that worked.
@@ -171,6 +181,10 @@ export class DiagnosticPullCoordinator {
 		const self = this;
 		return Effect.gen(function* () {
 			const previousResultId = self.resultIds.get(server)?.get(uri);
+			// The version the server is about to compute against, read before the
+			// request goes out: it is the last version synced to that server, and
+			// the store files the answer against it.
+			const version = self.deps.versionFor?.(server, uri);
 			const rawResult = yield* self.deps.request(server, uri, previousResultId);
 			const report = parsePullDiagnosticReport(server, uri, rawResult);
 			if (!report) {
@@ -190,7 +204,8 @@ export class DiagnosticPullCoordinator {
 			self.deps.store.pull({
 				uri: report.uri,
 				server: report.server,
-				diagnostics: report.diagnostics
+				diagnostics: report.diagnostics,
+				version
 			});
 		});
 	}

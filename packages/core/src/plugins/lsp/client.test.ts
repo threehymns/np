@@ -252,6 +252,17 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		expect(diagnostic.relatedDocumentSupport).toBe(false);
 	});
 
+	it('declares that it reads the version a publish carries', async () => {
+		// The client reads the version a publish carries and orders the answers
+		// for one path by it (ADR 0029), so it says so: a server is entitled
+		// to leave the version out for a client that has not declared it reads
+		// one.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const publishDiagnostics = (capabilities.textDocument as Record<string, unknown>)
+			.publishDiagnostics as Record<string, unknown>;
+		expect(publishDiagnostics.versionSupport).toBe(true);
+	});
+
 	it('sends client-capability names, never the server ones they replaced', async () => {
 		// The defect these cover was invisible from inside the client and fatal to
 		// it: `textDocumentSync` and `completionProvider` are ServerCapabilities,
