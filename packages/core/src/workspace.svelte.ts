@@ -44,6 +44,18 @@ export class Workspace {
 	layout = $state<LayoutNode>(new Pane());
 	activePaneId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
+	/**
+	 * Closed tabs awaiting reopen, most recent last, paired with the pane
+	 * that held them so `reopenClosedTab` puts a tab back where it was.
+	 * Session-scoped: the top of the stack answers the reopen command, and
+	 * a restart forgets the history.
+	 */
+	closedTabs = $state<{ tab: WorkspaceTab; paneId: string }[]>([]);
+	/**
+	 * Upper bound on the closed-tab history; an unbounded stack of closed
+	 * tabs would keep their tab records alive for the whole session.
+	 */
+	private static readonly MAX_CLOSED_TABS = 100;
 	project: Project;
 	// NOTE (#254): recent-folders history reads window-scoped but is
 	// per-folder-ambiguous; correct with one Project, revisitable when a
@@ -1118,6 +1130,14 @@ private searchSessions = new Map<string, SearchTabSession>();
 		const tab = targetPane.tabs[tabIndex];
 		const docId = tab.docId ?? tab.id;
 
+		// Feed the reopen history before the tab leaves, remembering the
+		// pane that held it. Bounded so a long session of closes cannot grow
+		// the stack without limit.
+		this.closedTabs.push({ tab, paneId: targetPane.id });
+		if (this.closedTabs.length > Workspace.MAX_CLOSED_TABS) {
+			this.closedTabs.splice(0, this.closedTabs.length - Workspace.MAX_CLOSED_TABS);
+		}
+
 		targetPane.tabs.splice(tabIndex, 1);
 
 		const totalDocTabs = this.countTabsForDocument(docId);
@@ -1152,6 +1172,137 @@ private searchSessions = new Map<string, SearchTabSession>();
 		}
 
 		this.debouncedSaveOpenFiles();
+	}
+
+	/**
+	 * The tabs of one pane, in tab-strip order. Defaults to the active
+	 * pane, so the pane-scoped tab commands need no caller-side pane
+	 * resolution. The returned array is a copy: closing mutates the pane.
+	 */
+	getPaneTabs(paneId?: string): WorkspaceTab[] {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		return pane ? [...pane.tabs] : [];
+	}
+
+	/**
+	 * True when closing a tab loses nothing: the Document behind it is not
+	 * modified, and a search tab holds no unsaved work while none of the
+	 * files its results show is modified.
+	 */
+	isTabClean(tab: WorkspaceTab): boolean {
+		if (tab.type === 'search') {
+			const session = tab.searchSession;
+			if (!session) return true;
+			const dirtyUris = new Set(
+				this.documents
+					.filter((d) => d.isModified)
+					.map((d) => (d.origin ? toURI(d.origin) : null))
+					.filter((uri): uri is string => !!uri)
+			);
+			return !session.resultUris.some((uri) => dirtyUris.has(uri));
+		}
+		const docId = tab.docId ?? tab.id;
+		const doc = this.documents.find((d) => d.id === docId);
+		return !doc?.isModified;
+	}
+
+	/**
+	 * Close every tab of a pane (default: the active pane). Each tab goes
+	 * through the normal ask/close path, so a dirty Document that is the last
+	 * tab referencing its session still asks before discarding.
+	 */
+	async closeAllTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		for (const tab of [...pane.tabs]) {
+			await this.closeTab(tab.id, pane.id);
+		}
+	}
+
+	/**
+	 * Close every tab of a pane except the active one (default: the active
+	 * pane). The active tab is the one the caller keeps, so it survives even
+	 * while dirty.
+	 */
+	async closeOtherTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		for (const tab of [...pane.tabs]) {
+			if (tab.id === pane.activeTabId) continue;
+			await this.closeTab(tab.id, pane.id);
+		}
+	}
+
+	/**
+	 * Close the clean tabs of a pane (default: the active pane) and keep the
+	 * dirty ones: closing is never a reason to lose unsaved work.
+	 */
+	async closeCleanTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		for (const tab of [...pane.tabs]) {
+			if (!this.isTabClean(tab)) continue;
+			await this.closeTab(tab.id, pane.id);
+		}
+	}
+
+	/**
+	 * Close the tabs that host a multi-file surface — search results, diffs,
+	 * and the LSP log view — in a pane (default: the active pane).
+	 */
+	async closeMultibufferTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		for (const tab of [...pane.tabs]) {
+			if (tab.type !== 'diff' && tab.type !== 'search') continue;
+			await this.closeTab(tab.id, pane.id);
+		}
+	}
+
+	/**
+	 * Close the tabs to the left of the pane's active tab (default: the
+	 * active pane). Left means the earlier half of the tab strip, right the
+	 * later half.
+	 */
+	async closeTabsToLeft(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		const tabs = [...pane.tabs];
+		const activeIndex = tabs.findIndex((t) => t.id === pane.activeTabId);
+		if (activeIndex === -1) return;
+		for (let i = 0; activeIndex > i; i++) {
+			await this.closeTab(tabs[i].id, pane.id);
+		}
+	}
+
+	/**
+	 * Close the tabs to the right of the pane's active tab (default: the
+	 * active pane).
+	 */
+	async closeTabsToRight(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		if (!pane) return;
+		const tabs = [...pane.tabs];
+		const activeIndex = tabs.findIndex((t) => t.id === pane.activeTabId);
+		if (activeIndex === -1) return;
+		for (let i = tabs.length - 1; activeIndex < i; i--) {
+			await this.closeTab(tabs[i].id, pane.id);
+		}
+	}
+
+	/**
+	 * Reopen the most recently closed tab, returning it to the pane that
+	 * held it. No-op when there is nothing left to reopen.
+	 */
+	reopenClosedTab(): boolean {
+		const entry = this.closedTabs.pop();
+		if (!entry) return false;
+		const pane = this.findPane(entry.paneId) ?? this.activePane;
+		if (!pane) return false;
+		pane.tabs.push(entry.tab);
+		pane.activeTabId = entry.tab.id;
+		this.debouncedSaveOpenFiles();
+		return true;
 	}
 
 	/**

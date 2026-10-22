@@ -439,6 +439,13 @@ export class AppState {
 		}
 		return closed;
 	}
+	closeAllTabs(paneId?: string) { this.workspace.closeAllTabs(paneId); }
+	async closeOtherTabs(paneId?: string): Promise<void> { return await this.workspace.closeOtherTabs(paneId); }
+	async closeCleanTabs(paneId?: string): Promise<void> { return await this.workspace.closeCleanTabs(paneId); }
+	async closeMultibufferTabs(paneId?: string): Promise<void> { return await this.workspace.closeMultibufferTabs(paneId); }
+	async closeTabsToLeft(paneId?: string): Promise<void> { return await this.workspace.closeTabsToLeft(paneId); }
+	async closeTabsToRight(paneId?: string): Promise<void> { return await this.workspace.closeTabsToRight(paneId); }
+	reopenClosedTab(): boolean { return this.workspace.reopenClosedTab(); }
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
 	dispose(): void { this.workspace.dispose(); }
 }
