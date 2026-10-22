@@ -531,6 +531,25 @@ describe("Query options: regex, case-sensitivity, whole-word, and globs (Issue #
 		expect(results[0].matches[0].line).toBe(2);
 	});
 
+	it("regex lookarounds against newlines are not skipped by the prefilter", async () => {
+		const storage = createMockStorage({
+			"/test-project/src/look.ts": "foo\n"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// (?!\n) fails the whole-file test ("foo" is followed by "\n" in the
+		// raw content) but matches the split "foo" line. The prefilter must
+		// not skip the file.
+		const results = await engine.search({ pattern: "foo(?!\\n)", isRegex: true }).all();
+		expect(results.length).toBe(1);
+		expect(results[0].filepath).toBe("src/look.ts");
+		expect(results[0].matches.length).toBe(1);
+		expect(results[0].matches[0].lineText).toBe("foo");
+	});
+
 	it("invalid regex does not crash engine and yields 0 results", async () => {
 		const storage = createMockStorage({
 			"/test-project/src/index.ts": "const foo = 'bar';"

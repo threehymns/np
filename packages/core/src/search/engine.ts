@@ -319,6 +319,11 @@ export class TypeScriptSearchEngine implements SearchBackend {
 		const contextLines = options?.contextLines ?? 1;
 
 		let searchRegex: RegExp | null = null;
+		// The whole-file prefilter below is only safe for literal patterns.
+		// Regex boundary semantics (e.g. (?!\n)) can differ between the raw
+		// file content and the split lines, so a regex that matches per-line
+		// may fail the whole-file test and wrongly skip the file.
+		const isRegexQuery = Boolean(query?.isRegex ?? false);
 		if (pattern) {
 			try {
 				searchRegex = buildSearchRegex(query);
@@ -408,9 +413,13 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					}
 
 					// Cheap check: does file contain pattern?
-					searchRegex.lastIndex = 0;
-					if (!searchRegex.test(content)) {
-						continue;
+					// Skipped for regex queries (see above): the whole-file
+					// test can reject files the per-line loop would match.
+					if (!isRegexQuery) {
+						searchRegex.lastIndex = 0;
+						if (!searchRegex.test(content)) {
+							continue;
+						}
 					}
 
 					// Phase 2: Full match only on files with hits
