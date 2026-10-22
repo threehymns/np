@@ -10,6 +10,10 @@ import {
 } from "./search-tab-behavior";
 
 const SEARCH_TAB_SRC = fs.readFileSync(path.join(__dirname, "SearchTab.svelte"), "utf-8");
+const SEARCH_TAB_RUNNER_SRC = fs.readFileSync(
+	path.join(__dirname, "search-tab-runner.svelte.ts"),
+	"utf-8"
+);
 const PANE_SRC = fs.readFileSync(path.join(__dirname, "Pane.svelte"), "utf-8");
 const MAIN_LAYOUT_SRC = fs.readFileSync(path.join(__dirname, "MainLayout.svelte"), "utf-8");
 
@@ -161,7 +165,8 @@ describe("Editable multibuffer and replace-all contract audit (Issue #336)", () 
 		// A replace edits the file in memory, so the re-run after it has to
 		// read the Document. Reading the disk would show the replaced text
 		// as if the replace had not happened.
-		expect(SEARCH_TAB_SRC).toContain("liveContent");
+		expect(SEARCH_TAB_SRC).toContain("getLiveContent");
+		expect(SEARCH_TAB_RUNNER_SRC).toContain("liveContent");
 	});
 
 	it("keeps the replace-all operation as one undo step in the search tab", () => {
