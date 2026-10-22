@@ -1,10 +1,13 @@
 <script lang="ts">
 	import {
 		LSP_DIAGNOSTICS_STORE_SERVICE_KEY,
+		SETTINGS_READER_SERVICE_KEY,
+		readDiagnosticDisplaySettings,
 		type DiagnosticSeverity,
 		type DiagnosticsSeverityFilter,
 		type DiagnosticsSort,
-		type LspDiagnosticsStore
+		type LspDiagnosticsStore,
+		type SettingsReader
 	} from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
 	import { onMount } from 'svelte';
@@ -32,19 +35,28 @@
 
 	const appState = useAppState();
 	const store = appState.plugins.getService<LspDiagnosticsStore>(LSP_DIAGNOSTICS_STORE_SERVICE_KEY);
+	const settingsReader = appState.plugins.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY);
 	// The session belongs to the tab, not to this view: switching away and back
 	// has to find the filter the reader chose.
 	const session = $derived(appState.workspace.getDiagnosticsSession(tabId));
 
 	// The store is not reactive, and neither is a server's report arriving: the
 	// revision counter is what turns the store's notification into state the
-	// list below can be derived from.
+	// list below can be derived from. Setting changes also bump the revision so
+	// a change in the shared severity ceiling refreshes the display immediately.
 	let revision = $state(0);
-	onMount(() =>
-		store?.subscribe(() => {
+	onMount(() => {
+		const unsubStore = store?.subscribe(() => {
 			revision++;
-		})
-	);
+		});
+		const unsubSettings = settingsReader?.subscribe?.(() => {
+			revision++;
+		});
+		return () => {
+			unsubStore?.();
+			unsubSettings?.();
+		};
+	});
 
 	// The text of the files the workspace has open. The tab shows the text the
 	// editor has — the unsaved edits in it — and a file the workspace has no
@@ -58,13 +70,21 @@
 		return texts;
 	});
 
+	const displaySettings = $derived.by(() => {
+		revision;
+		return readDiagnosticDisplaySettings(
+			settingsReader ? (namespace, key) => settingsReader.read(namespace, key) : undefined
+		);
+	});
+
 	const view = $derived.by(() => {
 		revision;
 		return diagnosticsView(store, {
 			filter: session.filter,
 			sort: session.sort,
 			readText: (path) => openTexts.get(path),
-			rootPath: appState.workspace.project.rootOrigin?.path ?? null
+			rootPath: appState.workspace.project.rootOrigin?.path ?? null,
+			maxSeverity: displaySettings.maxSeverity
 		});
 	});
 

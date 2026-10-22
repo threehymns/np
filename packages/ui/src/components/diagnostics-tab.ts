@@ -1,9 +1,14 @@
 import {
+	DEFAULT_DIAGNOSTIC_DISPLAY_SETTINGS,
 	fromFileUri,
+	readDiagnosticDisplaySettings,
+	visibleDiagnostics,
 	type DiagnosticSeverity,
 	type DiagnosticsSeverityFilter,
 	type DiagnosticsSort,
-	type LspDiagnostic
+	type LspDiagnostic,
+	type LspDiagnosticSeverity,
+	type SettingsRead
 } from '@np/core';
 
 /**
@@ -107,6 +112,13 @@ export interface DiagnosticsViewOptions {
 	readonly readText?: DiagnosticsTextReader;
 	/** The project root, so a path can be shown relative to it. */
 	readonly rootPath?: string | null;
+	/**
+	 * The severity ceiling: only diagnostics at least as severe are shown.
+	 * Defaults to the documented default (`hint`, showing everything).
+	 */
+	readonly maxSeverity?: LspDiagnosticSeverity;
+	/** Optional settings read function to resolve the ceiling from. */
+	readonly readSettings?: SettingsRead;
 }
 
 /**
@@ -139,9 +151,16 @@ export function diagnosticsView(
 	store: DiagnosticsStoreReader | undefined,
 	options: DiagnosticsViewOptions
 ): DiagnosticsView {
+	const maxSeverity =
+		options.maxSeverity ??
+		(options.readSettings ? readDiagnosticDisplaySettings(options.readSettings).maxSeverity : undefined) ??
+		DEFAULT_DIAGNOSTIC_DISPLAY_SETTINGS.maxSeverity;
+
 	const entries: DiagnosticsViewEntry[] = [];
 	for (const uri of store?.uris() ?? []) {
-		for (const diagnostic of store?.read(uri) ?? []) {
+		const raw = store?.read(uri) ?? [];
+		const visible = visibleDiagnostics(raw, maxSeverity);
+		for (const diagnostic of visible) {
 			if (options.filter !== 'all' && diagnostic.severity !== options.filter) continue;
 			entries.push(toEntry(uri, diagnostic, options.readText));
 		}

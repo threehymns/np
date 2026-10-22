@@ -5,7 +5,8 @@ import {
 	lspRegistration,
 	LSP_DIAGNOSTICS_STORE_SERVICE_KEY,
 	type LspDiagnostic,
-	type LspDiagnosticsStore
+	type LspDiagnosticsStore,
+	type SettingsReader
 } from '@np/core';
 import { diagnosticsView, type DiagnosticsView } from './diagnostics-tab';
 
@@ -172,5 +173,48 @@ describe('the diagnostics tab over the merged store', () => {
 		const fromReader = diagnosticsView(reader, { filter: 'all', sort: 'severity' });
 
 		expect(messages(fromReader)).toEqual(["Type 'x' is missing.", 'Unused variable.']);
+	});
+
+	it('narrows the diagnostics by the severity ceiling before the per-tab filter', async () => {
+		const store = await seededStore();
+
+		const ceilingWarning = diagnosticsView(store, {
+			filter: 'all',
+			sort: 'severity',
+			readText,
+			maxSeverity: 'warning'
+		});
+
+		expect(messages(ceilingWarning)).toEqual([
+			"Type 'x' is missing.",
+			'Unused variable.'
+		]);
+
+		const perTabMismatch = diagnosticsView(store, {
+			filter: 'info',
+			sort: 'severity',
+			readText,
+			maxSeverity: 'warning'
+		});
+
+		expect(messages(perTabMismatch)).toEqual([]);
+	});
+
+	it('reads the severity ceiling through a settings reader without modifying the store', async () => {
+		const store = await seededStore();
+		const reader: SettingsReader = {
+			read: (namespace, key) => (namespace === 'lsp' && key === 'max_severity' ? 'error' : undefined)
+		};
+
+		const ceilingError = diagnosticsView(store, {
+			filter: 'all',
+			sort: 'severity',
+			readText,
+			readSettings: (ns, key) => reader.read(ns, key)
+		});
+
+		expect(messages(ceilingError)).toEqual(["Type 'x' is missing."]);
+		expect(store.read(ALPHA)).toHaveLength(2);
+		expect(store.read(BETA)).toHaveLength(1);
 	});
 });
