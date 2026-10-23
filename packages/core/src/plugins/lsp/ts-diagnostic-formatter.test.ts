@@ -146,10 +146,11 @@ describe('TypeScript diagnostic formatter', () => {
 	describe('formatDiagnosticEntry', () => {
 		it('detects TypeScript error with code and generates action links', () => {
 			const diag = {
+				server: 'ts@/root',
 				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
 				severity: 1 as const,
 				source: 'ts',
-				code: 2322,
+				code: '2322',
 				message: "Type 'string' is not assignable to type 'number'."
 			};
 
@@ -170,10 +171,11 @@ describe('TypeScript diagnostic formatter', () => {
 
 		it('renders warning badges for severity 2 diagnostics', () => {
 			const diag = {
+				server: 'ts@/root',
 				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
 				severity: 2 as const,
 				source: 'ts',
-				code: 6133,
+				code: '6133',
 				message: "'x' is declared but its value is never read."
 			};
 
@@ -184,10 +186,11 @@ describe('TypeScript diagnostic formatter', () => {
 
 		it('preserves non-TypeScript diagnostics without TS action links or formatting', () => {
 			const diag = {
+				server: 'stub@/root',
 				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
 				severity: 1 as const,
 				source: 'stub',
-				code: 2304,
+				code: '2304',
 				message: 'stub server: cannot find name'
 			};
 
@@ -205,9 +208,11 @@ describe('TypeScript diagnostic formatter', () => {
 			});
 			try {
 				const diag = {
+					server: 'test@/root',
 					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
 					severity: 1 as const,
 					source: 'test',
+					code: null,
 					message: 'Error with <button onclick="bad()">click me</button> & <span>text</span>'
 				};
 				const entry = formatDiagnosticEntry(diag);
