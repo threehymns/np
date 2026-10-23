@@ -64,6 +64,7 @@ export interface ElectronAPI {
 		callback: (events: WatcherEvent[]) => void
 	): () => Promise<void>;
 	toggleDevTools(): Promise<void>;
+	openExternal(url: string): Promise<boolean>;
 }
 
 export interface WatcherEvent {

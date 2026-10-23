@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, webContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, webContents, shell } from 'electron';
+import { attachExternalLinkHandlers, isExternalUrl } from './external-links.js';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -158,6 +159,11 @@ function createWindow() {
 	});
 
 	const devUrl = process.env.ELECTRON_DEV_URL;
+	attachExternalLinkHandlers(mainWindow.webContents, {
+		devUrl,
+		openExternal: (url) => shell.openExternal(url)
+	});
+
 	if (devUrl) {
 		mainWindow.loadURL(devUrl);
 	} else {
@@ -183,6 +189,13 @@ app.whenReady().then(() => {
 		}
 	});
 	configWatcher.start();
+
+	app.on('web-contents-created', (_, contents) => {
+		attachExternalLinkHandlers(contents, {
+			devUrl: process.env.ELECTRON_DEV_URL,
+			openExternal: (url) => shell.openExternal(url)
+		});
+	});
 
 	createWindow();
 
@@ -681,6 +694,14 @@ function registerIpcHandlers() {
 		await closeWatcher(watchId);
 		watcherOwnership.cancelStart(watchId);
 		return { success: true };
+	});
+
+	ipcMain.handle('shell:openExternal', async (_, url: unknown) => {
+		if (typeof url === 'string' && isExternalUrl(url)) {
+			await shell.openExternal(url);
+			return true;
+		}
+		return false;
 	});
 }
 
