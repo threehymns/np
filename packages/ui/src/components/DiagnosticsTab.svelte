@@ -188,7 +188,11 @@
 		<p class="text-xs font-bold">No diagnostics</p>
 		<p class="mt-0.5 text-[9px] opacity-75">
 			{#if store}
-				No language server has reported anything.
+				{#if store.uris().length > 0}
+					No diagnostics match this filter.
+				{:else}
+					No language server has reported anything.
+				{/if}
 			{:else}
 				No language server is running.
 			{/if}
