@@ -117,15 +117,17 @@ describe("Pane tab close commands", () => {
 			expect(ws.getPaneTabs()[0].id).toBe(doc1.id);
 		});
 
-		it("closeMultibufferTabs closes diff and search tabs but keeps document tabs", async () => {
+		it("closeMultibufferTabs closes diff, search, and diagnostics tabs but keeps document tabs", async () => {
 			const ws = makeWorkspace();
 			const doc = await ws.newFile();
+			const diagId = ws.openDiagnosticsTab();
 			ws.tabs = [
 				{ id: doc.id, type: "document" },
 				{ id: "diff-1", type: "diff", pluginId: "git" },
-				{ id: "search-1", type: "search" }
+				{ id: "search-1", type: "search" },
+				{ id: diagId, type: "diagnostics" }
 			] as any;
-			expect(ws.getPaneTabs().length).toBe(3);
+			expect(ws.getPaneTabs().length).toBe(4);
 
 			await ws.closeMultibufferTabs();
 			await flush();
