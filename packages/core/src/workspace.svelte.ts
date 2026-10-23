@@ -773,10 +773,19 @@ export class Workspace {
 	 */
 	openDiagnosticsTab(): string {
 		const id = DIAGNOSTICS_TAB_ID;
-		if (!this.tabs.some((tab) => tab.id === id)) {
+		const existing = this.getAllTabs().find((tab) => tab.id === id);
+		if (existing) {
+			const pane = findPaneWithTab(this.layout, existing.id);
+			if (pane) {
+				this.activePaneId = pane.id;
+				pane.activeTabId = existing.id;
+			} else {
+				this.activeTabId = id;
+			}
+		} else {
 			this.tabs.push({ id, type: 'diagnostics', title: DIAGNOSTICS_TAB_TITLE });
+			this.activeTabId = id;
 		}
-		this.activeTabId = id;
 		this.getDiagnosticsSession(id);
 		return id;
 	}
