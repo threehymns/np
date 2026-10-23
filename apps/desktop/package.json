@@ -56,7 +56,7 @@
 		}
 	},
 	"devDependencies": {
-		"electron": "^34.0.0",
+		"electron": "^45.0.0",
 		"electron-builder": "^26.0.0",
 		"svelte": "^5.55.2",
 		"svelte-check": "^4.4.6",
