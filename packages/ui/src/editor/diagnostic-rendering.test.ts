@@ -7,6 +7,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
 	composeEditorContributions,
+	diagnosticHoverSource,
 	PluginHost,
 	lspRegistration,
 	reconfigureEditorContributions,
@@ -127,6 +128,12 @@ function installDom(): void {
 		}
 		querySelectorAll() {
 			return [];
+		}
+		querySelector(selector: string) {
+			if (selector === ".cm-lsp-diagnostic-copy") {
+				return (this.childNodes as any[]).find((c: any) => c.className?.includes?.("cm-lsp-diagnostic-copy")) ?? null;
+			}
+			return null;
 		}
 	}
 
@@ -341,26 +348,39 @@ describe("Server diagnostics on screen (#266)", () => {
 		expect(diagnosticSpans()).toEqual([
 			{
 				className: "cm-lsp-diagnostic cm-lsp-diagnostic-error",
-				title: "stub: (2304) stub server: cannot find name",
+				title: "",
 			},
 			{
 				className: "cm-lsp-diagnostic cm-lsp-diagnostic-warning",
-				title: "stub: stub server: unused variable",
+				title: "",
 			},
 		]);
 
+		// The inline mark's error message is carried by the hover tooltip
+		// rather than a title attribute.
+		const errorTooltip = diagnosticHoverSource(view, 0);
+		expect(errorTooltip).not.toBeNull();
+		const errorDom = (errorTooltip!.create as any)(view).dom;
+		expect(errorDom.textContent).toBe("stub: (2304) stub server: cannot find name");
+
+		const warningPos = view.state.doc.line(2).from;
+		const warningTooltip = diagnosticHoverSource(view, warningPos);
+		expect(warningTooltip).not.toBeNull();
+		const warningDom = (warningTooltip!.create as any)(view).dom;
+		expect(warningDom.textContent).toBe("stub: stub server: unused variable");
+
 		// The gutter is its own surface (issue #310): one mark per line, in the
-		// line's worst severity, carrying the same text the underline carries.
+		// line's worst severity, rendered without a title attribute.
 		expect(gutterMarks()).toEqual([
 			{
 				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-error",
 				text: "●",
-				title: "stub: (2304) stub server: cannot find name",
+				title: "",
 			},
 			{
 				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-warning",
 				text: "●",
-				title: "stub: stub server: unused variable",
+				title: "",
 			},
 		]);
 

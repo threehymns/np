@@ -10,7 +10,9 @@ import {
 	EditorView,
 	GutterMarker,
 	gutter,
-	type DecorationSet
+	hoverTooltip,
+	type DecorationSet,
+	type Tooltip
 } from '@codemirror/view';
 import type { EditorContribution } from '../editor';
 import type { SettingsRead } from '../services';
@@ -27,6 +29,8 @@ import type {
 	LspDiagnosticsStore,
 	LspRange
 } from './diagnostics';
+import { marked } from 'marked';
+import { sanitizeHtml } from '../../transformer/sanitize';
 
 /**
  * Diagnostics as editor marks (spec #263, ticket #266, ADR 0016).
@@ -183,18 +187,157 @@ export function diagnosticDecorations(
 		marks.push(
 			Decoration.mark({
 				class: diagnosticMarkClass(diagnostic.severity),
-				attributes: { title: diagnosticTitle(diagnostic) }
+				diagnostic
 			}).range(offsets.from, offsets.to)
 		);
 	}
 	return marks.length === 0 ? Decoration.none : Decoration.set(marks, true);
 }
 
+/**
+ * Hover tooltip source for inline diagnostics.
+ *
+ * Reads the active diagnostic display from the state field and returns a tooltip
+ * containing the message(s) of any visible diagnostic that covers the hovered position.
+ */
+export function diagnosticHoverSource(
+	view: { state: EditorState },
+	pos: number,
+	side: -1 | 1 = 1
+): Tooltip | null {
+	const display = view.state.field(lspDiagnosticField, false);
+	if (!display) return null;
+	const found: LspDiagnostic[] = [];
+	let start = -1;
+	let end = -1;
+	display.marks.between(
+		Math.max(0, pos - (side < 0 ? 1 : 0)),
+		Math.min(view.state.doc.length, pos + (side > 0 ? 1 : 0)),
+		(from, to, value) => {
+			if (
+				pos >= from &&
+				pos <= to &&
+				(from === to || ((pos > from || side > 0) && (pos < to || side < 0)))
+			) {
+				const diagnostic = (value.spec as { diagnostic?: LspDiagnostic })?.diagnostic;
+				if (diagnostic && !found.includes(diagnostic)) {
+					found.push(diagnostic);
+					if (start === -1 || from > start) start = from;
+					if (end === -1 || to < end) end = to;
+				}
+			}
+		}
+	);
+	if (found.length === 0 || start === -1) return null;
+
+	// Clamp the tooltip range so moving across any diagnostic boundary
+	// (entering or exiting an overlapping/enclosing diagnostic) drops this
+	// tooltip and re-queries for the new token/range.
+	display.marks.between(start, end, (from, to) => {
+		if (from > pos && from < end) end = from;
+		if (to < pos && to > start) start = to;
+	});
+
+	const message = found.map(diagnosticTitle).join('\n');
+	return {
+		pos: start,
+		end: Math.max(start, end),
+		create() {
+			return { dom: createDiagnosticTooltipElement(message) };
+		}
+	};
+}
+
+function renderDiagnosticMarkdown(text: string): string {
+	try {
+		// Convert single-quoted identifiers (standard in TypeScript / compiler diagnostics like 'Foo')
+		// into inline code spans (`Foo`), taking care not to touch English contractions like doesn't / it's.
+		const withCodeSpans = text.replace(/(?<!\w)'([^'\n`]+)'(?!\w)/g, "`$1`");
+		return sanitizeHtml(marked.parse(withCodeSpans, { async: false }) as string);
+	} catch {
+		return text;
+	}
+}
+
+function createDiagnosticTooltipElement(text: string): HTMLElement {
+	const parsed = renderDiagnosticMarkdown(text);
+	if (typeof document === 'undefined') {
+		const copyBtn = {
+			nodeType: 1,
+			className: 'cm-lsp-diagnostic-copy',
+			onclick: (e: any) => {
+				e?.preventDefault?.();
+				e?.stopPropagation?.();
+				if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+					void navigator.clipboard.writeText(text);
+				}
+			}
+		};
+		return {
+			nodeType: 1,
+			textContent: text,
+			className: 'cm-lsp-hover cm-lsp-diagnostic-tooltip',
+			childNodes: [copyBtn],
+			querySelector: (selector: string) => (selector === '.cm-lsp-diagnostic-copy' ? copyBtn : null)
+		} as any;
+	}
+	const dom = document.createElement('div');
+	dom.className = 'cm-lsp-hover cm-lsp-diagnostic-tooltip';
+	const message = document.createElement('div');
+	message.className = 'cm-lsp-diagnostic-message';
+	message.innerHTML = parsed;
+	dom.appendChild(message);
+	if (!dom.textContent) {
+		dom.textContent = text;
+	}
+
+	const copyBtn = document.createElement('button');
+	copyBtn.type = 'button';
+	copyBtn.className = 'cm-lsp-diagnostic-copy';
+	copyBtn.setAttribute('aria-label', 'Copy diagnostic');
+	copyBtn.title = 'Copy diagnostic';
+	copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-icon"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="check-icon" style="display: none;"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+	copyBtn.onclick = (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+			navigator.clipboard.writeText(text).then(() => {
+				const copyIcon = copyBtn.querySelector?.('.copy-icon') as HTMLElement | null;
+				const checkIcon = copyBtn.querySelector?.('.check-icon') as HTMLElement | null;
+				if (copyIcon && checkIcon) {
+					copyIcon.style.display = 'none';
+					checkIcon.style.display = 'block';
+					copyBtn.classList.add('copied');
+					setTimeout(() => {
+						copyIcon.style.display = 'block';
+						checkIcon.style.display = 'none';
+						copyBtn.classList.remove('copied');
+					}, 2000);
+				}
+			}).catch(() => {});
+		}
+	};
+	dom.appendChild(copyBtn);
+	if (!dom.querySelector) {
+		(dom as any).querySelector = (selector: string) => (selector === ".cm-lsp-diagnostic-copy" ? copyBtn : null);
+	}
+
+	return dom;
+}
+
+export const diagnosticHoverTooltip = hoverTooltip(diagnosticHoverSource);
+
 export function createDiagnosticEditorContribution(source: LspDiagnosticSource): EditorContribution {
 	return {
 		id: LSP_DIAGNOSTIC_DECORATION_ID,
 		type: 'decoration',
-		extension: [lspDiagnosticSourceFacet.of(source), lspDiagnosticField, diagnosticTheme],
+		extension: [
+			lspDiagnosticSourceFacet.of(source),
+			lspDiagnosticField,
+			diagnosticTheme,
+			diagnosticHoverTooltip
+		],
 		description: 'Underlines the language-server diagnostics of the document being edited'
 	};
 }
@@ -302,12 +445,6 @@ class LspDiagnosticGutterMarker extends GutterMarker {
 		const span = document.createElement('span');
 		span.className = diagnosticGutterClass(this.mark.severity);
 		span.textContent = gutterMarkText(this.mark);
-		// The same text the inline mark carries, because the two stand for the
-		// same diagnostic: a user who reads one wants to read the other.
-		span.setAttribute(
-			'title',
-			this.mark.findings.map((diagnostic) => diagnosticTitle(diagnostic)).join('\n')
-		);
 		return span;
 	}
 }
@@ -407,7 +544,7 @@ function clampToLine(line: Line, character: number): number {
 }
 
 /** The message in the mark's tooltip: an underline on its own says nothing. */
-function diagnosticTitle(diagnostic: LspDiagnostic): string {
+export function diagnosticTitle(diagnostic: LspDiagnostic): string {
 	const source = diagnostic.source ? `${diagnostic.source}: ` : '';
 	const code = diagnostic.code ? `(${diagnostic.code}) ` : '';
 	return `${source}${code}${diagnostic.message}`;
@@ -438,5 +575,85 @@ const diagnosticTheme = EditorView.baseTheme({
 	'.cm-lsp-diagnostic-gutter-error': { color: 'var(--destructive)' },
 	'.cm-lsp-diagnostic-gutter-warning': { color: 'var(--color-amber-500)' },
 	'.cm-lsp-diagnostic-gutter-info': { color: 'var(--muted-foreground)' },
-	'.cm-lsp-diagnostic-gutter-hint': { color: 'var(--muted-foreground)', opacity: '0.7' }
+	'.cm-lsp-diagnostic-gutter-hint': { color: 'var(--muted-foreground)', opacity: '0.7' },
+	'.cm-lsp-diagnostic-tooltip': {
+		display: 'flex',
+		alignItems: 'flex-start',
+		justifyContent: 'space-between',
+		gap: '0.5rem'
+	},
+	'.cm-lsp-diagnostic-message': {
+		flex: '1 1 auto',
+		minWidth: '0'
+	},
+	'.cm-lsp-diagnostic-message p': {
+		margin: '0',
+		marginTop: '0.25rem'
+	},
+	'.cm-lsp-diagnostic-message p:first-child': {
+		marginTop: '0'
+	},
+	'.cm-lsp-diagnostic-message hr': {
+		border: 'none',
+		borderTop: '1px solid var(--border)',
+		margin: '0.5rem 0'
+	},
+	'.cm-lsp-diagnostic-tooltip hr': {
+		border: 'none',
+		borderTop: '1px solid var(--border)',
+		margin: '0.5rem 0'
+	},
+	'.cm-lsp-diagnostic-message :not(pre) > code': {
+		fontFamily: 'var(--font-mono)',
+		fontSize: '0.85em',
+		backgroundColor: 'color-mix(in srgb, var(--muted) 45%, transparent)',
+		color: 'var(--foreground)',
+		borderRadius: 'calc(var(--radius) - 4px)',
+		padding: '0.1rem 0.3rem'
+	},
+	'.cm-lsp-diagnostic-message pre': {
+		margin: '0.25rem 0',
+		padding: '0.25rem 0.5rem',
+		backgroundColor: 'color-mix(in srgb, var(--muted) 30%, transparent)',
+		borderRadius: 'calc(var(--radius) - 4px)',
+		overflowX: 'auto'
+	},
+	'.cm-lsp-diagnostic-message a': {
+		color: 'var(--primary)'
+	},
+	'.cm-tooltip-section:not(:first-child)': {
+		borderTop: '1px solid var(--border)',
+		marginTop: '0.5rem',
+		paddingTop: '0.5rem'
+	},
+	'.cm-lsp-diagnostic-copy': {
+		flex: '0 0 auto',
+		display: 'inline-flex',
+		alignItems: 'center',
+		justifyContent: 'center',
+		padding: '2px',
+		borderRadius: 'var(--radius)',
+		border: '1px solid transparent',
+		background: 'transparent',
+		color: 'var(--muted-foreground)',
+		cursor: 'pointer',
+		opacity: '0.7',
+		transition: 'opacity 0.15s ease, color 0.15s ease'
+	},
+	'.cm-lsp-diagnostic-copy:hover': {
+		opacity: '1',
+		color: 'var(--foreground)',
+		backgroundColor: 'var(--muted)',
+		borderColor: 'var(--border)'
+	},
+	'.cm-lsp-diagnostic-copy.copied': {
+		color: 'var(--primary)',
+		opacity: '1'
+	},
+	'.cm-lsp-diagnostic-tooltip::selection': {
+		backgroundColor: 'transparent'
+	},
+	'.cm-lsp-diagnostic-tooltip ::selection': {
+		backgroundColor: 'transparent'
+	}
 });

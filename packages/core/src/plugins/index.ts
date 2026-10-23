@@ -86,6 +86,11 @@ export type {
 	DiagnosticGutterMark
 } from './lsp/diagnostic-display';
 export {
+	diagnosticHoverSource,
+	diagnosticHoverTooltip,
+	diagnosticTitle
+} from './lsp/diagnostic-decorations';
+export {
 	DIAGNOSTIC_SEVERITIES,
 	INLINE_DIAGNOSTICS_SETTING,
 	LSP_SCHEMA,

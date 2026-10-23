@@ -16,6 +16,8 @@ import {
 import { lspRegistration } from './registration';
 import {
 	createDiagnosticEditorContribution,
+	diagnosticHoverSource,
+	diagnosticTitle,
 	gutterMarksIn,
 	lspDiagnosticField
 } from './diagnostic-decorations';
@@ -57,15 +59,30 @@ afterEach(async () => {
 function marksIn(state: EditorState): MarkView[] {
 	const marks: MarkView[] = [];
 	state.field(lspDiagnosticField, false)?.marks.between(0, state.doc.length, (from, to, value) => {
-		const spec = (value as { spec: { class?: string; attributes?: Record<string, string> } }).spec;
+		const spec = (value as {
+			spec: {
+				class?: string;
+				attributes?: Record<string, string>;
+				diagnostic?: LspDiagnostic;
+			};
+		}).spec;
 		marks.push({
 			from,
 			to,
 			className: spec.class ?? '',
-			title: spec.attributes?.title
+			title: spec.attributes?.title ?? (spec.diagnostic ? diagnosticTitle(spec.diagnostic) : undefined)
 		});
 	});
 	return marks;
+}
+
+function markAttributesIn(state: EditorState): Array<Record<string, string> | undefined> {
+	const attrs: Array<Record<string, string> | undefined> = [];
+	state.field(lspDiagnosticField, false)?.marks.between(0, state.doc.length, (from, to, value) => {
+		const spec = (value as { spec: { attributes?: Record<string, string> } }).spec;
+		attrs.push(spec.attributes);
+	});
+	return attrs;
 }
 
 function range(line: number, from: number, to: number) {
@@ -586,6 +603,113 @@ describe('The display controls (#310)', () => {
 		// waiting for the next keystroke.
 		inline = false;
 		expect(marksIn(editor.state.update({}).state)).toHaveLength(0);
+	});
+
+	it('does not put diagnostic message in title attribute, using hover tooltip instead', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'a is broken' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+		const marks = marksIn(editor.state);
+		expect(marks).toHaveLength(1);
+		const attrs = markAttributesIn(editor.state);
+		expect(attrs[0]?.title).toBeUndefined();
+
+		const tooltip = diagnosticHoverSource(editor, 2);
+		expect(tooltip).not.toBeNull();
+		expect(tooltip?.pos).toBe(0);
+		expect(tooltip?.end).toBe(5);
+		const dom = (tooltip!.create as any)(editor).dom;
+		expect(dom.textContent).toBe('a is broken');
+
+		// Tooltip carries a copy button
+		const copyBtn = dom.querySelector?.('.cm-lsp-diagnostic-copy');
+		expect(copyBtn).toBeDefined();
+
+		expect(diagnosticHoverSource(editor, 8)).toBeNull();
+	});
+
+	it('returns null for hover tooltip when inline diagnostics are disabled', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'a is broken' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC, (namespace, key) =>
+			namespace === 'lsp' && key === 'inline_diagnostics' ? false : undefined
+		);
+		expect(marksIn(editor.state)).toHaveLength(0);
+		expect(diagnosticHoverSource(editor, 2)).toBeNull();
+	});
+
+	it('parses markdown formatting and horizontal rules in diagnostic hover tooltip', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: 'broken `symbol`\n\n---\n\nsee **docs**' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+		const tooltip = diagnosticHoverSource(editor, 2);
+		expect(tooltip).not.toBeNull();
+		const dom = (tooltip!.create as any)(editor).dom;
+		const messageEl = dom.querySelector?.('.cm-lsp-diagnostic-message') as HTMLElement | null;
+		if (messageEl && typeof messageEl.innerHTML === 'string') {
+			expect(messageEl.innerHTML).toContain('<code>symbol</code>');
+			expect(messageEl.innerHTML).toContain('<hr>');
+			expect(messageEl.innerHTML).toContain('<strong>docs</strong>');
+		}
+	});
+
+	it('formats TypeScript single-quoted identifiers as inline code without breaking contractions', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 5), severity: 1, message: "ts: (2724) '\"./document.svelte\"' has no exported member named 'DocumentSessiond'. It doesn't exist." }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+		const tooltip = diagnosticHoverSource(editor, 2);
+		expect(tooltip).not.toBeNull();
+		const dom = (tooltip!.create as any)(editor).dom;
+		const messageEl = dom.querySelector?.('.cm-lsp-diagnostic-message') as HTMLElement | null;
+		if (messageEl && typeof messageEl.innerHTML === 'string') {
+			expect(messageEl.innerHTML).toContain('<code>&quot;./document.svelte&quot;</code>');
+			expect(messageEl.innerHTML).toContain('<code>DocumentSessiond</code>');
+			expect(messageEl.innerHTML).toContain("It doesn't exist.");
+		}
+	});
+
+	it('tightens hover range to the intersection of overlapping diagnostics and clamps to neighbor boundaries', () => {
+		const store = new LspDiagnosticsStore();
+		publish(store, toFileUri('/repo/a.ts'), [
+			{ range: range(0, 0, 12), severity: 1, message: 'outer line error' },
+			{ range: range(0, 6, 7), severity: 2, message: 'inner token warning' }
+		]);
+		const editor = editorFor(store, '/repo/a.ts', DOC);
+
+		// Inside inner token `a` (pos 6): both diagnostics are active, range is narrowed to [6, 7]
+		const innerTooltip = diagnosticHoverSource(editor, 6);
+		expect(innerTooltip).not.toBeNull();
+		expect(innerTooltip?.pos).toBe(6);
+		expect(innerTooltip?.end).toBe(7);
+		const innerDom = (innerTooltip!.create as any)(editor).dom;
+		expect(innerDom.textContent).toContain('outer line error');
+		expect(innerDom.textContent).toContain('inner token warning');
+
+		// Before inner token (pos 2): only outer diagnostic is active, clamped to end at 6 so entering `a` re-evaluates
+		const beforeTooltip = diagnosticHoverSource(editor, 2);
+		expect(beforeTooltip).not.toBeNull();
+		expect(beforeTooltip?.pos).toBe(0);
+		expect(beforeTooltip?.end).toBe(6);
+		const beforeDom = (beforeTooltip!.create as any)(editor).dom;
+		expect(beforeDom.textContent).toContain('outer line error');
+		expect(beforeDom.textContent).not.toContain('inner token warning');
+
+		// After inner token (pos 10): only outer diagnostic is active, clamped to start at 7 so entering `a` to the left re-evaluates
+		const afterTooltip = diagnosticHoverSource(editor, 10);
+		expect(afterTooltip).not.toBeNull();
+		expect(afterTooltip?.pos).toBe(7);
+		expect(afterTooltip?.end).toBe(12);
+		const afterDom = (afterTooltip!.create as any)(editor).dom;
+		expect(afterDom.textContent).toContain('outer line error');
+		expect(afterDom.textContent).not.toContain('inner token warning');
 	});
 });
 
