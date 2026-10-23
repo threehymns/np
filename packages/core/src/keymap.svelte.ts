@@ -415,6 +415,18 @@ export class KeymapRegistry {
 	}
 	
 	handleKeydown(e: KeyboardEvent): boolean {
+		// Never intercept IME composition events. Some Chromium/WebKit builds
+		// report the Enter that confirms an IME composition as key "Enter"
+		// with isComposing true (or keyCode 229 on other platforms). This
+		// handler runs on the window capture phase, before CodeMirror's own
+		// keymap (which ignores composition events), so without this guard
+		// that Enter would be matched to edit.acceptCompletion and the
+		// preventDefault below would drop the IME candidate instead of
+		// confirming it.
+		if (e.isComposing || e.keyCode === 229) {
+			return false;
+		}
+
 		// Ignore if target is a standard input field or textarea, 
 		// but only for plain character keys (to allow Cmd+S etc.)
 		const target = e.target as HTMLElement;
