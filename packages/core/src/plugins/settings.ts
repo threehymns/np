@@ -398,6 +398,7 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 		languages: {
 			type: 'object',
 			default: {},
+			mergeRule: mergeLanguageOverrides,
 			title: 'Per-Language Overrides',
 			description: 'Overrides keyed by language name, matched case-insensitively. The popup toggle stays global and is ignored here'
 		}
@@ -715,6 +716,55 @@ function deepMergeObjects(base: any, override: any): any {
 }
 
 /**
+ * Merge function for `editor.languages`: language names match
+ * case-insensitively (the same rule `scopeForLanguage` uses when it folds a
+ * language's overrides), so `Markdown` in one scope and `markdown` in another
+ * must merge into a single entry instead of two. Without this, the deep merge
+ * keeps both keys and the fold returns whichever entry comes first — letting
+ * the user value win when the workspace value should.
+ *
+ * The first-seen key casing is kept; values merge per the deep-merge rules
+ * with the incoming scope winning per key.
+ *
+ * A null or otherwise invalid incoming value is treated as absent: the valid
+ * current map is preserved, and when the current map is invalid too the
+ * property's documented empty-map default ({}) applies. Null passes setting
+ * validation (it means "no value"), so it reaches this merge rather than
+ * being rejected there.
+ */
+function isPlainMap(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function mergeLanguageOverrides(
+	current: Record<string, unknown>,
+	incoming: Record<string, unknown>
+): Record<string, unknown> {
+	if (!isPlainMap(incoming)) {
+		return isPlainMap(current) ? { ...current } : {};
+	}
+	if (!isPlainMap(current)) {
+		return { ...incoming };
+	}
+	const result: Record<string, unknown> = { ...current };
+	const lowerToKey = new Map<string, string>();
+	for (const key of Object.keys(result)) {
+		const lower = key.toLowerCase();
+		if (!lowerToKey.has(lower)) lowerToKey.set(lower, key);
+	}
+	for (const [inKey, inValue] of Object.entries(incoming)) {
+		const existingKey = lowerToKey.get(inKey.toLowerCase());
+		if (existingKey !== undefined) {
+			result[existingKey] = deepMergeObjects(result[existingKey], inValue);
+		} else {
+			result[inKey] = inValue;
+			lowerToKey.set(inKey.toLowerCase(), inKey);
+		}
+	}
+	return result;
+}
+
+/**
  * Modifies a JSONC document while preserving existing formatting and comments.
  */
 export function applySettingEditToJsonc(
@@ -881,7 +931,12 @@ export class SettingsResolver {
 
 			if (wsValid) {
 				effectiveValue = applyMergeRule(effectiveValue, wsRawValue as T, propSchema.mergeRule);
-				provenance = 'workspace';
+				// Null passes validation as "no value", so a null workspace value
+				// contributed nothing to the effective value: provenance keeps
+				// naming the scope that actually supplied it.
+				if (wsRawValue !== null) {
+					provenance = 'workspace';
+				}
 			}
 
 			return {
@@ -1483,6 +1538,28 @@ export class SettingsManager {
 
 	get<T = any>(namespace: string, key: string, targetScope?: SettingScope): T {
 		return this.resolver.get<T>(namespace, key, targetScope);
+	}
+
+	/**
+	 * The value one scope stores for one key, with no other scope folded in.
+	 *
+	 * `resolve` answers "what does this setting mean now", which is a question
+	 * about every scope at once. A settings page that edits one scope asks a
+	 * different question: "what does this scope itself say". This answers that
+	 * one, so a page can show and write a scope's own value without
+	 * materialising the other scope's values into it (ADR 0014, ADR 0031).
+	 *
+	 * The value is the scope's stored value, exactly as stored. An invalid one
+	 * comes back as it is, because the page that edits it has to be able to
+	 * show the user what is wrong with it.
+	 */
+	getScopeValue<T = any>(
+		namespace: string,
+		key: string,
+		scope: SettingScope = 'user'
+	): T | undefined {
+		const resolved = this.resolver.resolve<T>(namespace, key);
+		return scope === 'workspace' ? resolved.workspaceValue : resolved.userValue;
 	}
 
 	/**

@@ -285,6 +285,21 @@ export class Preferences {
 	}
 
 	/**
+	 * The value one scope stores for one setting, with no other scope folded in.
+	 *
+	 * The resolved value is the answer for every scope at once. A page that
+	 * edits one scope needs that scope's own value, so that what it shows and
+	 * what it writes back are the scope's own entries and nothing else.
+	 */
+	getScopeValue<T = any>(
+		namespace: string,
+		key: string,
+		scope: SettingScope = 'user'
+	): T | undefined {
+		return this.settings.getScopeValue<T>(namespace, key, scope);
+	}
+
+	/**
 	 * Effective plugin enablement (ADR 0009: app-scoped configuration).
 	 * Returns the explicitly persisted toggle when the user ever changed
 	 * it, otherwise the manifest's `defaultEnabled`.

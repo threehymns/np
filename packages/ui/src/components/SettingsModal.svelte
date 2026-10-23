@@ -8,8 +8,9 @@
 	import { setMode, resetMode } from "mode-watcher";
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
+	import { languageOverridesText, writeLanguageOverrides } from './settings/language-overrides';
 	import { cn } from '@np/core';
-	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode } from '@np/core';
+	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode, SettingScope } from '@np/core';
 
 	const appState = useAppState();
 
@@ -180,28 +181,39 @@
 	let languageOverridesError = $state<string | null>(null);
 	let lastSyncedOverrides = $state('');
 	let overridesTextarea: HTMLTextAreaElement | null = $state(null);
+	/**
+	 * The scope the box is editing.
+	 *
+	 * The box shows one scope's own map, so the scope is part of what the box
+	 * holds: a blur writes back to the scope the box shows, not to whichever
+	 * scope happens to be active when the box loses focus.
+	 */
+	let languageOverridesScope = $state<SettingScope>('user');
 
 	$effect(() => {
-		// `settingsVersion` is the reactive handle for a resolved value.
+		// `settingsVersion` is the reactive handle for a stored value.
 		appState.prefs.settingsVersion;
-		const next = JSON.stringify(appState.prefs.get('editor', 'languages'), null, 2);
+		const scope = appState.prefs.activeScope;
+		// The scope's own map, never the resolved one: the resolved map is the
+		// scopes folded together, and saving it back would write the other
+		// scope's entries into this one (ADR 0031).
+		const next = languageOverridesText(appState.prefs, scope);
 		// Never clobber an edit in progress: the textarea saves only on blur,
-		// so skip the refresh while it is focused or while the draft holds
-		// unsaved changes. Otherwise keep it in sync with stored settings.
+		// so skip the refresh while it is focused. An edit that is still
+		// unsaved belongs to the scope the box was showing, so it survives
+		// while that scope is active and is dropped when the page moves to
+		// the other one.
 		if (typeof document !== 'undefined' && document.activeElement === overridesTextarea) return;
-		if (languageOverridesDraft !== lastSyncedOverrides) return;
+		if (languageOverridesDraft !== lastSyncedOverrides && languageOverridesScope === scope) return;
+		languageOverridesScope = scope;
 		languageOverridesDraft = next;
 		lastSyncedOverrides = next;
+		languageOverridesError = null;
 	});
 
 	function saveLanguageOverrides() {
 		try {
-			appState.prefs.set(
-				'editor',
-				'languages',
-				JSON.parse(languageOverridesDraft),
-				appState.prefs.activeScope,
-			);
+			writeLanguageOverrides(appState.prefs, languageOverridesScope, languageOverridesDraft);
 			lastSyncedOverrides = languageOverridesDraft;
 			languageOverridesError = null;
 		} catch (e) {
