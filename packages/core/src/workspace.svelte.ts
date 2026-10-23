@@ -1440,12 +1440,12 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 	/**
 	 * Close the tabs that host a multi-file surface — search results, diffs,
-	 * and the LSP log view — in a pane (default: the active pane).
+	 * diagnostics, and the LSP log view — in a pane (default: the active pane).
 	 */
 	async closeMultibufferTabs(paneId?: string): Promise<void> {
 		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search');
+		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search' || t.type === 'diagnostics');
 		await this.performCloseBatch(multi.map((t) => ({ tabId: t.id, paneId: pane.id })));
 	}
 
