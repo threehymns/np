@@ -580,6 +580,26 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 		expect(executed).toEqual(["edit.acceptCompletion"]);
 	});
 
+	it("does not intercept IME composition keystrokes (isComposing / keyCode 229)", () => {
+		const { reg, executed } = newCompletionRegistry();
+
+		// macOS Chromium/WebKit report the Enter that confirms an IME
+		// composition as key "Enter" with isComposing true. The keymap must
+		// not steal it for edit.acceptCompletion and drop the candidate.
+		const composing = completionKeyEvent("Enter");
+		(composing.e as any).isComposing = true;
+		expect(reg.handleKeydown(composing.e)).toBe(false);
+		expect(composing.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+
+		// Other platforms fire composition keydowns with keyCode 229.
+		const legacy = completionKeyEvent("Enter");
+		(legacy.e as any).keyCode = 229;
+		expect(reg.handleKeydown(legacy.e)).toBe(false);
+		expect(legacy.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+	});
+
 	/**
 	 * The trigger and the acceptance key are focus-scoped, and the reason is
 	 * the shape of the two overlays: the completion popup is an overlay exactly
