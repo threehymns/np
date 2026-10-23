@@ -24,7 +24,7 @@
 	}
 
 	interface Props {
-		sections: MultibufferSection[];
+		sections: readonly MultibufferSection[];
 		isCollapsed: (filepath: string) => boolean;
 		idPrefix?: string;
 		emptyState?: Snippet;

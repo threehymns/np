@@ -38,6 +38,20 @@ export type {
 	LspLogLevel,
 	LspLogsFocus
 } from './lsp/logs';
+// The merged diagnostics store, for the diagnostics tab (#309). The tab reads
+// the store's public surface and never the protocol behind it, so the types it
+// needs are published by name — the store, the diagnostics it holds, and the
+// severity they carry.
+export { LspDiagnosticsStore, LSP_DIAGNOSTICS_STORE_SERVICE_KEY } from './lsp/diagnostics';
+export type {
+	LspDiagnostic,
+	LspDiagnosticSeverity,
+	LspPosition,
+	LspRange
+} from './lsp/diagnostics';
+// The inverse of the file URI the protocol addresses documents with, so a
+// consumer can match a diagnostic's URI against a local path.
+export { fromFileUri, toFileUri } from './lsp/root';
 // Command ids, as bare strings: the status menu has to name the commands it
 // dispatches, and importing the constants is what stops a rename in `commands`
 // from leaving the menu pointing at nothing — a literal in a component compiles
@@ -51,6 +65,47 @@ export {
 } from './lsp/commands';
 export { LSP_UI_COMPONENTS_KEY, getLspUIComponents } from './lsp/ui';
 export type { LspUIComponents } from './lsp/ui';
+// The diagnostics display plan (issue #310). A surface that shows diagnostics —
+// the diagnostics list of #309, which is a UI component and so can only reach
+// the core through this package — reads the same narrowing the editor's own
+// surfaces read, so that a severity ceiling means one thing in all of them.
+// The module is plain: it reads diagnostics, never the protocol, and knows
+// nothing about the editor.
+export {
+	DEFAULT_DIAGNOSTIC_DISPLAY_SETTINGS,
+	isDiagnosticSeverity,
+	isMoreSevere,
+	planDiagnosticDisplay,
+	readDiagnosticDisplaySettings,
+	visibleDiagnostics
+} from './lsp/diagnostic-display';
+export type {
+	DiagnosticDisplayPlan,
+	DiagnosticDisplaySettings,
+	DiagnosticGutterMark
+} from './lsp/diagnostic-display';
+export {
+	createDiagnosticEditorContribution,
+	createDiagnosticGutterContribution,
+	diagnosticHoverSource,
+	diagnosticHoverTooltip,
+	diagnosticTitle,
+	type LspDiagnosticSource
+} from './lsp/diagnostic-decorations';
+export {
+	formatDiagnosticEntry,
+	formatTypeScriptType,
+	prettifyDiagnosticMessage,
+	isTypeScriptDiagnostic,
+	extractTypeScriptErrorCode
+} from './lsp/ts-diagnostic-formatter';
+export {
+	DIAGNOSTIC_SEVERITIES,
+	INLINE_DIAGNOSTICS_SETTING,
+	LSP_SCHEMA,
+	LSP_SETTINGS_NAMESPACE,
+	MAX_SEVERITY_SETTING
+} from './lsp/settings';
 export type { ServerCompletionItemKind, ServerCompletionList } from './lsp/completions';
 export type {
 	LspServerState,

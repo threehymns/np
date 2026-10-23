@@ -645,7 +645,7 @@ export async function highlightFencedCode(code: string, info: string): Promise<s
 }
 
 /** Highlights every fenced code block the Markdown parser emitted. */
-async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
+export async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
 	const blocks = dom.querySelectorAll("pre code");
 	for (const block of Array.from(blocks)) {
 		const element = block as HTMLElement;

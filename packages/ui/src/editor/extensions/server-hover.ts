@@ -110,11 +110,14 @@ export function createHoverSource(
 		// word. While the mouse stays inside [pos, end) the tooltip survives
 		// untouched (no hide, no re-query, no DOM swap), so the cycle only
 		// runs when the mouse truly leaves the symbol.
+		let start = pos;
 		let end = pos;
 		if (answer.hover.range) {
-			end = Math.max(pos, serverRangeToOffsets(view.state, answer.hover.range).to);
+			const offsets = serverRangeToOffsets(view.state, answer.hover.range);
+			start = offsets.from;
+			end = offsets.to;
 		}
-		return { pos, end, create: () => ({ dom }) };
+		return { pos: start, end: Math.max(start, end), create: () => ({ dom }) };
 	};
 }
 
@@ -123,5 +126,3 @@ export function serverHover(
 ) {
 	return hoverTooltip(createHoverSource(options));
 }
-
-

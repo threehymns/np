@@ -8,6 +8,7 @@ export * from './document.svelte';
 export * from './tab-ids';
 export * from './workspace.svelte';
 export * from './split-tree.svelte';
+export * from './diagnostics-tab.svelte';
 export * from './commands.svelte';
 export * from './state.svelte';
 export * from './context.svelte';

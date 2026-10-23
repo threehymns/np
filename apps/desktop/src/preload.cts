@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			}
 		};
 	},
-	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools')
+	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools'),
+	openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
 });
 

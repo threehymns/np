@@ -12,6 +12,11 @@ import { type SessionPersistence, type SerializedDocument, type SerializedWorksp
 import type { SwitchResult, VCSAdapter } from './project/vcs';
 import { SearchTabSession } from './search';
 import { SEARCH_TAB_ID } from './tab-ids';
+import {
+	DIAGNOSTICS_TAB_ID,
+	DIAGNOSTICS_TAB_TITLE,
+	DiagnosticsSession
+} from './diagnostics-tab.svelte';
 
 import {
 	Pane,
@@ -274,6 +279,18 @@ export class Workspace {
 	 * filepath). Stale ids are pruned on lookup, never persisted.
 	 */
 	readonly diffBoundDocIds = new Map<string, string>();
+
+	/**
+	 * The diagnostics session per diagnostics tab (#309): the severity filter
+	 * and the sort order the reader chose.
+	 *
+	 * Kept on the workspace rather than in the tab's view, because the tab's
+	 * controls and the tab's list are two different things: the filter has to
+	 * survive the tab being switched away from and back to, and a view that is
+	 * unmounted and mounted again starts empty. Keyed by tab id, so two
+	 * diagnostics tabs in two panes are two readers.
+	 */
+	private readonly diagnosticsSessions = new Map<string, DiagnosticsSession>();
 
 	private applyPendingDiffRestore() {
 		if (!this.isRepositoryActive) return;
@@ -727,6 +744,57 @@ export class Workspace {
 		return newDoc;
 	}
 
+	/**
+	 * The diagnostics session for one tab (#309): the severity filter and the
+	 * sort order the reader chose.
+	 *
+	 * Created on first ask, so a tab that is opened and never touched still has
+	 * a session to read: the tab's controls bind to it, and a control with
+	 * nothing to bind to is a control that cannot be written to.
+	 */
+	getDiagnosticsSession(tabId: string): DiagnosticsSession {
+		let session = this.diagnosticsSessions.get(tabId);
+		if (!session) {
+			session = new DiagnosticsSession();
+			this.diagnosticsSessions.set(tabId, session);
+		}
+		return session;
+	}
+
+	/**
+	 * Opens the project-wide diagnostics tab, or focuses it when it is already
+	 * open.
+	 *
+	 * Idempotent, because the tab is reachable from the command palette and
+	 * from a keybinding, and asking twice for the same tab must not stack two
+	 * of them. The diagnostics are not read here: the tab is a view over the
+	 * merged store the LSP plugin publishes, and the store is the only source
+	 * of what it shows.
+	 */
+	openDiagnosticsTab(): string {
+		const id = DIAGNOSTICS_TAB_ID;
+		const existing = this.getAllTabs().find((tab) => tab.id === id);
+		if (existing) {
+			const pane = findPaneWithTab(this.layout, existing.id);
+			if (pane) {
+				this.activePaneId = pane.id;
+				pane.activeTabId = existing.id;
+			} else {
+				this.activeTabId = id;
+			}
+		} else {
+			// A closed diagnostics tab leaves its record in the closed-tabs
+			// history. The replacement below reuses the same id, so the stale
+			// entry has to go: otherwise reopenClosedTab would later stack a
+			// second tab with that id.
+			this.closedTabs = this.closedTabs.filter((entry) => entry.tab.id !== id);
+			this.tabs.push({ id, type: 'diagnostics', title: DIAGNOSTICS_TAB_TITLE });
+			this.activeTabId = id;
+		}
+		this.getDiagnosticsSession(id);
+		return id;
+	}
+
 	async openFile(specificOrigin?: FileOrigin) {
 		let origin: FileOrigin | null = null;
 
@@ -972,6 +1040,13 @@ private searchSessions = new Map<string, SearchTabSession>();
 			// Load new folder state
 			await this.loadFolderState(toURI(origin), true);
 			this.cancelPendingClose();
+			// The outgoing layout's tabs were replaced, not closed, so the
+			// diagnostics session outlives them. Drop it now that the folder
+			// change has succeeded: a filter the reader set in the old
+			// folder must not hide diagnostics in the new one. A failed
+			// open restores the old layout from `previous`, so the session
+			// is only dropped on the success path.
+			this.diagnosticsSessions.delete(DIAGNOSTICS_TAB_ID);
 			return true;
 		} catch (error) {
 			if (changed) {
@@ -1203,6 +1278,11 @@ private searchSessions = new Map<string, SearchTabSession>();
 				if (tab.type === 'search') {
 					this.searchSessions.delete(tab.id);
 				}
+				// A closed diagnostics tab takes its session with it: the filter belongs
+				// to the tab that is open, and a reopened tab is a new tab.
+				if (tab.type === 'diagnostics') {
+					this.diagnosticsSessions.delete(tab.id);
+				}
 			}
 		}
 
@@ -1374,12 +1454,12 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 	/**
 	 * Close the tabs that host a multi-file surface — search results, diffs,
-	 * and the LSP log view — in a pane (default: the active pane).
+	 * diagnostics, and the LSP log view — in a pane (default: the active pane).
 	 */
 	async closeMultibufferTabs(paneId?: string): Promise<void> {
 		const pane = paneId ? this.findPane(paneId) : this.activePane;
 		if (!pane) return;
-		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search');
+		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search' || t.type === 'diagnostics');
 		await this.performCloseBatch(multi.map((t) => ({ tabId: t.id, paneId: pane.id })));
 	}
 

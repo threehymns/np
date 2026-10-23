@@ -371,7 +371,7 @@ describe("hover tooltips", () => {
 			});
 			const tooltip = await source({ state } as any, 10);
 			expect(tooltip).not.toBeNull();
-			expect(tooltip!.pos).toBe(10);
+			expect(tooltip!.pos).toBe(9);
 			expect(tooltip!.end).toBe(15);
 		} finally {
 			await cleanup();
