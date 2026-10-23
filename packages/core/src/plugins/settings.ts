@@ -931,7 +931,12 @@ export class SettingsResolver {
 
 			if (wsValid) {
 				effectiveValue = applyMergeRule(effectiveValue, wsRawValue as T, propSchema.mergeRule);
-				provenance = 'workspace';
+				// Null passes validation as "no value", so a null workspace value
+				// contributed nothing to the effective value: provenance keeps
+				// naming the scope that actually supplied it.
+				if (wsRawValue !== null) {
+					provenance = 'workspace';
+				}
 			}
 
 			return {
