@@ -279,6 +279,35 @@ describe('editor.languages layering (#286)', () => {
 		expect(resolved.provenance).toBe('user');
 	});
 
+	it('null user map is treated as absent, falls back to the {} default', () => {
+		const resolver = makeResolver({ editor: { languages: null } }, undefined);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({});
+		expect(resolved.provenance).toBe('user');
+	});
+
+	it('null workspace map preserves the valid user map', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: { Markdown: { words: 'disabled' } } } },
+			{ editor: { languages: null } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({ Markdown: { words: 'disabled' } });
+		expect(resolved.provenance).toBe('workspace');
+	});
+
+	it('null maps in both scopes fall back to the {} default', () => {
+		const resolver = makeResolver(
+			{ editor: { languages: null } },
+			{ editor: { languages: null } }
+		);
+
+		const resolved = resolver.resolve('editor', 'languages');
+		expect(resolved.value).toEqual({});
+	});
+
 	it('no overrides: falls back to the {} default', () => {
 		const resolver = makeResolver({}, undefined);
 
