@@ -10,7 +10,6 @@
 		type SettingsReader
 	} from '@np/core';
 	import { useAppState } from '@np/core/state.svelte';
-	import { onMount } from 'svelte';
 	import { CaretDownIcon, WarningCircleIcon } from 'phosphor-svelte';
 	import MultiBuffer from './MultiBuffer.svelte';
 	import * as DropdownMenu from './ui/dropdown-menu';
@@ -34,8 +33,8 @@
 	let { tabId }: { tabId: string } = $props();
 
 	const appState = useAppState();
-	const store = appState.plugins.getService<LspDiagnosticsStore>(LSP_DIAGNOSTICS_STORE_SERVICE_KEY);
-	const settingsReader = appState.plugins.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY);
+	const store = $derived(appState.plugins.getService<LspDiagnosticsStore>(LSP_DIAGNOSTICS_STORE_SERVICE_KEY));
+	const settingsReader = $derived(appState.plugins.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY));
 	// The session belongs to the tab, not to this view: switching away and back
 	// has to find the filter the reader chose.
 	const session = $derived(appState.workspace.getDiagnosticsSession(tabId));
@@ -45,11 +44,13 @@
 	// list below can be derived from. Setting changes also bump the revision so
 	// a change in the shared severity ceiling refreshes the display immediately.
 	let revision = $state(0);
-	onMount(() => {
-		const unsubStore = store?.subscribe(() => {
+	$effect(() => {
+		const currentStore = store;
+		const currentSettingsReader = settingsReader;
+		const unsubStore = currentStore?.subscribe(() => {
 			revision++;
 		});
-		const unsubSettings = settingsReader?.subscribe?.(() => {
+		const unsubSettings = currentSettingsReader?.subscribe?.(() => {
 			revision++;
 		});
 		return () => {
@@ -230,7 +231,7 @@
 	{@const section = sectionsByPath.get(filepath)}
 	{#if section}
 		<div class="flex flex-col gap-3 px-2 py-2">
-			{#each section.entries as entry (entry.uri + ':' + entry.line + ':' + entry.character)}
+			{#each section.entries as entry, index (entry.uri + ':' + entry.line + ':' + entry.character + ':' + index + ':' + entry.message + ':' + (entry.source ?? '') + ':' + (entry.code ?? ''))}
 				<div class="flex flex-col gap-1 border-l-2 pl-2 {SEVERITY_BORDERS[entry.severity]}">
 					<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
 						<span class="font-mono text-[10px] font-bold uppercase {SEVERITY_STYLES[entry.severity]}">
