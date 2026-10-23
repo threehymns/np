@@ -537,6 +537,15 @@ function getSeverityIcon(severity?: LspDiagnosticSeverity | number): string {
 	`;
 }
 
+function escapeHtml(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
 /**
  * Builds the HTML content for one diagnostic tooltip entry.
  */
@@ -617,7 +626,7 @@ export function formatDiagnosticEntry(diagnostic: LspDiagnostic): {
 	try {
 		parsedBody = sanitizeHtml(marked.parse(bodyMarkdown, { async: false }) as string);
 	} catch {
-		parsedBody = sanitizeHtml(bodyMarkdown);
+		parsedBody = escapeHtml(bodyMarkdown);
 	}
 
 	const htmlResult = html`

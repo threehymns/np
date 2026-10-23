@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
+import { marked } from 'marked';
 import {
 	formatTypeScriptType,
 	prettifyDiagnosticMessage,
@@ -196,6 +197,27 @@ describe('TypeScript diagnostic formatter', () => {
 			expect(entry.html).not.toContain('typescript.tv');
 			expect(entry.html).not.toContain('ts-error-translator');
 			expect(entry.html).toContain('stub: (2304) stub server: cannot find name');
+		});
+
+		it('escapes diagnostic text in catch fallback when markdown parsing fails', () => {
+			const spy = spyOn(marked, 'parse').mockImplementation(() => {
+				throw new Error('markdown parser error');
+			});
+			try {
+				const diag = {
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+					severity: 1 as const,
+					source: 'test',
+					message: 'Error with <button onclick="bad()">click me</button> & <span>text</span>'
+				};
+				const entry = formatDiagnosticEntry(diag);
+				expect(entry.html).toContain('&lt;button');
+				expect(entry.html).toContain('&lt;span&gt;text&lt;/span&gt;');
+				expect(entry.html).not.toContain('<button>');
+				expect(entry.html).not.toContain('<span>');
+			} finally {
+				spy.mockRestore();
+			}
 		});
 	});
 });
