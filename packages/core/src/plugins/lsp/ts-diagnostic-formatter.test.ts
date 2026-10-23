@@ -68,6 +68,12 @@ describe('TypeScript diagnostic formatter', () => {
 			const formatted = formatTypeScriptType(raw);
 			expect(formatted).toContain('... 4 more ...;');
 		});
+
+		it('terminates and handles unhandled characters like a lone backslash', () => {
+			const raw = '{ a: string; \\ }';
+			const formatted = formatTypeScriptType(raw);
+			expect(formatted).toContain('\\');
+		});
 	});
 
 	describe('prettifyDiagnosticMessage', () => {

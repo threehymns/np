@@ -141,6 +141,8 @@ export function formatTypeScriptType(typeStr: string, { maxLineLength = 50 }: { 
 		}
 		if (word) {
 			tokens.push({ type: 'word', value: word });
+		} else if (i < trimmed.length) {
+			tokens.push({ type: 'word', value: trimmed[i++] });
 		}
 	}
 
