@@ -295,7 +295,7 @@ describe('editor.languages layering (#286)', () => {
 
 		const resolved = resolver.resolve('editor', 'languages');
 		expect(resolved.value).toEqual({ Markdown: { words: 'disabled' } });
-		expect(resolved.provenance).toBe('workspace');
+		expect(resolved.provenance).toBe('user');
 	});
 
 	it('null maps in both scopes fall back to the {} default', () => {
