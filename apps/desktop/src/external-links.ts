@@ -47,6 +47,15 @@ export function isExternalUrl(rawUrl: string): boolean {
 	}
 }
 
+function parseOrigin(rawUrl: string): string | null {
+	try {
+		const parsed = new URL(rawUrl);
+		return parsed.origin !== 'null' ? parsed.origin : null;
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Configures an Electron WebContents instance so that all external links
  * (via target="_blank", window.open, or in-page navigation) open in the
@@ -59,6 +68,7 @@ export function attachExternalLinkHandlers(
 ): void {
 	const opener = options.openExternal;
 	const devUrl = options.devUrl;
+	const devOrigin = devUrl ? parseOrigin(devUrl) : null;
 
 	// Intercept target="_blank" and window.open calls
 	contents.setWindowOpenHandler(({ url }) => {
@@ -71,11 +81,15 @@ export function attachExternalLinkHandlers(
 
 	// Intercept standard in-page navigation (<a href="..." target="_self">)
 	contents.on('will-navigate', (event, url) => {
-		if (devUrl && url.startsWith(devUrl)) {
-			return;
+		if (devOrigin) {
+			const navOrigin = parseOrigin(url);
+			if (navOrigin !== null && navOrigin === devOrigin) {
+				return;
+			}
 		}
+
+		event.preventDefault();
 		if (isExternalUrl(url)) {
-			event.preventDefault();
 			void opener(url);
 		}
 	});

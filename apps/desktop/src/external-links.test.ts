@@ -93,5 +93,75 @@ describe('external-links', () => {
 			expect(prevented).toBe(false);
 			expect(openedUrls.length).toBe(1); // unchanged
 		});
+
+		it('cancels non-dev navigations including file URLs without calling opener', () => {
+			const listeners = new Map<string, Function>();
+			const mockWebContents: ExternalLinkWebContents = {
+				setWindowOpenHandler: () => {},
+				on: (event: string, listener: Function) => {
+					listeners.set(event, listener);
+				}
+			};
+
+			const openedUrls: string[] = [];
+			const mockOpener = mock(async (url: string) => {
+				openedUrls.push(url);
+			});
+
+			attachExternalLinkHandlers(mockWebContents, {
+				devUrl: 'http://localhost:5173',
+				openExternal: mockOpener
+			});
+
+			const willNavigate = listeners.get('will-navigate');
+			let prevented = false;
+			const event = {
+				preventDefault: () => {
+					prevented = true;
+				}
+			};
+
+			willNavigate!(event, 'file:///local/file.txt');
+			expect(prevented).toBe(true);
+			expect(openedUrls).toEqual([]);
+
+			prevented = false;
+			willNavigate!(event, 'not-a-valid-url');
+			expect(prevented).toBe(true);
+			expect(openedUrls).toEqual([]);
+		});
+
+		it('compares parsed origins instead of startsWith for devUrl', () => {
+			const listeners = new Map<string, Function>();
+			const mockWebContents: ExternalLinkWebContents = {
+				setWindowOpenHandler: () => {},
+				on: (event: string, listener: Function) => {
+					listeners.set(event, listener);
+				}
+			};
+
+			const openedUrls: string[] = [];
+			const mockOpener = mock(async (url: string) => {
+				openedUrls.push(url);
+			});
+
+			attachExternalLinkHandlers(mockWebContents, {
+				devUrl: 'http://localhost:5173',
+				openExternal: mockOpener
+			});
+
+			const willNavigate = listeners.get('will-navigate');
+			let prevented = false;
+			const event = {
+				preventDefault: () => {
+					prevented = true;
+				}
+			};
+
+			// Starts with devUrl string, but has a different port/origin
+			willNavigate!(event, 'http://localhost:51730/path');
+			expect(prevented).toBe(true);
+			expect(openedUrls).toEqual(['http://localhost:51730/path']);
+		});
 	});
 });
