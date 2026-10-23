@@ -3,6 +3,8 @@
 		LSP_DIAGNOSTICS_STORE_SERVICE_KEY,
 		SETTINGS_READER_SERVICE_KEY,
 		readDiagnosticDisplaySettings,
+		fromFileUri,
+		toURI,
 		type DiagnosticSeverity,
 		type DiagnosticsSeverityFilter,
 		type DiagnosticsSort,
@@ -66,7 +68,11 @@
 		revision;
 		const texts = new Map<string, string>();
 		for (const doc of appState.workspace.documents) {
-			if (doc.origin) texts.set(doc.origin.path, doc.content);
+			// Key by the same path form the view looks up with: the URI
+			// round-trip through the file-URI conversion, so a Windows origin
+			// path like `C:/x` (whose URI is `file:///C:/x`) matches the
+			// `fromFileUri` lookup in diagnosticsView and keeps its excerpts.
+			if (doc.origin) texts.set(fromFileUri(toURI(doc.origin)) ?? doc.origin.path, doc.content);
 		}
 		return texts;
 	});
@@ -206,7 +212,11 @@
 		<p class="text-xs font-bold">No diagnostics</p>
 		<p class="mt-0.5 text-[9px] opacity-75">
 			{#if store}
-				No language server has reported anything.
+				{#if store.uris().length > 0}
+					No diagnostics match this filter.
+				{:else}
+					No language server has reported anything.
+				{/if}
 			{:else}
 				No language server is running.
 			{/if}

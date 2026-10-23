@@ -110,6 +110,25 @@ describe("the diagnostics tab in the workspace", () => {
 		// The old layout was restored, so the reader's filter survives.
 		expect(ws.getDiagnosticsSession(tabId).filter).toBe("error");
 	});
+
+	it("drops the stale closed-tab entry when the tab is reopened", async () => {
+		const ws = makeWorkspace();
+		await ws.restoreSession();
+
+		ws.openDiagnosticsTab();
+		const tabId = ws.activeTabId;
+		await ws.closeTab(tabId);
+		// The closed tab left its record in the closed-tabs history.
+		expect(ws.closedTabs.some((entry) => entry.tab.id === tabId)).toBe(true);
+
+		// Reopening creates a replacement with the same id, so the stale
+		// entry must go: otherwise reopenClosedTab would stack a second tab
+		// with that id.
+		ws.openDiagnosticsTab();
+		expect(ws.closedTabs.some((entry) => entry.tab.id === tabId)).toBe(false);
+		expect(ws.reopenClosedTab()).toBe(false);
+		expect(ws.getAllTabs().filter((t) => t.id === tabId)).toHaveLength(1);
+	});
 });
 
 describe("opening the diagnostics tab", () => {
