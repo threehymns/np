@@ -725,20 +725,26 @@ function deepMergeObjects(base: any, override: any): any {
  *
  * The first-seen key casing is kept; values merge per the deep-merge rules
  * with the incoming scope winning per key.
+ *
+ * A null or otherwise invalid incoming value is treated as absent: the valid
+ * current map is preserved, and when the current map is invalid too the
+ * property's documented empty-map default ({}) applies. Null passes setting
+ * validation (it means "no value"), so it reaches this merge rather than
+ * being rejected there.
  */
+function isPlainMap(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function mergeLanguageOverrides(
 	current: Record<string, unknown>,
 	incoming: Record<string, unknown>
 ): Record<string, unknown> {
-	if (
-		Array.isArray(current) ||
-		Array.isArray(incoming) ||
-		typeof current !== 'object' ||
-		typeof incoming !== 'object' ||
-		!current ||
-		!incoming
-	) {
-		return incoming;
+	if (!isPlainMap(incoming)) {
+		return isPlainMap(current) ? { ...current } : {};
+	}
+	if (!isPlainMap(current)) {
+		return { ...incoming };
 	}
 	const result: Record<string, unknown> = { ...current };
 	const lowerToKey = new Map<string, string>();
