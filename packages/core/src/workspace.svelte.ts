@@ -783,6 +783,11 @@ export class Workspace {
 				this.activeTabId = id;
 			}
 		} else {
+			// A closed diagnostics tab leaves its record in the closed-tabs
+			// history. The replacement below reuses the same id, so the stale
+			// entry has to go: otherwise reopenClosedTab would later stack a
+			// second tab with that id.
+			this.closedTabs = this.closedTabs.filter((entry) => entry.tab.id !== id);
 			this.tabs.push({ id, type: 'diagnostics', title: DIAGNOSTICS_TAB_TITLE });
 			this.activeTabId = id;
 		}
