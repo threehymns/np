@@ -29,8 +29,7 @@ import type {
 	LspDiagnosticsStore,
 	LspRange
 } from './diagnostics';
-import { marked } from 'marked';
-import { sanitizeHtml } from '../../transformer/sanitize';
+import { formatDiagnosticEntry } from './ts-diagnostic-formatter';
 
 /**
  * Diagnostics as editor marks (spec #263, ticket #266, ADR 0016).
@@ -67,6 +66,8 @@ export interface LspDiagnosticSource {
 	 * everywhere else in the plugin.
 	 */
 	readonly read?: SettingsRead;
+	/** Optional syntax highlighter for code blocks within diagnostic tooltips. */
+	readonly highlightCodeBlocks?: (dom: HTMLElement) => Promise<void> | void;
 }
 
 /**
@@ -238,29 +239,25 @@ export function diagnosticHoverSource(
 		if (to < pos && to > start) start = to;
 	});
 
+	const source = view.state.facet(lspDiagnosticSourceFacet);
 	const message = found.map(diagnosticTitle).join('\n');
 	return {
 		pos: start,
 		end: Math.max(start, end),
 		create() {
-			return { dom: createDiagnosticTooltipElement(message) };
+			return { dom: createDiagnosticTooltipElement(found, source, message) };
 		}
 	};
 }
 
-function renderDiagnosticMarkdown(text: string): string {
-	try {
-		// Convert single-quoted identifiers (standard in TypeScript / compiler diagnostics like 'Foo')
-		// into inline code spans (`Foo`), taking care not to touch English contractions like doesn't / it's.
-		const withCodeSpans = text.replace(/(?<!\w)'([^'\n`]+)'(?!\w)/g, "`$1`");
-		return sanitizeHtml(marked.parse(withCodeSpans, { async: false }) as string);
-	} catch {
-		return text;
-	}
-}
+function createDiagnosticTooltipElement(
+	diagnostics: readonly LspDiagnostic[],
+	source: LspDiagnosticSource | null,
+	rawFallback: string
+): HTMLElement {
+	const entries = diagnostics.map(formatDiagnosticEntry);
+	const combinedHtml = entries.map((e) => e.html).join('<hr class="cm-lsp-diagnostic-divider">');
 
-function createDiagnosticTooltipElement(text: string): HTMLElement {
-	const parsed = renderDiagnosticMarkdown(text);
 	if (typeof document === 'undefined') {
 		const copyBtn = {
 			nodeType: 1,
@@ -269,26 +266,54 @@ function createDiagnosticTooltipElement(text: string): HTMLElement {
 				e?.preventDefault?.();
 				e?.stopPropagation?.();
 				if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-					void navigator.clipboard.writeText(text);
+					void navigator.clipboard.writeText(rawFallback);
 				}
 			}
 		};
+		const messageHtmlMatch = /<div class="cm-lsp-diagnostic-message">([\s\S]*?)<\/div>/.exec(combinedHtml);
+		const messageEl = {
+			nodeType: 1,
+			className: 'cm-lsp-diagnostic-message',
+			textContent: rawFallback,
+			innerHTML: (messageHtmlMatch ? messageHtmlMatch[1] : combinedHtml).replaceAll("&#39;", String.fromCharCode(39))
+		};
 		return {
 			nodeType: 1,
-			textContent: text,
+			textContent: rawFallback,
 			className: 'cm-lsp-hover cm-lsp-diagnostic-tooltip',
-			childNodes: [copyBtn],
-			querySelector: (selector: string) => (selector === '.cm-lsp-diagnostic-copy' ? copyBtn : null)
+			childNodes: [messageEl, copyBtn],
+			querySelector: (selector: string) => {
+				if (selector === '.cm-lsp-diagnostic-copy') return copyBtn;
+				if (selector === '.cm-lsp-diagnostic-message') return messageEl;
+				return null;
+			}
 		} as any;
 	}
+
 	const dom = document.createElement('div');
 	dom.className = 'cm-lsp-hover cm-lsp-diagnostic-tooltip';
-	const message = document.createElement('div');
-	message.className = 'cm-lsp-diagnostic-message';
-	message.innerHTML = parsed;
-	dom.appendChild(message);
+
+	const content = document.createElement('div');
+	content.className = 'cm-lsp-diagnostic-content';
+
+	diagnostics.forEach((diag, index) => {
+		const entry = formatDiagnosticEntry(diag);
+		const entryEl = document.createElement('div');
+		entryEl.className = 'cm-lsp-diagnostic-entry';
+		entryEl.innerHTML = entry.html;
+		content.appendChild(entryEl);
+
+		if (index < diagnostics.length - 1) {
+			const divider = document.createElement('hr');
+			divider.className = 'cm-lsp-diagnostic-divider';
+			content.appendChild(divider);
+		}
+	});
+
+	dom.appendChild(content);
+
 	if (!dom.textContent) {
-		dom.textContent = text;
+		dom.textContent = rawFallback;
 	}
 
 	const copyBtn = document.createElement('button');
@@ -302,7 +327,7 @@ function createDiagnosticTooltipElement(text: string): HTMLElement {
 		e.preventDefault();
 		e.stopPropagation();
 		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-			navigator.clipboard.writeText(text).then(() => {
+			navigator.clipboard.writeText(rawFallback).then(() => {
 				const copyIcon = copyBtn.querySelector?.('.copy-icon') as HTMLElement | null;
 				const checkIcon = copyBtn.querySelector?.('.check-icon') as HTMLElement | null;
 				if (copyIcon && checkIcon) {
@@ -319,8 +344,19 @@ function createDiagnosticTooltipElement(text: string): HTMLElement {
 		}
 	};
 	dom.appendChild(copyBtn);
+
 	if (!dom.querySelector) {
-		(dom as any).querySelector = (selector: string) => (selector === ".cm-lsp-diagnostic-copy" ? copyBtn : null);
+		(dom as any).querySelector = (selector: string) => {
+			if (selector === '.cm-lsp-diagnostic-copy') return copyBtn;
+			return content.querySelector?.(selector) ?? null;
+		};
+	}
+
+	if (source?.highlightCodeBlocks) {
+		const p = source.highlightCodeBlocks(dom);
+		if (p) {
+			(dom as any).highlightPromise = p;
+		}
 	}
 
 	return dom;
@@ -580,7 +616,87 @@ const diagnosticTheme = EditorView.baseTheme({
 		display: 'flex',
 		alignItems: 'flex-start',
 		justifyContent: 'space-between',
-		gap: '0.5rem'
+		gap: '0.5rem',
+		maxWidth: '44rem'
+	},
+	'.cm-lsp-diagnostic-content': {
+		flex: '1 1 auto',
+		minWidth: '0'
+	},
+	'.cm-lsp-diagnostic-entry': {
+		position: 'relative'
+	},
+	'.cm-lsp-diagnostic-header': {
+		display: 'flex',
+		alignItems: 'center',
+		gap: '0.45rem',
+		marginBottom: '0.4rem',
+		paddingBottom: '0.35rem',
+		borderBottom: '1px solid var(--border)',
+		fontSize: '0.75rem',
+		lineHeight: '1.2'
+	},
+	'.cm-lsp-diagnostic-badge': {
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '0.25rem',
+		fontWeight: '600',
+		fontSize: '0.75rem'
+	},
+	'.cm-lsp-severity-error': {
+		color: 'var(--destructive, #f87171)'
+	},
+	'.cm-lsp-severity-warning': {
+		color: 'var(--color-amber-500, #fbbf24)'
+	},
+	'.cm-lsp-severity-info': {
+		color: 'var(--color-blue-500, #60a5fa)'
+	},
+	'.cm-lsp-severity-hint': {
+		color: 'var(--muted-foreground)'
+	},
+	'.cm-lsp-diagnostic-icon': {
+		flexShrink: '0',
+		verticalAlign: 'middle'
+	},
+	'.cm-lsp-diagnostic-code': {
+		fontFamily: 'var(--font-mono)',
+		fontSize: '0.75rem',
+		color: 'var(--muted-foreground)',
+		opacity: '0.9'
+	},
+	'.cm-lsp-diagnostic-actions': {
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '0.35rem',
+		marginLeft: 'auto',
+		fontSize: '0.75rem'
+	},
+	'.cm-lsp-diagnostic-action-link': {
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '0.25rem',
+		color: 'var(--muted-foreground)',
+		textDecoration: 'none',
+		transition: 'color 0.15s ease, opacity 0.15s ease'
+	},
+	'.cm-lsp-diagnostic-action-link:hover': {
+		color: 'var(--foreground)',
+		textDecoration: 'underline'
+	},
+	'.cm-lsp-action-icon': {
+		flexShrink: '0',
+		opacity: '0.85'
+	},
+	'.cm-lsp-diagnostic-action-separator': {
+		color: 'var(--border)',
+		userSelect: 'none',
+		opacity: '0.7'
+	},
+	'.cm-lsp-diagnostic-divider': {
+		border: 'none',
+		borderTop: '1px solid var(--border)',
+		margin: '0.5rem 0'
 	},
 	'.cm-lsp-diagnostic-message': {
 		flex: '1 1 auto',
@@ -612,15 +728,43 @@ const diagnosticTheme = EditorView.baseTheme({
 		padding: '0.1rem 0.3rem'
 	},
 	'.cm-lsp-diagnostic-message pre': {
-		margin: '0.25rem 0',
-		padding: '0.25rem 0.5rem',
-		backgroundColor: 'color-mix(in srgb, var(--muted) 30%, transparent)',
+		margin: '0.375rem 0',
+		padding: '0.375rem 0.5rem',
+		backgroundColor: 'color-mix(in srgb, var(--muted) 35%, transparent)',
+		border: '1px solid var(--border)',
 		borderRadius: 'calc(var(--radius) - 4px)',
-		overflowX: 'auto'
+		overflowX: 'auto',
+		fontFamily: 'var(--font-mono)',
+		fontSize: '0.85em',
+		lineHeight: '1.4'
+	},
+	'.cm-lsp-diagnostic-message pre code': {
+		background: 'transparent',
+		padding: '0',
+		border: 'none',
+		fontFamily: 'inherit'
 	},
 	'.cm-lsp-diagnostic-message a': {
 		color: 'var(--primary)'
 	},
+	'.cm-lsp-diagnostic-prop-list': {
+		margin: '0.25rem 0',
+		paddingLeft: '1.25rem'
+	},
+	'.cm-lsp-diagnostic-prop-list li': {
+		marginTop: '0.15rem'
+	},
+	'.cm-lsp-diagnostic-indent': {
+		marginLeft: '0.75rem',
+		borderLeft: '2px solid color-mix(in srgb, var(--border) 80%, transparent)',
+		paddingLeft: '0.5rem',
+		marginTop: '0.25rem',
+		marginBottom: '0.25rem'
+	},
+	'.cm-lsp-diagnostic-indent-1': { marginLeft: '0.75rem' },
+	'.cm-lsp-diagnostic-indent-2': { marginLeft: '1.5rem' },
+	'.cm-lsp-diagnostic-indent-3': { marginLeft: '2.25rem' },
+	'.cm-lsp-diagnostic-indent-4': { marginLeft: '3rem' },
 	'.cm-tooltip-section:not(:first-child)': {
 		borderTop: '1px solid var(--border)',
 		marginTop: '0.5rem',

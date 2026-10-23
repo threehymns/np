@@ -102,7 +102,8 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 		currentUri: () => currentDocumentUri(host),
 		store: diagnostics,
 		read: (namespace, key) =>
-			host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY)?.read(namespace, key)
+			host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY)?.read(namespace, key),
+		highlightCodeBlocks: (dom) => getLspUIComponents(host)?.highlightCodeBlocks?.(dom)
 	};
 
 	host.registerEditorContributions(manifest.id, [
