@@ -41,6 +41,7 @@ export class SearchResultStream implements ISearchResultStream {
 
 	private abortController: AbortController;
 	private generator: AsyncGenerator<FileSearchResult, void, unknown>;
+	private cleanupExternalSignal?: () => void;
 
 	constructor(
 		generatorFactory: (
@@ -54,26 +55,42 @@ export class SearchResultStream implements ISearchResultStream {
 			if (externalSignal.aborted) {
 				this.abortController.abort();
 			} else {
-				externalSignal.addEventListener('abort', () => this.abortController.abort(), { once: true });
+				const onAbort = () => this.abortController.abort();
+				externalSignal.addEventListener('abort', onAbort, { once: true });
+				this.cleanupExternalSignal = () => {
+					externalSignal.removeEventListener('abort', onAbort);
+				};
 			}
 		}
 		this.generator = generatorFactory(this.abortController.signal, this.progress);
 	}
 
-	[Symbol.asyncIterator](): AsyncGenerator<FileSearchResult, void, unknown> {
-		return this.generator;
+	async *[Symbol.asyncIterator](): AsyncGenerator<FileSearchResult, void, unknown> {
+		try {
+			yield* this.generator;
+		} finally {
+			this.cleanupExternalSignal?.();
+			this.cleanupExternalSignal = undefined;
+		}
 	}
 
 	cancel(): void {
 		this.abortController.abort();
+		this.cleanupExternalSignal?.();
+		this.cleanupExternalSignal = undefined;
 	}
 
 	async all(): Promise<FileSearchResult[]> {
 		const results: FileSearchResult[] = [];
-		for await (const item of this) {
-			results.push(item);
+		try {
+			for await (const item of this) {
+				results.push(item);
+			}
+			return results;
+		} finally {
+			this.cleanupExternalSignal?.();
+			this.cleanupExternalSignal = undefined;
 		}
-		return results;
 	}
 }
 

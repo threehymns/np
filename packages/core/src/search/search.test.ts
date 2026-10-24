@@ -8,6 +8,7 @@ import type { TypeScriptSearchEngine } from "./engine";
 
 let WorktreeClass: typeof import("../project/worktree.svelte").Worktree;
 let TypeScriptSearchEngineClass: typeof import("./engine").TypeScriptSearchEngine;
+let SearchResultStreamClass: typeof import("./engine").SearchResultStream;
 let WorkspaceClass: typeof import("../workspace.svelte").Workspace;
 let ProjectClass: typeof import("../project/project.svelte").Project;
 let SearchTabSessionClass: typeof import("./session.svelte").SearchTabSession;
@@ -27,6 +28,7 @@ beforeAll(async () => {
 
 	const searchMod = await import("./engine");
 	TypeScriptSearchEngineClass = searchMod.TypeScriptSearchEngine;
+	SearchResultStreamClass = searchMod.SearchResultStream;
 	buildSearchRegexFn = searchMod.buildSearchRegex;
 	findMatchesInContentFn = searchMod.findMatchesInContent;
 	globToRegexFn = searchMod.globToRegex;
@@ -388,6 +390,123 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		}
 
 		expect(results.length).toBe(1);
+	});
+
+	it("cleans up external AbortSignal listener when stream is consumed with all()", async () => {
+		const files: Record<string, string> = {
+			"/test-project/file1.txt": "search text",
+			"/test-project/file2.txt": "search text"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const ac = new AbortController();
+		let listenerCount = 0;
+		const origAdd = ac.signal.addEventListener.bind(ac.signal);
+		const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+		ac.signal.addEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount++;
+			return origAdd(type, listener, options);
+		};
+		ac.signal.removeEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount--;
+			return origRemove(type, listener, options);
+		};
+
+		const stream = engine.search({ pattern: "search" }, { signal: ac.signal });
+		expect(listenerCount).toBe(1);
+
+		const results = await stream.all();
+		expect(results.length).toBe(2);
+		expect(listenerCount).toBe(0);
+	});
+
+	it("cleans up external AbortSignal listener when stream is consumed with for-await", async () => {
+		const files: Record<string, string> = {
+			"/test-project/file1.txt": "search text"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const ac = new AbortController();
+		let listenerCount = 0;
+		const origAdd = ac.signal.addEventListener.bind(ac.signal);
+		const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+		ac.signal.addEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount++;
+			return origAdd(type, listener, options);
+		};
+		ac.signal.removeEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount--;
+			return origRemove(type, listener, options);
+		};
+
+		const stream = engine.search({ pattern: "search" }, { signal: ac.signal });
+		expect(listenerCount).toBe(1);
+
+		for await (const _item of stream) {
+			// consuming stream
+		}
+		expect(listenerCount).toBe(0);
+	});
+
+	it("cleans up external AbortSignal listener when stream is cancelled", async () => {
+		const files: Record<string, string> = {
+			"/test-project/file1.txt": "search text"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+		const ac = new AbortController();
+		let listenerCount = 0;
+		const origAdd = ac.signal.addEventListener.bind(ac.signal);
+		const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+		ac.signal.addEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount++;
+			return origAdd(type, listener, options);
+		};
+		ac.signal.removeEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount--;
+			return origRemove(type, listener, options);
+		};
+
+		const stream = engine.search({ pattern: "search" }, { signal: ac.signal });
+		expect(listenerCount).toBe(1);
+
+		stream.cancel();
+		expect(listenerCount).toBe(0);
+	});
+
+	it("cleans up external AbortSignal listener when SearchResultStream generator throws", async () => {
+		const ac = new AbortController();
+		let listenerCount = 0;
+		const origAdd = ac.signal.addEventListener.bind(ac.signal);
+		const origRemove = ac.signal.removeEventListener.bind(ac.signal);
+		ac.signal.addEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount++;
+			return origAdd(type, listener, options);
+		};
+		ac.signal.removeEventListener = (type: string, listener: any, options?: any) => {
+			if (type === "abort") listenerCount--;
+			return origRemove(type, listener, options);
+		};
+
+		const stream = new SearchResultStreamClass(
+			async function* () {
+				throw new Error("Generator failure");
+			},
+			ac.signal
+		);
+		expect(listenerCount).toBe(1);
+
+		await expect(stream.all()).rejects.toThrow("Generator failure");
+		expect(listenerCount).toBe(0);
 	});
 });
 
