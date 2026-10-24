@@ -2065,3 +2065,97 @@ describe('the workspace pull loop (#308)', () => {
 		]);
 	});
 });
+
+describe("the diagnostic pull on open (#352)", () => {
+	it("Document open requests textDocument/diagnostic from a server advertising diagnosticProvider", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const wireLog = join(root, "wire.log");
+		const { runtime, diagnostics } = await startRuntime({
+			script: ["--diagnostic-pull", "--log-file", wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunning(runtime, 1);
+
+		// The stub pushes nothing, so the only finding the file can hold is
+		// the one the pull answered with. No edit happened: the open is the
+		// whole of the trigger.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pulled diagnostic" });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(["pulled diagnostic"]);
+
+		// And the server was asked about that file, and about nothing else.
+		const asked = received({ wireLog })
+			.filter((line) => line.includes("textDocument/diagnostic"))
+			.map((line) => JSON.parse(line).params.textDocument.uri);
+		expect(asked).toEqual([uri]);
+	});
+
+	it("Servers without diagnosticProvider are never pulled", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const wireLog = join(root, "wire.log");
+		const { runtime, diagnostics } = await startRuntime({
+			script: ["--diagnostics", "--log-file", wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunning(runtime, 1);
+
+		// The server pushes its findings for the open, and those are the ones
+		// the file shows: a server that advertises no `diagnosticProvider` is
+		// never asked a question it cannot answer.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pushed diagnostic" });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual([
+			"stub server: cannot find name",
+			"stub server: unused variable"
+		]);
+
+		// Long enough for the debounce to have elapsed and the pull to have
+		// gone out, had one been armed. An absence cannot be waited for
+		// exactly, so this is the window the assertion is made in.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join("\n");
+		expect(wire).toContain("textDocument/didOpen");
+		expect(wire).not.toContain("textDocument/diagnostic");
+	});
+
+	it("Reopening documents after server restart requests diagnostics for open documents", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ["--diagnostic-pull"] });
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pulled diagnostic" });
+
+		// The server restarts. What the old process knew went with it, so the
+		// file is left without findings.
+		const server = runtime.getStatusRows()[0].server;
+		expect(await runtime.restartServer(server)).toBe(true);
+		expect(diagnostics.read(uri)).toHaveLength(0);
+
+		// The document was re-opened against the new process, so it is asked
+		// again: a restarted server does not leave the file with no findings.
+		await waitFor(() => diagnostics.read(uri).length > 0, {
+			label: "the diagnostic after the restart"
+		});
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(["pulled diagnostic"]);
+	});
+});

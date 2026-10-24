@@ -885,6 +885,7 @@ export class LspRuntime
 				text: document.content
 			}
 		});
+		this.pullAfterEdit(uri, entry.server);
 	}
 
 	/**
@@ -1219,6 +1220,7 @@ export class LspRuntime
 					text: document.content
 				}
 			});
+			this.pullAfterEdit(uri, server);
 		}
 	}
 

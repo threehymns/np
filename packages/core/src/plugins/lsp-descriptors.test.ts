@@ -408,3 +408,153 @@ describe('Protocol language ids (#265)', () => {
 		expect(lspLanguageId(descriptor, null)).toBe('plaintext');
 	});
 });
+
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, basename } from "node:path";
+import { LspRuntime } from "./lsp/lifecycle";
+import { LspLogStore } from "./lsp/logs";
+import { LspDiagnosticsStore } from "./lsp/diagnostics";
+import { createRealProcessPlatform, waitFor } from "../../../../tests/fixtures/lsp-platform";
+
+import { afterEach } from "bun:test";
+const pullCleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+	while (pullCleanups.length > 0) await pullCleanups.pop()!();
+});
+
+function makeProject(files: Record<string, string>): string {
+	const root = mkdtempSync(join(tmpdir(), "lsp-project-"));
+	pullCleanups.push(() => rmSync(root, { recursive: true, force: true }));
+	for (const [relative, fileContent] of Object.entries(files)) {
+		const filePath = join(root, relative);
+		mkdirSync(dirname(filePath), { recursive: true });
+		writeFileSync(filePath, fileContent);
+	}
+	return root;
+}
+
+function receivedWire(wireLog: string): string[] {
+	try {
+		return readFileSync(wireLog, "utf-8").split("\n").filter((line) => line.length > 0);
+	} catch {
+		return [];
+	}
+}
+
+async function startPullRuntime(options: { script?: readonly string[] }) {
+	const host = new PluginHost({ platform: "desktop" });
+	host.register({
+		manifest: { id: "ts", name: "TS", version: 0 },
+		setup: (h: any) => {
+			h.registerLspDescriptor("ts", {
+				id: "ts",
+				command: "vtsls",
+				args: ["--stdio"],
+				rootMarkers: ["tsconfig.json"],
+				languages: ["typescript"]
+			});
+		}
+	});
+	await host.activate("ts");
+	const platform = createRealProcessPlatform(options.script ? { script: options.script } : {});
+	const logs = new LspLogStore();
+	const diagnostics = new LspDiagnosticsStore();
+	const runtime = new LspRuntime({
+		host,
+		pluginId: "ts",
+		logs,
+		platform,
+		diagnostics,
+		readSettings: () => undefined,
+		subscribeSettings: () => () => {}
+	});
+	pullCleanups.push(() => runtime.dispose());
+	return { runtime, diagnostics, platform };
+}
+
+async function waitForRunningServers(runtime: LspRuntime, count: number): Promise<void> {
+	await waitFor(() => runtime.getStatusRows().filter((s) => s.state === "running").length === count, {
+		label: `${count} running server(s)`
+	});
+}
+
+describe("LSP diagnostic pull on open and restart (#352)", () => {
+	it("Document open requests textDocument/diagnostic from a server advertising diagnosticProvider", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const wireLog = join(root, "wire.log");
+		const { runtime, diagnostics } = await startPullRuntime({
+			script: ["--diagnostic-pull", "--log-file", wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunningServers(runtime, 1);
+
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pulled diagnostic" });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(["pulled diagnostic"]);
+
+		const asked = receivedWire(wireLog)
+			.filter((line) => line.includes("textDocument/diagnostic"))
+			.map((line) => JSON.parse(line).params.textDocument.uri);
+		expect(asked).toEqual([uri]);
+	});
+
+	it("Servers without diagnosticProvider are never pulled", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const wireLog = join(root, "wire.log");
+		const { runtime, diagnostics } = await startPullRuntime({
+			script: ["--diagnostics", "--log-file", wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunningServers(runtime, 1);
+
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pushed diagnostic" });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual([
+			"stub server: cannot find name",
+			"stub server: unused variable"
+		]);
+
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = receivedWire(wireLog).join("\n");
+		expect(wire).toContain("textDocument/didOpen");
+		expect(wire).not.toContain("textDocument/diagnostic");
+	});
+
+	it("Reopening documents after server restart requests diagnostics for open documents", async () => {
+		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+		const uri = `file://${join(root, "src/a.ts")}`;
+		const { runtime, diagnostics } = await startPullRuntime({ script: ["--diagnostic-pull"] });
+
+		await runtime.openDocument({
+			path: join(root, "src/a.ts"),
+			fileName: "a.ts",
+			content: "export const a = 1;\n",
+			language: "typescript"
+		});
+		await waitForRunningServers(runtime, 1);
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: "the pulled diagnostic" });
+
+		const server = runtime.getStatusRows()[0].server;
+		expect(await runtime.restartServer(server)).toBe(true);
+		expect(diagnostics.read(uri)).toHaveLength(0);
+
+		await waitFor(() => diagnostics.read(uri).length > 0, {
+			label: "the diagnostic after the restart"
+		});
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(["pulled diagnostic"]);
+	});
+});
