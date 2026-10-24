@@ -497,6 +497,52 @@ describe('Document pull coordinator and merged store on Effect (#307)', () => {
 		expect(calls[1].previousResultId).toBeUndefined();
 	});
 
+	it('forgetUri drops only that document\'s result-id cache and interrupts only its pending pull', async () => {
+		const calls: RecordedCall[] = [];
+		const store = new LspDiagnosticsStore();
+		const otherUri = 'file:///repo/src/b.ts';
+		const coordinator = new DiagnosticPullCoordinator({
+			store,
+			request: (srv, u, previousResultId) => {
+				calls.push({ server: srv, uri: u, previousResultId });
+				return Effect.succeed({ kind: 'full', resultId: 'r1', items: [] });
+			}
+		});
+
+		await runTestClock(
+			Effect.scoped(
+				Effect.gen(function* () {
+					// Both documents pull once and cache their result ids.
+					yield* coordinator.armPull(uri, server);
+					yield* coordinator.armPull(otherUri, server);
+					yield* TestClock.adjust('50 millis');
+					expect(calls).toHaveLength(2);
+
+					// A pull for uri still waiting out the debounce never
+					// requests after the forget; the other document is untouched.
+					yield* coordinator.armPull(uri, server);
+					yield* coordinator.forgetUri(uri);
+					yield* TestClock.adjust('1 second');
+					expect(calls).toHaveLength(2);
+
+					// The next pull for uri starts clean, while the other
+					// document still sends its cached id.
+					yield* coordinator.armPull(uri, server);
+					yield* coordinator.armPull(otherUri, server);
+					yield* TestClock.adjust('50 millis');
+				})
+			)
+		);
+
+		expect(calls).toHaveLength(4);
+		const uriCalls = calls.filter((c) => c.uri === uri);
+		const otherCalls = calls.filter((c) => c.uri === otherUri);
+		expect(uriCalls).toHaveLength(2);
+		expect(uriCalls[1].previousResultId).toBeUndefined();
+		expect(otherCalls).toHaveLength(2);
+		expect(otherCalls[1].previousResultId).toBe('r1');
+	});
+
 	it('backoff then stop: failures retry per the backoff schedule, and interrupting mid-backoff issues zero further requests', async () => {
 		const calls: RecordedCall[] = [];
 		const store = new LspDiagnosticsStore();
