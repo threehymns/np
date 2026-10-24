@@ -266,6 +266,12 @@ export class IconRegistry implements IconRegistryInterface {
 			this.productIconTransforms = keptProductTransforms;
 			this.rebuild();
 		}
+		if (!this.fileThemes[this.activeFileThemeId]) {
+			this.activeFileThemeId = 'phosphor';
+		}
+		if (!this.productThemes[this.activeProductThemeId]) {
+			this.activeProductThemeId = 'phosphor';
+		}
 	}
 
 	setOwnerOrdering(order: (ownerIds: readonly string[]) => string[]): void {
@@ -287,6 +293,12 @@ export class IconRegistry implements IconRegistryInterface {
 	rebuild(): void {
 		this.fileThemes = this.replayFileTransforms();
 		this.productThemes = this.replayProductTransforms();
+		if (!this.fileThemes[this.activeFileThemeId]) {
+			this.activeFileThemeId = 'phosphor';
+		}
+		if (!this.productThemes[this.activeProductThemeId]) {
+			this.activeProductThemeId = 'phosphor';
+		}
 		this.applyAppearance();
 	}
 

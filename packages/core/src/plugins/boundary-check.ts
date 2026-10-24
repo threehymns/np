@@ -216,9 +216,9 @@ export function checkManifestFile(filePath: string): ManifestBoundaryResult {
  */
 export function runtimeImportSpecifiers(source: string): string[] {
 	const found: string[] = [];
-	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
+	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s*['"]([^'"]+)['"]/gm;
 	const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
-	const reExportRe = /^\s*export\s+(?!type\b)[\s\S]*?from\s+['"]([^'"]+)['"]/gm;
+	const reExportRe = /^\s*export\s+(?!type\b)[\s\S]*?from\s*['"]([^'"]+)['"]/gm;
 	const dynamicRe = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 	const requireRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 	for (const re of [staticRe, sideEffectRe, reExportRe, dynamicRe, requireRe]) {
