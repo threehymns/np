@@ -512,6 +512,7 @@
 	onblur={() => (altPressed = false)}
 />
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions (CodeMirror parent container delegates focus and key handling for clipboard sync) -->
 <div
 	bind:this={editorEl}
 	role="region"
