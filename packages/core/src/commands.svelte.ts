@@ -841,6 +841,17 @@ export function registerCoreCommands(appState: AppState) {
 
 	// edit.complete is the historical id; edit.startCompletion is its alias.
 	// One shared definition so the two cannot drift apart.
+	//
+	// Completion commands are focus-scoped, like their default keymap
+	// bindings: the `editor` context stays true for the whole active tab
+	// even while focus sits on a modal button, and a context-less user
+	// binding has no context filter at all. Without the focus check in
+	// isEnabled, a user-bound Enter could start or accept a completion in
+	// an unfocused editor and swallow the focused control's Enter. The
+	// false result from acceptCompletion still falls through, so Enter
+	// reaches the focused control when nothing is accepted.
+	const completionEnabled = () =>
+		!!appState.activeEditorView && appState.keymaps.context['editorFocused'] === true;
 	const triggerCompletion: Omit<Command, 'id'> = {
 		label: 'Trigger Completion',
 		category: 'Edit',
@@ -850,7 +861,7 @@ export function registerCoreCommands(appState: AppState) {
 			}
 			return false;
 		},
-		isEnabled: () => !!appState.activeEditorView
+		isEnabled: completionEnabled
 	};
 
 	coreCommands.push({ ...triggerCompletion, id: 'edit.complete' });
@@ -866,7 +877,7 @@ export function registerCoreCommands(appState: AppState) {
 			}
 			return false;
 		},
-		isEnabled: () => !!appState.activeEditorView
+		isEnabled: completionEnabled
 	});
 
 	coreCommands.push({
