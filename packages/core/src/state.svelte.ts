@@ -1,4 +1,3 @@
-import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';

@@ -19,6 +19,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 			undefined,
 			{ timeout: 15_000 }
 		);
+		await page.waitForFunction(() => Boolean((window as any).git));
 	});
 
 	test('CodeMirror diff viewer instances should mount and load when opening diff tab', async ({ page }) => {

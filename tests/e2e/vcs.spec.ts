@@ -24,6 +24,7 @@ test.describe('VCS and Branch Switching Integration Tests', () => {
 		// exposes a repository while its owner plugin is active. Wait for the
 		// owner before the spec publishes a repository on the plugin's behalf.
 		await page.waitForFunction(() => (window as any).appState?.plugins?.isPluginActive('git'));
+		await page.waitForFunction(() => Boolean((window as any).git));
 
 		// Install mock filesystem classes and the repo setup helper inside the browser context
 		await page.evaluate(installMockFS);

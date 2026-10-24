@@ -1,16 +1,19 @@
 <script lang="ts">
 	import { setContext } from "svelte";
+	import { dev } from '$app/environment';
 	import { AppState, KeymapStorageProvider, ManifestIconProvider, Repository, type ExportService } from "@np/core";
 	import { iconRegistry } from "@np/ui";
 	import { MultiSchemeStorage } from "@np/core/storage";
-	import { BrowserStorage, IsomorphicGitAdapter, IndexedDBSessionPersistence, git } from "@np/adapters-browser";
+	import { BrowserStorage } from "@np/adapters-browser/storage";
+	import { IndexedDBSessionPersistence } from "@np/adapters-browser/persistence";
+	import { LazyIsomorphicGitAdapter } from "@np/adapters-browser/lazy";
 	import AppShell from "@np/ui/AppShell.svelte";
 	import "./layout.css";
 
 	const storage = new MultiSchemeStorage();
 	storage.registerProvider('browser', new BrowserStorage());
 	const persistence = new IndexedDBSessionPersistence();
-	const vcsFactory = (origin: any) => new IsomorphicGitAdapter(origin);
+	const vcsFactory = (origin: any) => new LazyIsomorphicGitAdapter(origin);
 
 	const exportService: ExportService = {
 		exportFile: async ({ content, suggestedName, mimeType, types }) => {
@@ -55,7 +58,11 @@
 		(window as any).appState = appState;
 		(window as any).ManifestIconProvider = ManifestIconProvider;
 		(window as any).Repository = Repository;
-		(window as any).git = git;
+		if (dev) {
+			void import("@np/adapters-browser/git").then(({ git }) => {
+				(window as any).git = git;
+			});
+		}
 	}
 
 	let { children } = $props();

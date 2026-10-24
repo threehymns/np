@@ -22,6 +22,7 @@ test.describe('DiffViewer reload synchronization', () => {
 		// waits use Playwright's default timeout.
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 		await page.waitForFunction(() => !!(window as any).appState?.commands?.get('git.openDiff'));
+		await page.waitForFunction(() => Boolean((window as any).git));
 	});
 
 	test('waits for the fresh diff data before the pane is read', async ({ page }) => {
