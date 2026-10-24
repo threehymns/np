@@ -123,12 +123,20 @@ describe('adding a second server is one descriptor and configuration (#281)', ()
 			.sort();
 		expect(missingFromFixture).toEqual([]);
 
-		const vtslsEntry = findBundledEntry(LSP_DESCRIPTORS[0].bundled!, import.meta.dir);
-		const vtslsClosure = runtimeClosure(vtslsEntry);
-		const missingFromVtsls = [...vtslsClosure.packages]
-			.filter((name) => !asarCovers(name, derivedPatterns))
-			.sort();
-		expect(missingFromVtsls).toEqual([]);
+		// Packaging rules must cover every bundled descriptor, not just whichever
+		// happens to be first: a second server is configuration, so the order of
+		// LSP_DESCRIPTORS must not matter to this test.
+		for (const descriptor of LSP_DESCRIPTORS) {
+			if (!descriptor.bundled) continue;
+			const bundledEntry = findBundledEntry(descriptor.bundled, import.meta.dir);
+			const closure = runtimeClosure(bundledEntry);
+			const missing = [...closure.packages]
+				.filter((name) => !asarCovers(name, derivedPatterns))
+				.sort();
+			// The id is part of the expectation so a coverage gap names the server
+			// it belongs to.
+			expect({ id: descriptor.id, missing }).toEqual({ id: descriptor.id, missing: [] });
+		}
 
 		// 2. The typescript descriptor is present, and the registry length is not
 		// asserted: a second bundled server is configuration, so adding one must
