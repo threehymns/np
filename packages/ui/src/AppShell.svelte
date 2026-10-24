@@ -3,8 +3,18 @@
 
 	const appState = useAppState();
 
-	import * as Menubar from "./components/ui/menubar/index";
+	import AppMenu from "./components/AppMenu.svelte";
+	import ProjectSelectButton from "./components/ProjectSelectButton.svelte";
+	import BranchSelectButton from "./components/BranchSelectButton.svelte";
+	let menuOpen = $state(false);
+	let picker = $state<'project' | 'branch' | null>(null);
+
+	function setMenuOpen(open: boolean) {
+		menuOpen = open;
+		if (open) picker = null;
+	}
 	import * as AlertDialog from "./components/ui/alert-dialog/index";
+	import { Checkbox } from "./components/ui/checkbox";
 	import favicon from "./assets/favicon.png";
 	import { SidebarIcon, FolderOpenIcon } from "phosphor-svelte";
 	import { Button } from "./components/ui/button";
@@ -22,9 +32,10 @@
 	let CommandPalette = $state<typeof CommandPaletteComponent | null>(null);
 	let WhichKey = $state<typeof WhichKeyComponent | null>(null);
 
-	let { children } = $props<{ children: Snippet }>();
+	let { children }: { children: Snippet; } = $props();
 
 	let pendingDoc = $derived(appState.documents.find(d => d.id === appState.workspace.pendingCloseId));
+	let applyToRemaining = $state(false);
 
 	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof SidebarIcon {
 		return (icon ?? SidebarIcon) as unknown as typeof SidebarIcon;
@@ -134,120 +145,21 @@
 <ModeWatcher />
 
 <div class="flex flex-col h-screen w-screen bg-background text-foreground transition-colors duration-300 overflow-hidden">
-	<div class="relative z-50 shrink-0 bg-background flex items-center justify-between px-2 pr-4" class:border-b={appState.documents.length > 1}>
-		<Menubar.Root class="border-none bg-transparent p-0">
-			{#each ['File', 'Edit', 'Format', 'View'] as category (category)}
-				<Menubar.Menu>
-					<Menubar.Trigger>{category}</Menubar.Trigger>
-					<Menubar.Content>
-						{#if category === 'File'}
-							{#each appState.commands.getByCategory('File').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
-								<Menubar.Item
-									onclick={() => appState.commands.execute(command.id)}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-							<Menubar.Separator />
-							<Menubar.Sub>
-								<Menubar.SubTrigger>Export</Menubar.SubTrigger>
-								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('Export').filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
-										<Menubar.Item
-											onclick={() => appState.commands.execute(command.id)}
-											disabled={command.isEnabled && !command.isEnabled()}
-										>
-											{command.label}
-											{#if appState.keymaps.getShortcutForCommand(command.id)}
-												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-											{/if}
-										</Menubar.Item>
-									{/each}
-								</Menubar.SubContent>
-							</Menubar.Sub>
-						{:else if category === 'Format'}
-							{#each appState.commands.getByCategory('Format').filter(c => c.id !== 'format.toggleWordWrap' && (!c.isVisible || c.isVisible())) as command (command.id)}
-								<Menubar.Item
-									onclick={() => appState.commands.execute(command.id)}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-							<Menubar.Separator />
-							<Menubar.CheckboxItem bind:checked={appState.prefs.wordWrap}>
-								Word Wrap
-								{#if appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('format.toggleWordWrap')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-						{:else if category === 'View'}
-							<Menubar.Sub>
-								<Menubar.SubTrigger>Zoom</Menubar.SubTrigger>
-								<Menubar.SubContent>
-									{#each appState.commands.getByCategory('View').filter(c => c.id.startsWith('view.zoom') && (!c.isVisible || c.isVisible())) as command (command.id)}
-										<Menubar.Item onclick={() => appState.commands.execute(command.id)}>
-											{command.label}
-											{#if appState.keymaps.getShortcutForCommand(command.id)}
-												<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-											{/if}
-										</Menubar.Item>
-									{/each}
-								</Menubar.SubContent>
-							</Menubar.Sub>
-							<Menubar.CheckboxItem bind:checked={appState.prefs.statusBar}>
-								Status Bar
-								{#if appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleStatusBar')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-							<Menubar.CheckboxItem bind:checked={appState.prefs.sidebarVisible}>
-								Sidebar
-								{#if appState.keymaps.getShortcutForCommand('view.toggleSidebar')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('view.toggleSidebar')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.CheckboxItem>
-						{:else}
-							{#each appState.commands.getByCategory(category).filter(c => !c.isVisible || c.isVisible()) as command (command.id)}
-								<Menubar.Item
-									onclick={() => appState.commands.execute(command.id)}
-									disabled={command.isEnabled && !command.isEnabled()}
-								>
-									{command.label}
-									{#if appState.keymaps.getShortcutForCommand(command.id)}
-										<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand(command.id)}</Menubar.Shortcut>
-									{/if}
-								</Menubar.Item>
-							{/each}
-						{/if}
-
-						{#if category === 'Edit'}
-							<Menubar.Separator />
-							<Menubar.Item onclick={() => appState.settingsOpen = true}>
-								Settings...
-								{#if appState.keymaps.getShortcutForCommand('settings.open')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.open')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.Item>
-							<Menubar.Item onclick={() => appState.commands.execute('settings.openConfigJson')}>
-								Open Settings (JSON)
-								{#if appState.keymaps.getShortcutForCommand('settings.openConfigJson')}
-									<Menubar.Shortcut>{appState.keymaps.getShortcutForCommand('settings.openConfigJson')}</Menubar.Shortcut>
-								{/if}
-							</Menubar.Item>
-						{/if}
-					</Menubar.Content>
-				</Menubar.Menu>
-			{/each}
-		</Menubar.Root>
-	</div>
+	<header aria-label="Workspace" class="relative shrink-0 bg-background flex items-center gap-1 px-2 pr-4" class:border-b={appState.documents.length > 1}>
+		<AppMenu size="xs" bind:open={() => menuOpen, setMenuOpen} />
+		<div class={menuOpen ? 'hidden' : 'flex flex-row w-full items-center justify-start py-1'}>
+			<ProjectSelectButton size="xs" bind:open={() => picker === 'project', (open) => picker = open ? 'project' : picker === 'project' ? null : picker} />
+			{#key appState.workspace.project.repository}
+				<BranchSelectButton size="xs" bind:open={() => picker === 'branch', (open) => picker = open ? 'branch' : picker === 'branch' ? null : picker} />
+			{/key}
+		</div>
+	</header>
+	{#if appState.workspace.projectError}
+		<div role="alert" class="flex items-center justify-between gap-2 bg-destructive/10 px-3 py-1 text-xs text-destructive">
+			<span>{appState.workspace.projectError}</span>
+			<button type="button" onclick={() => appState.workspace.projectError = null}>Dismiss</button>
+		</div>
+	{/if}
 
 	<main class="flex-1 min-h-0 relative z-0 overflow-hidden">
 		{@render children()}
@@ -381,7 +293,12 @@
 	<SettingsModal bind:open={appState.settingsOpen} />
 {/if}
 
-<AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => { if (!open) appState.workspace.pendingCloseId = null; }}>
+<AlertDialog.Root open={!!appState.workspace.pendingCloseId} onOpenChange={(open) => {
+	if (!open) {
+		appState.workspace.cancelPendingClose();
+		applyToRemaining = false;
+	}
+}}>
 	<AlertDialog.Content>
 		<AlertDialog.Header>
 			<AlertDialog.Title>Do you want to save changes to {pendingDoc?.fileName}?</AlertDialog.Title>
@@ -389,12 +306,20 @@
 				Your changes will be lost if you don't save them.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
+		{#if appState.workspace.otherPendingCloseCount > 0}
+			<div class="flex items-center space-x-2 py-2">
+				<Checkbox id="apply-to-remaining-tabs" bind:checked={applyToRemaining} />
+				<label for="apply-to-remaining-tabs" class="text-sm font-medium leading-none cursor-pointer select-none">
+					Also apply for {appState.workspace.otherPendingCloseCount} other {appState.workspace.otherPendingCloseCount === 1 ? 'tab' : 'tabs'}
+				</label>
+			</div>
+		{/if}
 		<AlertDialog.Footer>
-			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, false)} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+			<AlertDialog.Cancel onclick={() => { appState.workspace.cancelPendingClose(); applyToRemaining = false; }}>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={() => { const apply = applyToRemaining; applyToRemaining = false; appState.finalizeClose(appState.workspace.pendingCloseId!, false, undefined, apply); }} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">
 				Don't Save
 			</AlertDialog.Action>
-			<AlertDialog.Action onclick={() => appState.finalizeClose(appState.workspace.pendingCloseId!, true)}>
+			<AlertDialog.Action onclick={() => { const apply = applyToRemaining; applyToRemaining = false; appState.finalizeClose(appState.workspace.pendingCloseId!, true, undefined, apply); }}>
 				Save
 			</AlertDialog.Action>
 		</AlertDialog.Footer>

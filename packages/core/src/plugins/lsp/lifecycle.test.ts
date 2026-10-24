@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
-import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, lspServerKey, parseTriggerCharacters } from './lifecycle';
+import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, formatMemoryBytes, lspServerKey, parseServerVersion, parseTriggerCharacters } from './lifecycle';
 import { LspDiagnosticsStore } from './diagnostics';
 import {
 	LSP_PLATFORM_SERVICE_KEY,
@@ -35,6 +35,18 @@ import {
  */
 
 const cleanups: Array<() => Promise<void> | void> = [];
+
+/**
+ * A memory reading that is the same on every machine.
+ *
+ * The platform's real reader is `/proc`, which only Linux has: anywhere else
+ * it answers nothing and the row's figure stays a dash for ever. A test that
+ * pins the figure the runtime publishes needs a reader that answers the same
+ * everywhere, so this one stands in for it — and the reading is a real one
+ * the runtime has to carry, not a dash it can pass through.
+ */
+const FIXED_MEMORY_BYTES = 412 * 1024 * 1024;
+const fixedMemory = async (): Promise<number> => FIXED_MEMORY_BYTES;
 
 afterEach(async () => {
 	while (cleanups.length > 0) await cleanups.pop()!();
@@ -116,14 +128,19 @@ function settingsReader(store: Record<string, Record<string, unknown>>): {
 
 async function startPlugin(
 	script: readonly string[] = [],
-	settings: Record<string, Record<string, unknown>> = {}
+	settings: Record<string, Record<string, unknown>> = {},
+	/** Replaces the platform's memory reader, for a test that pins the figure. */
+	processMemory?: (pid: number) => Promise<number | null>
 ): Promise<Harness> {
 	const host = new PluginHost({ platform: 'desktop' });
 	const wireLog = join(makeProject({}), 'wire.log');
 	// Always on: the stub is the only witness to what the client sent, and a
 	// suite where some tests have one and some do not is a suite where the
 	// difference is invisible.
-	const platform = createRealProcessPlatform({ script: [...script, '--log-file', wireLog] });
+	const platform = createRealProcessPlatform({
+		script: [...script, '--log-file', wireLog],
+		...(processMemory ? { processMemory } : {})
+	});
 	host.provideService(LSP_PLATFORM_SERVICE_KEY, platform);
 	const settingsAccess = settingsReader(settings);
 	host.provideService(SETTINGS_READER_SERVICE_KEY, {
@@ -171,6 +188,7 @@ async function startRuntime(
 		settings?: Record<string, Record<string, unknown>>;
 		/** Replaces the platform, for a test that has to count what it asks. */
 		platform?: RealProcessPlatform;
+		languages?: readonly string[];
 	}
 ): Promise<{
 	runtime: LspRuntime;
@@ -188,7 +206,7 @@ async function startRuntime(
 				command: 'vtsls',
 				args: ['--stdio'],
 				rootMarkers: ['tsconfig.json'],
-				languages: ['typescript']
+				languages: options.languages ? [...options.languages] : ['typescript']
 			});
 		}
 	});
@@ -354,17 +372,152 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			initialize.params.capabilities.textDocument.hover?.contentFormat
 		).toEqual(['markdown']);
 
-		expect(harness.runtime.getStatusRows()).toEqual([
-			{
-				server: lspServerKey('typescript', root),
-				descriptorId: 'typescript',
-				root,
-				marker: 'tsconfig.json',
-				state: 'running',
-				pid: harness.platform.pids[0],
-				details: []
-			}
+		expect(harness.runtime.getStatusRows()).toHaveLength(1);
+		const [statusRow] = harness.runtime.getStatusRows();
+		expect(statusRow).toMatchObject({
+			server: lspServerKey('typescript', root),
+			descriptorId: 'typescript',
+			root,
+			marker: 'tsconfig.json',
+			state: 'running',
+			pid: harness.platform.pids[0]
+		});
+		expect(statusRow.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
+		const memoryFigure = statusRow.details.find((detail) => detail.label === 'memory')!;
+		expect(memoryFigure.value).toMatch(/^(\d+ (KiB|MiB)|—)$/);
+		expect(memoryFigure.value).not.toBe('0 MiB');
+	});
+
+	it('fills the status details slot with the version the server reported (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin();
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+
+		const row = harness.runtime.getStatusRows()[0];
+		expect(row.details).toContainEqual({ label: 'version', value: 'v0.0.0' });
+	});
+
+	it('fills the status details slot with the memory the platform observed (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin([], {}, fixedMemory);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+
+		// The figure is the platform's reading carried through, so the wait is
+		// for the read to land rather than for a number to turn up: a dash
+		// means the platform has not answered yet.
+		await waitFor(
+			() =>
+				(harness.runtime.getStatusRows()[0]?.details ?? []).some(
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
+				),
+			{ label: 'the memory figure' }
+		);
+		const memory = harness.runtime
+			.getStatusRows()[0]
+			.details.find((detail) => detail.label === 'memory')!;
+		expect(memory.value).toBe('412 MiB');
+	});
+
+	it('shows a dash when the platform cannot report a memory figure (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		// The platform's own reader reads `/proc`, which only Linux has: off
+		// Linux it answers nothing at all. A reader that answers null stands in
+		// for that platform on every machine, so the case is pinned everywhere
+		// rather than only where a runner happens to have a `/proc`.
+		let asked = 0;
+		const harness = await startPlugin([], {}, async () => {
+			asked++;
+			return null;
+		});
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		await waitFor(() => asked > 0, { label: 'the platform to be asked for the figure' });
+
+		// A dash and not a zero: a server that has reported nothing says so.
+		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
+			label: 'memory',
+			value: '—'
+		});
+	});
+
+	it('shows dashes while the handshake is still in flight (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const gate = makeGate();
+		const harness = await startPlugin(gate.script);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitFor(() => received(harness).some((line) => line.includes('"initialize"')), {
+			label: 'the handshake to reach the server'
+		});
+		expect(harness.runtime.getStatusRows().map((server) => server.state)).toEqual(['starting']);
+
+		expect(harness.runtime.getStatusRows()[0].details).toEqual([
+			{ label: 'version', value: 'v—' },
+			{ label: 'memory', value: '—' }
 		]);
+
+		gate.release();
+		await waitForRunning(harness.runtime, 1);
+		expect(harness.runtime.getStatusRows()[0].details).toContainEqual({
+			label: 'version',
+			value: 'v0.0.0'
+		});
+	});
+
+	it('clears the figures when the server stops and re-reports them on restart (#282)', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': '' });
+		const harness = await startPlugin([], {}, fixedMemory);
+		harness.open(join(root, 'src/a.ts'), '');
+		await waitForRunning(harness.runtime, 1);
+		const key = lspServerKey('typescript', root);
+		const [pid] = harness.platform.pids;
+
+		expect(await harness.runtime.stopServer(key)).toBe(true);
+		await waitFor(() => !isProcessAlive(pid), { label: 'the stopped server to exit' });
+		expect(harness.runtime.getStatusRows().find((server) => server.server === key)?.details).toEqual(
+			[]
+		);
+
+		expect(await harness.runtime.restartServer(key)).toBe(true);
+		await waitForRunning(harness.runtime, 1);
+		expect(
+			harness.runtime.getStatusRows().find((server) => server.server === key)?.details
+		).toContainEqual({ label: 'version', value: 'v0.0.0' });
+		await waitFor(
+			() =>
+				(harness.runtime
+					.getStatusRows()
+					.find((server) => server.server === key)
+					?.details ?? []).some(
+					(detail) => detail.label === 'memory' && detail.value === '412 MiB'
+				),
+			{ label: 'the re-reported memory figure' }
+		);
+	});
+
+	describe('status figure formatting (#282)', () => {
+		it('reads the version off serverInfo and nothing else', () => {
+			expect(parseServerVersion({ serverInfo: { name: 'stub-ls', version: '0.0.0' } })).toBe(
+				'0.0.0'
+			);
+			expect(parseServerVersion({ serverInfo: { name: 'stub-ls' } })).toBeNull();
+			expect(parseServerVersion({ serverInfo: { version: '' } })).toBeNull();
+			expect(parseServerVersion({ serverInfo: { version: 42 } })).toBeNull();
+			expect(parseServerVersion({})).toBeNull();
+			expect(parseServerVersion(null)).toBeNull();
+		});
+
+		it('formats bytes as whole MiB past one mebibyte and whole KiB below', () => {
+			expect(formatMemoryBytes(412 * 1024 * 1024)).toBe('412 MiB');
+			expect(formatMemoryBytes(1536 * 1024)).toBe('2 MiB');
+			expect(formatMemoryBytes(512 * 1024)).toBe('512 KiB');
+		});
+
+		it('never formats a blank or a zero figure', () => {
+			expect(formatMemoryBytes(0)).toBe('1 KiB');
+			expect(formatMemoryBytes(100)).toBe('1 KiB');
+		});
 	});
 
 	it('syncs each served language with the protocol id its server answers to', async () => {
@@ -1249,7 +1402,10 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		harness.open(join(root, 'src/a.ts'), '');
 		await waitForRunning(harness.runtime, 1);
 		const [pid] = harness.platform.pids;
-		expect(harness.settingsListeners()).toBe(1);
+		// The plugin holds two subscriptions: the runtime's gate, and the
+		// display's own repaint (issue #310 — a setting that changes has to
+		// reach the editor while it sits idle). Both are the plugin's.
+		expect(harness.settingsListeners()).toBe(2);
 
 		await harness.host.deactivate(lspRegistration.manifest.id);
 		await waitFor(() => !isProcessAlive(pid), { label: 'the disabled plugin to leave no orphan' });
@@ -1372,6 +1528,53 @@ describe('editor.lsp gates the server for documents of that language (#263)', ()
 		expect(diagnostics.read(uri)).toEqual([]);
 	});
 
+	it('uses the open document language when clearing diagnostics on settings change', async () => {
+		const root = makeProject({
+			'tsconfig.json': '{}',
+			'src/a.ts': 'export const a = 1;\n',
+			'src/unopened.ts': 'export const b = 2;\n'
+		});
+		const settings: Record<string, Record<string, unknown>> = {};
+		const { runtime, diagnostics, setSetting } = await startRuntime({
+			script: ['--diagnostics'],
+			languages: ['typescript', 'TSX'],
+			settings
+		});
+		const openUri = `file://${join(root, 'src/a.ts')}`;
+		const unopenedUri = `file://${join(root, 'src/unopened.ts')}`;
+
+		diagnostics.workspacePull({
+			server: 'ts',
+			uri: unopenedUri,
+			diagnostics: [
+				{
+					message: 'unopened finding',
+					severity: 'warning',
+					source: 'ts',
+					range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }
+				}
+			]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			language: 'TSX',
+			content: 'export const a = 1;\n'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(openUri).length > 0, { label: 'the open diagnostic' });
+		expect(diagnostics.read(openUri)).toHaveLength(2);
+		expect(diagnostics.read(unopenedUri)).toHaveLength(1);
+
+		setSetting('editor', 'languages', { TypeScript: { lsp: false } });
+
+		await waitFor(() => diagnostics.read(unopenedUri).length === 0, {
+			label: 'unopened diagnostic to clear'
+		});
+		expect(diagnostics.read(openUri)).toHaveLength(2);
+	});
+
 	it('keeps the runtime serving every language when no settings reader is published', async () => {
 		// The absence has to be the documented default. A runtime that read `lsp` as
 		// off because nothing published settings would silently serve nothing, and
@@ -1477,5 +1680,334 @@ describe('live triggerCharacters plus CompletionContext (#306)', () => {
 				capabilities: { completionProvider: { triggerCharacters: ['.', 7, '', '"'] } }
 			})
 		).toEqual(['.', '"']);
+	});
+});
+
+/**
+ * The diagnostic pull, end to end: an edit asks the server for the file's
+ * diagnostics, and a server that does not offer the pull is never asked.
+ *
+ * The stub is the witness. It answers `textDocument/diagnostic` only when the
+ * test asks it to (`--diagnostic-pull`), so the file's diagnostics in the first
+ * test can only have come from a pull, and the absence of a pull in the second
+ * is the client's decision rather than the server's silence. The third stages
+ * a server that does both — it pushes for every change and answers the pull —
+ * which is the case the store's rule is about.
+ */
+describe('the diagnostic pull on edit (#307)', () => {
+	const edited = 'export const a = 2;\n';
+
+	it('asks a server that offers the pull for the file diagnostics, and files the answer', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ['--diagnostic-pull'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The edit: the same file with new text, so the runtime sends
+		// `didChange` and arms the pull that follows it.
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The stub pushes nothing, so the only diagnostic the file can hold is the
+		// one the pull answered with.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+	});
+
+	it('a pull replaces a push that named no version, because the pull is the newer word', async () => {
+		// The server pushes for every change and names no version, so its
+		// diagnostics cannot be ordered against the pull's by revision. The
+		// source decides there (ADR 0029), and the pull is the newer word for
+		// the path: a server that says nothing about which text it looked at
+		// must not be able to keep the file on its own answer.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostics', '--diagnostic-pull']
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The server's own diagnostics arrived with the change and the pull
+		// answered after them, so the file shows the pull's answer and not the
+		// push that named no revision.
+		await waitFor(() => diagnostics.read(uri).some((d) => d.message === 'pulled diagnostic'), {
+			label: 'the pulled diagnostic'
+		});
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+	});
+
+	it('never asks a server that offers no pull', async () => {
+		// The control for the test above. The same edit against a server that
+		// advertises no `diagnosticProvider` has to produce no pull at all,
+		// and the diagnostics the server pushed have to be the ones the file
+		// shows.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const wireLog = join(root, 'wire.log');
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostics', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+
+		// The server is alive and answering: it pushed its diagnostics for the
+		// change. So the absence of a pull below is the client's decision and
+		// not the server's silence.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pushed diagnostic' });
+
+		// Long enough for the debounce to have elapsed and the pull to have
+		// gone out, had one been armed. An absence cannot be waited for
+		// exactly, so this is the window the assertion is made in.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join('\n');
+		expect(wire).toContain('textDocument/didChange');
+		expect(wire).not.toContain('textDocument/diagnostic');
+	});
+
+	it('reports a failed pull, because a failed pull and a working one look the same', async () => {
+		// A pull that fails leaves the pushed diagnostics alone (ADR 0029), so
+		// from the outside the file looks exactly as it would if the pull had
+		// worked. The reason has to be somewhere the Logs tab can show it,
+		// the way a failed completion and a failed hover are.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const { runtime, logs } = await startRuntime({ script: ['--mode', 'fail-diagnostic-pull'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: edited,
+			language: 'typescript'
+		});
+		// The retries are bounded and back off, so the failure is reported
+		// after them rather than at once: the window is the whole schedule.
+		await waitFor(() => logs.read({ level: 'warn' }).length > 0, {
+			label: 'the pull failure to be reported',
+			timeoutMs: 20000
+		});
+		expect(logs.read({ level: 'warn' })[0].message).toContain('Diagnostic pull failed');
+	});
+});
+
+/**
+ * The workspace pull loop, end to end (spec #308).
+ *
+ * The stub is the witness again: it answers `workspace/diagnostic` only when
+ * the test asks it to (`--workspace-diagnostics`), so the diagnostics for a file
+ * the editor never opened can only have come from the workspace pull, and the
+ * absence of one in the control test is the client's decision rather than the
+ * server's silence.
+ */
+describe('the workspace pull loop (#308)', () => {
+	/** The workspace pulls the stub was asked for, counted off the wire. */
+	function workspacePulls(wireLog: string): number {
+		return received({ wireLog }).filter((line) => line.includes('"method":"workspace/diagnostic"')).length;
+	}
+
+	async function startWorkspaceServer(
+		root: string,
+		wireLog: string
+	): Promise<{ runtime: LspRuntime; diagnostics: LspDiagnosticsStore }> {
+		const started = await startRuntime({
+			script: ['--workspace-diagnostics', '--log-file', wireLog]
+		});
+		await started.runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(started.runtime, 1);
+		return started;
+	}
+
+	it('asks a server that offers the workspace pull about the whole workspace, and files the answer', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const unopened = `file://${join(root, 'unopened.ts')}`;
+		const streamed = `file://${join(root, 'partial.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ['--workspace-diagnostics'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The file the editor never opened. The only way it can hold diagnostics
+		// is the workspace pull: the stub pushes nothing, and the document
+		// pull is only ever asked about a file that was edited.
+		await waitFor(() => diagnostics.read(unopened).length > 0, {
+			label: 'the workspace diagnostic'
+		});
+		expect(diagnostics.read(unopened).map((d) => d.message)).toEqual([
+			'stub server: workspace diagnostic'
+		]);
+
+		// And the report the server streamed while it worked, which arrives as
+		// a progress notification under the token the pull asked for.
+		await waitFor(() => diagnostics.read(streamed).length > 0, {
+			label: 'the streamed workspace diagnostic'
+		});
+		expect(diagnostics.read(streamed).map((d) => d.message)).toEqual([
+			'stub server: partial workspace diagnostic'
+		]);
+	});
+
+	it('never asks a server that offers no workspace pull', async () => {
+		// The control. A server that does not announce
+		// `diagnosticProvider.workspaceDiagnostics` is never asked about the
+		// workspace, so the single-root workspace it serves behaves exactly as
+		// it did before the loop existed.
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startRuntime({
+			script: ['--diagnostic-pull', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The first pull is immediate, so a window shorter than the repull
+		// interval is enough to see one had it been asked for.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join('\n');
+		expect(wire).toContain('textDocument/didOpen');
+		expect(wire).not.toContain('"method":"workspace/diagnostic"');
+	});
+
+	it('ends the loop when the server stops, with no further request', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startWorkspaceServer(root, wireLog);
+		await waitFor(() => workspacePulls(wireLog) === 1, { label: 'the first workspace pull' });
+
+		expect(await runtime.stopServer(lspServerKey('ts', root))).toBe(true);
+
+		// Longer than the repull interval: a loop that was still running would
+		// have pulled again by now.
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		expect(workspacePulls(wireLog)).toBe(1);
+	});
+
+	it('ends the loop when the runtime is disposed, with no further request', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startWorkspaceServer(root, wireLog);
+		await waitFor(() => workspacePulls(wireLog) === 1, { label: 'the first workspace pull' });
+
+		await runtime.dispose();
+
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		expect(workspacePulls(wireLog)).toBe(1);
+	});
+
+	it('re-arms the workspace pull and the open buffers when the server asks for a refresh', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const wireLog = join(root, 'wire.log');
+		const { runtime } = await startRuntime({
+			script: [
+				'--diagnostic-pull',
+				'--workspace-diagnostics',
+				'--workspace-refresh',
+				'--log-file',
+				wireLog
+			]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The stub asks for the refresh right after it answered the first
+		// workspace pull, and the client answers it — with a null, the spec's
+		// own answer for a request with no result.
+		await waitFor(() => received({ wireLog }).some((line) => line.includes('"id":9000')), {
+			label: 'the refresh to be answered'
+		});
+		const answer = received({ wireLog }).find((line) => line.includes('"id":9000'))!;
+		expect(JSON.parse(answer).result).toBeNull();
+
+		// The document pull is armed by the refresh: the document was opened
+		// and never edited, so nothing else could have asked for it.
+		await waitFor(
+			() =>
+				received({ wireLog }).some((line) => line.includes('"method":"textDocument/diagnostic"')),
+			{ label: 'the re-armed document pull' }
+		);
+
+		// And the workspace pull is not left waiting out the interval: the
+		// second one is asked for at once, well before the two seconds are up.
+		await waitFor(() => workspacePulls(wireLog) === 2, {
+			label: 'the re-armed workspace pull',
+			timeoutMs: 1500
+		});
+
+		// The second pull carries the result ids the first one gave, in the
+		// protocol's own shape, so the server can answer "unchanged".
+		const second = received({ wireLog }).filter((line) =>
+			line.includes('"method":"workspace/diagnostic"')
+		)[1];
+		expect(JSON.parse(second).params.previousResultIds).toEqual([
+			{ uri: `file://${join(root, 'partial.ts')}`, value: 'stub-workspace-partial' },
+			{ uri: `file://${join(root, 'unopened.ts')}`, value: 'stub-workspace-1' }
+		]);
 	});
 });

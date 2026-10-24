@@ -7,6 +7,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
 	composeEditorContributions,
+	diagnosticHoverSource,
 	PluginHost,
 	lspRegistration,
 	reconfigureEditorContributions,
@@ -95,6 +96,28 @@ function installDom(): void {
 		remove() {
 			this.parentNode = null;
 		}
+		/**
+		 * The class attribute, kept where the walker reads it.
+		 *
+		 * CodeMirror writes a gutter's class with `className` and a decoration's
+		 * with `setAttribute`, and the walker below reads one place for both.
+		 */
+		get className(): string {
+			return this.attrs.class ?? "";
+		}
+		set className(value: string) {
+			this.setAttribute("class", value);
+		}
+		/** The first child, as the gutter walks its markers through the DOM. */
+		get firstChild(): unknown {
+			return this.childNodes[0] ?? null;
+		}
+		get nextSibling(): unknown {
+			const parent = this.parentNode as MockElement | null;
+			if (!parent || !Array.isArray(parent.childNodes)) return null;
+			const index = parent.childNodes.indexOf(this);
+			return index === -1 ? null : (parent.childNodes[index + 1] ?? null);
+		}
 		addEventListener() {}
 		removeEventListener() {}
 		contains() {
@@ -105,6 +128,12 @@ function installDom(): void {
 		}
 		querySelectorAll() {
 			return [];
+		}
+		querySelector(selector: string) {
+			if (selector === ".cm-lsp-diagnostic-copy") {
+				return (this.childNodes as any[]).find((c: any) => c.className?.includes?.("cm-lsp-diagnostic-copy")) ?? null;
+			}
+			return null;
 		}
 	}
 
@@ -177,8 +206,36 @@ function diagnosticSpans(): Array<{ className: string; title: string }> {
 	const found: Array<{ className: string; title: string }> = [];
 	const walk = (node: any) => {
 		const className = node?.attrs?.class;
-		if (typeof className === "string" && className.includes("cm-lsp-diagnostic")) {
+		// The inline mark's own class, not the gutter's: the gutter element
+		// carries a class that starts with the same words.
+		if (typeof className === "string" && className.split(" ").includes("cm-lsp-diagnostic")) {
 			found.push({ className, title: node.attrs.title ?? "" });
+		}
+		for (const child of node?.childNodes ?? []) walk(child);
+	};
+	if (view) walk(view.dom);
+	return found;
+}
+
+/**
+ * Every gutter mark the plugin's diagnostics produced.
+ *
+ * The gutter's own element carries the `cm-lsp-diagnostic-gutter` class, so
+ * the marks are the ones that also carry a severity class under it.
+ */
+function gutterMarks(): Array<{ className: string; text: string; title: string }> {
+	const found: Array<{ className: string; text: string; title: string }> = [];
+	const walk = (node: any) => {
+		const className = node?.attrs?.class;
+		if (
+			typeof className === "string" &&
+			className.split(" ").some((name: string) => name.startsWith("cm-lsp-diagnostic-gutter-"))
+		) {
+			found.push({
+				className,
+				text: node.textContent ?? "",
+				title: node.attrs.title ?? "",
+			});
 		}
 		for (const child of node?.childNodes ?? []) walk(child);
 	};
@@ -263,12 +320,17 @@ describe("Server diagnostics on screen (#266)", () => {
 				language: { name: "TypeScript" },
 			},
 		});
+		// The method, not the bare name: the client's own initialize request
+		// names the publish capability it declares, so a loose match would
+		// find the handshake rather than the publish.
 		await waitFor(
 			() =>
 				host
 					.getService<{ read(): Array<{ message: string }> }>("lsp:log-store")
 					?.read()
-					.some((entry) => entry.message.includes("publishDiagnostics")) ?? false,
+					.some((entry) =>
+						entry.message.includes('"method":"textDocument/publishDiagnostics"'),
+					) ?? false,
 			{ label: "the server to publish diagnostics" },
 		);
 
@@ -286,11 +348,39 @@ describe("Server diagnostics on screen (#266)", () => {
 		expect(diagnosticSpans()).toEqual([
 			{
 				className: "cm-lsp-diagnostic cm-lsp-diagnostic-error",
-				title: "stub: (2304) stub server: cannot find name",
+				title: "",
 			},
 			{
 				className: "cm-lsp-diagnostic cm-lsp-diagnostic-warning",
-				title: "stub: stub server: unused variable",
+				title: "",
+			},
+		]);
+
+		// The inline mark's error message is carried by the hover tooltip
+		// rather than a title attribute.
+		const errorTooltip = diagnosticHoverSource(view, 0);
+		expect(errorTooltip).not.toBeNull();
+		const errorDom = (errorTooltip!.create as any)(view).dom;
+		expect(errorDom.textContent).toBe("stub: (2304) stub server: cannot find name");
+
+		const warningPos = view.state.doc.line(2).from;
+		const warningTooltip = diagnosticHoverSource(view, warningPos);
+		expect(warningTooltip).not.toBeNull();
+		const warningDom = (warningTooltip!.create as any)(view).dom;
+		expect(warningDom.textContent).toBe("stub: stub server: unused variable");
+
+		// The gutter is its own surface (issue #310): one mark per line, in the
+		// line's worst severity, rendered without a title attribute.
+		expect(gutterMarks()).toEqual([
+			{
+				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-error",
+				text: "●",
+				title: "",
+			},
+			{
+				className: "cm-lsp-diagnostic-gutter cm-lsp-diagnostic-gutter-warning",
+				text: "●",
+				title: "",
 			},
 		]);
 

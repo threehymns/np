@@ -132,3 +132,9 @@ export const markdownHighlightChunks: TagStyle[] = [
 ];
 
 export const markdownHighlight = HighlightStyle.define(markdownHighlightChunks);
+
+// Generic code highlighting for all languages
+export const codeHighlight = HighlightStyle.define(codeStyles);
+
+// Markdown-specific styling (headings, links, markers, etc.)
+export const markdownOnlyHighlight = HighlightStyle.define(headingStyles);

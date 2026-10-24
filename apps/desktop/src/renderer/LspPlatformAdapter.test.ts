@@ -1,6 +1,7 @@
+import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { createElectronLspPlatform, provideLspPlatform } from './LspPlatformAdapter';
-import { LSP_PLATFORM_SERVICE_KEY } from '@np/core';
+import { LSP_PLATFORM_SERVICE_KEY } from '@np/core/plugins/services';
 
 /**
  * The desktop platform over a stubbed preload bridge, the same seam
@@ -18,6 +19,7 @@ describe('createElectronLspPlatform', () => {
 	let mockWrite: ReturnType<typeof mock>;
 	let mockEnd: ReturnType<typeof mock>;
 	let mockKill: ReturnType<typeof mock>;
+	let mockMemory: ReturnType<typeof mock>;
 	let mockExists: ReturnType<typeof mock>;
 	let capturedHandlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
@@ -33,6 +35,7 @@ describe('createElectronLspPlatform', () => {
 		mockWrite = mock(() => {});
 		mockEnd = mock(() => {});
 		mockKill = mock(async () => {});
+		mockMemory = mock(async () => 412 * 1024 * 1024);
 		mockExists = mock(async () => true);
 		unsubscribe = mock(() => {});
 
@@ -44,6 +47,7 @@ describe('createElectronLspPlatform', () => {
 				writeLspServer: mockWrite,
 				endLspServer: mockEnd,
 				killLspServer: mockKill,
+				lspMemory: mockMemory,
 				onLspServerData: mock((handlers: typeof capturedHandlers) => {
 					capturedHandlers = handlers;
 					return unsubscribe;
@@ -127,6 +131,35 @@ describe('createElectronLspPlatform', () => {
 		expect(mockExists).toHaveBeenCalledWith('/repo/tsconfig.json');
 	});
 
+	it('reads one server\'s memory through the bridge, addressed by its process id', async () => {
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		expect(await platform.processMemory?.(4242)).toBe(412 * 1024 * 1024);
+		expect(mockMemory).toHaveBeenCalledWith('p1');
+	});
+
+	it('answers no memory for a pid with no live server, without asking main', async () => {
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		expect(await platform.processMemory?.(9999)).toBeNull();
+		expect(mockMemory).not.toHaveBeenCalled();
+	});
+
+	it('answers no memory when the observation itself fails', async () => {
+		mockMemory.mockImplementation(async () => {
+			throw new Error('no /proc here');
+		});
+		const platform = createElectronLspPlatform(bridgeHost());
+		platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
+		await waitFor(() => mockSpawn.mock.calls.length === 1);
+
+		expect(await platform.processMemory?.(4242)).toBeNull();
+	});
+
 	it('carries a chunk across as bytes, so a split character survives the bridge', async () => {
 		const platform = createElectronLspPlatform(bridgeHost());
 		const received: Uint8Array[] = [];
@@ -183,7 +216,7 @@ describe('createElectronLspPlatform', () => {
 		const received: Uint8Array[] = [];
 		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		spawned.stdout.onData((chunk) => received.push(chunk));
-		spawned.stdin.write('early');
+		spawned.stdin.write(new TextEncoder().encode('early'));
 
 		// The write above is still buffered: the spawn itself has not been called
 		// yet, so there is nothing to attach to.

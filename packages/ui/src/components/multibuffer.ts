@@ -13,11 +13,20 @@ import { getChunks, type MergeView } from "@codemirror/merge";
  * Pure move: behavior is identical to the Diff Viewer originals.
  */
 
-export type MultibufferViewEntry = { inline?: EditorView; split?: MergeView };
+export type MultibufferViewEntry = { inline?: EditorView; split?: MergeView | EditorView };
 export type MultibufferViewMode = 'inline' | 'split';
 export type MultibufferPreferSide = 'a' | 'b';
 
 export const MULTIBUFFER_COLLAPSE_CONFIG = { margin: 3, minSize: 4 } as const;
+
+/**
+ * A split slot holds a MergeView for a file with two panes, or a single view
+ * for a file that shows one pane only (a deleted file's read-only Original
+ * pane). A single view has neither an `a` nor a `b` side.
+ */
+function isMergeView(split: MergeView | EditorView): split is MergeView {
+	return 'a' in split || 'b' in split;
+}
 
 type ViewWaiter = {
 	mode: MultibufferViewMode;
@@ -37,7 +46,12 @@ export function createViewRegistry() {
 	function pickView(views: MultibufferViewEntry | undefined, mode: MultibufferViewMode, preferSide: MultibufferPreferSide): EditorView | undefined {
 		if (mode === 'split') {
 			const split = views?.split;
-			return preferSide === 'a' ? (split?.a || split?.b) : (split?.b || split?.a);
+			if (!split) return undefined;
+			if (isMergeView(split)) {
+				return preferSide === 'a' ? (split.a || split.b) : (split.b || split.a);
+			}
+			// A one-pane file: the single view is the only focusable pane.
+			return split;
 		}
 		return views?.inline;
 	}

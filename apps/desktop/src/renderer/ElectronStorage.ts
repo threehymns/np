@@ -1,4 +1,5 @@
-import { isNotFoundError, type StorageProvider, type FileOrigin, type StorageEntry, type SaveFileOptions } from '@np/core';
+import { isNotFoundError } from '@np/core/utils';
+import type { StorageProvider, FileOrigin, StorageEntry, SaveFileOptions } from '@np/core/storage';
 
 export class ElectronStorage implements StorageProvider {
 	scheme = 'file';

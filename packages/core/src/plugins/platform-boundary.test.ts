@@ -142,6 +142,7 @@ describe('Platform separation static boundary', () => {
 			'git/ui.ts',
 			'git/registration.ts',
 			'git/manifest.ts',
+			'git/watch.ts',
 			'svelte-language/index.ts',
 			'svelte-language/snippets.ts',
 			'svelte-language/registration.ts',

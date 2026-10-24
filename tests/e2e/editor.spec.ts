@@ -9,6 +9,14 @@ test('editor should correctly handle markdown syntax', async ({ page }) => {
   const editor = page.locator('.cm-content');
   await expect(editor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 
+  // The language is resolved from the file name. An untitled document has no
+  // extension, so it is plain text and the Markdown rules never run. Switch
+  // the document to Markdown before typing into it.
+  await page.evaluate(() => {
+    (window as any).appState.activeDocument.userLanguageOverride = 'Markdown';
+  });
+  await expect(page.locator('button:has-text("Markdown")')).toBeVisible();
+
   // Focus and clear
   await editor.click();
   await page.keyboard.press('Control+A');
@@ -38,7 +46,8 @@ test('editor should correctly handle markdown syntax', async ({ page }) => {
   expect(text).toContain('Bold Text');
   
   await page.keyboard.type('- List Item 1');
-  // Visible while on the line
+  // The cursor has moved past the marker, so the marker is replaced by a bullet
   text = await editor.innerText();
-  expect(text).toContain('- List Item 1');
+  expect(text).toContain('• List Item 1');
+  expect(text).not.toContain('- List Item 1');
 });

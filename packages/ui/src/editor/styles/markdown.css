@@ -168,7 +168,7 @@
 }
 
 /* Show visible markers in focused editor on the active line slightly transparent */
-.cm-activeLine .md-marker {
+.cm-editor.is-markdown .cm-activeLine .md-marker {
 	opacity: 0.5 !important;
 }
 

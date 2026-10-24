@@ -34,6 +34,8 @@ export interface LspUIComponents {
 	readonly statusItemComponent: UIContributionComponent;
 	readonly logsComponent: UIContributionComponent;
 	readonly logsIcon?: UIContributionIcon;
+	/** Highlights fenced code blocks in diagnostic tooltips matching the editor theme. */
+	readonly highlightCodeBlocks?: (dom: HTMLElement) => Promise<void> | void;
 }
 
 export function getLspUIComponents(

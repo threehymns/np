@@ -8,6 +8,7 @@ import {
 import { TerminalWindowIcon } from 'phosphor-svelte';
 import LspLogsContent from './LspLogsContent.svelte';
 import LspStatusItem from './LspStatusItem.svelte';
+import { highlightCodeBlocks } from '../../editor/extensions/server-completions';
 
 /**
  * Real LSP UI components, provided to the plugin through the loader service
@@ -21,7 +22,8 @@ import LspStatusItem from './LspStatusItem.svelte';
 const lspUIComponents = {
 	statusItemComponent: LspStatusItem as unknown as UIContributionComponent,
 	logsComponent: LspLogsContent as unknown as UIContributionComponent,
-	logsIcon: TerminalWindowIcon as unknown as UIContributionIcon
+	logsIcon: TerminalWindowIcon as unknown as UIContributionIcon,
+	highlightCodeBlocks: (dom: HTMLElement) => highlightCodeBlocks(dom)
 } satisfies LspUIComponents;
 
 export function provideLspUIComponents(host: PluginHostInterface): void {

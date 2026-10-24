@@ -96,11 +96,6 @@ import { ArrowClockwiseIcon, LightningIcon, ScrollIcon, StopIcon } from 'phospho
 										{#if row.stateNote}
 											<span class="ml-2 text-muted-foreground">{row.stateNote}</span>
 										{/if}
-										<!-- The details slot: empty until the version and memory
-						     follow-ups land, and already in the row when they do. -->
-										{#each row.details as detail (detail.label)}
-											<span class="ml-2 text-muted-foreground">{detail.label} {detail.value}</span>
-										{/each}
 									</DropdownMenu.SubTrigger>
 								{/snippet}
 							</Tooltip.Trigger>
@@ -121,6 +116,16 @@ import { ArrowClockwiseIcon, LightningIcon, ScrollIcon, StopIcon } from 'phospho
 									<StopIcon />
 									{row.actions.stop.label}
 								</DropdownMenu.Item>
+							{/if}
+							<!-- The trigger names the server; its figures live down here, out of
+							     the row. Absent when the server has no process to report on. -->
+							{#if row.details.length > 0}
+								<DropdownMenu.Separator class="my-0.5" />
+								<DropdownMenu.Label class="flex gap-3 py-1 leading-none">
+									{#each row.details as detail (detail.label)}
+										<span>{detail.value}</span>
+									{/each}
+								</DropdownMenu.Label>
 							{/if}
 						</DropdownMenu.SubContent>
 					</DropdownMenu.Sub>

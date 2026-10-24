@@ -68,3 +68,16 @@ svg.cm-tooltip-selection path.cm-selectionBackground {
 	border-left: 2px solid var(--primary) !important;
 	margin-left: -1px;
 }
+
+/* Dividers and horizontal rules inside tooltips use the theme border token */
+.cm-tooltip hr {
+	border: none !important;
+	border-top: 1px solid var(--border) !important;
+	margin: 0.5rem 0 !important;
+}
+
+.cm-tooltip .cm-tooltip-section:not(:first-child) {
+	border-top: 1px solid var(--border) !important;
+	margin-top: 0.5rem;
+	padding-top: 0.5rem;
+}

@@ -2,6 +2,9 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
+import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
+import type { SplitDirection, SplitMode, Rect } from './split-tree.svelte';
+import type { DocumentSession } from './document.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
 import { registerCoreCommands } from './commands.svelte';
 import { KeymapRegistry } from './keymap.svelte';
@@ -99,6 +102,7 @@ export interface AppStateOptions {
 	iconRegistry?: IconRegistryInterface;
 	pluginHost?: PluginHost;
 	platform?: PluginPlatform;
+	snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy;
 }
 
 export class AppState {
@@ -125,6 +129,12 @@ export class AppState {
 	 * in the Plugins settings page instead of failing silently.
 	 */
 	pluginStartupError = $state<string | null>(null);
+	/**
+	 * The header's application-menu controller. Registered by the menu
+	 * component on mount so the command can toggle it without the core
+	 * knowing what the menu is made of.
+	 */
+	applicationMenu: { toggle(): void } | undefined;
 	dialogService?: DialogService;
 	clipboardService?: ClipboardService;
 	exportService?: ExportService;
@@ -152,6 +162,21 @@ export class AppState {
 	// Mounted diff view's hunk navigator, if any. Mirrors the
 	// activeEditorView precedent: UI publishes, core commands consume.
 	activeDiffNavigator = $state<DiffHunkNavigator | undefined>(undefined);
+	/**
+	 * Hands the DOM focus to the editor of the active pane. The UI
+	 * publishes it and the pane commands consume it, the same way
+	 * `activeEditorView` is published and consumed: only the shell knows
+	 * which editor belongs to which pane.
+	 */
+	focusActivePaneEditor = $state<(() => void) | undefined>(undefined);
+	/**
+	 * Document bound to the focused split-diff Working-copy pane (#269).
+	 * Published by the mounted DiffViewer (focus or active-diff-file
+	 * fallback), cleared on unmount. `saveFile`/`saveFileAs` fall back to
+	 * it when no document tab is active, so saving from the diff pane
+	 * routes through the standard file-save path for that Document.
+	 */
+	activeDiffDocument = $state<DocumentSession | undefined>(undefined);
 
 	constructor(options: AppStateOptions) {
 		this.storage = options.storage;
@@ -188,7 +213,13 @@ export class AppState {
 		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
-		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		this.workspace = new Workspace(
+			this.storage,
+			options.vcsFactory,
+			persistence,
+			this.plugins,
+			options.snapshotStrategyFactory
+		);
 		// Generic collaborator services for feature plugins (#202, ADR 0008):
 		// dialog capability and the mounted diff view's hunk navigator. The
 		// workspace publishes itself. Keys are generic; values are consumed
@@ -348,12 +379,28 @@ export class AppState {
 	set activeDocumentId(value: string) { this.workspace.activeDocumentId = value; }
 	get activeTabId() { return this.workspace.activeTabId; }
 	set activeTabId(value: string) { this.workspace.activeTabId = value; }
+	get activePane() { return this.workspace.activePane; }
+	get activePaneId() { return this.workspace.activePaneId; }
+	set activePaneId(value: string) { this.workspace.activePaneId = value; }
+
+	splitActivePane(direction: SplitDirection, mode?: SplitMode) {
+		return this.workspace.splitActivePane(direction, mode);
+	}
+
+	focusPaneInDirection(direction: SplitDirection, rectsMap?: Map<string, Rect>) {
+		return this.workspace.focusPaneInDirection(direction, rectsMap);
+	}
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
+	openSearchTab(query?: string) { return this.workspace.openSearchTab(query); }
 	async saveFile() {
-		if (this.activeDocument) {
-			const ok = await this.workspace.saveDocument(this.activeDocument);
+		// With a diff tab active there is no activeDocument; fall back to
+		// the focused diff pane's bound Document (#269). A real document
+		// tab always wins when one is active.
+		const target = this.activeDocument ?? this.activeDiffDocument;
+		if (target) {
+			const ok = await this.workspace.saveDocument(target);
 			if (!ok && this.workspace.lastSaveCancellationReason) {
 				if (this.dialogService?.alert) {
 					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -365,8 +412,9 @@ export class AppState {
 		}
 	}
 	async saveFileAs() {
-		if (this.activeDocument) {
-			const ok = await this.workspace.saveDocument(this.activeDocument, { forceNewOrigin: true });
+		const target = this.activeDocument ?? this.activeDiffDocument;
+		if (target) {
+			const ok = await this.workspace.saveDocument(target, { forceNewOrigin: true });
 			if (!ok && this.workspace.lastSaveCancellationReason) {
 				if (this.dialogService?.alert) {
 					await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -379,9 +427,9 @@ export class AppState {
 	}
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
-	closeTab(id: string) { this.workspace.closeTab(id); }
-	async finalizeClose(id: string, saveFirst = false): Promise<boolean> {
-		const closed = await this.workspace.finalizeClose(id, saveFirst);
+	closeTab(id: string, paneId?: string) { this.workspace.closeTab(id, paneId); }
+	async finalizeClose(id: string, saveFirst = false, paneId?: string, applyToRemaining = false): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId, applyToRemaining);
 		if (!closed && this.workspace.lastSaveCancellationReason) {
 			if (this.dialogService?.alert) {
 				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -391,7 +439,15 @@ export class AppState {
 		}
 		return closed;
 	}
+	async closeAllTabs(paneId?: string): Promise<void> { return await this.workspace.closeAllTabs(paneId); }
+	async closeOtherTabs(paneId?: string): Promise<void> { return await this.workspace.closeOtherTabs(paneId); }
+	async closeCleanTabs(paneId?: string): Promise<void> { return await this.workspace.closeCleanTabs(paneId); }
+	async closeMultibufferTabs(paneId?: string): Promise<void> { return await this.workspace.closeMultibufferTabs(paneId); }
+	async closeTabsToLeft(paneId?: string): Promise<void> { return await this.workspace.closeTabsToLeft(paneId); }
+	async closeTabsToRight(paneId?: string): Promise<void> { return await this.workspace.closeTabsToRight(paneId); }
+	reopenClosedTab(): boolean { return this.workspace.reopenClosedTab(); }
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
+	dispose(): void { this.workspace.dispose(); }
 }
 
 export function useAppState(): AppState {
