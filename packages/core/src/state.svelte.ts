@@ -190,6 +190,9 @@ export class AppState {
 		this.prefs.onIconThemeChange = (type, id) => {
 			if (type === 'file') {
 				this.icons.activeFileThemeId = id;
+				void this.icons.ensureFileTheme?.(id).catch((e) => {
+					console.warn(`[AppState] Failed to load file icon theme "${id}":`, e);
+				});
 			} else if (type === 'product') {
 				this.icons.activeProductThemeId = id;
 			}

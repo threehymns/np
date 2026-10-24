@@ -77,6 +77,10 @@ export interface IconRegistryInterface {
   rebuild(): void;
   refresh(): void;
   getFileThemes(): ThemeInfo[];
+  /** Selectable themes, including builtins that load on first selection. */
+  getAvailableFileThemes?(): ThemeInfo[];
+  /** Loads a builtin theme on demand; resolves when the attempt finishes. */
+  ensureFileTheme?(id: string): Promise<void>;
   getProductThemes(): ThemeInfo[];
   setAppearance(appearance: 'light' | 'dark'): void;
   resolveFileIconChain(filename: string, context?: { language?: string }): ResolvedIcon[];
@@ -91,4 +95,3 @@ export interface IconRegistryInterface {
   getThemeDefaultFolderExpandedIcon(): any;
   initialize?(): Promise<void>;
 }
-

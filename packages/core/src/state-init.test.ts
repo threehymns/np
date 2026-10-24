@@ -241,4 +241,26 @@ describe("AppState / Workspace SSR & Initialization", () => {
 		expect(callCount).toBe(2);
 		expect(appState.workspace.isRestoring).toBe(false);
 	});
+
+	it('asks the icon registry to load a builtin theme when the preference changes', async () => {
+		const ensureFileTheme = mock(async () => {});
+		const icons = {
+			activeFileThemeId: 'phosphor',
+			activeProductThemeId: 'phosphor',
+			currentAppearance: 'dark',
+			initialize: mock(async () => {}),
+			ensureFileTheme
+		} as any;
+
+		const appState = new AppState({
+			storage: createMockStorage(),
+			vcsFactory: () => ({} as any),
+			persistence: createMockPersistence(),
+			iconRegistry: icons
+		});
+
+		await appState.init();
+		appState.prefs.fileIconThemeId = 'catppuccin';
+		expect(ensureFileTheme).toHaveBeenCalledWith('catppuccin');
+	});
 });
