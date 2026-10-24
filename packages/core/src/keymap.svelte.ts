@@ -465,6 +465,11 @@ export class KeymapRegistry {
 		}
 
 		if (fullMatch && !hasPartial) {
+			const command = this.appState.commands.get(fullMatch.commandId);
+			if (!command) {
+				this.keyBuffer = [];
+				return false;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			this.keyBuffer = [];

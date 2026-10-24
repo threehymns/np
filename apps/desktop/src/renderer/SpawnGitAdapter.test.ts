@@ -88,7 +88,7 @@ describe('SpawnGitAdapter', () => {
 		expect(statusCall![1]).toContain('-uall');
 
 		// Should not have called git show at all during getChanges
-		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' || call[1][0] === 'ls-files' || call[1][0] === 'ls-tree');
 		expect(showCalls.length).toBe(0);
 
 		// The untracked file is the only thing read (to count lines); tracked files are not read
@@ -331,7 +331,7 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'show') {
+			if (args[0] === 'show' || args[0] === 'ls-files' || args[0] === 'ls-tree') {
 				return { code: 128, stdout: '', stderr: 'fatal: bad index file sha1 signature' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
@@ -372,6 +372,12 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff skips HEAD git show query for staged added files (status: "A", staged: true)', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tadded.txt\n', stderr: '' };
+			}
+			if (args[0] === 'cat-file' && args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+				return { code: 0, stdout: 'staged index content', stderr: '' };
+			}
 			if (args[0] === 'show' && args[1] === ':added.txt') {
 				return { code: 0, stdout: 'staged index content', stderr: '' };
 			}
@@ -382,7 +388,10 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('staged index content');
-		const headCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
+		const headCalls = mockGitRun.mock.calls.filter((call: any) =>
+			(call[1][0] === 'show' && call[1][1].startsWith('HEAD:')) ||
+			(call[1][0] === 'ls-tree' && call[1][1] === 'HEAD')
+		);
 		expect(headCalls.length).toBe(0);
 	});
 
@@ -406,6 +415,20 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff reads a deleted-in-index file once, not once to probe and again to read', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-tree') {
+				return { code: 0, stdout: '100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tdeleted.txt\n', stderr: '' };
+			}
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\tdeleted.txt\n', stderr: '' };
+			}
+			if (args[0] === 'cat-file') {
+				if (args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+					return { code: 0, stdout: 'head content', stderr: '' };
+				}
+				if (args[2] === 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') {
+					return { code: 0, stdout: 'index content', stderr: '' };
+				}
+			}
 			if (args[0] === 'show' && args[1] === 'HEAD:deleted.txt') {
 				return { code: 0, stdout: 'head content', stderr: '' };
 			}
@@ -1041,14 +1064,14 @@ describe('SpawnGitAdapter', () => {
 				if (args[0] === 'log') {
 					return {
 						code: 0,
-						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x001111111111111111111111111111111111111111\x00tag: v1.0\x00',
+						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00tag: v1.0\x00',
 						stderr: ''
 					};
 				}
 				if (args[0] === 'rev-list') {
 					return {
 						code: 0,
-						stdout: '1111111111111111111111111111111111111111\n',
+						stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n',
 						stderr: ''
 					};
 				}

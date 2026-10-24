@@ -94,7 +94,7 @@ describe("ADR 0002 Headless Core Invariants", () => {
 
 	it("runs the user's command when a plugin binds the same sequence", () => {
 		const executed: string[] = [];
-		const appState = { commands: { execute: (id: string) => executed.push(id) } } as any;
+		const appState = { commands: { get: (id: string) => ({ id }), execute: (id: string) => executed.push(id) } } as any;
 		const registry = new KeymapRegistry(appState);
 
 		// A plugin rebinds a default shortcut, and the user binds that same
@@ -108,7 +108,7 @@ describe("ADR 0002 Headless Core Invariants", () => {
 
 	it("keeps default bindings in the base keymap under user bindings", () => {
 		const executed: string[] = [];
-		const appState = { commands: { execute: (id: string) => executed.push(id) } } as any;
+		const appState = { commands: { get: (id: string) => ({ id }), execute: (id: string) => executed.push(id) } } as any;
 		const registry = new KeymapRegistry(appState);
 
 		registry.reloadUserKeymap(JSON.stringify([{ bindings: { "ctrl+alt+i": "user.run" } }]));
