@@ -1093,6 +1093,9 @@ describe("completion composition — rebound keys reach all tiers (Issue #287)",
 		registerCoreCommands(appState);
 
 		const reg = new KeymapRegistry(appState);
+		// The real AppState always wires its keymaps registry; the guard
+		// for the completion commands reads focus from it.
+		appState.keymaps = reg;
 		reg.loadBindings(defaultKeymap as any);
 		reg.setContext("editor", true);
 		// The completion trigger and the acceptance key are focus-scoped: the

@@ -1,6 +1,7 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, afterEach } from "bun:test";
 import { parseKeySequence, formatShortcutLabel, keystrokesEqual, KeymapRegistry, defaultKeymap } from "./keymap.svelte";
+import { CommandRegistry, registerCoreCommands } from "./commands.svelte";
 
 /**
  * The formatter and the parser must agree about the same vocabulary.
@@ -635,6 +636,95 @@ describe("completion trigger and acceptance keybindings (Issue #287)", () => {
 		expect(acceptKey.prevented()).toBe(0);
 
 		expect(executed).toEqual([]);
+	});
+});
+
+describe("completion commands require editor focus even for context-less bindings", () => {
+	/**
+	 * A registry with the REAL completion commands registered.
+	 *
+	 * The default bindings already carry `editorFocused` in their context,
+	 * so they cannot show the gap: a context-less user binding (exactly
+	 * what setCustomKeybinding stores) has no context filter, and the
+	 * command's own isEnabled guard is the only thing standing between
+	 * a modal button's Enter and an unfocused editor's completion.
+	 */
+	function newRealCompletionRegistry(focused: boolean, acceptResult: boolean = true) {
+		const commands = new CommandRegistry();
+		const appState: any = {
+			commands,
+			activeEditorView: {},
+			workspace: {},
+		};
+		registerCoreCommands(appState);
+		const reg = new KeymapRegistry(appState);
+		// The real AppState always wires its keymaps registry; the guard
+		// for the completion commands reads focus from it.
+		appState.keymaps = reg;
+		reg.setContext("editor", true);
+		if (focused) reg.setContext("editorFocused", true);
+		// Context-less user binding, as setCustomKeybinding stores it.
+		reg.loadBindings([{ bindings: { enter: "edit.acceptCompletion" } } as any]);
+		// Stub the action: the gate under test is isEnabled, not CodeMirror.
+		const cmd: any = commands.get("edit.acceptCompletion");
+		let actionRan = false;
+		cmd.action = () => { actionRan = true; return acceptResult; };
+		return { reg, commands, actionRan: () => actionRan };
+	}
+
+	function modalButtonEnterKey() {
+		let prevented = 0;
+		const e = {
+			key: "Enter",
+			// A modal button, not an input: the standard-input early return
+			// must not be what lets this Enter through.
+			target: { tagName: "BUTTON" },
+			ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+			isComposing: false, keyCode: 13,
+			preventDefault: () => { prevented++; },
+			stopPropagation: () => {},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented };
+	}
+
+	const COMPLETION_COMMANDS = ["edit.complete", "edit.startCompletion", "edit.acceptCompletion"];
+
+	it("reports all three completion commands disabled while the editor is not focused", () => {
+		const { commands } = newRealCompletionRegistry(false);
+		for (const id of COMPLETION_COMMANDS) {
+			expect(commands.get(id)?.isEnabled?.()).toBe(false);
+		}
+	});
+
+	it("reports all three completion commands enabled while the editor is focused", () => {
+		const { commands } = newRealCompletionRegistry(true);
+		for (const id of COMPLETION_COMMANDS) {
+			expect(commands.get(id)?.isEnabled?.()).toBe(true);
+		}
+	});
+
+	it("does not consume a modal button's Enter through a context-less binding while unfocused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(false);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(false);
+		expect(key.prevented()).toBe(0);
+		expect(actionRan()).toBe(false);
+	});
+
+	it("executes a context-less binding while the editor is focused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(true);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(true);
+		expect(key.prevented()).toBe(1);
+		expect(actionRan()).toBe(true);
+	});
+
+	it("lets Enter fall through when acceptance declines while focused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(true, false);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(false);
+		expect(key.prevented()).toBe(0);
+		expect(actionRan()).toBe(true);
 	});
 });
 
