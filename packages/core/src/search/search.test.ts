@@ -610,6 +610,32 @@ describe("Workspace and Project search tab integration", () => {
 		expect(results[0].filepath).toBe("foo.ts");
 	});
 
+	it("detaches the search backend from the worktree when the project root is cleared", async () => {
+		const storage = createMockStorage({
+			"/test-project/foo.ts": "const x = 42;"
+		});
+		const project = new ProjectClass(storage as any, () => ({} as any), {
+			loadOpenFiles: mock(async () => []),
+			saveOpenFiles: mock(async () => {}),
+			loadActiveDocumentId: mock(async () => null),
+			saveActiveDocumentId: mock(async () => {})
+		} as any);
+
+		project.hasRootPermission = true;
+		project.rootOrigin = rootOrigin;
+		await project.worktree!.scan();
+
+		const backend = project.searchBackend;
+		const found = await backend.search({ pattern: "42" }).all();
+		expect(found.length).toBe(1);
+
+		// Clearing the root disposes the worktree and detaches the backend
+		// from it, so the backend no longer searches the disposed root.
+		project.rootOrigin = null;
+		const afterClear = await backend.search({ pattern: "42" }).all();
+		expect(afterClear.length).toBe(0);
+	});
+
 	it("clicking a match opens the file at the line and column location", async () => {
 		const storage = createMockStorage({
 			"/test-project/main.ts": "line 1\nlet needle = 100;\nline 3"

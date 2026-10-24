@@ -1,5 +1,6 @@
 import type { Project } from './project.svelte';
 import { SvelteSet } from 'svelte/reactivity';
+import { untrack } from 'svelte';
 import { toURI, type FileOrigin } from '../storage';
 import { Worktree, GitIgnoreMatcher } from './worktree.svelte';
 
@@ -123,14 +124,21 @@ export class ProjectTree {
 		}
 		this.subscribedWorktree = wt;
 		if (wt) {
-			this.worktreeUnsubscribe = wt.subscribe((snapshot) => {
-				if (
-					!this.project.rootOrigin ||
-					toURI(this.project.rootOrigin) === toURI(snapshot.root)
-				) {
-					this.nodes = snapshot.entries;
-				}
-			});
+			// The subscribe calls its listener straight away, and the
+			// listener reads the snapshot's entries. That read is untracked
+			// on purpose: this method attaches from a getter, and a tracked
+			// read would tie whoever read the getter to every scan that
+			// follows.
+			this.worktreeUnsubscribe = untrack(() =>
+				wt.subscribe((snapshot) => {
+					if (
+						!this.project.rootOrigin ||
+						toURI(this.project.rootOrigin) === toURI(snapshot.root)
+					) {
+						this.nodes = snapshot.entries;
+					}
+				})
+			);
 		} else {
 			this.nodes = [];
 		}
