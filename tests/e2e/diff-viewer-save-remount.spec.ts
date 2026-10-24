@@ -15,6 +15,7 @@ test.describe('DiffViewer CodeMirror instances across a save', () => {
 		// waits use Playwright's default timeout.
 		await page.waitForFunction(() => (window as any).appState !== undefined);
 		await page.waitForFunction(() => !!(window as any).appState?.commands?.get('git.openDiff'));
+		await page.waitForFunction(() => Boolean((window as any).git));
 	});
 
 	test('keeps the same CodeMirror instances when the diffed file is saved', async ({ page }) => {

@@ -536,7 +536,7 @@
 											bind:value={appState.prefs.fileIconThemeId}
 											class="flex flex-col gap-2"
 										>
-											{#each appState.icons.getFileThemes() as theme (theme.id)}
+											{#each (appState.icons.getAvailableFileThemes?.() ?? appState.icons.getFileThemes()) as theme (theme.id)}
 												<Label
 													for={"file-icon-" + theme.id}
 													class="flex items-center justify-between p-3 rounded-lg border-2 border-muted bg-card hover:bg-accent cursor-pointer transition-all [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:bg-primary/5"

@@ -8,6 +8,7 @@ test.describe('Header project picker', () => {
 		await page.goto('/');
 		await expect(page.locator('.cm-content').first()).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });
 		await page.waitForFunction(() => typeof (window as any).appState !== 'undefined' && typeof (window as any).browserHandleRegistry !== 'undefined');
+		await page.waitForFunction(() => Boolean((window as any).git));
 		await page.evaluate(installMockFS);
 		await page.evaluate(async () => {
 			const appState = (window as any).appState;

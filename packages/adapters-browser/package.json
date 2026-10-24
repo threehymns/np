@@ -9,7 +9,11 @@
 		".": {
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
-		}
+		},
+		"./storage": "./src/storage.ts",
+		"./persistence": "./src/persistence.ts",
+		"./lazy": "./src/lazy.ts",
+		"./git": "./src/git.ts"
 	},
 	"dependencies": {
 		"isomorphic-git": "^1.38.1",
