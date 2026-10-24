@@ -1,7 +1,7 @@
 import '../../../../tests/contract/rune-setup';
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { createElectronLspPlatform, provideLspPlatform } from './LspPlatformAdapter';
-import { LSP_PLATFORM_SERVICE_KEY } from '@np/core';
+import { LSP_PLATFORM_SERVICE_KEY } from '@np/core/plugins/services';
 
 /**
  * The desktop platform over a stubbed preload bridge, the same seam
@@ -216,7 +216,7 @@ describe('createElectronLspPlatform', () => {
 		const received: Uint8Array[] = [];
 		const spawned = platform.spawn({ command: 'vtsls', args: [], cwd: '/repo' });
 		spawned.stdout.onData((chunk) => received.push(chunk));
-		spawned.stdin.write('early');
+		spawned.stdin.write(new TextEncoder().encode('early'));
 
 		// The write above is still buffered: the spawn itself has not been called
 		// yet, so there is nothing to attach to.

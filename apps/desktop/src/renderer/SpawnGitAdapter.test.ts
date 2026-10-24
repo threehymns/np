@@ -83,12 +83,12 @@ describe('SpawnGitAdapter', () => {
 		const changes = await adapter.getChanges();
 
 		// Should pass -uall to status
-		const statusCall = mockGitRun.mock.calls.find((call: [string, string[]]) => call[1].includes('status'));
+		const statusCall = mockGitRun.mock.calls.find((call: any) => call[1].includes('status'));
 		expect(statusCall).toBeDefined();
 		expect(statusCall![1]).toContain('-uall');
 
 		// Should not have called git show at all during getChanges
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 
 		// The untracked file is the only thing read (to count lines); tracked files are not read
@@ -127,7 +127,7 @@ describe('SpawnGitAdapter', () => {
 
 		// Should not call readFile or git show for deleted files during getChanges
 		expect(mockReadFile).not.toHaveBeenCalled();
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 		expect(changes.length).toBe(2);
 		const unstagedDeleted = changes.find(c => c.filepath === 'deleted.txt');
@@ -173,7 +173,7 @@ describe('SpawnGitAdapter', () => {
 		const changes = await adapter.getChanges();
 
 		// Check that numstat commands include core.quotepath=false configuration
-		const numstatCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1].includes('--numstat'));
+		const numstatCalls = mockGitRun.mock.calls.filter((call: any) => call[1].includes('--numstat'));
 		expect(numstatCalls.length).toBe(2);
 		// `-z` is required: without it git C-quotes any path holding a newline,
 		// tab, or quote, and the counts would be keyed by a display string that
@@ -182,12 +182,12 @@ describe('SpawnGitAdapter', () => {
 		expect(numstatCalls[1][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--numstat', '-z']);
 
 		// Check that no per-file diff or show commands were executed
-		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
+		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: any) => {
 			const args = call[1];
 			return args.includes('diff') && args.includes('--') && !args.includes('--numstat');
 		});
 		expect(perFileDiffCalls.length).toBe(0);
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 		expect(mockReadFile).not.toHaveBeenCalled();
 
@@ -366,7 +366,7 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('untracked disk content');
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 	});
 
@@ -382,7 +382,7 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('staged index content');
-		const headCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
+		const headCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
 		expect(headCalls.length).toBe(0);
 	});
 
@@ -432,7 +432,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.stageAll();
 
-		const addCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'add');
+		const addCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'add');
 		expect(addCalls.length).toBe(1);
 		expect(addCalls[0][1]).toEqual(['add', '-A']);
 	});
@@ -629,7 +629,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageAll();
 
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls.length).toBe(1);
 		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '.']);
 	});
@@ -688,11 +688,11 @@ describe('SpawnGitAdapter', () => {
 
 		// A clean repository has nothing to remove, so the untracked paths are
 		// enumerated and `clean` is skipped entirely rather than run over `.`.
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls.length).toBe(1);
 		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '--worktree', '.']);
 
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(0);
 	});
 
@@ -707,7 +707,7 @@ describe('SpawnGitAdapter', () => {
 
 		// `clean -fd` over `.` would unlink any resurrected file along with the junk,
 		// and it ignores `-e :(exclude)` pathspecs, so removals are enumerated instead.
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
 		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt', ':(literal)nested/deep.txt']);
 	});
@@ -734,7 +734,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.discardAll();
 
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls[0][1]).toEqual([
 			'restore',
 			'--staged',
@@ -744,7 +744,7 @@ describe('SpawnGitAdapter', () => {
 		]);
 
 		// Only the junk is removed; the recreated file is never passed to clean.
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
 		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt']);
 	});
