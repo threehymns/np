@@ -71,6 +71,23 @@ export function shortServer(server: string): string {
 	return at === -1 ? server : server.slice(at + 1);
 }
 
+/**
+ * A server key as the picker names it: the descriptor id plus the root's
+ * folder name, `vtsls (np)`. The root's basename, not its path — the picker
+ * tells two roots apart by name, and the full path is the line column's
+ * tooltip. A key with nothing after the separator is shown whole.
+ */
+export function serverLabel(server: string): string {
+	const at = server.indexOf('@');
+	if (at === -1) return server;
+	const root = server.slice(at + 1);
+	// Both separators, because a root is a path on the machine it came from:
+	// a Windows root is written with backslashes, and splitting only on
+	// slashes would leave the whole path in the label.
+	const folder = root.split(/[/\\]/).filter(Boolean).pop() ?? root;
+	return `${server.slice(0, at)} (${folder})`;
+}
+
 /** What the tab does with a narrowing request: the picker value, and the request it has acted on. */
 export interface LspLogsFocusDecision {
 	readonly filter: string;
@@ -101,15 +118,24 @@ export function applyLogsFocus(
  * The tab over one store. An absent store is the ordinary case of a plugin that
  * is not active: the tab still renders, empty, rather than failing inside a
  * plugin-owned view.
+ * `hiddenKinds` drops whole feeds after the store filter: the protocol feed
+ * grows a line per keystroke, so the tab starts with it hidden.
  */
-export function lspLogsView(logs: LspLogsReader | undefined, filter: LspLogFilter): LspLogsView {
-	const entries = logs?.read(filter) ?? [];
+export function lspLogsView(
+	logs: LspLogsReader | undefined,
+	filter: LspLogFilter,
+	hiddenKinds: readonly LspLogKind[] = []
+): LspLogsView {
+	const read = logs?.read(filter) ?? [];
+	const entries = hiddenKinds.length
+		? read.filter((entry) => !hiddenKinds.includes(entry.kind))
+		: read;
 	const dropped = logs?.droppedCount ?? 0;
 	return {
 		entries,
 		serverOptions: (logs?.servers() ?? []).map((server) => ({
 			value: server,
-			label: shortServer(server)
+			label: serverLabel(server)
 		})),
 		lineCount: `${entries.length} ${entries.length === 1 ? 'line' : 'lines'}`,
 		droppedNote: dropped > 0 ? `${dropped} dropped` : null,

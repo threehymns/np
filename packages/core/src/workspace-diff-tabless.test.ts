@@ -243,3 +243,55 @@ describe("tab-less diff bound Documents (issue #272)", () => {
 		expect(doc.isModified).toBe(false);
 	});
 });
+
+describe("bound Documents the project search creates (issue #336)", () => {
+	it("creates a Document without a tab, and reuses it on the next edit", async () => {
+		const storage = localStorage();
+		storage.readFile = mock(async () => "alpha target beta\n");
+		const ws = await makeWorkspace(storage, silentFactory(), new MemorySessionPersistence());
+
+		const doc = await ws.getOrCreateBoundDocument(fileOrigin);
+
+		expect(doc?.content).toBe("alpha target beta\n");
+		expect(ws.documents.filter((d) => d.origin && d.origin.path === fileOrigin.path)).toHaveLength(1);
+		// No tab: a replace in the results must not open one.
+		expect(ws.countTabsForDocument(doc!.id)).toBe(0);
+		expect(ws.tabs).toHaveLength(0);
+
+		const again = await ws.getOrCreateBoundDocument(fileOrigin, "text the results show\n");
+		expect(again).toBe(doc);
+		// An existing Document is the truth; the caller's text is not a
+		// second one.
+		expect(again?.content).toBe("alpha target beta\n");
+	});
+
+	it("seeds a new Document with the text the caller is editing", async () => {
+		// The results show the file as it was when the search ran. An edit
+		// made through them addresses that text, so the Document starts
+		// from it instead of from a disk read the offsets do not describe.
+		const storage = localStorage();
+		storage.readFile = mock(async () => "changed on disk since the search\n");
+		const ws = await makeWorkspace(storage, silentFactory(), new MemorySessionPersistence());
+
+		const doc = await ws.getOrCreateBoundDocument(fileOrigin, "alpha target beta\n");
+
+		expect(doc?.content).toBe("alpha target beta\n");
+		expect(storage.readFile).not.toHaveBeenCalled();
+	});
+
+	it("openFile adopts the Document the search created and opens a tab for it", async () => {
+		const storage = localStorage();
+		storage.readFile = mock(async () => "alpha target beta\n");
+		const ws = await makeWorkspace(storage, silentFactory(), new MemorySessionPersistence());
+		const doc = await ws.getOrCreateBoundDocument(fileOrigin);
+		ws.updateDocumentContent(doc!, "alpha REPLACED beta\n");
+
+		const opened = await ws.openFile(fileOrigin);
+
+		expect(opened).toBe(doc);
+		expect(ws.tabs.some((t) => t.id === doc!.id && t.type === "document")).toBe(true);
+		// The replacement the results made is still there, unsaved.
+		expect(opened!.content).toBe("alpha REPLACED beta\n");
+		expect(opened!.isModified).toBe(true);
+	});
+});

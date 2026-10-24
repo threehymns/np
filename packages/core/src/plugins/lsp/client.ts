@@ -128,6 +128,16 @@ export interface LspClientOptions {
 	 * listener at all.
 	 */
 	readonly onNotification?: (method: string, params: unknown) => void;
+	/**
+	 * Server-to-client requests, which carry an id and expect a reply.
+	 *
+	 * The client answers the request itself and tells the caller afterwards, so
+	 * the reply is on the wire before the caller's reaction to it. That order
+	 * is not incidental: the caller's reaction to a diagnostic refresh is a
+	 * pull, and a server waiting for the refresh reply will not answer a pull
+	 * until the reply arrives.
+	 */
+	readonly onRequest?: (method: string, params: unknown) => void;
 }
 
 export class LspRequestError extends Error {
@@ -297,6 +307,14 @@ export class LspClient {
 							// never names a related document, so the related
 							// half is false as well.
 							relatedDocumentSupport: false
+						},
+						publishDiagnostics: {
+							// The client reads the version a publish carries and
+							// orders the answers for one path by it (ADR 0029),
+							// so it says so: a server is entitled to leave the
+							// version out for a client that has not declared it
+							// reads one.
+							versionSupport: true
 						}
 						// No trigger-character declaration, for the same
 						// client-table reason from the other side: trigger
@@ -307,6 +325,17 @@ export class LspClient {
 						// (`min_word_length`, prose silence, the global popup
 						// toggle), and the runtime honours each running
 						// server's announced characters live.
+					},
+					workspace: {
+						// The client answers `workspace/diagnostic/refresh` (see
+						// `receiveRequest`), so it says so. The capability is the
+						// server's permission to ask: a server that is told the
+						// client cannot handle a refresh has no reason to send
+						// one, and one that sends it anyway is owed a reply
+						// whether it was told to or not.
+						diagnostics: {
+							refreshSupport: true
+						}
 					},
 					...((params.capabilities as Record<string, unknown> | undefined) ?? {})
 				}
@@ -423,6 +452,10 @@ export class LspClient {
 				this.options.onNotification?.(message.method, message.params);
 				continue;
 			}
+			if (typeof message.method === 'string' && message.id !== undefined && message.id !== null) {
+				this.receiveRequest(message);
+				continue;
+			}
 			if (typeof message.id === 'number' && (message.result !== undefined || message.error !== undefined)) {
 				const waiter = this.pending.get(message.id);
 				if (!waiter) continue;
@@ -432,6 +465,35 @@ export class LspClient {
 				continue;
 			}
 		}
+	}
+
+	/**
+	 * A server-to-client request: one that carries an id and expects a reply.
+	 *
+	 * `workspace/diagnostic/refresh` is answered here rather than by the
+	 * caller, because the client declared that it handles it and a server
+	 * waits for the answer. The reply goes out before the caller is told, and
+	 * that order is the whole of the deadlock it avoids: the caller's reaction
+	 * to a refresh is a pull, and a server that is waiting for the refresh
+	 * reply will not answer the pull until the reply is on the wire.
+	 *
+	 * A request the client does not implement is answered with JSON-RPC's
+	 * "method not found" rather than left hanging, because a server that waits
+	 * for a reply that never comes waits forever.
+	 */
+	private receiveRequest(message: JsonRpcMessage): void {
+		const method = message.method as string;
+		const id = message.id as number | string;
+		if (method === 'workspace/diagnostic/refresh') {
+			this.send({ jsonrpc: '2.0', id, result: null });
+			this.options.onRequest?.(method, message.params);
+			return;
+		}
+		this.send({
+			jsonrpc: '2.0',
+			id,
+			error: { code: -32601, message: `Method not found: ${method}` }
+		});
 	}
 
 	private receiveStderr(chunk: Uint8Array): void {

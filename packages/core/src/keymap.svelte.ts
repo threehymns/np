@@ -51,6 +51,9 @@ export const defaultKeymap: KeymapBinding[] = [
 			"space e y": "edit.copy",
 			"space e p": "edit.paste",
 			"space e f": "edit.find",
+			"space /": "edit.findInFiles",
+			"space f f": "edit.findInFiles",
+			"space s": "edit.findInFiles",
 			"space e a": "edit.selectAll",
 			"space e l": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's vim-mode `]c` / `[c`
@@ -67,6 +70,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+z": "edit.undo",
 			"cmd+shift+z": "edit.redo",
 			"cmd+f": "edit.find",
+			"cmd+shift+f": "edit.findInFiles",
 			"cmd+a": "edit.selectAll",
 			"cmd+k m": "edit.changeLanguageMode",
 			// Hunk navigation mirrors Zed's editor `cmd+f8` / `cmd+shift+f8`
@@ -98,6 +102,7 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+o": "file.open",
 			"cmd+s": "file.save",
 			"cmd+shift+s": "file.saveAs",
+			"cmd+shift+f": "edit.findInFiles",
 			"cmd+shift+p": "commandPalette.toggle",
 			"cmd+\\": "view.toggleSidebar",
 			"cmd++": "view.zoomIn",
@@ -116,7 +121,11 @@ export const defaultKeymap: KeymapBinding[] = [
 			"cmd+k cmd+up": "pane.focusUp",
 			"cmd+k cmd+down": "pane.focusDown",
 			"cmd+f8": "diff.nextHunk",
-			"cmd+shift+f8": "diff.prevHunk"
+			"cmd+shift+f8": "diff.prevHunk",
+			// The project-wide diagnostics tab (#309). The shortcut other editors
+			// use for the problems panel, which is the same thing: every diagnostic
+			// the servers reported, in one list.
+			"cmd+shift+m": "diagnostics.open"
 		}
 	}
 ];

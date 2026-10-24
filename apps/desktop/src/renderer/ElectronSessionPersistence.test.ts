@@ -45,7 +45,7 @@ describe('ElectronSessionPersistence', () => {
 				}
 			];
 
-			await persistence.saveOpenFiles(files);
+			await persistence.saveOpenFiles(files as any);
 			expect(mockPersistenceSave).toHaveBeenCalledWith('openFiles', files);
 
 			mockPersistenceLoad.mockResolvedValueOnce(files);
@@ -66,7 +66,7 @@ describe('ElectronSessionPersistence', () => {
 				}
 			];
 
-			await persistence.saveOpenFiles(files, folderUri);
+			await persistence.saveOpenFiles(files as any, folderUri);
 			expect(mockPersistenceSave).toHaveBeenCalledWith(`openFiles:${folderUri}`, files);
 
 			mockPersistenceLoad.mockResolvedValueOnce(files);
@@ -251,7 +251,7 @@ describe('ElectronSessionPersistence', () => {
 			// Save all aspects of the session
 			await persistence.saveRootFolder(rootFolder);
 			await persistence.saveRecentFolders(recentFolders);
-			await persistence.saveOpenFiles(openFiles, folderUri);
+			await persistence.saveOpenFiles(openFiles as any, folderUri);
 			await persistence.saveExpandedPaths(expandedPaths, folderUri);
 			await persistence.saveActiveDocumentId(activeId, folderUri);
 

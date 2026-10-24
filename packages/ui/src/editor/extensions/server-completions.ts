@@ -25,7 +25,7 @@ import {
 	type BufferWordSettings,
 } from "./buffer-words";
 import { currentDocFacet } from "./wikilinks";
-import { markdownHighlight } from "./highlight";
+import { codeHighlight } from "./highlight";
 
 /**
  * Server completion items as one more source on the existing chain (spec #263,
@@ -618,7 +618,7 @@ function escapeCodeHtml(value: string): string {
 /**
  * Highlights one fenced code block to inner HTML with the editor's own token
  * colors and no editor instance: the Lezer parser for the fence language plus
- * `highlightCode` over the shared `markdownHighlight` style, whose classes the
+ * `highlightCode` over the shared `codeHighlight` style, whose classes the
  * open editor already mounts. Unknown languages and load failures degrade to
  * escaped plain text, never to an error.
  */
@@ -631,7 +631,7 @@ export async function highlightFencedCode(code: string, info: string): Promise<s
 	if (!parser) return escapeCodeHtml(source);
 	try {
 		let html = "";
-		highlightCode(source, parser.parse(source), markdownHighlight, (text, classes) => {
+		highlightCode(source, parser.parse(source), codeHighlight, (text, classes) => {
 			html += classes
 				? `<span class="${classes}">${escapeCodeHtml(text)}</span>`
 				: escapeCodeHtml(text);
@@ -645,7 +645,7 @@ export async function highlightFencedCode(code: string, info: string): Promise<s
 }
 
 /** Highlights every fenced code block the Markdown parser emitted. */
-async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
+export async function highlightCodeBlocks(dom: HTMLElement): Promise<void> {
 	const blocks = dom.querySelectorAll("pre code");
 	for (const block of Array.from(blocks)) {
 		const element = block as HTMLElement;

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 		ipcRenderer.send('lsp:write', processId, chunk),
 	endLspServer: (processId: string) => ipcRenderer.send('lsp:end', processId),
 	killLspServer: (processId: string) => ipcRenderer.invoke('lsp:kill', processId),
+	lspMemory: (processId: string) => ipcRenderer.invoke('lsp:memory', processId),
 	onLspServerData: (handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;
@@ -75,6 +76,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			ipcRenderer.removeListener('config:changed', listener);
 		};
 	},
-	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools')
+	watchDirectory: (
+		dirPath: string,
+		callback: (events: Array<{ path: string; type: 'create' | 'update' | 'delete' }>) => void
+	) => {
+		const watchId = crypto.randomUUID();
+		const listener = (
+			_event: unknown,
+			payload: { watchId: string; events: Array<{ path: string; type: 'create' | 'update' | 'delete' }> }
+		) => {
+			if (payload.watchId === watchId) {
+				callback(payload.events);
+			}
+		};
+		ipcRenderer.on('watcher:events', listener);
+		// The main process can refuse to start the watcher. Settle that
+		// here instead of letting it surface later: the unsubscribe must
+		// not rethrow a startup failure, and there is nothing to stop when
+		// the watcher never started.
+		const startPromise = ipcRenderer.invoke('watcher:start', watchId, dirPath).then(
+			() => ({ started: true }),
+			(error: unknown) => {
+				console.error('[watcher] Failed to start watching', dirPath, error);
+				return { started: false };
+			}
+		);
+		return async () => {
+			ipcRenderer.removeListener('watcher:events', listener);
+			const { started } = await startPromise;
+			if (started) {
+				await ipcRenderer.invoke('watcher:stop', watchId);
+			}
+		};
+	},
+	toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools'),
+	openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
 });
 

@@ -6,9 +6,17 @@ import { DocumentSession } from './document.svelte';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { Project } from './project/project.svelte';
+import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
 import type { Repository, RepositorySafetyReport } from './project/repository.svelte';
 import { type SessionPersistence, type SerializedDocument, type SerializedWorkspace } from './persistence';
 import type { SwitchResult, VCSAdapter } from './project/vcs';
+import { SearchTabSession } from './search';
+import { SEARCH_TAB_ID } from './tab-ids';
+import {
+	DIAGNOSTICS_TAB_ID,
+	DIAGNOSTICS_TAB_TITLE,
+	DiagnosticsSession
+} from './diagnostics-tab.svelte';
 
 import {
 	Pane,
@@ -41,6 +49,28 @@ export class Workspace {
 	layout = $state<LayoutNode>(new Pane());
 	activePaneId = $state<string>('');
 	pendingCloseId = $state<string | null>(null);
+	pendingCloseQueue = $state<{ tabId: string; paneId?: string }[]>([]);
+	/**
+	 * Closed tabs awaiting reopen, most recent last, paired with the pane
+	 * that held them so `reopenClosedTab` puts a tab back where it was.
+	 * Session-scoped: the top of the stack answers the reopen command, and
+	 * a restart forgets the history.
+	 */
+	closedTabs = $state<{ tab: WorkspaceTab; paneId: string; doc?: DocumentSession }[]>([]);
+
+	get otherPendingCloseCount(): number {
+		return this.pendingCloseQueue.length;
+	}
+
+	cancelPendingClose(): void {
+		this.pendingCloseId = null;
+		this.pendingCloseQueue = [];
+	}
+	/**
+	 * Upper bound on the closed-tab history; an unbounded stack of closed
+	 * tabs would keep their tab records alive for the whole session.
+	 */
+	private static readonly MAX_CLOSED_TABS = 100;
 	project: Project;
 	// NOTE (#254): recent-folders history reads window-scoped but is
 	// per-folder-ambiguous; correct with one Project, revisitable when a
@@ -49,6 +79,7 @@ export class Workspace {
 	onRootOriginChange?: (origin: FileOrigin | null) => Promise<void> | void;
 	pluginHost: PluginHostInterface;
 	lastSaveCancellationReason = $state<string | null>(null);
+	searchTabFocusNonce = $state<number>(0);
 
 	/**
 	 * A Root switch is in flight. Workspace-level, not Project-level: the
@@ -249,6 +280,18 @@ export class Workspace {
 	 */
 	readonly diffBoundDocIds = new Map<string, string>();
 
+	/**
+	 * The diagnostics session per diagnostics tab (#309): the severity filter
+	 * and the sort order the reader chose.
+	 *
+	 * Kept on the workspace rather than in the tab's view, because the tab's
+	 * controls and the tab's list are two different things: the filter has to
+	 * survive the tab being switched away from and back to, and a view that is
+	 * unmounted and mounted again starts empty. Keyed by tab id, so two
+	 * diagnostics tabs in two panes are two readers.
+	 */
+	private readonly diagnosticsSessions = new Map<string, DiagnosticsSession>();
+
 	private applyPendingDiffRestore() {
 		if (!this.isRepositoryActive) return;
 		const repo = this.project.repository;
@@ -302,7 +345,26 @@ export class Workspace {
 		for (const pane of this.getAllPanes()) {
 			for (const tab of pane.tabs) {
 				if (serializedMap.has(tab.id)) continue;
-				if (tab.type === 'diff') {
+				if (tab.type === 'search') {
+					// The query and its options live in the tab's session, so
+					// they are persisted with the tab and restored with it.
+					const session = tab.searchSession ?? this.searchSessions.get(tab.id);
+					serializedMap.set(tab.id, {
+						id: tab.id,
+						origin: null,
+						virtualTabType: 'search',
+						...(session
+							? {
+									searchQuery: session.query,
+									searchIsRegex: session.isRegex,
+									searchCaseSensitive: session.caseSensitive,
+									searchWholeWord: session.wholeWord,
+									searchIncludePattern: session.includePattern,
+									searchExcludePattern: session.excludePattern
+								}
+							: {})
+					});
+				} else if (tab.type === 'diff') {
 					const serialized: SerializedDocument = {
 						id: tab.id,
 						origin: null,
@@ -340,7 +402,7 @@ export class Workspace {
 					serializedMap.set(tab.id, serialized);
 				}
 			}
-		}
+}
 
 		// Tab-less bound Documents (Diff Viewer Working-copy pane bindings for
 		// files with no open tab, issue #272) hold user text no tab serializes.
@@ -393,9 +455,10 @@ export class Workspace {
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
 		persistence: SessionPersistence,
-		pluginHost?: PluginHostInterface
+		pluginHost?: PluginHostInterface,
+		snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy
 	) {
-		this.project = new Project(storage, vcsFactory, persistence);
+		this.project = new Project(storage, vcsFactory, persistence, snapshotStrategyFactory);
 		this.activePaneId = (this.layout as Pane).id;
 		this.project.projectTree.setWindowHooks({
 			markDocumentsDeleted: (origin) => this.markDocumentsDeleted(origin),
@@ -431,6 +494,18 @@ export class Workspace {
 				const _folderUri = this.project.rootOrigin ? toURI(this.project.rootOrigin) : '';
 				const _tabs = this.getAllTabs().map(t => t.id).join(',');
 				const _docs = this.documents.map(d => `${d.id}:${d.origin ? toURI(d.origin) : d.untitledTitle}`).join(',');
+				// Read the search-session fields (query + five options) for every
+				// search tab so option changes schedule a persistence flush.
+				// Mirrors serializeTabs(): read-only lookup, no session creation.
+				const _search = this.tabs
+					.filter(t => t.type === 'search')
+					.map(t => {
+						const session = t.searchSession ?? this.searchSessions.get(t.id);
+						return session
+							? [session.query, session.isRegex, session.caseSensitive, session.wholeWord, session.includePattern, session.excludePattern].join('|')
+							: '';
+					})
+					.join(',');
 				
 				this.debouncedSaveOpenFiles();
 			});
@@ -669,6 +744,57 @@ export class Workspace {
 		return newDoc;
 	}
 
+	/**
+	 * The diagnostics session for one tab (#309): the severity filter and the
+	 * sort order the reader chose.
+	 *
+	 * Created on first ask, so a tab that is opened and never touched still has
+	 * a session to read: the tab's controls bind to it, and a control with
+	 * nothing to bind to is a control that cannot be written to.
+	 */
+	getDiagnosticsSession(tabId: string): DiagnosticsSession {
+		let session = this.diagnosticsSessions.get(tabId);
+		if (!session) {
+			session = new DiagnosticsSession();
+			this.diagnosticsSessions.set(tabId, session);
+		}
+		return session;
+	}
+
+	/**
+	 * Opens the project-wide diagnostics tab, or focuses it when it is already
+	 * open.
+	 *
+	 * Idempotent, because the tab is reachable from the command palette and
+	 * from a keybinding, and asking twice for the same tab must not stack two
+	 * of them. The diagnostics are not read here: the tab is a view over the
+	 * merged store the LSP plugin publishes, and the store is the only source
+	 * of what it shows.
+	 */
+	openDiagnosticsTab(): string {
+		const id = DIAGNOSTICS_TAB_ID;
+		const existing = this.getAllTabs().find((tab) => tab.id === id);
+		if (existing) {
+			const pane = findPaneWithTab(this.layout, existing.id);
+			if (pane) {
+				this.activePaneId = pane.id;
+				pane.activeTabId = existing.id;
+			} else {
+				this.activeTabId = id;
+			}
+		} else {
+			// A closed diagnostics tab leaves its record in the closed-tabs
+			// history. The replacement below reuses the same id, so the stale
+			// entry has to go: otherwise reopenClosedTab would later stack a
+			// second tab with that id.
+			this.closedTabs = this.closedTabs.filter((entry) => entry.tab.id !== id);
+			this.tabs.push({ id, type: 'diagnostics', title: DIAGNOSTICS_TAB_TITLE });
+			this.activeTabId = id;
+		}
+		this.getDiagnosticsSession(id);
+		return id;
+	}
+
 	async openFile(specificOrigin?: FileOrigin) {
 		let origin: FileOrigin | null = null;
 
@@ -708,6 +834,105 @@ export class Workspace {
 		// is on disk rather than as an empty shell it has to wait on.
 		this.pluginHost?.emit('document:opened', { document: newDoc, origin: newDoc.origin });
 		return newDoc;
+	}
+
+	/**
+	 * The document for a file, whether or not the file has a tab.
+	 *
+	 * The results are an editor for the files they show, so an edit made
+	 * there needs a Document even when the file is not open. The Document
+	 * is created without a tab — the same bound Document a Diff Viewer's
+	 * working-copy pane uses (issue #272) — and `openFile` adopts it when
+	 * the file is opened later. A replace operation never opens a tab.
+	 *
+	 * `content` seeds a new Document with the text the caller is editing,
+	 * so the caller's offsets keep their meaning even when the file has
+	 * changed on disk since the caller read it.
+	 */
+	async getOrCreateBoundDocument(
+		origin: FileOrigin,
+		content?: string
+	): Promise<DocumentSession | null> {
+		const targetUri = toURI(origin);
+		const existing = this.documents.find(d => d.origin && toURI(d.origin) === targetUri);
+		if (existing) return existing;
+
+		let initialContent = content;
+		if (initialContent === undefined) {
+			try {
+				initialContent = await this.project.storage.readFile(origin);
+			} catch {
+				return null;
+			}
+		}
+
+		const doc = new DocumentSession(this.project.storage, initialContent, origin);
+		doc.refreshPermissionState(this.project.coversOrigin(origin));
+		this.documents.push(doc);
+		this.pluginHost?.emit('document:opened', { document: doc, origin: doc.origin });
+		return doc;
+	}
+
+private searchSessions = new Map<string, SearchTabSession>();
+
+	/**
+	 * The query session of a search tab.
+	 *
+	 * The query and its options live in the session rather than in the
+	 * component, so they survive a tab switch, a tab close and reopen, and
+	 * a restart. A tab that already carries a session keeps it.
+	 */
+	getSearchSession(tabId: string): SearchTabSession {
+		let session = this.searchSessions.get(tabId);
+		if (!session) {
+			// The tab may live in another pane, so every pane is searched.
+			const tab = this.getAllTabs().find(t => t.id === tabId);
+			if (tab?.searchSession) {
+				session = tab.searchSession;
+			} else {
+				session = new SearchTabSession();
+			}
+			this.searchSessions.set(tabId, session);
+			if (tab) {
+				tab.searchSession = session;
+			}
+		}
+		return session;
+	}
+
+	/**
+	 * Open the project-wide search tab.
+	 *
+	 * The search tab is a singleton: the project has one search surface, so
+	 * asking for it again focuses the existing tab instead of stacking a
+	 * second one. It is a virtual tab, so it lives in a pane like any other
+	 * tab but carries no document behind it.
+	 *
+	 * A query seeds the tab's session, so opening the search tab with a
+	 * query shows that query.
+	 */
+	openSearchTab(query?: string): string {
+		this.searchTabFocusNonce++;
+		const existing = this.getAllTabs().find(t => t.id === SEARCH_TAB_ID || t.type === 'search');
+		if (existing) {
+			// The tab may live in another pane, so focus that pane rather than
+			// pointing the active pane at a tab it does not hold.
+			const pane = findPaneWithTab(this.layout, existing.id);
+			if (pane) {
+				this.activePaneId = pane.id;
+				pane.activeTabId = existing.id;
+			}
+			if (query !== undefined) {
+				const session = this.getSearchSession(existing.id);
+				session.query = query;
+			}
+			return existing.id;
+		}
+		const session = new SearchTabSession({ query: query ?? '' });
+		this.searchSessions.set(SEARCH_TAB_ID, session);
+		this.tabs.push({ id: SEARCH_TAB_ID, type: 'search', searchSession: session });
+		this.activeTabId = SEARCH_TAB_ID;
+		return SEARCH_TAB_ID;
 	}
 
 	/**
@@ -814,7 +1039,14 @@ export class Workspace {
 
 			// Load new folder state
 			await this.loadFolderState(toURI(origin), true);
-			this.pendingCloseId = null;
+			this.cancelPendingClose();
+			// The outgoing layout's tabs were replaced, not closed, so the
+			// diagnostics session outlives them. Drop it now that the folder
+			// change has succeeded: a filter the reader set in the old
+			// folder must not hide diagnostics in the new one. A failed
+			// open restores the old layout from `previous`, so the session
+			// is only dropped on the success path.
+			this.diagnosticsSessions.delete(DIAGNOSTICS_TAB_ID);
 			return true;
 		} catch (error) {
 			if (changed) {
@@ -822,6 +1054,20 @@ export class Workspace {
 				this.project.repository = previous.repository;
 				this.project.repositoryOwnerId = previous.repositoryOwnerId;
 				this.project.hasRootPermission = previous.permission;
+				// The restored root gets a fresh Worktree, and a fresh
+				// Worktree publishes an empty snapshot. Rescan the restored
+				// root so the project that is still open publishes its files
+				// again instead of an empty set. The scan runs before the
+				// tree's own state is put back, so the tree keeps the
+				// content the open started from.
+				if (previous.root && previous.permission) {
+					try {
+						await this.project.projectTree.scan(previous.root);
+					} catch {
+						// The open failure is the reason to report. A failure
+						// to rescan the restored root does not change it.
+					}
+				}
 				this.documents = previous.documents;
 				this.layout = previous.layout;
 				this.activePaneId = previous.activePaneId;
@@ -902,20 +1148,26 @@ export class Workspace {
 
 		// The save/discard prompt fires only when the last tab referencing a session closes.
 		// Closing a cloned tab while the session lives on elsewhere closes silently.
-		if (totalDocTabs <= 1 && tab.type === 'document') {
+	if (totalDocTabs <= 1 && tab.type === 'document') {
 			const doc = this.documents.find(d => d.id === docId);
 			if (doc && doc.isModified) {
+				this.pendingCloseQueue = [];
 				this.pendingCloseId = id;
 				return;
 			}
 		}
 
-		this.finalizeClose(id, false, targetPane.id).catch((err) => {
+		await this.finalizeClose(id, false, targetPane.id).catch((err) => {
 			console.error('[Workspace] Failed to close tab', err);
 		});
 	}
 
-	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
+	async finalizeClose(
+		id: string,
+		saveFirst = false,
+		paneId?: string,
+		applyToRemaining = false
+	): Promise<boolean> {
 		const targetPane = paneId
 			? this.findPane(paneId)
 			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
@@ -927,66 +1179,146 @@ export class Workspace {
 		const docId = tab.docId ?? tab.id;
 		const totalDocTabs = this.countTabsForDocument(docId);
 
+		if (applyToRemaining) {
+			const queue = [...this.pendingCloseQueue];
+			this.pendingCloseQueue = [];
+			this.pendingCloseId = null;
+
+			const allClosing = [{ tabId: id, paneId: targetPane.id }, ...queue];
+
+			if (saveFirst) {
+				const docsToSave = new Set<DocumentSession>();
+				for (const item of allClosing) {
+					const itemPane = item.paneId ? this.findPane(item.paneId) : this.findPaneWithTab(item.tabId);
+					const itemTab = itemPane?.tabs.find(t => t.id === item.tabId);
+					if (itemTab && itemTab.type === 'document') {
+						const itemDocId = itemTab.docId ?? itemTab.id;
+						const itemDoc = this.documents.find(d => d.id === itemDocId);
+						if (itemDoc && itemDoc.isModified) {
+							docsToSave.add(itemDoc);
+						}
+					}
+				}
+				for (const doc of docsToSave) {
+					try {
+						await this.saveDocument(doc);
+					} catch (err) {
+						console.error('[Workspace] Save before close failed for queued tab', err);
+					}
+				}
+			}
+
+			await this.performCloseBatch(allClosing);
+			return true;
+		}
+
+		let saved = true;
 		if (totalDocTabs <= 1 && tab.type === 'document') {
 			const doc = this.documents.find(d => d.id === docId);
 			if (doc && saveFirst) {
 				try {
-					const saved = await this.saveDocument(doc);
-					if (saved) await this.performClose(id, targetPane.id);
-					return saved;
+					saved = await this.saveDocument(doc);
+					if (!saved) {
+						this.cancelPendingClose();
+						return false;
+					}
 				} catch (err) {
 					console.error('[Workspace] Save before close failed', err);
+					this.cancelPendingClose();
 					return false;
-				} finally {
-					this.pendingCloseId = null;
 				}
 			}
 		}
 
 		await this.performClose(id, targetPane.id);
-		this.pendingCloseId = null;
+
+		if (this.pendingCloseQueue.length > 0) {
+			const next = this.pendingCloseQueue.shift()!;
+			this.pendingCloseId = next.tabId;
+		} else {
+			this.pendingCloseId = null;
+		}
+
 		return true;
 	}
 
 	/**
-	 * Close a tab without asking, in the pane that holds it.
+	 * Close multiple tabs across panes in a single batch update.
 	 *
-	 * This is the unconditional close: the tab leaves its pane, the document
-	 * leaves the workspace when no tab references it any more, and a pane
-	 * whose last tab closed dies with it. It does not ask about unsaved
-	 * changes, so a caller that has not already asked must use `closeTab`,
-	 * which prompts, or `finalizeClose`, which is the answer to that prompt.
+	 * Avoids intermediate activeTabId churn and per-tab reactive updates
+	 * by filtering closed tabs and documents in bulk and setting activeTabId
+	 * only once per affected pane.
 	 */
-	async performClose(id: string, paneId?: string) {
-		const targetPane = paneId
-			? this.findPane(paneId)
-			: (this.activePane.tabs.some(t => t.id === id) ? this.activePane : this.findPaneWithTab(id));
-		if (!targetPane) return;
+	async performCloseBatch(items: { tabId: string; paneId?: string }[]) {
+		if (items.length === 0) return;
 
-		const tabIndex = targetPane.tabs.findIndex(t => t.id === id);
-		if (tabIndex === -1) return;
+		const itemsByPane = new Map<Pane, string[]>();
+		for (const item of items) {
+			const targetPane = item.paneId
+				? this.findPane(item.paneId)
+				: (this.activePane.tabs.some(t => t.id === item.tabId) ? this.activePane : this.findPaneWithTab(item.tabId));
+			if (!targetPane) continue;
+			let list = itemsByPane.get(targetPane);
+			if (!list) {
+				list = [];
+				itemsByPane.set(targetPane, list);
+			}
+			list.push(item.tabId);
+		}
 
-		const tab = targetPane.tabs[tabIndex];
-		const docId = tab.docId ?? tab.id;
+		if (itemsByPane.size === 0) return;
 
-		targetPane.tabs.splice(tabIndex, 1);
-
-		const totalDocTabs = this.countTabsForDocument(docId);
-		if (totalDocTabs === 0 && tab.type === 'document') {
-			const docIndex = this.documents.findIndex(doc => doc.id === docId);
-			if (docIndex !== -1) {
-				this.documents.splice(docIndex, 1);
+		for (const [pane, tabIds] of itemsByPane) {
+			const idSet = new Set(tabIds);
+			for (const tab of pane.tabs) {
+				if (!idSet.has(tab.id)) continue;
+				const docId = tab.docId ?? tab.id;
+				const doc = tab.type === 'document' ? this.documents.find(d => d.id === docId) : undefined;
+				this.closedTabs.push({ tab, paneId: pane.id, doc });
+				if (tab.type === 'search') {
+					this.searchSessions.delete(tab.id);
+				}
+				// A closed diagnostics tab takes its session with it: the filter belongs
+				// to the tab that is open, and a reopened tab is a new tab.
+				if (tab.type === 'diagnostics') {
+					this.diagnosticsSessions.delete(tab.id);
+				}
 			}
 		}
 
-		if (targetPane.tabs.length > 0) {
-			if (targetPane.activeTabId === id) {
-				targetPane.activeTabId = targetPane.tabs[Math.max(0, tabIndex - 1)].id;
+		if (this.closedTabs.length > Workspace.MAX_CLOSED_TABS) {
+			this.closedTabs.splice(0, this.closedTabs.length - Workspace.MAX_CLOSED_TABS);
+		}
+
+		const deadPanes: Pane[] = [];
+		for (const [pane, tabIds] of itemsByPane) {
+			const idSet = new Set(tabIds);
+			const activeIndex = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+			const activeIsClosed = idSet.has(pane.activeTabId);
+
+			pane.tabs = pane.tabs.filter(t => !idSet.has(t.id));
+
+			if (pane.tabs.length > 0) {
+				if (activeIsClosed || !pane.activeTabId) {
+					const newIndex = Math.min(pane.tabs.length - 1, Math.max(0, activeIndex - 1));
+					pane.activeTabId = pane.tabs[newIndex]?.id ?? '';
+				}
+			} else {
+				deadPanes.push(pane);
 			}
-		} else {
+		}
+
+		const remainingDocIds = new Set<string>();
+		for (const p of this.getAllPanes()) {
+			for (const t of p.tabs) {
+				remainingDocIds.add(t.docId ?? t.id);
+			}
+		}
+		this.documents = this.documents.filter(d => remainingDocIds.has(d.id));
+
+		for (const targetPane of deadPanes) {
 			const allPanes = this.getAllPanes();
 			if (allPanes.length > 1) {
-				// Implicit death: a pane whose last tab closes is removed, tree collapses, focus falls back to a neighbor
 				const result = removePane(this.layout, targetPane.id);
 				if (result) {
 					this.layout = result.newRoot;
@@ -995,12 +1327,191 @@ export class Workspace {
 					}
 				}
 			} else {
-				// Last pane is guarded and survives as an empty pane
 				targetPane.activeTabId = '';
 			}
 		}
 
 		this.debouncedSaveOpenFiles();
+	}
+
+	/**
+	 * Close a tab without asking, in the pane that holds it.
+	 */
+	async performClose(id: string, paneId?: string) {
+		await this.performCloseBatch([{ tabId: id, paneId }]);
+	}
+
+	/**
+	 * The tabs of one pane, in tab-strip order. Defaults to the active
+	 * pane, so the pane-scoped tab commands need no caller-side pane
+	 * resolution. The returned array is a copy: closing mutates the pane.
+	 */
+	getPaneTabs(paneId?: string): WorkspaceTab[] {
+		const pane = paneId ? this.findPane(paneId) ?? this.activePane : this.activePane;
+		return pane ? [...pane.tabs] : [];
+	}
+
+	/**
+	 * True when closing a tab loses nothing: the Document behind it is not
+	 * modified, and a search tab holds no unsaved work while none of the
+	 * files its results show is modified.
+	 */
+	isTabClean(tab: WorkspaceTab): boolean {
+		if (tab.type === 'search') {
+			const session = tab.searchSession;
+			if (!session) return true;
+			const dirtyUris = new Set(
+				this.documents
+					.filter((d) => d.isModified)
+					.map((d) => (d.origin ? toURI(d.origin) : null))
+					.filter((uri): uri is string => !!uri)
+			);
+			return !session.resultUris.some((uri) => dirtyUris.has(uri));
+		}
+		const docId = tab.docId ?? tab.id;
+		const doc = this.documents.find((d) => d.id === docId);
+		return !doc?.isModified;
+	}
+
+	private async closeTabsBatch(tabs: WorkspaceTab[], paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+
+		const cleanTabs: WorkspaceTab[] = [];
+		const dirtyTabs: WorkspaceTab[] = [];
+
+		for (const tab of tabs) {
+			if (this.isTabClean(tab)) {
+				cleanTabs.push(tab);
+			} else {
+				dirtyTabs.push(tab);
+			}
+		}
+
+		if (cleanTabs.length > 0) {
+			await this.performCloseBatch(cleanTabs.map(t => ({ tabId: t.id, paneId: pane.id })));
+		}
+
+		const uniqueDirtyTabs: WorkspaceTab[] = [];
+		const duplicateTabs: { tabId: string; paneId: string }[] = [];
+		const seenDocIds = new Set<string>();
+
+		for (const tab of dirtyTabs) {
+			const docId = tab.docId ?? tab.id;
+			if (seenDocIds.has(docId)) {
+				duplicateTabs.push({ tabId: tab.id, paneId: pane.id });
+			} else {
+				seenDocIds.add(docId);
+				uniqueDirtyTabs.push(tab);
+			}
+		}
+
+		if (duplicateTabs.length > 0) {
+			await this.performCloseBatch(duplicateTabs);
+		}
+
+		if (uniqueDirtyTabs.length === 0) {
+			return;
+		}
+
+		this.pendingCloseId = uniqueDirtyTabs[0].id;
+		this.pendingCloseQueue = uniqueDirtyTabs.slice(1).map((t) => ({ tabId: t.id, paneId: pane.id }));
+	}
+
+	/**
+	 * Close every tab of a pane (default: the active pane). Each tab goes
+	 * through the normal ask/close path, so a dirty Document that is the last
+	 * tab referencing its session still asks before discarding.
+	 */
+	async closeAllTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		await this.closeTabsBatch(pane.tabs, pane.id);
+	}
+
+	/**
+	 * Close every tab of a pane except the active one (default: the active
+	 * pane). The active tab is the one the caller keeps, so it survives even
+	 * while dirty.
+	 */
+	async closeOtherTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		const tabs = pane.tabs.filter((t) => t.id !== pane.activeTabId);
+		await this.closeTabsBatch(tabs, pane.id);
+	}
+
+	/**
+	 * Close the clean tabs of a pane (default: the active pane) and keep the
+	 * dirty ones: closing is never a reason to lose unsaved work.
+	 */
+	async closeCleanTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		const clean = pane.tabs.filter((t) => this.isTabClean(t));
+		await this.performCloseBatch(clean.map((t) => ({ tabId: t.id, paneId: pane.id })));
+	}
+
+	/**
+	 * Close the tabs that host a multi-file surface — search results, diffs,
+	 * diagnostics, and the LSP log view — in a pane (default: the active pane).
+	 */
+	async closeMultibufferTabs(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		const multi = pane.tabs.filter((t) => t.type === 'diff' || t.type === 'search' || t.type === 'diagnostics');
+		await this.performCloseBatch(multi.map((t) => ({ tabId: t.id, paneId: pane.id })));
+	}
+
+	/**
+	 * Close the tabs to the left of the pane's active tab (default: the
+	 * active pane). Left means the earlier half of the tab strip, right the
+	 * later half.
+	 */
+	async closeTabsToLeft(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+		if (activeIndex === -1) return;
+		const tabs = pane.tabs.slice(0, activeIndex);
+		await this.closeTabsBatch(tabs, pane.id);
+	}
+
+	/**
+	 * Close the tabs to the right of the pane's active tab (default: the
+	 * active pane).
+	 */
+	async closeTabsToRight(paneId?: string): Promise<void> {
+		const pane = paneId ? this.findPane(paneId) : this.activePane;
+		if (!pane) return;
+		const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+		if (activeIndex === -1) return;
+		const tabs = pane.tabs.slice(activeIndex + 1);
+		await this.closeTabsBatch(tabs, pane.id);
+	}
+
+	/**
+	 * Reopen the most recently closed tab, returning it to the pane that
+	 * held it. No-op when there is nothing left to reopen.
+	 */
+	reopenClosedTab(): boolean {
+		const entry = this.closedTabs.pop();
+		if (!entry) return false;
+		const pane = this.findPane(entry.paneId) ?? this.activePane;
+		if (!pane) return false;
+
+		if (entry.doc && !this.documents.some((d) => d.id === entry.doc!.id)) {
+			this.documents.push(entry.doc);
+			this.pluginHost?.emit('document:opened', { document: entry.doc, origin: entry.doc.origin });
+		}
+		if (entry.tab.type === 'search' && entry.tab.searchSession) {
+			this.searchSessions.set(entry.tab.id, entry.tab.searchSession);
+		}
+
+		pane.tabs.push(entry.tab);
+		pane.activeTabId = entry.tab.id;
+		this.debouncedSaveOpenFiles();
+		return true;
 	}
 
 	/**
@@ -1199,6 +1710,25 @@ export class Workspace {
 					}
 
 					let doc: DocumentSession | null = null;
+					if (serialized.virtualTabType === 'search') {
+						// The query and its options are restored with the tab, so a
+						// restart brings back the search the user left.
+						const session = new SearchTabSession({
+							query: serialized.searchQuery ?? '',
+							isRegex: serialized.searchIsRegex ?? false,
+							caseSensitive: serialized.searchCaseSensitive ?? false,
+							wholeWord: serialized.searchWholeWord ?? false,
+							includePattern: serialized.searchIncludePattern ?? '',
+							excludePattern: serialized.searchExcludePattern ?? ''
+						});
+						this.searchSessions.set(serialized.id, session);
+						restoredTabs.push({
+							id: serialized.id,
+							type: 'search',
+							searchSession: session
+						});
+						continue;
+					}
 					if (serialized.virtualTabType === 'diff') {
 						if (!serialized.pluginId || !this.pluginHost.isPluginActive(serialized.pluginId)) {
 							continue;
@@ -1381,5 +1911,9 @@ export class Workspace {
 
 		this.restorePromise = currentPromise;
 		return currentPromise;
+	}
+
+	dispose(): void {
+		this.project.dispose();
 	}
 }

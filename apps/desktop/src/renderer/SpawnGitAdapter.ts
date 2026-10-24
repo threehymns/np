@@ -1,4 +1,4 @@
-import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
+import type { VCSAdapter, SwitchResult, VCSStatus, FileOrigin, GitChange, GitCommit, GitHistoryCommit, FileDiffDetail, GetFileDiffOptions } from '@np/core';
 import { resolveDiffDetail, countLines } from '@np/core/project/vcs';
 import { mapBounded, isNotFoundError, isDirectoryError } from '@np/core/utils';
 
@@ -747,6 +747,81 @@ export class SpawnGitAdapter implements VCSAdapter {
 			while (i < records.length && records[i] === '') i += 1;
 		}
 		return commits;
+	}
+
+	private async getAheadCommitShas(branch?: string | null): Promise<Set<string>> {
+		const revRange = branch ? `${branch}@{u}..${branch}` : '@{u}..HEAD';
+		const res = await this.runGit(['rev-list', revRange]);
+		if (res.code !== 0) {
+			// No upstream configured, detached HEAD, or revRange not found -- this is normal, not an error.
+			return new Set();
+		}
+		const lines = res.stdout
+			.split('\n')
+			.map(s => s.trim())
+			.filter(s => s.length > 0);
+		return new Set(lines);
+	}
+
+	async getAheadCount(branch?: string | null): Promise<number> {
+		const shas = await this.getAheadCommitShas(branch);
+		return shas.size;
+	}
+
+	async getHistory(options?: { branch?: string | null; maxCount?: number }): Promise<GitHistoryCommit[]> {
+		const args = ['log', '-z', '--format=%s%x00%an%x00%at%x00%h%x00%H%x00%D'];
+		if (options?.maxCount !== undefined) {
+			args.push('-n', String(options.maxCount));
+		}
+		if (options?.branch) {
+			// Terminate the revision list: a branch name that also matches a path
+			// would otherwise be interpreted as a path filter, silently returning
+			// the wrong history.
+			args.push(options.branch, '--');
+		}
+
+		const [res, aheadShas] = await Promise.all([
+			this.runGit(args),
+			this.getAheadCommitShas(options?.branch)
+		]);
+
+		if (res.code !== 0) {
+			if (
+				res.stderr.includes('does not have any commits yet') ||
+				res.stderr.includes('fatal: bad default revision') ||
+				res.stderr.includes('fatal: your current branch') ||
+				res.stderr.includes('unknown revision or path not in the working tree')
+			) {
+				return [];
+			}
+			throw new Error(res.stderr || 'Failed to retrieve git history log');
+		}
+
+		const records = res.stdout.split('\0');
+		const entries: GitHistoryCommit[] = [];
+		let i = 0;
+		while (i + 6 <= records.length) {
+			const subject = records[i];
+			const author = records[i + 1];
+			const timestampStr = records[i + 2];
+			const shortSha = records[i + 3];
+			const sha = records[i + 4];
+			const refDecoration = records[i + 5];
+
+			if (sha) {
+				entries.push({
+					sha,
+					shortSha,
+					subject,
+					author,
+					timestamp: parseInt(timestampStr, 10) || 0,
+					refDecoration: refDecoration || undefined,
+					isAhead: aheadShas.has(sha) ? true : undefined
+				});
+			}
+			i += 6;
+		}
+		return entries;
 	}
 
 	/**

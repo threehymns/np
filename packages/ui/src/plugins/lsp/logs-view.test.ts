@@ -8,7 +8,7 @@ import {
 	type LspLogLevel,
 	type LspLogStore
 } from '@np/core';
-import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer, type LspLogsView } from './logs-view';
+import { applyLogsFocus, lspLogFilter, lspLogsView, serverLabel, shortServer, type LspLogsView } from './logs-view';
 
 /**
  * The Logs tab's decisions, over the plugin's real buffers (spec #263, ticket
@@ -169,6 +169,43 @@ describe('LSP log filters', () => {
 		expect(messages(cleared)).toHaveLength(5);
 		expect(cleared.lineCount).toBe('5 lines');
 	});
+
+	it('hides the protocol feed while RPC Messages is unchecked, the default (#282)', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), ['protocol']))).toEqual([
+			'root started',
+			'root error',
+			'app started'
+		]);
+	});
+
+	it('hides the server feed while Server Logs is unchecked', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), ['server']))).toEqual([
+			'root trace',
+			'app error'
+		]);
+	});
+
+	it('keeps the whole buffer while both feeds are checked', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', ''), []))).toHaveLength(5);
+		expect(messages(lspLogsView(logs, lspLogFilter('', '', '')))).toHaveLength(5);
+	});
+
+	it('shows nothing while both feeds are unchecked', async () => {
+		const logs = await seededStore();
+		const view = lspLogsView(logs, lspLogFilter('', '', ''), ['server', 'protocol']);
+		expect(view.entries).toEqual([]);
+		expect(view.empty).toBe(true);
+	});
+
+	it('still narrows by server and level with the protocol feed hidden', async () => {
+		const logs = await seededStore();
+		expect(messages(lspLogsView(logs, lspLogFilter(APP, '', 'warn'), ['protocol']))).toEqual([
+			'app started'
+		]);
+	});
 });
 
 describe('LSP log tab summary', () => {
@@ -205,11 +242,11 @@ describe('LSP log tab summary', () => {
 		expect(view.entries[0].message).toBe(`line ${dropped}`);
 	});
 
-	it('offers every server that has a buffer, labelled by its root', async () => {
+	it('offers every server that has a buffer, labelled by descriptor and folder', async () => {
 		const logs = await seededStore();
 		expect(lspLogsView(logs, lspLogFilter('', '', '')).serverOptions).toEqual([
-			{ value: ROOT, label: '/repo' },
-			{ value: APP, label: '/repo/packages/app' }
+			{ value: ROOT, label: 'typescript (repo)' },
+			{ value: APP, label: 'typescript (app)' }
 		]);
 	});
 });
@@ -224,6 +261,26 @@ describe('LSP log tab with no store behind it', () => {
 		expect(view.lineCount).toBe('0 lines');
 		expect(view.droppedNote).toBeNull();
 		expect(view.empty).toBe(true);
+	});
+});
+
+describe('LSP log server picker labels', () => {
+	it('names a server by descriptor and the root folder, the way the picker does', () => {
+		expect(serverLabel('typescript@/repo/packages/app')).toBe('typescript (app)');
+	});
+
+	it('keeps a scoped folder name whole', () => {
+		expect(serverLabel('typescript@/repo/@generated')).toBe('typescript (@generated)');
+	});
+
+	it('names a Windows root by its final folder', () => {
+		// A Windows root arrives with backslashes, and a label that showed the
+		// whole path would not tell two roots apart.
+		expect(serverLabel('typescript@C:\\Users\\me\\project')).toBe('typescript (project)');
+	});
+
+	it('leaves a key with no root whole rather than dropping it', () => {
+		expect(serverLabel('typescript')).toBe('typescript');
 	});
 });
 

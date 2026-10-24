@@ -621,6 +621,70 @@ export function registerCoreCommands(appState: AppState) {
 	});
 
 	coreCommands.push({
+		id: 'pane.closeAllTabs',
+		label: 'Pane: Close All Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeAllTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeOtherTabs',
+		label: 'Pane: Close Other Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeOtherTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeCleanTabs',
+		label: 'Pane: Close Clean Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeCleanTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeActiveTab',
+		label: 'Pane: Close Active Tab',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.closeTab(appState.workspace.activeTabId, appState.workspace.activePaneId); }
+	});
+
+	coreCommands.push({
+		id: 'pane.reopenClosedTab',
+		label: 'Pane: Reopen Closed Tab',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.reopenClosedTab(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeMultibufferTabs',
+		label: 'Pane: Close Multibuffer Tabs',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeMultibufferTabs(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeTabsToLeft',
+		label: 'Pane: Close Tabs to the Left',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeTabsToLeft(); }
+	});
+
+	coreCommands.push({
+		id: 'pane.closeTabsToRight',
+		label: 'Pane: Close Tabs to the Right',
+		category: 'View',
+		keywords: ['pane'],
+		action: () => { appState.workspace.closeTabsToRight(); }
+	});
+
+	coreCommands.push({
 		id: 'edit.undo',
 		label: 'Undo',
 		category: 'Edit',
@@ -726,6 +790,14 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'Edit',
 		action: () => appState.activeEditorView && openSearchPanel(appState.activeEditorView),
 		isEnabled: () => !!appState.activeEditorView
+	});
+
+	coreCommands.push({
+		id: 'edit.findInFiles',
+		label: 'Find in Project...',
+		category: 'Edit',
+		action: () => appState.workspace.openSearchTab(),
+		isEnabled: () => true
 	});
 
 	coreCommands.push({
@@ -885,6 +957,19 @@ export function registerCoreCommands(appState: AppState) {
 		category: 'View',
 		action: () => {
 			appState.prefs.sidebarVisible = !appState.prefs.sidebarVisible;
+		}
+	});
+
+	coreCommands.push({
+		id: 'diagnostics.open',
+		label: 'Open Project Diagnostics',
+		category: 'Diagnostics',
+		keywords: ['problems', 'errors', 'lsp'],
+		action: () => {
+			// The tab reads the merged diagnostics store; opening it asks the
+			// workspace for a tab, not a server for an answer.
+			appState.workspace.openDiagnosticsTab();
+			return true;
 		}
 	});
 

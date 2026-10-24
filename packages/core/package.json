@@ -16,7 +16,8 @@
 		"./utils": "./src/utils.ts",
 		"./project/vcs": "./src/project/vcs.ts",
 		"./links": "./src/links.ts",
-		"./transformer": "./src/transformer/index.ts"
+		"./transformer": "./src/transformer/index.ts",
+		"./plugins/services": "./src/plugins/services.ts"
 	},
 	"dependencies": {
 		"@codemirror/commands": "^6.10.4",

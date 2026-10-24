@@ -1,9 +1,11 @@
 import type { FileOrigin, Storage } from '../storage';
 import type { SerializedDocument, SerializedWorkspace, SessionPersistence } from '../persistence';
 import type { VCSAdapter } from './vcs';
-import { Worktree } from './worktree.svelte';
+import { Worktree, type WorktreeSnapshotStrategy, PolledSnapshotStrategy } from './worktree.svelte';
 import { ProjectTree } from './tree.svelte';
 import type { Repository } from './repository.svelte';
+import type { SearchBackend } from '../search/types';
+import { TypeScriptSearchEngine } from '../search/engine';
 
 /**
  * The shared backing store behind one Workspace: its search scope, its
@@ -34,16 +36,19 @@ export class Project {
 	storage: Storage;
 	vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter;
 	persistence: SessionPersistence;
+	snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy;
 	projectTree: ProjectTree;
 
 	constructor(
 		storage: Storage,
 		vcsFactory: (rootOrigin: FileOrigin) => VCSAdapter,
-		persistence: SessionPersistence
+		persistence: SessionPersistence,
+		snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy
 	) {
 		this.storage = storage;
 		this.vcsFactory = vcsFactory;
 		this.persistence = persistence;
+		this.snapshotStrategyFactory = snapshotStrategyFactory;
 		this.projectTree = new ProjectTree(this);
 	}
 
@@ -76,18 +81,66 @@ export class Project {
 
 	set rootOrigin(origin: FileOrigin | null) {
 		if (!origin) {
+			this.worktrees[0]?.dispose();
 			this.worktrees = [];
+			this.projectTree.attachToWorktree(null);
+			if (this._searchBackend && 'attachToWorktree' in this._searchBackend) {
+				(this._searchBackend as any).attachToWorktree(null);
+			}
 			return;
 		}
 		const current = this.worktrees[0];
 		if (current && current.root.scheme === origin.scheme && current.root.path === origin.path) {
 			return;
 		}
-		this.worktrees = [new Worktree(origin)];
+		current?.dispose();
+		const strategy: WorktreeSnapshotStrategy = this.snapshotStrategyFactory
+			? this.snapshotStrategyFactory(origin, this.storage)
+			: new PolledSnapshotStrategy();
+		const wt = new Worktree(origin, {
+			storage: this.storage,
+			strategy
+		});
+		this.worktrees = [wt];
+		this.projectTree.attachToWorktree(wt);
+		void strategy.start?.(wt);
+		this._searchBackend?.attachToWorktree?.(wt);
 	}
 
 	get worktree(): Worktree | null {
 		return this.worktrees[0] ?? null;
+	}
+
+	private _searchBackend: SearchBackend | null = null;
+
+	/**
+	 * The project's search seam (ADR 0026). The engine reads the worktree
+	 * snapshot, so it is handed the worktree whenever the project root
+	 * changes.
+	 */
+	get searchBackend(): SearchBackend {
+		if (!this._searchBackend) {
+			this._searchBackend = new TypeScriptSearchEngine(this.worktree);
+		}
+		return this._searchBackend;
+	}
+
+	set searchBackend(backend: SearchBackend) {
+		// The backend that is replaced may hold a subscription and a cache.
+		// Releasing it here keeps exactly one backend alive.
+		this._searchBackend?.dispose?.();
+		this._searchBackend = backend;
+		this._searchBackend.attachToWorktree?.(this.worktree);
+	}
+
+	dispose(): void {
+		for (const wt of this.worktrees) {
+			wt.dispose();
+		}
+		this.worktrees = [];
+		this.projectTree.attachToWorktree(null);
+		this._searchBackend?.dispose?.();
+		this._searchBackend = null;
 	}
 
 	/**

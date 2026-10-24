@@ -468,11 +468,15 @@
 		const lineNum = (paneId ? doc.peekViewState(paneId)?.pendingLineToScroll : null) ?? doc.pendingLineToScroll;
 		if (view && focused && lineNum !== null) {
 			const targetView = view;
+			const colNum = doc.pendingColumn ?? 1;
+			const matchLen = doc.pendingMatchLength ?? 0;
 			untrack(() => {
 				if (paneId) {
 					doc.setViewState(paneId, { pendingLineToScroll: null });
 				}
 				doc.pendingLineToScroll = null;
+				doc.pendingColumn = null;
+				doc.pendingMatchLength = null;
 			});
 			const gen = ++pendingScrollGen;
 			// Wait a tick for editor rendering to ensure DOM and dimensions are correct
@@ -483,8 +487,10 @@
 					const lineCount = targetView.state.doc.lines;
 					const targetLine = Math.max(1, Math.min(lineNum, lineCount));
 					const line = targetView.state.doc.line(targetLine);
+					const anchor = Math.min(line.to, line.from + Math.max(0, colNum - 1));
+					const head = matchLen > 0 ? Math.min(line.to, anchor + matchLen) : anchor;
 					targetView.dispatch({
-						selection: { anchor: line.from },
+						selection: { anchor, head },
 						scrollIntoView: true,
 					});
 					targetView.focus();
@@ -506,6 +512,7 @@
 	onblur={() => (altPressed = false)}
 />
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions (CodeMirror parent container delegates focus and key handling for clipboard sync) -->
 <div
 	bind:this={editorEl}
 	role="region"

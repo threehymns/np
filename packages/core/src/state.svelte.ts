@@ -2,6 +2,7 @@ import './polyfills';
 import type { Storage, FileOrigin } from './storage';
 import type { VCSAdapter } from './project/vcs';
 import { Workspace } from './workspace.svelte';
+import type { WorktreeSnapshotStrategy } from './project/worktree.svelte';
 import type { SplitDirection, SplitMode, Rect } from './split-tree.svelte';
 import type { DocumentSession } from './document.svelte';
 import { Preferences, type PreferenceStorage } from './preferences.svelte';
@@ -101,6 +102,7 @@ export interface AppStateOptions {
 	iconRegistry?: IconRegistryInterface;
 	pluginHost?: PluginHost;
 	platform?: PluginPlatform;
+	snapshotStrategyFactory?: (rootOrigin: FileOrigin, storage: Storage) => WorktreeSnapshotStrategy;
 }
 
 export class AppState {
@@ -211,7 +213,13 @@ export class AppState {
 		this.prefs.settings.setSchemaRegistry(this.plugins.settings);
 
 		const persistence = options.persistence ?? new MemorySessionPersistence();
-		this.workspace = new Workspace(this.storage, options.vcsFactory, persistence, this.plugins);
+		this.workspace = new Workspace(
+			this.storage,
+			options.vcsFactory,
+			persistence,
+			this.plugins,
+			options.snapshotStrategyFactory
+		);
 		// Generic collaborator services for feature plugins (#202, ADR 0008):
 		// dialog capability and the mounted diff view's hunk navigator. The
 		// workspace publishes itself. Keys are generic; values are consumed
@@ -385,6 +393,7 @@ export class AppState {
 
 	async newFile() { return await this.workspace.newFile(); }
 	async openFile() { return await this.workspace.openFile(); }
+	openSearchTab(query?: string) { return this.workspace.openSearchTab(query); }
 	async saveFile() {
 		// With a diff tab active there is no activeDocument; fall back to
 		// the focused diff pane's bound Document (#269). A real document
@@ -419,8 +428,8 @@ export class AppState {
 	
 	closeDocument(id: string) { this.workspace.closeDocument(id); }
 	closeTab(id: string, paneId?: string) { this.workspace.closeTab(id, paneId); }
-	async finalizeClose(id: string, saveFirst = false, paneId?: string): Promise<boolean> {
-		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId);
+	async finalizeClose(id: string, saveFirst = false, paneId?: string, applyToRemaining = false): Promise<boolean> {
+		const closed = await this.workspace.finalizeClose(id, saveFirst, paneId, applyToRemaining);
 		if (!closed && this.workspace.lastSaveCancellationReason) {
 			if (this.dialogService?.alert) {
 				await this.dialogService.alert(this.workspace.lastSaveCancellationReason);
@@ -430,7 +439,15 @@ export class AppState {
 		}
 		return closed;
 	}
+	async closeAllTabs(paneId?: string): Promise<void> { return await this.workspace.closeAllTabs(paneId); }
+	async closeOtherTabs(paneId?: string): Promise<void> { return await this.workspace.closeOtherTabs(paneId); }
+	async closeCleanTabs(paneId?: string): Promise<void> { return await this.workspace.closeCleanTabs(paneId); }
+	async closeMultibufferTabs(paneId?: string): Promise<void> { return await this.workspace.closeMultibufferTabs(paneId); }
+	async closeTabsToLeft(paneId?: string): Promise<void> { return await this.workspace.closeTabsToLeft(paneId); }
+	async closeTabsToRight(paneId?: string): Promise<void> { return await this.workspace.closeTabsToRight(paneId); }
+	reopenClosedTab(): boolean { return this.workspace.reopenClosedTab(); }
 	flushSaveOpenFiles() { return this.workspace.flushSaveOpenFiles(); }
+	dispose(): void { this.workspace.dispose(); }
 }
 
 export function useAppState(): AppState {

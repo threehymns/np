@@ -67,7 +67,7 @@ if (CodeMirror && CodeMirror.prototype) {
 }
 
 import { getActiveLanguages } from "@np/core";
-import { markdownHighlight } from "./extensions/highlight";
+import { markdownHighlight, codeHighlight, markdownOnlyHighlight } from "./extensions/highlight";
 import { hideMarkersPlugin } from "./extensions/hide-markers";
 import { codeBlockPlugin } from "./extensions/codeblocks";
 import { blockquotePlugin } from "./extensions/blockquote";
@@ -134,6 +134,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 			markdownLanguage.data.of({
 				autocomplete: wikilinkAutocompletion,
 			}),
+			syntaxHighlighting(markdownOnlyHighlight),
 			markdownTables({
 				theme: markdownTableTheme,
 				style: TableStyle.default,
@@ -144,7 +145,7 @@ export async function getLanguageExtensions(langDesc: LanguageDescription | null
 					keymap.of(defaultKeymap),
 					highlightActiveLine(),
 					hideMarkersPlugin,
-					syntaxHighlighting(markdownHighlight),
+					syntaxHighlighting(markdownOnlyHighlight),
 					roundedSelectionLayer,
 				],
 				globalKeyBindings: [...historyKeymap, ...searchKeymap],
@@ -320,7 +321,7 @@ export function createEditorExtensions(options: {
 		crosshairCursor(),
 		highlightActiveLine(),
 		highlightSelectionMatches(),
-		syntaxHighlighting(markdownHighlight),
+		syntaxHighlighting(codeHighlight),
 		linkHandlers,
 		editorTheme,
 		keymap.of([

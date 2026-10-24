@@ -26,7 +26,7 @@
 		trackCursorFocus,
 		type MultibufferViewEntry
 	} from './multibuffer.js';
-	import { getLanguageExtensions, editorTheme, diffTheme, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange } from '../editor/index';
+	import { getLanguageExtensions, editorTheme, diffTheme, codeHighlight, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 	import MultiBuffer from './MultiBuffer.svelte';
 	import {
@@ -612,7 +612,7 @@
 							{ key: "Shift-Tab", run: smartIndent("less") }
 						])
 					] : []),
-					syntaxHighlighting(markdownHighlight),
+					syntaxHighlighting(codeHighlight),
 					editorTheme,
 					diffTheme,
 					EditorView.updateListener.of((update) => {
@@ -926,7 +926,7 @@
 						EditorState.readOnly.of(true),
 						EditorView.editable.of(false),
 						...langExtensions,
-						syntaxHighlighting(markdownHighlight),
+						syntaxHighlighting(codeHighlight),
 						editorTheme,
 						diffTheme,
 						fileNavKeymap(options.filepath),
@@ -972,7 +972,7 @@
 							{ key: "Tab", run: smartIndent("more") },
 							{ key: "Shift-Tab", run: smartIndent("less") }
 						]),
-						syntaxHighlighting(markdownHighlight),
+						syntaxHighlighting(codeHighlight),
 						editorTheme,
 						EditorView.updateListener.of((update) => {
 							if (

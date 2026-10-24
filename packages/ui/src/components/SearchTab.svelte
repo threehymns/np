@@ -1,0 +1,826 @@
+<script lang="ts">
+	import { useAppState } from '@np/core/state.svelte';
+import { untrack } from 'svelte';
+	import type { FileSearchResult, SearchMatch, SingleEdit, DocumentSession } from '@np/core';
+	import { SEARCH_TAB_ID } from '@np/core';
+	import {
+		FileExcerptMap,
+		applyReplaceAll,
+		applyEditsToDocumentSession,
+		buildExcerptMapForContent,
+		isExcerptMapStale,
+		undoReplaceAll,
+		toURI
+	} from '@np/core';
+	import MultiBuffer, { type MultibufferSection } from './MultiBuffer.svelte';
+	import Icon from './Icon.svelte';
+	import { CaretRightIcon, CaretDownIcon, MagnifyingGlassIcon, CircleNotchIcon, WarningIcon } from 'phosphor-svelte';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { EditorView, keymap, lineNumbers, Decoration, type DecorationSet } from '@codemirror/view';
+	import { EditorState, StateField, RangeSetBuilder } from '@codemirror/state';
+	import { history, historyKeymap, undoDepth } from '@codemirror/commands';
+	import { isResultFileDirty, shouldUndoReplaceAllOperation } from './search-tab-behavior';
+	import { getLanguageExtensions, editorTheme, LanguageSupport } from '../editor/index';
+	import {
+		searchStatusText,
+		shouldFocusSearchInput,
+		shouldRunSearchOnKeydown,
+		truncationCapText
+	} from './search-tab-behavior';
+	import { SearchTabRunner, type SearchExcerptView } from './search-tab-runner.svelte';
+
+	interface Props {
+		tabId?: string;
+	}
+
+	let { tabId }: Props = $props();
+
+	const appState = useAppState();
+	const activeId = $derived(tabId ?? appState.workspace.activeTabId);
+	const session = $derived(appState.workspace.getSearchSession(activeId));
+
+	let inputRef = $state<HTMLInputElement | null>(null);
+	let replaceText = $state('');
+	let isReplacing = $state(false);
+	let searchTimeout: any = null;
+	const collapsedPaths = new SvelteSet<string>();
+
+	/** How many replace-all operations the tab keeps for undo. */
+	const MAX_UNDO_OPERATIONS = 10;
+
+	interface ExcerptViewEntry extends SearchExcerptView {
+		view: EditorView;
+		/** URI of the document the excerpt mirrors. */
+		uri: string;
+		getMap: () => FileExcerptMap;
+	}
+
+	// The tab marks unsaved work the results carry. The files' origins live
+	// on the session, where the tab strip reads them, and both markers read
+	// the same `isModified` a document tab reads.
+	let documentDirtiness = $derived(
+		appState.documents.map((d) => ({
+			uri: d.origin ? toURI(d.origin) : null,
+			isModified: d.isModified
+		}))
+	);
+
+	// The tab renders what the runner holds. The runner owns the search: it
+	// runs it with the session's query, replaces the results, and re-runs
+	// the query when the file snapshot moves on.
+	const runner = new SearchTabRunner<ExcerptViewEntry>({
+		getBackend: () => appState.workspace.project.searchBackend,
+		getSession: () => session,
+		// A file changed in the results is unsaved: its text lives in a
+		// Document, so the search reads that instead of the disk. A
+		// replace-all re-runs the search, and the counts it shows have to
+		// describe the text the user is looking at.
+		getLiveContent: (origin) => {
+			const uri = toURI(origin);
+			return appState.workspace.documents.find((d) => d.origin && toURI(d.origin) === uri)
+				?.content;
+		}
+	});
+
+	// The search reads the files the worktree's snapshot holds, so the tab
+	// follows that snapshot: a snapshot that moved on means the files the
+	// results describe are no longer the files the project has.
+	//
+	// The attach is untracked on purpose. Worktree.subscribe calls its
+	// listener straight away, and the listener reads the snapshot's
+	// version, so a tracked call would make this effect re-run on every
+	// snapshot change. The cleanup would then dispose the runner, which
+	// cancels the re-run that was just scheduled and aborts the search in
+	// flight. Only the worktree itself is tracked here, so the effect
+	// re-runs when the project changes, not when its files change.
+	$effect(() => {
+		const worktree = appState.workspace.project.worktree;
+		untrack(() => runner.attachToWorktree(worktree));
+		return () => runner.dispose();
+	});
+
+	// An excerpt mirrors a live document. When that document changes outside
+	// its excerpt view, for example an edit in the main editor, the map's
+	// file offsets no longer point at the text the document holds and an
+	// edit made through the excerpt would land at a shifted position.
+	// Rebuild the view from the document's current content when that
+	// happens, so the map always describes the content it edits.
+	$effect(() => {
+		const documents = appState.workspace.documents;
+		for (const entry of runner.excerptViews.values()) {
+			const doc = documents.find((d) => d.origin && toURI(d.origin) === entry.uri);
+			if (!doc) continue;
+			const content = doc.content;
+			if (!isExcerptMapStale(entry.getMap(), content)) continue;
+			entry.rebuild();
+		}
+	});
+
+	let totalMatches = $derived(runner.results.reduce((sum, r) => sum + r.matches.length, 0));
+	let searchStatus = $derived(
+		searchStatusText({
+			isSearching: runner.isSearching,
+			totalMatches,
+			fileCount: runner.results.length,
+			isQueryEmpty: !session.query
+		})
+	);
+
+	let sections = $derived<MultibufferSection[]>(
+		runner.results.map((r) => ({
+			filepath: r.filepath,
+			key: r.filepath
+		}))
+	);
+
+	$effect(() => {
+		session.resultUris = runner.results.map((r) => toURI(r.origin));
+	});
+
+	$effect(() => {
+		const focusNonce = appState.workspace.searchTabFocusNonce;
+		const activeTabId = appState.activeTabId;
+		if (!inputRef) return;
+		// Only the search tab the user is looking at takes the focus. A
+		// search tab in another pane stays mounted, and it must not take
+		// the focus away from the pane the user is in.
+		if (activeTabId !== (tabId ?? SEARCH_TAB_ID)) return;
+		if (!shouldFocusSearchInput({ focusNonce, activeTabId, searchTabId: SEARCH_TAB_ID })) return;
+		inputRef.focus();
+		inputRef.select();
+	});
+
+	function toggleCollapse(filepath: string) {
+		if (collapsedPaths.has(filepath)) {
+			collapsedPaths.delete(filepath);
+		} else {
+			collapsedPaths.add(filepath);
+		}
+	}
+
+	function handleInput() {
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+		}
+		searchTimeout = setTimeout(() => {
+			void runner.run();
+		}, 150);
+	}
+
+	function toggleCaseSensitive() {
+		session.toggleCaseSensitive();
+		void runner.run();
+	}
+
+	function toggleWholeWord() {
+		session.toggleWholeWord();
+		void runner.run();
+	}
+
+	function toggleRegex() {
+		session.toggleRegex();
+		void runner.run();
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		// Enter during IME composition confirms the composition candidate,
+		// not the query: don't fire a search on the partial text.
+		if (!shouldRunSearchOnKeydown({ key: e.key, isComposing: e.isComposing })) return;
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+			searchTimeout = null;
+		}
+		void runner.run();
+	}
+
+	async function openFile(result?: FileSearchResult) {
+		if (!result) return;
+		await appState.workspace.openFile(result.origin);
+	}
+
+	async function jumpToMatch(result: FileSearchResult, match: SearchMatch) {
+		const doc = await appState.workspace.openFile(result.origin);
+		if (doc) {
+			doc.pendingLineToScroll = match.line;
+			doc.pendingColumn = match.column;
+			doc.pendingMatchLength = match.matchLength;
+		}
+	}
+
+	async function applyUserEditToFile(
+		fileResult: FileSearchResult,
+		edit: SingleEdit,
+		contentBefore: string
+	): Promise<DocumentSession | null> {
+		// The results are the editor for the files they show, so the edit
+		// belongs to a Document: the open one, or a bound one with no tab.
+		// `contentBefore` is the text the excerpt was built from, so a
+		// Document created here starts from it and the edit's offsets keep
+		// their meaning.
+		const doc = await appState.workspace.getOrCreateBoundDocument(
+			fileResult.origin,
+			contentBefore
+		);
+		if (!doc) return null;
+		applyEditsToDocumentSession(doc, [edit], appState.workspace);
+		return doc;
+	}
+
+	/**
+	 * Saves the file an excerpt mirrors.
+	 *
+	 * A replace edits the file in memory and leaves it unsaved, and the
+	 * results have no save button: the file under the cursor is the one the
+	 * user is working in, so the save belongs to it, the way a buffer saves.
+	 */
+	async function saveExcerptFile(fileResult: FileSearchResult) {
+		const doc = appState.workspace.documents.find(
+			(d) => d.origin && toURI(d.origin) === toURI(fileResult.origin)
+		);
+		if (!doc || !doc.isModified) return;
+		try {
+			await appState.workspace.saveDocument(doc);
+		} catch (e) {
+			console.error('[SearchTab] Save failed:', e);
+		}
+	}
+
+	async function replaceAll() {
+		if (runner.results.length === 0 || !session.query || isReplacing) return;
+		isReplacing = true;
+
+		try {
+			// Replace-all applies across all results in one action.
+			// No confirmation modal, no summary report.
+			// Dirty files accept replace edits without warnings.
+			const result = await applyReplaceAll({
+				workspace: appState.workspace,
+				fileResults: runner.results,
+				replacement: replaceText
+			});
+			if (result.undo.changes.length > 0) {
+				// The operation is one undo step: the search tab keeps it, so
+				// one undo puts every file it changed back.
+				session.replaceAllUndos.push({ undo: result.undo });
+				// The stack is bounded: an operation holds the content of
+				// every file it changed.
+				while (session.replaceAllUndos.length > MAX_UNDO_OPERATIONS) {
+					session.replaceAllUndos.shift();
+				}
+			}
+		} catch (error) {
+			console.error('Replace all failed:', error);
+		} finally {
+			// Re-run the search so every excerpt view rebuilds from fresh matches
+			// computed against the post-replacement content. Reusing the old match
+			// offsets would misalign excerpts whenever the replacement length
+			// differs from the match length.
+			await runner.run();
+			isReplacing = false;
+		}
+	}
+
+	function setupExcerptEditor(node: HTMLDivElement, fileResult: FileSearchResult) {
+		let view: EditorView | undefined;
+		let disposed = false;
+		let initSeq = 0;
+
+		async function init() {
+			// Invalidate any earlier in-flight init: the newest result wins.
+			const seq = ++initSeq;
+			const alive = () => !disposed && seq === initSeq;
+
+			const uri = toURI(fileResult.origin);
+			// Match by exact URI only: a path-suffix fallback can resolve to a
+			// different file that happens to share the same filename.
+			let doc = appState.workspace.documents.find(
+				(d) => d.origin && toURI(d.origin) === uri
+			);
+			let content = doc?.content;
+			if (content === undefined) {
+				try {
+					content = await appState.workspace.project.storage.readFile(fileResult.origin);
+				} catch {
+					content = '';
+				}
+			}
+			if (!alive()) return;
+
+			// The excerpt mirrors the document: its text is the document's
+			// current content and its match positions are derived from that
+			// content with the session's query. A map built from older
+			// content hands out file offsets that no longer point at the
+			// text the user sees.
+			const built = buildExcerptMapForContent(
+				fileResult.filepath,
+				fileResult.origin,
+				content,
+				session.toQuery(),
+				1
+			);
+			// An unusable query (an invalid regular expression) leaves the
+			// search's own matches in place rather than showing nothing.
+			const matches = built ? built.matches : fileResult.matches;
+			let excerptMap =
+				built?.map ??
+				new FileExcerptMap(fileResult.filepath, fileResult.origin, content, matches, {
+					contextLines: 1
+				});
+
+			// The map snapshots the document at init() time. Track the document
+			// revision it reflects so an edit made anywhere else (main editor,
+			// another view) is detected before a stale offset can write to the
+			// wrong place in the file.
+			let mapRevision = doc?.revision ?? -1;
+
+			// Document writes are serialized per view: each edit is checked
+			// against the revision only after earlier edits have landed, so an
+			// in-flight edit of our own never looks like an external change.
+			let applyChain: Promise<void> = Promise.resolve();
+
+			// Separator text between excerpts has no file counterpart. Reject
+			// edits touching it at the editor level: mapping them would drop
+			// the file edit while the buffer still changes, leaving the two
+			// permanently out of sync. Separator bounds are read live from the
+			// map because applyExcerptEdit shifts them after every edit; a
+			// snapshot taken here would go stale after the first keystroke.
+			const rejectSeparatorEdits = EditorState.changeFilter.of((tr) => {
+				if (!tr.docChanged) return true;
+				let allowed = true;
+				tr.changes.iterChangedRanges((fromA, toA) => {
+					for (let i = 0; i < excerptMap.excerpts.length - 1; i++) {
+						const sepFrom = excerptMap.excerpts[i].bufferEnd;
+						const sepTo = excerptMap.excerpts[i + 1].bufferStart;
+						if (fromA < sepTo && toA > sepFrom) {
+							allowed = false;
+						}
+					}
+				});
+				return allowed;
+			});
+
+			const highlightDecorations = () => {
+				const builder = new RangeSetBuilder<Decoration>();
+				for (const match of matches) {
+					const bufFrom = excerptMap.fileOffsetToExcerptOffset(match.offset);
+					if (bufFrom !== null) {
+						const bufTo = Math.min(bufFrom + match.matchLength, excerptMap.bufferText.length);
+						if (bufFrom < bufTo) {
+							builder.add(
+								bufFrom,
+								bufTo,
+								Decoration.mark({
+									class: 'cm-search-match bg-primary/30 text-primary font-bold rounded-xs px-0.5'
+								})
+							);
+						}
+					}
+				}
+				return builder.finish();
+			};
+
+			const matchField = StateField.define<DecorationSet>({
+				create() {
+					return highlightDecorations();
+				},
+				update(decorations, tr) {
+					if (tr.docChanged) {
+						return decorations.map(tr.changes);
+					}
+					return decorations;
+				},
+				provide: (f) => EditorView.decorations.from(f)
+			});
+
+			const customLineNumbers = lineNumbers({
+				formatNumber(lineNo, state) {
+					const line = state.doc.line(lineNo);
+					const fileOffset = excerptMap.excerptOffsetToFileOffset(line.from);
+					if (fileOffset !== null) {
+						// Use the map's live file content, not the init-time
+						// snapshot: edits applied through applyExcerptEdit update
+						// the map but not the captured `content` variable.
+						const live = excerptMap.fileContent;
+						let fileLine = 1;
+						for (let i = 0; i < fileOffset && i < live.length; i++) {
+							if (live[i] === '\n') fileLine++;
+						}
+						return String(fileLine);
+					}
+					return String(lineNo);
+				}
+			});
+
+			const langDesc = LanguageSupport.getLanguageForFile(fileResult.filepath);
+			const langExtensions = await getLanguageExtensions(langDesc);
+			if (!alive()) return;
+
+			const startState = EditorState.create({
+				doc: excerptMap.bufferText,
+				extensions: [
+					EditorView.lineWrapping,
+					customLineNumbers,
+					matchField,
+					rejectSeparatorEdits,
+					...langExtensions,
+					editorTheme,
+					// The editor keeps its own history, so a manual edit in the
+					// results is undone one edit at a time, and the undo writes
+					// the text back to the file through the same path the edit
+					// took.
+					history(),
+					keymap.of([
+						{
+							key: 'Mod-s',
+							run: () => {
+								// A replace leaves the file dirty in memory; the
+								// results carry the save for the file the user
+								// is working in.
+								void saveExcerptFile(fileResult);
+								return true;
+							}
+						},
+						{
+							key: 'Mod-z',
+							run: () => {
+								// A replace-all is one operation across every file
+								// it changed, so the search tab undoes it as one
+								// step. A manual edit made after it is newer, and
+								// the editor's own history undoes that one first.
+								const pending = session.replaceAllUndos[session.replaceAllUndos.length - 1];
+								const currentChange = pending?.undo.changes.find(
+									(c) => toURI(c.origin) === uri
+								);
+								const manualEditAfterReplaceAll = currentChange
+									? currentChange.after !== undefined &&
+									  (doc?.content ?? currentChange.doc.content) !== currentChange.after
+									: (view ? undoDepth(view.state) > 0 : false);
+								if (
+									!shouldUndoReplaceAllOperation({
+										hasPendingReplaceAll: pending !== undefined,
+										manualEditAfterReplaceAll
+									})
+								) {
+									return false;
+								}
+								const entry = session.replaceAllUndos.pop();
+								if (!entry) return false;
+								void undoReplaceAll(entry.undo, appState.workspace)
+									.catch((e) => console.error('[SearchTab] Undo replace all failed:', e))
+									.then(() => runner.run());
+								return true;
+							}
+						},
+						...historyKeymap
+					]),
+					EditorView.updateListener.of((update) => {
+						if (update.docChanged) {
+							update.transactions.forEach((tr) => {
+								// iterChanges reports pre-transaction coordinates, so
+								// handle the latest change first: each edit then still
+								// refers to the map's current coordinate space.
+								const changes: { from: number; to: number; insert: string }[] = [];
+								tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+									changes.push({ from: fromA, to: toA, insert: inserted.toString() });
+								});
+								changes.sort((a, b) => b.from - a.from);
+								for (const excerptEdit of changes) {
+									const fileEdit = excerptMap.mapExcerptEditToFileEdit(excerptEdit);
+									// The file's content before this edit: a file that is
+									// not open is written from it.
+									const contentBefore = excerptMap.fileContent;
+									if (fileEdit) {
+										applyChain = applyChain
+											.then(async () => {
+												const liveDoc =
+													doc ??
+													appState.workspace.documents.find(
+														(d) => d.origin && toURI(d.origin) === uri
+													);
+												if (liveDoc && liveDoc.revision !== mapRevision) {
+													// The document moved on outside this view since
+													// init(): these offsets describe stale content.
+													// Drop the edit and rebuild from the current
+													// document instead of writing to the wrong place.
+													queueMicrotask(() => {
+														if (!alive()) return;
+														view?.destroy();
+														view = undefined;
+														void init();
+													});
+													return;
+												}
+												const appliedDoc = await applyUserEditToFile(fileResult, fileEdit, contentBefore);
+												if (appliedDoc) {
+													doc = appliedDoc;
+													mapRevision = appliedDoc.revision;
+												}
+											})
+											.catch(() => {
+												// A failed write must not break serialization for later edits.
+											});
+									}
+									// Keep segment bounds in sync so later edits map
+									// through current bounds, not search-time ones.
+									excerptMap.applyExcerptEdit(excerptEdit, fileEdit);
+								}
+							});
+						}
+					})
+				]
+			});
+
+			view = new EditorView({
+				state: startState,
+				parent: node
+			});
+
+			runner.registerExcerptView(fileResult.filepath, {
+				view,
+				uri,
+				getMap: () => excerptMap,
+				rebuild: () => {
+					if (!alive()) return;
+					view?.destroy();
+					view = undefined;
+					void init();
+				}
+			});
+		}
+
+		void init();
+
+		return {
+			update(newResult: FileSearchResult) {
+				// A fresh result object means a new search run (e.g. the
+				// re-search after Replace All). Rebuild the editor from the
+				// fresh content and match offsets: keeping the old excerptMap
+				// would map edits through stale segment bounds.
+				if (newResult === fileResult) return;
+				fileResult = newResult;
+				view?.destroy();
+				view = undefined;
+				void init();
+			},
+			destroy() {
+				disposed = true;
+				runner.unregisterExcerptView(fileResult.filepath);
+				view?.destroy();
+				view = undefined;
+			}
+		};
+	}
+</script>
+
+<div class="flex flex-col h-full w-full bg-background text-foreground overflow-hidden">
+	<!-- Query bar on top -->
+	<div class="border-b border-border/40 p-3 bg-muted/20 flex flex-col gap-2 shrink-0">
+		<!-- Search row -->
+		<div class="relative flex items-center">
+			<MagnifyingGlassIcon class="absolute left-2.5 size-4 text-muted-foreground pointer-events-none" />
+			<input
+				type="text"
+				bind:this={inputRef}
+				bind:value={session.query}
+				oninput={handleInput}
+				onkeydown={handleKeydown}
+				placeholder="Search project..."
+				class="w-full bg-background border border-input rounded-md pl-9 pr-24 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				aria-label="Search query"
+			/>
+			<div class="absolute right-1.5 flex items-center gap-0.5">
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.caseSensitive ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Match Case"
+					aria-pressed={session.caseSensitive}
+					title="Match Case"
+					onclick={toggleCaseSensitive}
+				>
+					Aa
+				</button>
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.wholeWord ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Match Whole Word"
+					aria-pressed={session.wholeWord}
+					title="Match Whole Word"
+					onclick={toggleWholeWord}
+				>
+					\b
+				</button>
+				<button
+					type="button"
+					class="px-1.5 py-0.5 text-xs font-mono rounded border transition-colors {session.isRegex ? 'bg-primary/20 text-primary border-primary/40 font-semibold' : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'}"
+					aria-label="Use Regular Expression"
+					aria-pressed={session.isRegex}
+					title="Use Regular Expression"
+					onclick={toggleRegex}
+				>
+					.*
+				</button>
+			</div>
+		</div>
+
+		{#if session.regexError}
+			<div class="text-xs text-destructive font-medium px-0.5 flex items-center gap-1" role="alert">
+				<span>{session.regexError}</span>
+			</div>
+		{/if}
+
+		<!-- File include and exclude globs -->
+		<div class="grid grid-cols-2 gap-2">
+			<input
+				type="text"
+				bind:value={session.includePattern}
+				oninput={handleInput}
+				placeholder="files to include (e.g. *.ts, src/**)"
+				aria-label="Files to include"
+				class="w-full bg-background border border-input rounded-md px-2.5 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			/>
+			<input
+				type="text"
+				bind:value={session.excludePattern}
+				oninput={handleInput}
+				placeholder="files to exclude (e.g. *.test.ts, build/**)"
+				aria-label="Files to exclude"
+				class="w-full bg-background border border-input rounded-md px-2.5 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			/>
+		</div>
+
+		<!-- Replace row -->
+		<div class="flex items-center gap-2">
+			<input
+				type="text"
+				bind:value={replaceText}
+				placeholder="Replace with..."
+				class="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				aria-label="Replace query"
+				onkeydown={(e) => {
+					if (e.key === 'Enter' && !isReplacing) {
+						e.preventDefault();
+						replaceAll();
+					}
+				}}
+			/>
+			<button
+				type="button"
+				onclick={replaceAll}
+				disabled={runner.results.length === 0 || !session.query || isReplacing}
+				class="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+				aria-label="Replace all"
+			>
+				Replace All
+			</button>
+		</div>
+
+		{#if runner.isSearching}
+			<div class="h-0.5 w-full bg-muted overflow-hidden relative rounded-full" role="progressbar" aria-label="Searching project">
+				<div class="h-full bg-primary animate-pulse w-full"></div>
+			</div>
+		{/if}
+
+		<!-- Status and truncation bar -->
+		<div class="flex items-center justify-between text-xs px-0.5">
+			<div class="flex items-center gap-2">
+				{#if runner.isSearching}
+					<span class="text-muted-foreground flex items-center gap-1.5" role="status">
+						<CircleNotchIcon class="size-3.5 animate-spin text-primary" />
+						<span>{searchStatus}</span>
+					</span>
+				{:else}
+					<span class="text-muted-foreground">{searchStatus}</span>
+				{/if}
+			</div>
+
+			{#if runner.isTruncated}
+				<!-- Plain text: the alert banner below is the sole live-region cap announcement -->
+				<div class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
+					<WarningIcon class="size-3.5 text-amber-500 shrink-0" />
+					<span>Results truncated: capped at {truncationCapText(runner.truncationReason)}</span>
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	<!-- Unmissable truncation notice banner when caps are hit -->
+	{#if runner.isTruncated}
+		<div
+			class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-3.5 py-2 text-xs flex items-center justify-between gap-2 shrink-0 font-medium"
+			role="alert"
+			aria-live="assertive"
+		>
+			<div class="flex items-center gap-2">
+				<WarningIcon class="size-4 text-amber-500 shrink-0" />
+				<span>
+					<strong>Results truncated:</strong> capped at {truncationCapText(runner.truncationReason)}. Refine your query to see more specific matches.
+				</span>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Grouped results below using MultiBuffer -->
+	<div class="flex-1 overflow-hidden flex flex-col">
+		<MultiBuffer
+			{sections}
+			isCollapsed={(fp) => collapsedPaths.has(fp)}
+			idPrefix="search-"
+		>
+			{#snippet header(filepath: string)}
+				{@const fileResult = runner.results.find((r) => r.filepath === filepath)}
+				<div
+					class="flex items-center gap-2 py-1 px-2 hover:bg-muted/30 rounded cursor-pointer select-none"
+					onclick={() => toggleCollapse(filepath)}
+					role="button"
+					tabindex="0"
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							toggleCollapse(filepath);
+						}
+					}}
+				>
+					<button
+						type="button"
+						aria-label={collapsedPaths.has(filepath) ? `Expand ${filepath}` : `Collapse ${filepath}`}
+						class="p-0.5 hover:bg-muted rounded text-muted-foreground"
+						onclick={(e) => {
+							e.stopPropagation();
+							toggleCollapse(filepath);
+						}}
+					>
+						{#if collapsedPaths.has(filepath)}
+							<CaretRightIcon size={14} />
+						{:else}
+							<CaretDownIcon size={14} />
+						{/if}
+					</button>
+
+					<Icon resource={filepath} type="file" class="size-4 opacity-90" />
+
+					<button
+						type="button"
+						class="font-medium text-xs text-foreground hover:underline truncate text-left"
+						onclick={(e) => {
+							e.stopPropagation();
+							openFile(fileResult);
+						}}
+					>
+						{filepath}
+					</button>
+
+					{#if fileResult && isResultFileDirty(toURI(fileResult.origin), documentDirtiness)}
+						<span
+							class="size-1.5 rounded-full bg-foreground/40 shrink-0"
+							role="img"
+							aria-label="Unsaved changes"
+							title="Unsaved changes"
+						></span>
+					{/if}
+
+					<span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full font-mono">
+						{fileResult?.matches.length ?? 0}
+					</span>
+				</div>
+			{/snippet}
+
+			{#snippet content(filepath: string)}
+				{@const fileResult = runner.results.find((r) => r.filepath === filepath)}
+				{#if fileResult}
+					<!-- Editable excerpt multibuffer for this file -->
+					<div class="search-excerpt-editor flex flex-col py-1 border-t border-border/20">
+						<div use:setupExcerptEditor={fileResult}></div>
+
+						<!-- Hidden snippet preserving accessible match context for tests/screen readers -->
+						<div class="sr-only" aria-hidden="true">
+							{#each fileResult.matches as match (match.offset)}
+								{#each match.contextBefore as ctx (ctx.line)}
+									<span>{ctx.text}</span>
+								{/each}
+								<mark>{match.lineText.slice(match.column - 1, match.column - 1 + match.matchLength)}</mark>
+								{#each match.contextAfter as ctx (ctx.line)}
+									<span>{ctx.text}</span>
+								{/each}
+							{/each}
+						</div>
+					</div>
+				{/if}
+			{/snippet}
+
+			{#snippet emptyState()}
+				<div class="flex-1 flex flex-col items-center justify-center p-8 text-muted-foreground text-sm">
+					{#if runner.isSearching}
+						<div class="flex flex-col items-center gap-2">
+							<CircleNotchIcon class="size-6 animate-spin text-primary" />
+							<p>Searching project...</p>
+						</div>
+					{:else if session.query.trim()}
+						<p>No results found for &ldquo;{session.query}&rdquo;</p>
+					{:else}
+						<p>Type a query above to search the project.</p>
+					{/if}
+				</div>
+			{/snippet}
+		</MultiBuffer>
+	</div>
+</div>

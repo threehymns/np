@@ -83,12 +83,12 @@ describe('SpawnGitAdapter', () => {
 		const changes = await adapter.getChanges();
 
 		// Should pass -uall to status
-		const statusCall = mockGitRun.mock.calls.find((call: [string, string[]]) => call[1].includes('status'));
+		const statusCall = mockGitRun.mock.calls.find((call: any) => call[1].includes('status'));
 		expect(statusCall).toBeDefined();
 		expect(statusCall![1]).toContain('-uall');
 
 		// Should not have called git show at all during getChanges
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 
 		// The untracked file is the only thing read (to count lines); tracked files are not read
@@ -127,7 +127,7 @@ describe('SpawnGitAdapter', () => {
 
 		// Should not call readFile or git show for deleted files during getChanges
 		expect(mockReadFile).not.toHaveBeenCalled();
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 		expect(changes.length).toBe(2);
 		const unstagedDeleted = changes.find(c => c.filepath === 'deleted.txt');
@@ -173,7 +173,7 @@ describe('SpawnGitAdapter', () => {
 		const changes = await adapter.getChanges();
 
 		// Check that numstat commands include core.quotepath=false configuration
-		const numstatCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1].includes('--numstat'));
+		const numstatCalls = mockGitRun.mock.calls.filter((call: any) => call[1].includes('--numstat'));
 		expect(numstatCalls.length).toBe(2);
 		// `-z` is required: without it git C-quotes any path holding a newline,
 		// tab, or quote, and the counts would be keyed by a display string that
@@ -182,12 +182,12 @@ describe('SpawnGitAdapter', () => {
 		expect(numstatCalls[1][1]).toEqual(['-c', 'core.quotepath=false', 'diff', '--numstat', '-z']);
 
 		// Check that no per-file diff or show commands were executed
-		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => {
+		const perFileDiffCalls = mockGitRun.mock.calls.filter((call: any) => {
 			const args = call[1];
 			return args.includes('diff') && args.includes('--') && !args.includes('--numstat');
 		});
 		expect(perFileDiffCalls.length).toBe(0);
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 		expect(mockReadFile).not.toHaveBeenCalled();
 
@@ -366,7 +366,7 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('untracked disk content');
-		const showCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
 		expect(showCalls.length).toBe(0);
 	});
 
@@ -382,7 +382,7 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('staged index content');
-		const headCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
+		const headCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
 		expect(headCalls.length).toBe(0);
 	});
 
@@ -432,7 +432,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.stageAll();
 
-		const addCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'add');
+		const addCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'add');
 		expect(addCalls.length).toBe(1);
 		expect(addCalls[0][1]).toEqual(['add', '-A']);
 	});
@@ -629,7 +629,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.unstageAll();
 
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls.length).toBe(1);
 		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '.']);
 	});
@@ -688,11 +688,11 @@ describe('SpawnGitAdapter', () => {
 
 		// A clean repository has nothing to remove, so the untracked paths are
 		// enumerated and `clean` is skipped entirely rather than run over `.`.
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls.length).toBe(1);
 		expect(restoreCalls[0][1]).toEqual(['restore', '--staged', '--worktree', '.']);
 
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(0);
 	});
 
@@ -707,7 +707,7 @@ describe('SpawnGitAdapter', () => {
 
 		// `clean -fd` over `.` would unlink any resurrected file along with the junk,
 		// and it ignores `-e :(exclude)` pathspecs, so removals are enumerated instead.
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
 		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt', ':(literal)nested/deep.txt']);
 	});
@@ -734,7 +734,7 @@ describe('SpawnGitAdapter', () => {
 		const adapter = new SpawnGitAdapter(rootOrigin);
 		await adapter.discardAll();
 
-		const restoreCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'restore');
+		const restoreCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'restore');
 		expect(restoreCalls[0][1]).toEqual([
 			'restore',
 			'--staged',
@@ -744,7 +744,7 @@ describe('SpawnGitAdapter', () => {
 		]);
 
 		// Only the junk is removed; the recreated file is never passed to clean.
-		const cleanCalls = mockGitRun.mock.calls.filter((call: [string, string[]]) => call[1][0] === 'clean');
+		const cleanCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'clean');
 		expect(cleanCalls.length).toBe(1);
 		expect(cleanCalls[0][1]).toEqual(['clean', '-fd', '--', ':(literal)junk.txt']);
 	});
@@ -915,4 +915,155 @@ describe('SpawnGitAdapter', () => {
 			expect(await new SpawnGitAdapter(rootOrigin).getCommits()).toEqual([]);
 		});
 	});
+
+	describe('getHistory', () => {
+		const logReturning = (stdout: string, code = 0, stderr = '') => {
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'log') return { code, stdout, stderr };
+				return { code: 0, stdout: '', stderr: '' };
+			});
+		};
+
+		/**
+		 * One record of `git log -z --format=%s%x00%an%x00%at%x00%h%x00%H%x00%D`.
+		 *
+		 * The format writes six NUL-separated fields per commit (subject,
+		 * author, timestamp, short sha, full sha, ref decoration) and `-z`
+		 * terminates each record with a NUL. The last record is terminated
+		 * too, so a stream of N records splits into 6N + 1 pieces: the 6N
+		 * fields and the empty tail the final NUL leaves behind.
+		 *
+		 * The decoration is empty on every commit but the one the current
+		 * branch points at, so the stream of two records ends in two NULs:
+		 * the empty decoration field, then the terminator.
+		 */
+		const historyRecord = (
+			subject: string,
+			author: string,
+			timestamp: string,
+			shortSha: string,
+			sha: string,
+			refDecoration: string
+		) => [subject, author, timestamp, shortSha, sha, refDecoration].join('\x00') + '\x00';
+
+		it('parses a two-record NUL-delimited stream into GitHistoryCommit entries', async () => {
+			logReturning(
+				historyRecord(
+					'feat: hello',
+					'Alice',
+					'1700000000',
+					'abcdef1',
+					'abcdef1234567890abcdef1234567890abcdef12',
+					'tag: v1.0'
+				) +
+					historyRecord(
+						'fix: goodbye',
+						'Bob',
+						'1700000100',
+						'bcdef23',
+						'bcdef234567890abcdef1234567890abcdef12345678',
+						''
+					)
+			);
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+
+			// Both records are read, newest first, each with its own fields.
+			expect(history).toEqual([
+				{
+					sha: 'abcdef1234567890abcdef1234567890abcdef12',
+					shortSha: 'abcdef1',
+					subject: 'feat: hello',
+					author: 'Alice',
+					timestamp: 1700000000,
+					refDecoration: 'tag: v1.0'
+				},
+				{
+					sha: 'bcdef234567890abcdef1234567890abcdef12345678',
+					shortSha: 'bcdef23',
+					subject: 'fix: goodbye',
+					author: 'Bob',
+					timestamp: 1700000100
+				}
+			]);
+			// The empty decoration of the older commit is not an empty string.
+			expect(history[1].refDecoration).toBeUndefined();
+		});
+
+		it('handles truncated stream gracefully', async () => {
+			logReturning('feat: hello\x00Alice\x001700000000');
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+			expect(history).toEqual([]);
+		});
+
+		it('returns empty array when git log reports no commits yet', async () => {
+			logReturning('', 128, 'fatal: your current branch master does not have any commits yet');
+
+			const history = await new SpawnGitAdapter(rootOrigin).getHistory();
+			expect(history).toEqual([]);
+		});
+
+		it('passes -n flag when maxCount is supplied', async () => {
+			const calls: string[][] = [];
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				calls.push(args);
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			await new SpawnGitAdapter(rootOrigin).getHistory({ maxCount: 10, branch: 'feat/abc' });
+			const logCall = calls.find(c => c[0] === 'log');
+			expect(logCall).toBeDefined();
+			expect(logCall).toContain('-n');
+			expect(logCall).toContain('10');
+			expect(logCall).toContain('feat/abc');
+		});
+
+		it('terminates the revision list with -- after the branch argument', async () => {
+			const calls: string[][] = [];
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				calls.push(args);
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			await new SpawnGitAdapter(rootOrigin).getHistory({ branch: 'feat/abc' });
+			const logCall = calls.find(c => c[0] === 'log');
+			expect(logCall).toBeDefined();
+			const branchIdx = logCall!.indexOf('feat/abc');
+			expect(branchIdx).toBeGreaterThan(-1);
+			// -- must immediately follow the branch so git parses it as a
+			// revision even when a path with the same name exists.
+			expect(logCall![branchIdx + 1]).toBe('--');
+		});
+
+		it('queries rev-list for ahead commits and marks isAhead (Ticket #346)', async () => {
+			window.electronAPI.gitRun = mock(async (_workingDir: string, args: string[]) => {
+				if (args[0] === 'log') {
+					return {
+						code: 0,
+						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x001111111111111111111111111111111111111111\x00tag: v1.0\x00',
+						stderr: ''
+					};
+				}
+				if (args[0] === 'rev-list') {
+					return {
+						code: 0,
+						stdout: '1111111111111111111111111111111111111111\n',
+						stderr: ''
+					};
+				}
+				return { code: 0, stdout: '', stderr: '' };
+			});
+
+			const adapter = new SpawnGitAdapter(rootOrigin);
+			const history = await adapter.getHistory();
+			expect(history).toHaveLength(1);
+			expect(history[0].isAhead).toBe(true);
+			expect(history[0].refDecoration).toBe('tag: v1.0');
+
+			const aheadCount = await adapter.getAheadCount();
+			expect(aheadCount).toBe(1);
+		});
+	});
+
 });

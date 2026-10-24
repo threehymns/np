@@ -28,10 +28,11 @@ import type { LspLogStore } from './logs';
 import { basenameOfUri, fromFileUri, toFileUri } from './root';
 import { describeError } from './describe-error';
 import { lspServerKey, LspTargetResolver, type LspTargetInput } from './targets';
-import type { LspServerState, LspServerStatus, LspServerStatusApi } from './status';
+import type { LspServerState, LspServerStatus, LspServerStatusApi, LspStatusDetail } from './status';
 import { resolveLspPlatform } from './platform';
 import { Effect, Exit, Scope } from 'effect';
 import { DiagnosticPullCoordinator, parseDiagnosticPullSupport } from './diagnostic-pull';
+import { WorkspacePullCoordinator, parseWorkspaceDiagnosticSupport } from './workspace-pull';
 
 export { lspServerKey };
 export type { LspServerState, LspServerStatus };
@@ -115,7 +116,7 @@ export interface LspRuntimeOptions {
 	readonly pluginId: string;
 	readonly logs: LspLogStore;
 	/**
-	 * Where server findings are filed. Optional because a runtime with nowhere to
+	 * Where server diagnostics are filed. Optional because a runtime with nowhere to
 	 * put diagnostics is a working runtime: the notification is simply dropped.
 	 */
 	readonly diagnostics?: LspDiagnosticsStore;
@@ -177,6 +178,20 @@ interface RunningServer {
 	 * diagnosticProvider. False until the handshake.
 	 */
 	pullSupported: boolean;
+	/**
+	 * Read from the handshake, like the others: the server names its own
+	 * `diagnosticProvider.workspaceDiagnostics`. False until the handshake, and
+	 * false forever for a server that does not answer workspace pulls.
+	 */
+	workspaceDiagnosticsSupported: boolean;
+	/**
+	 * The version the server reported in its `initialize` result (`serverInfo.version`),
+	 * or null until it has. Read by {@link LspRuntime.getStatusRows} for the details
+	 * slot; a server that reports none says so rather than showing a blank or a zero.
+	 */
+	serverVersion: string | null;
+	/** Snapshot, not a live read: the menu reads rows synchronously on render. */
+	memoryBytes: number | null;
 }
 
 /**
@@ -225,6 +240,18 @@ interface PendingDocument {
  * request's silence, which is the failure `words` answers behind.
  */
 const DEFAULT_FETCH_TIMEOUT_MS = 5000;
+
+/**
+ * How long one workspace pull may take before it is given up on.
+ *
+ * Longer than the document pull's bound, because the protocol says the
+ * workspace request is not bound to a document: a server computing a whole
+ * workspace may take far longer than one file. A pull that overruns it is
+ * retried with the backoff, so a slow server is waited for rather than asked
+ * again, and a server that never answers is given up on rather than waited
+ * for forever.
+ */
+const WORKSPACE_PULL_TIMEOUT_MS = 30000;
 
 /**
  * The running-server table, and the only reader of it.
@@ -294,6 +321,17 @@ export class LspRuntime
 	private readonly resolvedItems = new Map<string, unknown>();
 	private readonly pullScope: Scope.Closeable | null;
 	private readonly pullCoordinator: DiagnosticPullCoordinator | null;
+	/**
+	 * The workspace pull loop, one per server that offers it (spec #308).
+	 *
+	 * A server that answers `workspace/diagnostic` is asked about the whole
+	 * workspace rather than about the file the editor happens to have open,
+	 * which is the only way a file nobody opened gets diagnostics at all. The
+	 * loops live on the runtime's own scope, each in a child scope of its own,
+	 * so stopping one server ends its loop and disposing the runtime ends them
+	 * all.
+	 */
+	private readonly workspaceCoordinator: WorkspacePullCoordinator | null;
 
 	constructor(private readonly options: LspRuntimeOptions) {
 		this.targets = new LspTargetResolver({
@@ -307,6 +345,7 @@ export class LspRuntime
 			const store = options.diagnostics;
 			this.pullCoordinator = new DiagnosticPullCoordinator({
 				store,
+				versionFor: (server, uri) => this.syncedVersion(server, uri),
 				request: (server, uri, previousResultId) =>
 					Effect.tryPromise({
 						try: () => {
@@ -323,7 +362,7 @@ export class LspRuntime
 								// Bounded like every other request the client makes. A
 								// server that never answers must not hold the pull
 								// open forever, and a pull that times out leaves the
-								// pushed findings alone (ADR 0029), so the cost of
+								// pushed diagnostics alone (ADR 0029), so the cost of
 								// the bound is a warning rather than a wrong answer.
 								DEFAULT_FETCH_TIMEOUT_MS
 							);
@@ -332,19 +371,52 @@ export class LspRuntime
 					}),
 				onFailure: (server, error) => {
 					// A failed pull says nothing about the file, so the pushed
-					// findings stay and the file looks exactly as it would if the
+					// diagnostics stay and the file looks exactly as it would if the
 					// pull had worked. That is the same blindness the completion
 					// and hover failures are logged for.
 					this.options.logs.appendServerNote(
 						server,
 						'warn',
-						`Diagnostic pull failed, so the findings the server pushed stay: ${describeError(error)}`
+						`Diagnostic pull failed, so the diagnostics the server pushed stay: ${describeError(error)}`
+					);
+				}
+			});
+			this.workspaceCoordinator = new WorkspacePullCoordinator({
+				store,
+				accepts: (uri) =>
+					this.gateFor({
+						path: fromFileUri(uri),
+						fileName: basenameOfUri(uri)
+					}).enabled,
+				request: (server, params) =>
+					Effect.tryPromise({
+						try: () => {
+							const client = this.servers.get(server)?.client;
+							if (!client) {
+								throw new Error(
+									`Server "${server}" is not running, so its workspace diagnostics cannot be pulled.`
+								);
+							}
+							return client.request('workspace/diagnostic', params, WORKSPACE_PULL_TIMEOUT_MS);
+						},
+						catch: (error) => error
+					}),
+				onFailure: (server, error) => {
+					// A failed workspace pull says nothing about any file, so
+					// the diagnostics already filed stay. Reported once per failure
+					// series rather than once per attempt, the way a failed
+					// document pull is.
+					this.options.logs.appendServerNote(
+						server,
+						'warn',
+						`Workspace diagnostic pull failed, so the diagnostics already filed stay: ${describeError(error)}`
 					);
 				}
 			});
 		} else {
 			this.pullScope = null;
 			this.pullCoordinator = null;
+			this.workspaceCoordinator = null;
 		}
 	}
 
@@ -361,9 +433,7 @@ export class LspRuntime
 			marker: entry.marker,
 			state: entry.state,
 			pid: entry.client?.pid,
-			// The details slot is shaped now and filled by the version and memory
-			// follow-ups, so arriving there is not a redesign of the row.
-			details: []
+			details: statusDetailsFor(entry)
 		}));
 	}
 
@@ -943,6 +1013,7 @@ export class LspRuntime
 		this.disposed = true;
 		// Closed first: arming a pull after this point would fork into a dead scope,
 		// and in-flight pulls must not outlive the runtime that owns their client.
+		// The workspace loops are children of this scope, so this ends them too.
 		if (this.pullScope) await Effect.runPromise(Scope.close(this.pullScope, Exit.void));
 		// Released before the slow part, and released at all: a settings change that
 		// arrives after a disable has nothing left to act on, and holding the
@@ -978,6 +1049,42 @@ export class LspRuntime
 		Effect.runFork(coordinator.armPull(uri, server).pipe(Effect.provideService(Scope.Scope, scope)));
 	}
 
+	/**
+	 * The document version last synced to one server.
+	 *
+	 * The runtime counts a version per document, and a document is served by
+	 * one server at a time, so the version the server holds is the one this
+	 * document has reached. A pull is computed against that version, and the
+	 * store needs it to tell a pull that is still fresh from one that was
+	 * already in flight when the text changed.
+	 *
+	 * Undefined when the document was never synced to that server, which
+	 * names no revision rather than a wrong one.
+	 */
+	private syncedVersion(server: string, uri: string): number | undefined {
+		const document = this.openDocuments.get(uri);
+		if (!document) return undefined;
+		if (this.documentServers.get(uri) !== server) return undefined;
+		return document.version;
+	}
+
+	/**
+	 * Starts one server's workspace pull loop, when it offers one.
+	 *
+	 * The loop is forked on the runtime's own scope, in a child scope of its
+	 * own, so stopping the server ends the loop and disposing the runtime ends
+	 * them all. A server that does not announce the workspace pull is never
+	 * asked: the machinery is off for it rather than merely empty, which is
+	 * what keeps a single-root workspace behaving exactly as it did before.
+	 */
+	private startWorkspacePull(entry: RunningServer): void {
+		const coordinator = this.workspaceCoordinator;
+		const scope = this.pullScope;
+		if (!coordinator || !scope) return;
+		if (!entry.workspaceDiagnosticsSupported) return;
+		Effect.runFork(coordinator.start(entry.server).pipe(Effect.provideService(Scope.Scope, scope)));
+	}
+
 	private resolvePlatform(): LspPlatform | undefined {
 		return this.options.platform ?? resolveLspPlatform(this.options.host);
 	}
@@ -1010,7 +1117,10 @@ export class LspRuntime
 			state: 'starting',
 			stoppedByUser: false,
 			triggerCharacters: [],
-			pullSupported: false
+			pullSupported: false,
+			workspaceDiagnosticsSupported: false,
+			serverVersion: null,
+			memoryBytes: null
 		};
 		this.servers.set(server, entry);
 		// The menu shows a starting server as such, so the status changes as soon
@@ -1044,7 +1154,8 @@ export class LspRuntime
 				server,
 				logs: this.options.logs,
 				initializeTimeoutMs: this.options.initializeTimeoutMs,
-				onNotification: (method, params) => this.onNotification(server, method, params)
+				onNotification: (method, params) => this.onNotification(server, method, params),
+				onRequest: (method, params) => this.onRequest(server, method, params)
 			});
 			entry.client = client;
 			const initResult = await client.initialize({
@@ -1068,8 +1179,16 @@ export class LspRuntime
 			// Live from the handshake, like triggerCharacters: the server names
 			// its own diagnosticProvider.
 			entry.pullSupported = parseDiagnosticPullSupport(initResult);
+			// And the workspace half of it: a server that answers
+			// `workspace/diagnostic` is asked about the whole workspace.
+			entry.workspaceDiagnosticsSupported = parseWorkspaceDiagnosticSupport(initResult);
+			// The version arrives with the handshake it describes, so a restart —
+			// a new handshake — re-reports it and the row refreshes with it.
+			entry.serverVersion = parseServerVersion(initResult);
 			entry.state = 'running';
 			this.statusChanged();
+			// Fire and forget: a slow or failed observation must not hold the start.
+			void this.refreshMemory(entry);
 			this.log(
 				entry,
 				'info',
@@ -1077,6 +1196,7 @@ export class LspRuntime
 					`${serverProcess.pid !== undefined ? ` (pid ${serverProcess.pid})` : ''}` +
 					` at ${root}${marker ? ` via ${marker}` : ' with no root marker, scoped to the document directory'}.`
 			);
+			this.startWorkspacePull(entry);
 			this.reopenDocumentsFor(server);
 		} catch (error) {
 			entry.state = 'failed';
@@ -1116,24 +1236,55 @@ export class LspRuntime
 		}
 	}
 
+	/**
+	 * Never fails the start: any observation failure leaves the figure at "—".
+	 * Guarded against a stop or restart that landed while the read was in flight.
+	 */
+	private async refreshMemory(entry: RunningServer): Promise<void> {
+		const pid = entry.client?.pid;
+		const platform = this.resolvePlatform();
+		if (pid === undefined || platform?.processMemory === undefined) return;
+		let bytes: number | null;
+		try {
+			bytes = await platform.processMemory(pid);
+		} catch {
+			return;
+		}
+		if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return;
+		if (this.servers.get(entry.server) !== entry || entry.state !== 'running') return;
+		entry.memoryBytes = bytes;
+		this.statusChanged();
+	}
+
 	private async stopEntry(entry: RunningServer): Promise<void> {
 		const client = entry.client;
 		entry.client = undefined;
 		entry.state = 'stopped';
 		this.serverCapabilities.delete(entry.server);
 		this.dropResolved(entry.server);
+		// A stopped row keeps no figures from the dead process.
+		entry.serverVersion = null;
+		entry.memoryBytes = null;
 		// The queue is deliberately untouched: one of this method's callers is the
 		// revival path, where the stop is about to be followed by a start that should
 		// serve whatever is still waiting. The callers that mean it drops the waiters
 		// with the server say so themselves — see {@link LspRuntime.dropPending}.
-		// Whatever this server reported describes a process that is no longer
-		// watching, and a restart that kept them would look like it did nothing.
-		this.options.diagnostics?.dropServer(entry.server);
+		// The workspace loop goes with it, and before the process is told to
+		// go: a loop that was still running would ask a server that is on its
+		// way out about the workspace, which is the request the stop is meant
+		// to prevent. It also goes before the diagnostics are dropped, so a
+		// report that lands in the gap cannot repopulate a cleared store.
+		const workspace = this.workspaceCoordinator;
+		if (workspace) await Effect.runPromise(workspace.stop(entry.server));
 		// The pull side is forgotten with it: a restarted server must not get
 		// a previousResultId from the dead process, and a pending pull against
 		// the old process must not write after the stop.
 		const coordinator = this.pullCoordinator;
 		if (coordinator) await Effect.runPromise(coordinator.forgetServer(entry.server));
+		// Whatever this server reported describes a process that is no longer
+		// watching, and a restart that kept them would look like it did nothing.
+		// Dropped last, after every loop that could file is stopped.
+		this.options.diagnostics?.dropServer(entry.server);
 		this.statusChanged();
 		if (!client) return;
 		// The handshake is best-effort; a server that ignores `shutdown` is still
@@ -1157,6 +1308,10 @@ export class LspRuntime
 	 * running when the setting changed.
 	 */
 	private onNotification(server: string, method: string, params: unknown): void {
+		if (method === '$/progress') {
+			this.acceptProgress(server, params);
+			return;
+		}
 		if (method !== 'textDocument/publishDiagnostics') return;
 		const report = parsePublishDiagnostics(server, params);
 		if (!report) return;
@@ -1166,6 +1321,66 @@ export class LspRuntime
 			return;
 		}
 		this.options.diagnostics?.publish(report);
+	}
+
+	/**
+	 * A progress notification, which is how a server streams the partial
+	 * results of the workspace pull it is answering.
+	 *
+	 * The token is what says whose result it is: only a progress value that
+	 * names the pull in flight is taken, so a report for a pull that has
+	 * already finished — or for one that was abandoned with its server — is
+	 * not filed.
+	 */
+	private acceptProgress(server: string, params: unknown): void {
+		const progress = params as { token?: unknown; value?: unknown } | null | undefined;
+		if (!progress || typeof progress.token !== 'string') return;
+		this.workspaceCoordinator?.acceptPartialResult(server, progress.token, progress.value);
+	}
+
+	/**
+	 * A server-to-client request. The client has already answered it: the
+	 * refresh reply is on the wire before this is called, which is what keeps
+	 * the pull this provokes from deadlocking against the server that asked
+	 * for it.
+	 */
+	private onRequest(server: string, method: string, _params: unknown): void {
+		if (method !== 'workspace/diagnostic/refresh') return;
+		this.refreshDiagnostics(server);
+	}
+
+	/**
+	 * Re-arms the diagnostics for one server: the workspace pull, and the
+	 * document pull of every open buffer it serves.
+	 *
+	 * A refresh is a server's word that something changed underneath it, so
+	 * the answers already on screen may be stale. The workspace pull covers
+	 * the files no buffer has open, and the document pulls cover the ones
+	 * that have: a path an open buffer owns is answered by the document pull
+	 * (ADR 0029), so the workspace pull alone would not refresh it.
+	 *
+	 * A refresh that arrives before the loop is running costs nothing: the
+	 * loop's first pull is immediate, so the answers are current either way.
+	 */
+	private refreshDiagnostics(server: string): void {
+		const scope = this.pullScope;
+		if (!scope) return;
+		const workspace = this.workspaceCoordinator;
+		if (workspace) {
+			Effect.runFork(
+				workspace.notifyRefresh(server).pipe(Effect.provideService(Scope.Scope, scope))
+			);
+		}
+		const coordinator = this.pullCoordinator;
+		if (!coordinator) return;
+		const entry = this.servers.get(server);
+		if (!entry || entry.state !== 'running' || !entry.pullSupported) return;
+		for (const [uri] of this.openDocuments) {
+			if (this.documentServers.get(uri) !== server) continue;
+			Effect.runFork(
+				coordinator.armPull(uri, server).pipe(Effect.provideService(Scope.Scope, scope))
+			);
+		}
 	}
 
 	/**
@@ -1234,6 +1449,20 @@ export class LspRuntime
 		if (this.disposed) return;
 		const read = this.options.readSettings ?? this.publishedSettingsReader();
 		if (!read) return;
+		// Workspace-pulled diagnostics for URIs the gate now rejects are not open
+		// documents, so the detach loop below never sees them — and the workspace
+		// pull skips them from now on without clearing what is already stored.
+		// Drop them here so a disabled language leaves nothing behind.
+		const diagnostics = this.options.diagnostics;
+		if (diagnostics) {
+			for (const uri of diagnostics.uris()) {
+				const fileName = basenameOfUri(uri);
+				const language = this.openDocuments.get(uri)?.language;
+				if (!this.gateFor({ path: fromFileUri(uri), fileName, language }).enabled) {
+					diagnostics.dropUri(uri);
+				}
+			}
+		}
 		// Collected before the detach: detaching is what forgets which server a
 		// document belonged to.
 		const affected = new Set<string>();
@@ -1278,7 +1507,7 @@ export class LspRuntime
 
 	/**
 	 * Stops tracking one document, addressed by its URI because every map here is
-	 * keyed by URI: `didClose` to a server holding it, and its findings off the
+	 * keyed by URI: `didClose` to a server holding it, and its diagnostics off the
 	 * gutter.
 	 *
 	 * Not a server stop, on its own. The process is shared by every language its
@@ -1352,4 +1581,40 @@ function readServerCapabilities(result: unknown): {
 		hoverProvider: hover === true || (typeof hover === 'object' && hover !== null),
 		executeCommands: commands
 	};
+}
+
+/**
+ * Null for anything but a non-empty `serverInfo.version` string. A server that
+ * omits the field is conforming, not broken.
+ */
+export function parseServerVersion(result: unknown): string | null {
+	if (typeof result !== 'object' || result === null) return null;
+	const info = (result as { serverInfo?: unknown }).serverInfo;
+	if (typeof info !== 'object' || info === null) return null;
+	const version = (info as { version?: unknown }).version;
+	return typeof version === 'string' && version.length > 0 ? version : null;
+}
+
+/**
+ * Version and memory for live and starting servers; stopped and failed rows
+ * are cleared. The value is the whole display form — the submenu's footer
+ * renders it without the label, so the version carries its `v` and an unknown
+ * figure is a dash, not a label-less sentence.
+ */
+function statusDetailsFor(entry: RunningServer): LspStatusDetail[] {
+	if (entry.state !== 'running' && entry.state !== 'starting') return [];
+	return [
+		{ label: 'version', value: entry.serverVersion !== null ? `v${entry.serverVersion}` : 'v—' },
+		{
+			label: 'memory',
+			value: entry.memoryBytes !== null ? formatMemoryBytes(entry.memoryBytes) : '—'
+		}
+	];
+}
+
+/** Never blank and never zero: an unknown figure is the caller's "—". */
+export function formatMemoryBytes(bytes: number): string {
+	const MIB = 1024 * 1024;
+	if (bytes >= MIB) return `${Math.max(1, Math.round(bytes / MIB))} MiB`;
+	return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
 }

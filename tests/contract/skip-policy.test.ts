@@ -136,13 +136,20 @@ const TEST_FILE_PATTERN = /(\.|_|-)(test|spec)\.[cm]?[jt]sx?$/;
  * directory is not, so the safe direction to err in is to over-include.
  */
 function ignoredDirectoryNames(): string[] {
-	const gitignore = readFileSync(join(REPO_ROOT, '.gitignore'), 'utf8');
+	const sources = [join(REPO_ROOT, '.gitignore')];
+	const gitExclude = join(REPO_ROOT, '.git', 'info', 'exclude');
+	if (existsSync(gitExclude)) {
+		sources.push(gitExclude);
+	}
 	const names: string[] = [];
-	for (const raw of gitignore.split('\n')) {
-		const line = raw.trim();
-		if (!line || line.startsWith('#') || line.startsWith('!')) continue;
-		if (line.includes('*')) continue;
-		names.push(line.replace(/\/$/, ''));
+	for (const file of sources) {
+		const content = readFileSync(file, 'utf8');
+		for (const raw of content.split('\n')) {
+			const line = raw.trim();
+			if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+			if (line.includes('*')) continue;
+			names.push(line.replace(/^\/+/, '').replace(/\/+$/, ''));
+		}
 	}
 	return names;
 }

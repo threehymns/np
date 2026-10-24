@@ -1,3 +1,5 @@
+import type { SearchTabSession } from './search/session.svelte';
+
 export type PaneAxis = 'horizontal' | 'vertical';
 export type SplitDirection = 'left' | 'right' | 'up' | 'down';
 export type SplitMode = 'empty' | 'move' | 'clone';
@@ -6,10 +8,20 @@ export const WORKSPACE_PERSISTENCE_VERSION = 1;
 
 export interface WorkspaceTab {
 	id: string;
-	type: 'document' | 'diff';
+	type: 'document' | 'diff' | 'search' | 'diagnostics';
 	pluginId?: string;
 	canSplit?: boolean;
 	docId?: string;
+	/**
+	 * For search tabs: the per-tab query session the tab reads and writes.
+	 */
+	searchSession?: SearchTabSession;
+	/**
+	 * Title of a tab that is not a document. A contributed view carries its own
+	 * title in its contribution; a host-owned view (the diagnostics tab) carries
+	 * it here, because the tab strip has no other way to name it.
+	 */
+	title?: string;
 }
 
 export class Pane {
@@ -115,7 +127,10 @@ export function findPaneWithTab(root: LayoutNode, tabId: string): Pane | null {
 export function canSplitTab(tab?: WorkspaceTab | null): boolean {
 	if (!tab) return false;
 	if (tab.canSplit !== undefined) return tab.canSplit;
-	if (tab.type === 'diff') return false;
+	// Virtual tabs carry no document, and views are not documents: cloning into
+	// another pane would duplicate a host-owned surface (single search tab, or
+	// duplicating the id the diagnostics tab's session is keyed by).
+	if (tab.type === 'diff' || tab.type === 'search' || tab.type === 'diagnostics') return false;
 	if (tab.id === '__lsp_logs__' || tab.id === '__project_diff__') return false;
 	return true;
 }

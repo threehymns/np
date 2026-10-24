@@ -1,15 +1,18 @@
 <script lang="ts">
 	import type { Pane as PaneType } from '@np/core';
-	import { useAppState, cn, type UIContributionIcon } from '@np/core';
+	import { useAppState, cn, toURI, type UIContributionIcon } from '@np/core';
 	import * as Tabs from './ui/tabs/index';
 	import * as Tooltip from './ui/tooltip';
 	import Icon from './Icon.svelte';
 	import { Empty } from './ui/empty';
-	import { XIcon } from 'phosphor-svelte';
+	import { XIcon, MagnifyingGlassIcon } from 'phosphor-svelte';
+	import SearchTab from './SearchTab.svelte';
 	import { flip } from 'svelte/animate';
 	import type { EditorView } from '@codemirror/view';
 	import type EditorComponent from './Editor.svelte';
 	import { paneEditorKey } from './pane-focus';
+	import { hasDirtyResults } from './search-tab-behavior';
+	import DiagnosticsTab from './DiagnosticsTab.svelte';
 
 	let {
 		pane,
@@ -26,7 +29,19 @@
 	let isActive = $derived(appState.workspace.activePaneId === pane.id);
 	let allPanes = $derived(appState.workspace.getAllPanes());
 	let isSplit = $derived(allPanes.length > 1);
-	let showTabBar = $derived(isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId));
+	let showTabBar = $derived(
+		isSplit || pane.tabs.length > 1 || pane.tabs.some(t => t.pluginId || t.type === 'search' || t.type === 'diagnostics')
+	);
+
+	// A search tab holds unsaved work when a file its results show is
+	// dirty: the results are an editor for those files, so the tab carries
+	// the same modified marker a document tab carries.
+	let documentDirtiness = $derived(
+		appState.documents.map(d => ({
+			uri: d.origin ? toURI(d.origin) : null,
+			isModified: d.isModified
+		}))
+	);
 
 	function toPhosphorIcon(icon: UIContributionIcon | undefined): typeof XIcon {
 		return (icon ?? XIcon) as unknown as typeof XIcon;
@@ -107,8 +122,11 @@
 					{#each pane.tabs as tab (tab.id)}
 						{@const tabDocument = appState.documents.find(d => d.id === (tab.docId ?? tab.id))}
 						{@const tabContent = tab.pluginId ? appState.plugins.getTabContent(tab.pluginId) : undefined}
-						{@const title = tabContent?.title ?? tabDocument?.fileName ?? 'Untitled'}
-						{@const isModified = tabDocument?.isModified}
+						{@const title = tab.type === 'search' ? 'Search' : (tabContent?.title ?? tabDocument?.fileName ?? tab.title ?? 'Untitled')}
+						{@const searchSession = tab.type === 'search' ? tab.searchSession : undefined}
+						{@const isModified = searchSession
+							? hasDirtyResults(searchSession.resultUris, documentDirtiness)
+							: tabDocument?.isModified}
 						{@const deletedOnDisk = tabDocument?.deletedOnDisk}
 						<div
 							animate:flip={{ duration: 150 }}
@@ -128,7 +146,9 @@
 										onclick={handleActivate}
 										class="data-[state=active]:bg-background! data-[state=active]:border-border! px-1 py-0 text-xs font-medium pr-6 border-b-0! rounded-none border-transparent! hover:bg-accent flex items-center gap-1.5 {deletedOnDisk ? 'line-through opacity-60 text-muted-foreground' : ''}"
 									>
-										{#if tabContent?.icon}
+										{#if tab.type === 'search'}
+											<MagnifyingGlassIcon class="size-3.5 opacity-90 text-primary shrink-0" />
+										{:else if tabContent?.icon}
 											{@const TabIcon = toPhosphorIcon(tabContent.icon)}
 											<TabIcon class="size-3.5 opacity-90 text-primary shrink-0" />
 										{:else}
@@ -142,7 +162,9 @@
 									</Tabs.Trigger>
 								</Tooltip.Trigger>
 								<Tooltip.Content side="bottom">
-									{deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path}
+									{tab.type === 'search'
+										? 'Project Search'
+										: (deletedOnDisk ? `${title} (deleted on disk)` : tabDocument?.origin?.path)}
 								</Tooltip.Content>
 							</Tooltip.Root>
 
@@ -184,9 +206,21 @@
 				{@const viewKey = paneEditorKey(pane.id, tab.id)}
 				<Tabs.Content value={tab.id} class="flex-1 overflow-hidden focus-visible:outline-none m-0 p-0 h-full min-h-0">
 					{#if pane.activeTabId === tab.id}
-						{#if tab.pluginId && tabContent}
+						{#if tab.type === 'search'}
+							<!--
+								The tab id identifies the tab's own query session. A
+								search tab can sit in a pane that is not the active
+								one, so the workspace's active tab is not necessarily
+								this tab.
+							-->
+							<SearchTab tabId={tab.id} />
+						{:else if tab.pluginId && tabContent}
 							{@const TabComponent = tabContent.component}
 							<TabComponent {...(tabContent.props ?? {})} />
+						{:else if tab.type === 'diagnostics'}
+							<!-- The project-wide diagnostics tab (#309): a view over the
+							     merged store, with its own session on the workspace. -->
+							<DiagnosticsTab tabId={tab.id} />
 						{:else if Editor}
 							{#if tabDocument}
 								<!--

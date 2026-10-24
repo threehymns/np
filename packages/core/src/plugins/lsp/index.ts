@@ -2,7 +2,9 @@ import {
 	COMPLETION_COORDINATOR_SERVICE_KEY,
 	COMPLETION_RESOLVE_SERVICE_KEY,
 	HOVER_COORDINATOR_SERVICE_KEY,
+	SETTINGS_READER_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
+	type SettingsReader,
 	type WorkspaceLike
 } from '../services';
 import type { PluginCleanup, PluginHostInterface } from '../types';
@@ -10,10 +12,15 @@ import { createPilotComponent } from '../ui-contributions';
 import { manifest } from './manifest';
 import { createLspCommands } from './commands';
 import { LSP_DESCRIPTORS } from './descriptors';
-import { createDiagnosticEditorContribution } from './diagnostic-decorations';
-import { LspDiagnosticsStore } from './diagnostics';
+import {
+	createDiagnosticEditorContribution,
+	createDiagnosticGutterContribution,
+	type LspDiagnosticSource
+} from './diagnostic-decorations';
+import { LspDiagnosticsStore, LSP_DIAGNOSTICS_STORE_SERVICE_KEY } from './diagnostics';
 import { LspLogStore, LSP_LOG_STORE_SERVICE_KEY } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, type LspDocumentInput } from './lifecycle';
+import { LSP_SCHEMA } from './settings';
 import {
 	getLspUIComponents,
 	LSP_LOGS_TAB_ID,
@@ -50,6 +57,11 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 
 	host.registerLspDescriptors(manifest.id, LSP_DESCRIPTORS);
 	host.provideService(LSP_LOG_STORE_SERVICE_KEY, logs);
+	// The merged store is published for the diagnostics tab (#309), which reads
+	// it as a view over the diagnostics and never over the protocol that filed
+	// them. Publishing the same instance the decorations read is what keeps the
+	// tab and the editor's underlines from telling different stories.
+	host.provideService(LSP_DIAGNOSTICS_STORE_SERVICE_KEY, diagnostics);
 	host.provideService(LSP_RUNTIME_SERVICE_KEY, runtime);
 	// The same runtime under the generic name, because that is the name the editor
 	// shell knows: it composes a completion query without knowing that a language
@@ -63,11 +75,17 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	host.provideService(HOVER_COORDINATOR_SERVICE_KEY, runtime);
 	host.provideService(COMPLETION_RESOLVE_SERVICE_KEY, runtime);
 
+	// The plugin's own settings namespace (ADR 0014, issue #310): how diagnostics
+	// are shown, which is a question about this plugin's display rather than
+	// about the editor the diagnostics are painted in.
+	host.registerSettingSchema(manifest.id, LSP_SCHEMA);
+
 	// One closure for both events: opening a document and changing one are the
 	// same work — resolve the server, start it if the file is served, sync the
 	// current text — and the runtime already treats identical text as nothing to
 	// resend. Two copies of this would be two places for the next event to miss.
 	const syncDocumentEvent = (payload: unknown): void => {
+		ensureSettingsSubscription();
 		const input = readDocumentInput(payload);
 		if (input) void runtime.openDocument(input);
 	};
@@ -76,11 +94,21 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 		host.on('document:changed', syncDocumentEvent, manifest.id)
 	];
 
+	// The display reads the store, and the store is the only source of diagnostics
+	// (ADR 0022). The settings reader is resolved per use rather than captured,
+	// so an app that publishes it after the plugin is active still gets it, and
+	// an app that publishes none gets the documented defaults.
+	const source: LspDiagnosticSource = {
+		currentUri: () => currentDocumentUri(host),
+		store: diagnostics,
+		read: (namespace, key) =>
+			host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY)?.read(namespace, key),
+		highlightCodeBlocks: (dom) => getLspUIComponents(host)?.highlightCodeBlocks?.(dom)
+	};
+
 	host.registerEditorContributions(manifest.id, [
-		createDiagnosticEditorContribution({
-			currentUri: () => currentDocumentUri(host),
-			store: diagnostics
-		})
+		createDiagnosticEditorContribution(source),
+		createDiagnosticGutterContribution(source)
 	]);
 
 	// Diagnostics arrive from a pipe while the editor sits idle, and a plugin may
@@ -96,9 +124,31 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	// keystroke it answers. Coalesced per tick so a burst costs one rebuild rather
 	// than one per report, which is the difference between re-instantiating every
 	// other decoration contribution dozens of times a second and once.
-	const unsubscribeDiagnostics = diagnostics.subscribe(
-		createRepaintScheduler(() => host.rebuildEditorContributions())
-	);
+	//
+	// A setting that changes is the same kind of event: it is not a keystroke,
+	// and a switch that only takes effect on the next one is a switch a user has
+	// learned to distrust. So the reader's change signal asks for the same
+	// rebuild, through the same scheduler.
+	const requestRepaint = createRepaintScheduler(() => host.rebuildEditorContributions());
+	const unsubscribeDiagnostics = diagnostics.subscribe(requestRepaint);
+	let unsubscribeSettings: (() => void) | undefined;
+
+	/**
+	 * Takes the subscription to the app's settings changes, when there is a
+	 * reader to subscribe to.
+	 *
+	 * The app publishes the reader, and it may publish it after this plugin is
+	 * active — so the subscription is taken again on the next document event
+	 * rather than being given up on. The same degradation the LSP runtime makes
+	 * for its own gate.
+	 */
+	function ensureSettingsSubscription(): void {
+		if (unsubscribeSettings) return;
+		const reader = host.getService<SettingsReader>(SETTINGS_READER_SERVICE_KEY);
+		if (!reader?.subscribe) return;
+		unsubscribeSettings = reader.subscribe(requestRepaint);
+	}
+	ensureSettingsSubscription();
 
 	const getWorkspace = (): WorkspaceLike | undefined =>
 		host.getService<WorkspaceLike>(WORKSPACE_SERVICE_KEY);
@@ -136,6 +186,7 @@ export function setup(host: PluginHostInterface): PluginCleanup {
 	return async () => {
 		for (const stop of stopObserving) stop();
 		unsubscribeDiagnostics();
+		unsubscribeSettings?.();
 		// The view goes first. The tab offers actions on a plugin that is on its way
 		// out, and stopping the processes is the slow part of a disable.
 		closeLogsTab(getWorkspace());

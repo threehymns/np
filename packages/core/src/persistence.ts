@@ -23,7 +23,7 @@ export interface SerializedDocument {
 	 * Tab kind for tabs that are not plain file-backed documents, e.g. `'diff'`
 	 * for git-computed diff views. Omitted on ordinary document tabs.
 	 */
-	virtualTabType?: 'diff' | 'document';
+	virtualTabType?: 'diff' | 'document' | 'search';
 	pluginId?: string;
 	/**
 	 * For diff tabs: filepath of the change selected when the session was
@@ -46,6 +46,15 @@ export interface SerializedDocument {
 	 * survive a restart exactly as tab drafts do.
 	 */
 	tabless?: boolean;
+	/**
+	 * For search tabs: persisted query and toggle options.
+	 */
+	searchQuery?: string;
+	searchIsRegex?: boolean;
+	searchCaseSensitive?: boolean;
+	searchWholeWord?: boolean;
+	searchIncludePattern?: string;
+	searchExcludePattern?: string;
 }
 
 /**

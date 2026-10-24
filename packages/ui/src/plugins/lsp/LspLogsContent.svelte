@@ -5,13 +5,14 @@
 	import { onMount } from 'svelte';
 	import * as DropdownMenu from '../../components/ui/dropdown-menu';
 	import * as Tooltip from '../../components/ui/tooltip/index';
-	import { applyLogsFocus, lspLogFilter, lspLogsView, shortServer } from './logs-view';
+	import { applyLogsFocus, lspLogFilter, lspLogsView, serverLabel, shortServer } from './logs-view';
 
 	/**
 	 * The Logs tab: the buffers the plugin already keeps (ADR 0020), filtered
 	 * rather than scrolled. Reading the store through its service key keeps the
 	 * tab from importing plugin state, and every line shown here came out of a
-	 * real pipe. What the three selections select is `logs-view`'s decision.
+	 * real pipe. What the pickers and feed checkboxes select is `logs-view`'s
+	 * decision.
 	 */
 	const appState = useAppState();
 	const logs = appState.plugins.getService<LspLogStore>(`${lspManifest.id}:log-store`);
@@ -26,8 +27,11 @@
 	}));
 
 	let serverFilter = $state('');
-	let kindFilter = $state('');
 	let levelFilter = $state('');
+	// The kind menu is two checkboxes, one per feed. The protocol feed grows a
+	// line per keystroke, so it starts hidden: the trace is the opt-in.
+	let showServer = $state(true);
+	let showProtocol = $state(false);
 
 	// Which server the View Logs command last asked for, read through the same
 	// revision as the entries: a request arrives from a command rather than from a
@@ -51,16 +55,26 @@
 		serverFilter = decision.filter;
 	});
 
-	const KINDS: readonly LspLogKind[] = ['server', 'protocol'];
-	const LEVELS: readonly LspLogLevel[] = ['error', 'warn', 'info', 'trace'];
+	const KIND_ITEMS: readonly LspLogKind[] = ['server', 'protocol'];
+	const LEVELS: readonly LspLogLevel[] = ['trace', 'info', 'warn', 'error'];
 
 	// One read of the store per change, whatever changed: the filter and the
 	// counter come off the same revision so a truncated buffer cannot report a
 	// line count the drop count does not explain.
+	const hiddenKinds = $derived(
+		KIND_ITEMS.filter((kind) => (kind === 'server' ? !showServer : !showProtocol))
+	);
 	const view = $derived.by(() => {
 		revision;
-		return lspLogsView(logs, lspLogFilter(serverFilter, kindFilter, levelFilter));
+		return lspLogsView(logs, lspLogFilter(serverFilter, '', levelFilter), hiddenKinds);
 	});
+	// The trigger names the picked server the way its menu item does.
+	const serverTrigger = $derived(
+		serverFilter === ''
+			? 'All servers'
+			: (view.serverOptions.find((option) => option.value === serverFilter)?.label ??
+				serverLabel(serverFilter))
+	);
 
 	function clear(): void {
 		// Clearing the selected server when one is picked, everything otherwise:
@@ -87,7 +101,7 @@
 						class="flex max-w-56 items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground/80 hover:bg-accent/50"
 						aria-label="Filter by server"
 					>
-						<span class="truncate">{serverFilter || 'All servers'}</span>
+						<span class="truncate">{serverTrigger}</span>
 						<CaretDownIcon class="size-3 opacity-70" />
 					</button>
 				{/snippet}
@@ -109,20 +123,16 @@
 						{...props}
 						type="button"
 						class="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground/80 hover:bg-accent/50"
-						aria-label="Filter by kind"
+						aria-label="Choose which feeds to show"
 					>
-						<span>{kindFilter || 'All kinds'}</span>
+						<span>Server Logs</span>
 						<CaretDownIcon class="size-3 opacity-70" />
 					</button>
 				{/snippet}
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content align="start">
-				<DropdownMenu.RadioGroup bind:value={kindFilter}>
-					<DropdownMenu.RadioItem value="">All kinds</DropdownMenu.RadioItem>
-					{#each KINDS as kind (kind)}
-						<DropdownMenu.RadioItem value={kind}>{kind}</DropdownMenu.RadioItem>
-					{/each}
-				</DropdownMenu.RadioGroup>
+				<DropdownMenu.CheckboxItem bind:checked={showServer}>Server Logs</DropdownMenu.CheckboxItem>
+				<DropdownMenu.CheckboxItem bind:checked={showProtocol}>RPC Messages</DropdownMenu.CheckboxItem>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 
@@ -135,7 +145,7 @@
 						class="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground/80 hover:bg-accent/50"
 						aria-label="Filter by level"
 					>
-						<span>{levelFilter || 'All levels'}</span>
+						<span>Log level</span>
 						<CaretDownIcon class="size-3 opacity-70" />
 					</button>
 				{/snippet}
