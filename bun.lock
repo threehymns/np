@@ -79,6 +79,7 @@
       "name": "@np/core",
       "version": "0.0.1",
       "dependencies": {
+        "@codemirror/autocomplete": "^6.20.3",
         "@codemirror/commands": "^6.10.4",
         "@codemirror/lang-markdown": "^6.5.2",
         "@codemirror/language": "^6.12.3",

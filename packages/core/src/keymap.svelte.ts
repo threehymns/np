@@ -65,6 +65,29 @@ export const defaultKeymap: KeymapBinding[] = [
 		}
 	},
 	{
+		// The completion trigger and the acceptance key are focus-scoped, not
+		// merely tab-scoped, for the same reason the clipboard bindings are:
+		// the `editor` context stays true for the whole active tab, including
+		// while the user selects text in a hover tooltip, which never takes
+		// focus. The completion popup is an overlay exactly like that tooltip,
+		// and an overlay must not open another overlay on top of itself. So the
+		// trigger waits for real focus, and the acceptance key with it: a
+		// completion accepted while the user is reading a tooltip they cannot
+		// see is a completion they did not choose.
+		context: "editor && editorFocused && vim_mode == insert",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"ctrl+y": "edit.acceptCompletion"
+		}
+	},
+	{
+		context: "editor && editorFocused && !vim_mode",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"enter": "edit.acceptCompletion"
+		}
+	},
+	{
 		context: "editor",
 		bindings: {
 			"cmd+z": "edit.undo",
@@ -262,7 +285,9 @@ export class KeymapRegistry {
 		
 		// Load user keymap asynchronously on startup
 		this.readUserKeymap().then(content => {
-			this.reloadUserKeymap(content);
+			if (this.userKeymap.length === 0) {
+				this.reloadUserKeymap(content);
+			}
 		}).catch(err => {
 			console.error('Failed to load user keymap on startup:', err);
 		});
@@ -408,6 +433,18 @@ export class KeymapRegistry {
 	}
 	
 	handleKeydown(e: KeyboardEvent): boolean {
+		// Never intercept IME composition events. Some Chromium/WebKit builds
+		// report the Enter that confirms an IME composition as key "Enter"
+		// with isComposing true (or keyCode 229 on other platforms). This
+		// handler runs on the window capture phase, before CodeMirror's own
+		// keymap (which ignores composition events), so without this guard
+		// that Enter would be matched to edit.acceptCompletion and the
+		// preventDefault below would drop the IME candidate instead of
+		// confirming it.
+		if (e.isComposing || e.keyCode === 229) {
+			return false;
+		}
+
 		// Ignore if target is a standard input field or textarea, 
 		// but only for plain character keys (to allow Cmd+S etc.)
 		const target = e.target as HTMLElement;
@@ -465,10 +502,24 @@ export class KeymapRegistry {
 		}
 
 		if (fullMatch && !hasPartial) {
+			if (!fullMatch.commandId || fullMatch.commandId === 'none' || fullMatch.commandId === 'noop' || fullMatch.commandId === 'unbound') {
+				this.keyBuffer = [];
+				return false;
+			}
+			if (typeof this.appState?.commands?.get === 'function') {
+				const command = this.appState.commands.get(fullMatch.commandId);
+				if (!command || (command.isEnabled && !command.isEnabled())) {
+					this.keyBuffer = [];
+					return false;
+				}
+			}
+			this.keyBuffer = [];
+			const result = this.appState.commands.execute(fullMatch.commandId);
+			if (result === false) {
+				return false;
+			}
 			e.preventDefault();
 			e.stopPropagation();
-			this.keyBuffer = [];
-			this.appState.commands.execute(fullMatch.commandId);
 			return true;
 		}
 

@@ -242,9 +242,10 @@ const markdownTableTheme = {
  * appearing a tick later; the editor component's completion effect
  * reconfigures the compartment with the real language and the real settings.
  *
- * Takes the mount-time `vimEnabled` so the very first keymap is already the
- * modal one — a bound Enter in the first state would eat a newline typed
- * before the effect lands.
+ * Takes the mount-time `vimEnabled` for compatibility; it no longer affects the
+ * completion keymap, whose trigger and acceptance keys come from the keymap
+ * registry. Passing it here keeps the compartment's initial content shaped
+ * like the reconfigured one from the editor component's completion effect.
  */
 const initialCompletionExtensions = (vimEnabled: boolean): Extension[] =>
 	completionCompartmentExtensions({
