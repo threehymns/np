@@ -1762,10 +1762,10 @@ describe('the diagnostic pull on edit (#307)', () => {
 	});
 
 	it('never asks a server that offers no pull', async () => {
-		// The control for the test above. The same edit against a server that
-		// advertises no `diagnosticProvider` has to produce no pull at all,
-		// and the diagnostics the server pushed have to be the ones the file
-		// shows.
+		// The control for the test above. The same open and the same edit
+		// against a server that advertises no `diagnosticProvider` have to
+		// produce no pull at all, and the diagnostics the server pushed have to
+		// be the ones the file shows.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
 		const wireLog = join(root, 'wire.log');
@@ -1836,6 +1836,110 @@ describe('the diagnostic pull on edit (#307)', () => {
 });
 
 /**
+ * The diagnostic pull, end to end, on open (#352).
+ *
+ * A file the user has just opened has no findings until something asks for
+ * them, and a server that answers `textDocument/diagnostic` is asked on the
+ * open rather than left to push whenever it feels like it. The stub is the
+ * witness: it answers the pull only when the test asks it to
+ * (`--diagnostic-pull`), and it pushes nothing, so the file's findings can
+ * only have come from a pull.
+ */
+describe('the diagnostic pull on open (#352)', () => {
+	it('asks a server that offers the pull for the file findings, with no keystroke', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const wireLog = join(root, 'wire.log');
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostic-pull', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The stub pushes nothing, so the only finding the file can hold is
+		// the one the pull answered with. No edit happened: the open is the
+		// whole of the trigger.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+
+		// And the server was asked about that file, and about nothing else.
+		const asked = received({ wireLog })
+			.filter((line) => line.includes('textDocument/diagnostic'))
+			.map((line) => JSON.parse(line).params.textDocument.uri);
+		expect(asked).toEqual([uri]);
+	});
+
+	it('never asks a server that offers no pull, and its pushes are the file findings', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const wireLog = join(root, 'wire.log');
+		const { runtime, diagnostics } = await startRuntime({
+			script: ['--diagnostics', '--log-file', wireLog]
+		});
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+
+		// The server pushes its findings for the open, and those are the ones
+		// the file shows: a server that advertises no `diagnosticProvider` is
+		// never asked a question it cannot answer.
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pushed diagnostic' });
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual([
+			'stub server: cannot find name',
+			'stub server: unused variable'
+		]);
+
+		// Long enough for the debounce to have elapsed and the pull to have
+		// gone out, had one been armed. An absence cannot be waited for
+		// exactly, so this is the window the assertion is made in.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+
+		const wire = received({ wireLog }).join('\n');
+		expect(wire).toContain('textDocument/didOpen');
+		expect(wire).not.toContain('textDocument/diagnostic');
+	});
+
+	it('pulls again for a document re-opened against a server that has just started', async () => {
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		const uri = `file://${join(root, 'src/a.ts')}`;
+		const { runtime, diagnostics } = await startRuntime({ script: ['--diagnostic-pull'] });
+
+		await runtime.openDocument({
+			path: join(root, 'src/a.ts'),
+			fileName: 'a.ts',
+			content: 'export const a = 1;\n',
+			language: 'typescript'
+		});
+		await waitForRunning(runtime, 1);
+		await waitFor(() => diagnostics.read(uri).length > 0, { label: 'the pulled diagnostic' });
+
+		// The server restarts. What the old process knew went with it, so the
+		// file is left without findings.
+		const server = runtime.getStatusRows()[0].server;
+		expect(await runtime.restartServer(server)).toBe(true);
+		expect(diagnostics.read(uri)).toHaveLength(0);
+
+		// The document was re-opened against the new process, so it is asked
+		// again: a restarted server does not leave the file with no findings.
+		await waitFor(() => diagnostics.read(uri).length > 0, {
+			label: 'the diagnostic after the restart'
+		});
+		expect(diagnostics.read(uri).map((d) => d.message)).toEqual(['pulled diagnostic']);
+	});
+});
+
+/**
  * The workspace pull loop, end to end (spec #308).
  *
  * The stub is the witness again: it answers `workspace/diagnostic` only when
@@ -1883,7 +1987,7 @@ describe('the workspace pull loop (#308)', () => {
 
 		// The file the editor never opened. The only way it can hold diagnostics
 		// is the workspace pull: the stub pushes nothing, and the document
-		// pull is only ever asked about a file that was edited.
+		// pull is only ever asked about a file the editor opened.
 		await waitFor(() => diagnostics.read(unopened).length > 0, {
 			label: 'the workspace diagnostic'
 		});
@@ -1985,8 +2089,9 @@ describe('the workspace pull loop (#308)', () => {
 		const answer = received({ wireLog }).find((line) => line.includes('"id":9000'))!;
 		expect(JSON.parse(answer).result).toBeNull();
 
-		// The document pull is armed by the refresh: the document was opened
-		// and never edited, so nothing else could have asked for it.
+		// The document pull is armed by the refresh. The open arms it too
+		// (#352), so this only pins that the file is still asked about; the
+		// workspace pull below is what pins the refresh's own re-arm.
 		await waitFor(
 			() =>
 				received({ wireLog }).some((line) => line.includes('"method":"textDocument/diagnostic"')),

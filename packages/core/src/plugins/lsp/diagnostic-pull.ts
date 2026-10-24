@@ -110,12 +110,19 @@ export class DiagnosticPullCoordinator {
 
 	/**
 	 * Arms a debounced pull for one (uri, server), on the caller's Scope.
-	 * A newer edit interrupts the still-pending pull for the same key, so rapid
-	 * edits collapse to one request. Closing the scope interrupts everything,
-	 * including a pull sleeping mid-backoff: no further requests are issued.
-	 * Requires an ambient Scope (same contract as scopedPullLoop).
+	 *
+	 * What triggered it is the runtime's business: an open and a change both
+	 * mean the client may be missing what the server knows about the file, so
+	 * both arm the same pull.
+	 *
+	 * A newer trigger interrupts the still-pending pull for the same key, so
+	 * rapid edits collapse to one request and a pull already in flight is
+	 * replaced by the newer one rather than racing it. Closing the scope
+	 * interrupts everything, including a pull sleeping mid-backoff: no further
+	 * requests are issued. Requires an ambient Scope (same contract as
+	 * scopedPullLoop).
 	 */
-	notifyEdit(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
+	armPull(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
 		const self = this;
 		return Effect.uninterruptibleMask((restore) =>
 			Effect.gen(function* () {
@@ -228,6 +235,40 @@ export class DiagnosticPullCoordinator {
 				self.pending.delete(server);
 			}
 			self.resultIds.delete(server);
+		});
+	}
+
+	/**
+	 * Drops all pull state for one detached document: the result-id cache and
+	 * any pending debounced pull. A document opened again must not send a
+	 * `previousResultId` from its closed session — the store side was dropped
+	 * with it, so an "unchanged" answer would leave the reopened document
+	 * with no diagnostics — and a pull armed before the detach must not
+	 * write after it. Called from `LspRuntime.detachDocument` alongside the
+	 * store's `dropUri`, which clears the store side. Scoped to the URI:
+	 * other documents on the same server keep their pulls and their cached
+	 * ids, and a URI is bound to one server at a time, so no other server
+	 * holds live state for it.
+	 */
+	forgetUri(uri: string): Effect.Effect<void> {
+		const self = this;
+		return Effect.gen(function* () {
+			for (const [server, serverPulls] of self.pending) {
+				const fiber = serverPulls.get(uri);
+				if (fiber) {
+					yield* Fiber.interrupt(fiber);
+				}
+				serverPulls.delete(uri);
+				if (serverPulls.size === 0) {
+					self.pending.delete(server);
+				}
+			}
+			for (const [server, serverIds] of self.resultIds) {
+				serverIds.delete(uri);
+				if (serverIds.size === 0) {
+					self.resultIds.delete(server);
+				}
+			}
 		});
 	}
 }
