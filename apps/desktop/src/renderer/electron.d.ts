@@ -1,3 +1,5 @@
+/// <reference types="svelte" />
+
 /**
  * A token naming a spawn plan the main process minted and holds. It is passed
  * back verbatim rather than rebuilt by the renderer, so the only thing the

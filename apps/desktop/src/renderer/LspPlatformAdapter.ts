@@ -4,7 +4,7 @@ import {
 	type LspReadableStream,
 	type LspPlatform,
 	type LspWritableStream
-} from '@np/core';
+} from '@np/core/plugins/services';
 
 /**
  * The desktop LSP platform (spec #263).
