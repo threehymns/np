@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkManifestFile, platformImportViolations } from './boundary-check';
 
@@ -62,8 +62,14 @@ describe('Platform separation static boundary', () => {
 
 	it('rejects runtime re-exports of platform-only modules', () => {
 		expect(platformImportViolations(`export { app } from 'electron';`)).toEqual(['electron']);
+		expect(platformImportViolations(`export { app } from'electron';`)).toEqual(['electron']);
 		expect(platformImportViolations(`export * from 'node:fs';`)).toEqual(['node:fs']);
+		expect(platformImportViolations(`export * from'node:fs';`)).toEqual(['node:fs']);
 		expect(platformImportViolations(`export * as fs from 'node:fs';`)).toEqual(['node:fs']);
+	});
+
+	it('rejects imports without spaces after from', () => {
+		expect(platformImportViolations(`import { app } from'electron';`)).toEqual(['electron']);
 	});
 
 	it('ignores type-only re-exports', () => {
@@ -120,53 +126,25 @@ describe('Platform separation static boundary', () => {
 	});
 
 	it('keeps the generic host path free of platform-only runtime imports', () => {
-		const neutralModules = [
-			'host.svelte.ts',
-			'services.ts',
-			'types.ts',
-			'hooks.ts',
-			'commands.ts',
-			'settings.ts',
-			'ui-contributions.ts',
-			'editor.ts',
-			'events.ts',
-			'errors.ts',
-			'languages.ts',
-			'language-scope.ts',
-			'completions.ts',
-			'lsp-descriptors.ts',
-			'git/index.ts',
-			'git/commands.ts',
-			'git/lifecycle.ts',
-			'git/gutter.ts',
-			'git/ui.ts',
-			'git/registration.ts',
-			'git/manifest.ts',
-			'git/watch.ts',
-			'svelte-language/index.ts',
-			'svelte-language/snippets.ts',
-			'svelte-language/registration.ts',
-			'svelte-language/manifest.ts',
-			'lsp/index.ts',
-			'lsp/client.ts',
-			'lsp/completions.ts',
-			'lsp/commands.ts',
-			'lsp/descriptors.ts',
-			'lsp/diagnostic-decorations.ts',
-			'lsp/diagnostics.ts',
-			'lsp/lifecycle.ts',
-			'lsp/logs.ts',
-			'lsp/root.ts',
-			'lsp/status.ts',
-			'lsp/platform.ts',
-			'lsp/targets.ts',
-			'lsp/ui.ts',
-			'lsp/registration.ts',
-			'lsp/manifest.ts'
-		];
+		const pluginsDir = import.meta.dir;
+		const entries = readdirSync(pluginsDir, { recursive: true }) as string[];
+		const pluginFiles = entries.filter((entry) => {
+			const normalized = entry.replace(/\\/g, '/');
+			return (
+				normalized.endsWith('.ts') &&
+				!normalized.endsWith('.test.ts') &&
+				!normalized.endsWith('.spec.ts') &&
+				normalized !== 'boundary-check.ts' &&
+				!normalized.endsWith('/boundary-check.ts') &&
+				!statSync(join(pluginsDir, entry)).isDirectory()
+			);
+		});
+
+		expect(pluginFiles.length).toBeGreaterThan(0);
+
 		const offenders: string[] = [];
-		for (const file of neutralModules) {
-			const source = readFileSync(join(import.meta.dir, file), 'utf-8');
+		for (const file of pluginFiles) {
+			const source = readFileSync(join(pluginsDir, file), 'utf-8');
 			for (const spec of platformImportViolations(source)) {
 				offenders.push(`${file}: ${spec}`);
 			}
