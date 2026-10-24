@@ -241,3 +241,70 @@ describe("ProjectTree Project ownership pin (#252)", () => {
 		expect(tree.nodes[0].name).toBe("fileA.txt");
 	});
 });
+
+describe("ProjectTree.createFile advances worktree version", () => {
+	it("createFile on tree advances worktree.version and notifies snapshot listeners", async () => {
+		const folder: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
+		const subOrigin: FileOrigin = { scheme: "file", path: "/test-project/sub", name: "sub" };
+		const files: Record<string, any[]> = {
+			"/test-project/sub": []
+		};
+		const storage = {
+			readFile: mock(async () => "content"),
+			readDirectory: mock(async (origin: FileOrigin) => {
+				if (toURI(origin) === toURI(folder)) {
+					return [
+						{ name: "sub", kind: "directory" as const, origin: subOrigin }
+					];
+				}
+				if (toURI(origin) === toURI(subOrigin)) {
+					return files["/test-project/sub"];
+				}
+				return [];
+			}),
+			createFile: mock(async (parentOrigin: FileOrigin, name: string) => {
+				files[parentOrigin.path].push({
+					name,
+					kind: "file" as const,
+					origin: { scheme: "file", path: `${parentOrigin.path}/${name}`, name }
+				});
+			}),
+			createDirectory: mock(async () => {}),
+			deleteEntry: mock(async () => {}),
+			renameEntry: mock(async (o: FileOrigin) => o)
+		};
+
+		const project: any = {
+			hasRootPermission: true,
+			rootOrigin: folder,
+			storage,
+			persistence: {
+				loadExpandedPaths: mock(async () => []),
+				saveExpandedPaths: mock(async () => {})
+			}
+		};
+
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree;
+		expect(wt).toBeDefined();
+		const initialVersion = wt!.version;
+
+		const receivedSnapshots: any[] = [];
+		wt!.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+		expect(receivedSnapshots.length).toBe(1);
+		expect(receivedSnapshots[0].version).toBe(initialVersion);
+
+		const parentNode = tree.nodes.find((n) => n.name === "sub")!;
+		expect(parentNode).toBeDefined();
+
+		await tree.createFile(subOrigin, "new-file.ts", parentNode);
+
+		expect(wt!.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.length).toBe(2);
+		expect(receivedSnapshots[1].version).toBe(initialVersion + 1);
+	});
+});
