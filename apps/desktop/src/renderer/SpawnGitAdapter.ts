@@ -184,11 +184,43 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return refs.code === 0 && refs.stdout.trim() === '';
 	}
 
-	private async readGitObject(objectSpec: string): Promise<string | null> {
-		const res = await this.runGit(['show', objectSpec]);
-		if (res.code === 0) return res.stdout;
-		if (this.isPathNotFoundError(res.stderr)) return null;
-		throw new Error(res.stderr || `Failed to read git object ${objectSpec}`);
+	private async readIndexContent(filepath: string): Promise<string | null> {
+		const res = await this.runGit(['ls-files', '--stage', '--', literalPathspec(filepath)]);
+		if (res.code !== 0) {
+			if (this.isPathNotFoundError(res.stderr)) return null;
+			throw new Error(res.stderr || `Failed to read index for ${filepath}`);
+		}
+		const line = res.stdout.trim().split('\n')[0];
+		if (!line) return null;
+		const parts = line.split(/\s+/);
+		const oid = parts[1];
+		if (!oid || !/^[0-9a-fA-F]+$/.test(oid)) return null;
+		const catRes = await this.runGit(['cat-file', '-p', oid]);
+		if (catRes.code !== 0) {
+			throw new Error(catRes.stderr || `Failed to read git object ${oid}`);
+		}
+		return catRes.stdout;
+	}
+
+	private async readHeadContent(filepath: string): Promise<string | null> {
+		const res = await this.runGit(['ls-tree', 'HEAD', '--', literalPathspec(filepath)]);
+		if (res.code !== 0) {
+			if (this.isPathNotFoundError(res.stderr) || this.isUnbornHeadError(res.stderr)) {
+				return null;
+			}
+			throw new Error(res.stderr || `Failed to read HEAD tree for ${filepath}`);
+		}
+		const line = res.stdout.trim().split('\n')[0];
+		if (!line) return null;
+		const parts = line.split(/[\s\t]+/);
+		if (parts.length < 3 || parts[1] !== 'blob') return null;
+		const oid = parts[2];
+		if (!oid || !/^[0-9a-fA-F]+$/.test(oid)) return null;
+		const catRes = await this.runGit(['cat-file', '-p', oid]);
+		if (catRes.code !== 0) {
+			throw new Error(catRes.stderr || `Failed to read git object ${oid}`);
+		}
+		return catRes.stdout;
 	}
 
 	async getCurrentBranch(): Promise<string | null> {
@@ -437,7 +469,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const deletedSources = entries.filter(e => e.y === 'D' && e.filepath !== filepath);
 		const matches: string[] = [];
 		for (const source of deletedSources) {
-			const indexContent = await this.readGitObject(`:${source.filepath}`);
+			const indexContent = await this.readIndexContent(source.filepath);
 			if (indexContent !== null && indexContent === destinationContent) {
 				matches.push(source.filepath);
 			}
@@ -990,15 +1022,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string }> {
 		const [headObj, indexObj] = await Promise.all([
-			this.readGitObject(`HEAD:${origPath}`),
-			this.readGitObject(`:${filepath}`)
+			this.readHeadContent(origPath),
+			this.readIndexContent(filepath)
 		]);
 
 		const headContent = headObj ?? '';
 		let indexContent = indexObj;
 
 		if (indexContent === null && origPath !== filepath) {
-			const origIndexObj = await this.readGitObject(`:${origPath}`);
+			const origIndexObj = await this.readIndexContent(origPath);
 			indexContent = origIndexObj ?? headContent;
 		}
 
@@ -1057,7 +1089,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// Optimization: If a file is added ('A'), HEAD is guaranteed empty.
 		if (options?.status === 'A') {
 			const workingTreeContent = options?.staged !== true ? await this.readWorkingTreeContent(filepath) : '';
-			const indexObj = await this.readGitObject(`:${filepath}`);
+			const indexObj = await this.readIndexContent(filepath);
 			return resolveDiffDetail('', indexObj ?? '', workingTreeContent, options);
 		}
 
@@ -1222,7 +1254,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
-		const oldContent = await this.readGitObject(`:${filepath}`);
+		const oldContent = await this.readIndexContent(filepath);
 		// Quoted, so a tab or newline inside a filename cannot truncate the header's
 		// tab-delimited pathspec and redirect the write to a different file.
 		const quoted = SpawnGitAdapter.patchSidePath('a', filepath);
