@@ -237,4 +237,38 @@ export class DiagnosticPullCoordinator {
 			self.resultIds.delete(server);
 		});
 	}
+
+	/**
+	 * Drops all pull state for one detached document: the result-id cache and
+	 * any pending debounced pull. A document opened again must not send a
+	 * `previousResultId` from its closed session — the store side was dropped
+	 * with it, so an "unchanged" answer would leave the reopened document
+	 * with no diagnostics — and a pull armed before the detach must not
+	 * write after it. Called from `LspRuntime.detachDocument` alongside the
+	 * store's `dropUri`, which clears the store side. Scoped to the URI:
+	 * other documents on the same server keep their pulls and their cached
+	 * ids, and a URI is bound to one server at a time, so no other server
+	 * holds live state for it.
+	 */
+	forgetUri(uri: string): Effect.Effect<void> {
+		const self = this;
+		return Effect.gen(function* () {
+			for (const [server, serverPulls] of self.pending) {
+				const fiber = serverPulls.get(uri);
+				if (fiber) {
+					yield* Fiber.interrupt(fiber);
+				}
+				serverPulls.delete(uri);
+				if (serverPulls.size === 0) {
+					self.pending.delete(server);
+				}
+			}
+			for (const [server, serverIds] of self.resultIds) {
+				serverIds.delete(uri);
+				if (serverIds.size === 0) {
+					self.resultIds.delete(server);
+				}
+			}
+		});
+	}
 }

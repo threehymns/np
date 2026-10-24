@@ -1527,6 +1527,13 @@ export class LspRuntime
 		// The same rule — "off" means this document is no longer that server's
 		// business — reached from the queue rather than from the open set.
 		this.pendingDocuments.delete(uri);
+		// The pull state goes with the document, not with the server: a pull
+		// armed before the detach must not write after it, and a later open
+		// must not send the closed session's result id. Scoped to this URI,
+		// so other documents on the same server keep their pulls.
+		if (this.pullCoordinator) {
+			Effect.runFork(this.pullCoordinator.forgetUri(uri));
+		}
 		const server = this.documentServers.get(uri);
 		if (!server) return;
 		const document = this.openDocuments.get(uri);
