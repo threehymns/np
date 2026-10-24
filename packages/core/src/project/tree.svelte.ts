@@ -485,7 +485,7 @@ export class ProjectTree {
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
-			this.worktree?.notify();
+			this.worktree?.notifyEntriesChanged();
 		} else {
 			await this.scan(this.project.rootOrigin!);
 		}
@@ -496,7 +496,7 @@ export class ProjectTree {
 		if (parentNode) {
 			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
 			parentNode.isExpanded = true;
-			this.worktree?.notify();
+			this.worktree?.notifyEntriesChanged();
 		} else {
 			await this.scan(this.project.rootOrigin!);
 		}

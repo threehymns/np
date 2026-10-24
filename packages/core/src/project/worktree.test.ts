@@ -100,6 +100,41 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(wt.snapshot.entries).toBe(wt.entries);
 	});
 
+	it("re-scanning unchanged files does not advance wt.version", async () => {
+		const storage = createMockStorage({
+			"/test-project/README.md": "# Readme",
+			"/test-project/src/index.ts": "console.log('hi');"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+	});
+
+	it("scanning after adding or removing a file advances wt.version", async () => {
+		const files: Record<string, string> = {
+			"/test-project/README.md": "# Readme"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+
+		// Add a file
+		files["/test-project/src/index.ts"] = "console.log('hi');";
+		await wt.scan();
+		expect(wt.version).toBe(2);
+
+		// Remove a file
+		delete files["/test-project/README.md"];
+		await wt.scan();
+		expect(wt.version).toBe(3);
+	});
+
 	it("respects .gitignore during scan", async () => {
 		const storage = createMockStorage({
 			"/test-project/.gitignore": "*.log\ntemp/\n",

@@ -106,6 +106,22 @@ export class GitIgnoreMatcher {
  * Expansion state is display only, so the tree filters the snapshot for
  * display instead of narrowing what the snapshot contains.
  */
+export function entriesEqual(a: readonly TreeNode[], b: readonly TreeNode[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const nodeA = a[i];
+		const nodeB = b[i];
+		if (nodeA.name !== nodeB.name || nodeA.kind !== nodeB.kind) return false;
+		if (nodeA.kind === "directory" || nodeB.kind === "directory") {
+			const childrenA = nodeA.children ?? [];
+			const childrenB = nodeB.children ?? [];
+			if (!entriesEqual(childrenA, childrenB)) return false;
+		}
+	}
+	return true;
+}
+
 export class Worktree {
 	root: FileOrigin;
 	storage: Storage | null = null;
@@ -185,7 +201,14 @@ export class Worktree {
 	}
 
 	updateSnapshot(entries: TreeNode[]): void {
+		if (this._version === 0 || !entriesEqual(this._entries, entries)) {
+			this._version++;
+		}
 		this._entries = entries;
+		this.notify();
+	}
+
+	notifyEntriesChanged(): void {
 		this._version++;
 		this.notify();
 	}

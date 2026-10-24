@@ -227,7 +227,7 @@ describe("Search tab runner (Issue #355)", () => {
 		// The file is edited in a terminal, so the watcher publishes a new
 		// snapshot. The user does not touch the query.
 		files["/test-project/notes.txt"] = "needle new";
-		await worktree.scan();
+		worktree.notifyEntriesChanged();
 
 		await runner.idle();
 		expect(runner.results.length).toBe(1);
@@ -288,7 +288,7 @@ describe("Search tab runner (Issue #355)", () => {
 
 		// A change of the file snapshot runs the search again, and the
 		// excerpt views are rebuilt from what the new run found.
-		worktree.updateSnapshot(worktree.entries);
+		worktree.notifyEntriesChanged();
 		await runner.idle();
 		expect(rebuilds).toBe(2);
 	});
@@ -313,9 +313,9 @@ describe("Search tab runner (Issue #355)", () => {
 
 		// A save storm publishes a snapshot per file. The search runs once
 		// for the storm, not once per file.
-		worktree.updateSnapshot(worktree.entries);
-		worktree.updateSnapshot(worktree.entries);
-		worktree.updateSnapshot(worktree.entries);
+		worktree.notifyEntriesChanged();
+		worktree.notifyEntriesChanged();
+		worktree.notifyEntriesChanged();
 
 		await runner.idle();
 		expect(backend.queries.length).toBe(2);
@@ -336,7 +336,7 @@ describe("Search tab runner (Issue #355)", () => {
 		});
 		runner.attachToWorktree(worktree);
 
-		worktree.updateSnapshot(worktree.entries);
+		worktree.notifyEntriesChanged();
 		await runner.idle();
 		// Long enough for a re-run to have happened, if one was scheduled.
 		await new Promise((resolve) => setTimeout(resolve, 30));
@@ -391,7 +391,7 @@ describe("Search tab runner (Issue #355)", () => {
 
 		// The second file is gone: the re-run reports one file, not two.
 		batch = [fileResult("a.txt", 1)];
-		worktree.updateSnapshot(worktree.entries);
+		worktree.notifyEntriesChanged();
 		await runner.idle();
 
 		expect(runner.results.length).toBe(1);
