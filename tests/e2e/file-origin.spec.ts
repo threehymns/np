@@ -134,7 +134,7 @@ test.describe('FileOrigin & Registry Tests', () => {
 
       try {
         // 1. Scheme-less target without rootOrigin - relative path (unsupported)
-        appState.workspace.rootOrigin = null;
+        appState.workspace.project.rootOrigin = null;
         let relativeThrew = false;
         try {
           await appState.commands.execute('file.open', 'unrooted-relative.md');
@@ -152,7 +152,7 @@ test.describe('FileOrigin & Registry Tests', () => {
         await appState.commands.execute('file.open', 'file:///etc/hosts');
 
         // 5. Scheme-less target with rootOrigin
-        appState.workspace.rootOrigin = { scheme: 'browser', path: 'workspace-dir', name: 'workspace-dir' };
+        appState.workspace.project.rootOrigin = { scheme: 'browser', path: 'workspace-dir', name: 'workspace-dir' };
         await appState.commands.execute('file.open', 'subfolder/doc.md');
 
         return {

@@ -9,7 +9,7 @@ import { checkManifestFile } from './boundary-check';
 import { DIALOGS_SERVICE_KEY } from './services';
 import { Workspace } from '../workspace.svelte';
 import { DocumentSession } from '../document.svelte';
-import { MemorySessionPersistence } from '../persistence';
+import { MemorySessionPersistence, type SerializedWorkspace } from '../persistence';
 import type { FileOrigin, Storage } from '../storage';
 import type { VCSAdapter } from '../project/vcs';
 import { Repository } from '../project/repository.svelte';
@@ -217,6 +217,50 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			expect(stageAll).toHaveBeenCalled();
 		});
 
+		it('keeps the repository active diff file when the diff tab opens without a filepath', async () => {
+			// The panel's "Uncommitted Changes" button opens the tab without
+			// a path. Clearing the active file there left the Diff Viewer
+			// with no active file: every file expanded, none highlighted.
+			const { host, workspace } = await makeHarness();
+
+			const repo = new Repository(
+				rootOrigin,
+				createMockVcsFactory({
+					changes: async () => [
+						{ filepath: 'a.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false }
+					]
+				})
+			);
+			workspace.project.repository = repo;
+			await repo.refresh();
+			expect(repo.activeDiffFile?.filepath).toBe('a.md');
+
+			await host.executeCommand('git.openDiff');
+
+			expect(workspace.tabs.some((t) => t.id === '__project_diff__')).toBe(true);
+			expect(repo.activeDiffFile?.filepath).toBe('a.md');
+		});
+
+		it('moves the active diff file when the diff tab opens with a filepath', async () => {
+			const { host, workspace } = await makeHarness();
+
+			const repo = new Repository(
+				rootOrigin,
+				createMockVcsFactory({
+					changes: async () => [
+						{ filepath: 'a.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false },
+						{ filepath: 'b.md', status: 'M', additions: 1, deletions: 0, diff: '', staged: false }
+					]
+				})
+			);
+			workspace.project.repository = repo;
+			await repo.refresh();
+
+			await host.executeCommand('git.openDiff', 'b.md');
+
+			expect(repo.activeDiffFile?.filepath).toBe('b.md');
+		});
+
 		it('refreshes the repository through the afterSave hook on successful save', async () => {
 			const { host, workspace } = await makeHarness();
 
@@ -361,14 +405,14 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			const folderLess = [
 				{ id: 'doc-1', origin: { scheme: 'file', path: '/elsewhere/a.md', name: 'a.md' }, isModified: false }
 			];
-			await persistence.saveOpenFiles(folderLess, '');
+			await persistence.saveOpenFiles({ version: 1, docs: folderLess }, '');
 			await persistence.saveActiveDocumentId('doc-1', '');
 
 			await host.deactivate('git');
 
 			// Disablement owns no folder here, so it must not rewrite the unscoped
 			// bucket with the workspace's own (here: empty) tab list.
-			expect(await persistence.loadOpenFiles('')).toEqual(folderLess);
+			expect((await persistence.loadOpenFiles('') as SerializedWorkspace).docs).toEqual(folderLess);
 			expect(await persistence.loadActiveDocumentId('')).toBe('doc-1');
 		});
 
@@ -377,14 +421,14 @@ describe('Git Core Plugin: lifecycle and commands (#202)', () => {
 			await workspace.openDirectory();
 			workspace.tabs.push({ id: '__project_diff__', type: 'diff', pluginId: 'git' });
 			await workspace.saveFolderState('file:///repo');
-			expect((await persistence.loadOpenFiles('file:///repo')).map((d) => d.id)).toContain('__project_diff__');
+			expect(((await persistence.loadOpenFiles('file:///repo')) as SerializedWorkspace).docs.map((d) => d.id)).toContain('__project_diff__');
 
 			await host.deactivate('git');
 
 			// The diff tab is gone from the session, and the folder's saved state
 			// no longer resurrects it on the next open.
 			expect(workspace.tabs.some((tab) => tab.id === '__project_diff__')).toBe(false);
-			const saved = await persistence.loadOpenFiles('file:///repo');
+			const saved = (await persistence.loadOpenFiles('file:///repo') as SerializedWorkspace).docs;
 			expect(saved.some((doc) => doc.virtualTabType === 'diff')).toBe(false);
 		});
 

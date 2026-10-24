@@ -42,8 +42,8 @@ describe('ConfigWatcher', () => {
 		watcher.close();
 
 		expect(receivedContent).not.toBeNull();
-		expect(receivedContent).toContain('"zoom": 125');
-		expect(receivedContent).toContain('// comment');
+		expect(receivedContent!).toContain('"zoom": 125');
+		expect(receivedContent!).toContain('// comment');
 	});
 
 	it('ignores external update if JSONC contains syntax errors and does not broadcast', async () => {
@@ -258,7 +258,7 @@ describe('ConfigWatcher', () => {
 
 		// Since marker was cleared, change should be broadcasted
 		expect(receivedContent).not.toBeNull();
-		expect(receivedContent).toContain('"zoom": 115');
+		expect(receivedContent!).toContain('"zoom": 115');
 	});
 
 	it('discards stale content from an older read when a newer change supersedes it', async () => {

@@ -26,6 +26,8 @@
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",
+		"@types/node": "^25.9.1",
+		"@types/wicg-file-system-access": "^2023.10.7",
 		"typescript": "^6.0.2"
 	}
 }

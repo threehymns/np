@@ -247,6 +247,33 @@ describe('The initialize handshake declares what the client will do (#264)', () 
 		expect(hover.contentFormat).toEqual(['markdown']);
 	});
 
+	it('declares the diagnostic pull the client asks for, and no dynamic registration', async () => {
+		// The client asks a server for a document's findings by pull
+		// (`textDocument/diagnostic`, #307), so it declares that support. The
+		// dynamic half is false because the client never asks a server to
+		// register a diagnostic provider: the server's own `diagnosticProvider`
+		// is what says it answers pulls. Asking for the answers while declaring
+		// nothing is the protocol error the completion block above describes.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const diagnostic = (capabilities.textDocument as Record<string, unknown>).diagnostic as Record<
+			string,
+			unknown
+		>;
+		expect(diagnostic.dynamicRegistration).toBe(false);
+		expect(diagnostic.relatedDocumentSupport).toBe(false);
+	});
+
+	it('declares that it reads the version a publish carries', async () => {
+		// The client reads the version a publish carries and orders the answers
+		// for one path by it (ADR 0029), so it says so: a server is entitled
+		// to leave the version out for a client that has not declared it reads
+		// one.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const publishDiagnostics = (capabilities.textDocument as Record<string, unknown>)
+			.publishDiagnostics as Record<string, unknown>;
+		expect(publishDiagnostics.versionSupport).toBe(true);
+	});
+
 	it('sends client-capability names, never the server ones they replaced', async () => {
 		// The defect these cover was invisible from inside the client and fatal to
 		// it: `textDocumentSync` and `completionProvider` are ServerCapabilities,
@@ -341,5 +368,65 @@ describe("The client's capability table is the client's (#281)", () => {
 		// added to it nor replaced it.
 		expect(textDocument.completion).toBeDefined();
 		expect(textDocument.hover).toBeDefined();
+	});
+});
+
+/**
+ * What the client does with a request the server sends it (spec #308).
+ *
+ * A request is not a notification: it carries an id and the server waits for
+ * the answer. The client answers the one it declared support for, and answers
+ * the ones it did not with JSON-RPC's "method not found" rather than leaving
+ * the server to wait for a reply that never comes.
+ */
+describe('The client answers the requests a server sends it (#308)', () => {
+	it('declares that it handles a diagnostic refresh, because it does', async () => {
+		// The capability is the server's permission to ask: a server told the
+		// client cannot handle a refresh has no reason to send one, and one
+		// that sends it anyway is answered with a reply the client owes it.
+		const capabilities = (await handshakeParams(fakeProcess())).capabilities as Record<string, unknown>;
+		const workspace = capabilities.workspace as Record<string, unknown>;
+		const diagnostics = workspace.diagnostics as Record<string, unknown>;
+		expect(diagnostics.refreshSupport).toBe(true);
+	});
+
+	it('answers a diagnostic refresh with null, and tells the caller afterwards', async () => {
+		// The order is the whole of it: the caller's reaction to a refresh is a
+		// pull, and a server waiting for the refresh reply will not answer the
+		// pull until the reply is on the wire. The count of messages written at
+		// the moment the caller is told is what pins that order.
+		const process = fakeProcess();
+		const { LspClient } = await import('./client');
+		const told: string[] = [];
+		const client = new LspClient({
+			process,
+			server: 'typescript@/repo',
+			logs: new LspLogStore(),
+			onRequest: (method) => {
+				told.push(`${method} after ${sentMessages(process).length} message(s)`);
+			}
+		});
+
+		process.feedStdout(
+			framed(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'workspace/diagnostic/refresh' }))
+		);
+
+		expect(sentMessages(process)).toEqual([{ jsonrpc: '2.0', id: 7, result: null }]);
+		expect(told).toEqual(['workspace/diagnostic/refresh after 1 message(s)']);
+	});
+
+	it('answers a request it does not implement with method-not-found', async () => {
+		// A server that waits for a reply that never comes waits forever, so an
+		// unimplemented request is answered rather than dropped.
+		const process = fakeProcess();
+		const { LspClient } = await import('./client');
+		const client = new LspClient({ process, server: 'typescript@/repo', logs: new LspLogStore() });
+
+		process.feedStdout(
+			framed(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'window/showMessageRequest' }))
+		);
+
+		const reply = sentMessages(process).find((m) => m.id === 9);
+		expect(reply?.error).toMatchObject({ code: -32601 });
 	});
 });

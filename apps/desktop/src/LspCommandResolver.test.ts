@@ -147,7 +147,7 @@ describe("resolveLanguageServerCommand", () => {
 		// the Electron binary into one. Spawning the script directly would either
 		// start a second Electron app or fail outright.
 		expect(plan.command).toBe(process.execPath);
-		expect(plan.args).toEqual([plan.script]);
+		expect(plan.args).toEqual([plan.script!]);
 		expect(plan.env).toEqual({ ELECTRON_RUN_AS_NODE: "1" });
 	});
 

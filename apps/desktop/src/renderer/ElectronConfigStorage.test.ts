@@ -180,7 +180,7 @@ describe('ElectronConfigStorage', () => {
 		prefs.reload();
 
 		expect(prefs.zoom).toBe(120);
-		expect(prefs.theme).toBe('nord');
+		expect(prefs.theme as string).toBe('nord');
 
 		// Crucial acceptance criterion: reloading preferences does not trigger a reciprocal save back to disk!
 		expect(mockWriteConfigFile).toHaveBeenCalledTimes(0);
@@ -275,9 +275,9 @@ describe('ElectronConfigStorage', () => {
 		expect(writtenText).toContain('"theme": "default" // This comment belongs to theme');
 		// The new property is present and not carrying the stray comment.
 		expect(writtenText).toMatch(/"word_wrap"\s*:\s*false/);
-		const themeLine = writtenText.split('\n').find((l) => l.includes('"theme"'));
+		const themeLine = writtenText.split('\n').find((l: string) => l.includes('"theme"'));
 		expect(themeLine).toContain('// This comment belongs to theme');
-		const wordWrapLine = writtenText.split('\n').find((l) => l.includes('"word_wrap"'));
+		const wordWrapLine = writtenText.split('\n').find((l: string) => l.includes('"word_wrap"'));
 		expect(wordWrapLine).not.toContain('// This comment belongs to theme');
 	});
 

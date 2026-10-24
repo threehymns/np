@@ -1,3 +1,5 @@
+/// <reference types="svelte" />
+
 /**
  * A token naming a spawn plan the main process minted and holds. It is passed
  * back verbatim rather than rebuilt by the renderer, so the only thing the
@@ -41,6 +43,7 @@ export interface ElectronAPI {
 	writeLspServer(processId: string, chunk: Uint8Array): void;
 	endLspServer(processId: string): void;
 	killLspServer(processId: string): Promise<void>;
+	lspMemory(processId: string): Promise<number | null>;
 	onLspServerData(handlers: {
 		onStdout: (processId: string, chunk: Uint8Array) => void;
 		onStderr: (processId: string, chunk: Uint8Array) => void;
@@ -58,7 +61,17 @@ export interface ElectronAPI {
 	writeConfigFile(content: string): Promise<void>;
 	getConfigPath(): Promise<string>;
 	onConfigChanged(callback: (content: string) => void): () => void;
+	watchDirectory(
+		dirPath: string,
+		callback: (events: WatcherEvent[]) => void
+	): () => Promise<void>;
 	toggleDevTools(): Promise<void>;
+	openExternal(url: string): Promise<boolean>;
+}
+
+export interface WatcherEvent {
+	path: string;
+	type: 'create' | 'update' | 'delete';
 }
 
 declare global {

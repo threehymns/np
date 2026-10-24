@@ -11,6 +11,9 @@ export * from './editor/index';
 export { IconRegistry, iconRegistry, PhosphorIconProvider } from './editor/icons.svelte';
 export * as Tabs from './components/ui/tabs/index';
 export * as ScrollArea from './components/ui/scroll-area/index';
+export * as Empty from './components/ui/empty/index';
+export { default as Pane } from './components/Pane.svelte';
+export { default as SplitTree } from './components/SplitTree.svelte';
 
 // Generic bundled-plugin UI bridge (no feature names here)
 export { registerBundledPlugins, registerPluginUiLoader } from './plugins/index';

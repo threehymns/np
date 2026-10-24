@@ -9,7 +9,7 @@ import { SettingsManager, type SettingNamespaceSchema, type WorkspaceSettingsSto
 import type { PluginManifest, PluginRegistration } from './types';
 import { Workspace } from '../workspace.svelte';
 import { DocumentSession } from '../document.svelte';
-import { MemorySessionPersistence } from '../persistence';
+import { MemorySessionPersistence, type SerializedWorkspace } from '../persistence';
 import { AppState } from '../state.svelte';
 import { toURI } from '../storage';
 import type { FileOrigin, Storage } from '../storage';
@@ -219,7 +219,7 @@ describe('Enable/disable plus cascade UX and off-state verification (#204)', () 
 			const folderUri = toURI(rootOrigin);
 			await persistence.saveRootFolder(rootOrigin);
 			await persistence.saveOpenFiles(
-				[{ id: '__project_diff__', origin: null, isModified: false, virtualTabType: 'diff', pluginId: 'git' }],
+				{ version: 1, docs: [{ id: '__project_diff__', origin: null, isModified: false, virtualTabType: 'diff', pluginId: 'git' }] },
 				folderUri
 			);
 			await persistence.saveActiveDocumentId('__project_diff__', folderUri);
@@ -330,7 +330,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.setPluginEnabled('git', false);
 			expect(app.workspace.tabs.some((tab) => tab.type === 'diff')).toBe(false);
 			expect(app.activeTabId).not.toBe('__project_diff__');
-			const saved = await app.workspace.project.persistence.loadOpenFiles(toURI(app.workspace.project.rootOrigin!));
+			const saved = (await app.workspace.project.persistence.loadOpenFiles(toURI(app.workspace.project.rootOrigin!)) as SerializedWorkspace).docs;
 			expect(saved.some((entry) => entry.pluginId === 'git')).toBe(false);
 
 			await app.setPluginEnabled('git', true);
@@ -351,7 +351,7 @@ describe('toggle off/on round trip restores full function without restart', () =
 			await app.workspace.flushSaveOpenFiles();
 
 			// The draft is on disk in session persistence before the toggle.
-			const persisted = await app.workspace.project.persistence.loadOpenFiles(folderUri);
+			const persisted = (await app.workspace.project.persistence.loadOpenFiles(folderUri) as SerializedWorkspace).docs;
 			const entry = persisted.find((s) => s.origin?.path === '/repo/notes.md');
 			expect(entry?.draftContent).toBe('unsaved draft edits');
 

@@ -15,6 +15,9 @@
 		"./FileExplorer.svelte": "./src/components/FileExplorer.svelte",
 		"./Icon.svelte": "./src/components/Icon.svelte",
 		"./Tabs": "./src/components/ui/tabs/index.js",
+		"./Empty": "./src/components/ui/empty/index.js",
+		"./Pane.svelte": "./src/components/Pane.svelte",
+		"./SplitTree.svelte": "./src/components/SplitTree.svelte",
 		"./layout.css": "./src/layout.css"
 	},
 	"dependencies": {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { isNotFoundError, isDirectoryError, mapBounded } from './utils';
+import { isNotFoundError, isDirectoryError, mapBounded, formatRelativeTime, parseRefTags } from './utils';
 
 describe('isNotFoundError', () => {
 	it('keeps the Electron main message fallback identical to core', async () => {
@@ -145,3 +145,79 @@ describe('mapBounded', () => {
 		expect(results).toEqual([]);
 	});
 });
+
+describe('formatRelativeTime', () => {
+	const nowMs = 1700000000 * 1000; // Reference timestamp in ms
+
+	it('returns just now for timestamps under a minute ago', () => {
+		expect(formatRelativeTime(1700000000 - 30, nowMs)).toBe('just now');
+		expect(formatRelativeTime(1700000000, nowMs)).toBe('just now');
+	});
+
+	it('returns minutes ago for timestamps under an hour ago', () => {
+		expect(formatRelativeTime(1700000000 - 65, nowMs)).toBe('1 minute ago');
+		expect(formatRelativeTime(1700000000 - 300, nowMs)).toBe('5 minutes ago');
+	});
+
+	it('returns hours ago for timestamps under a day ago', () => {
+		expect(formatRelativeTime(1700000000 - 3600, nowMs)).toBe('1 hour ago');
+		expect(formatRelativeTime(1700000000 - 7200, nowMs)).toBe('2 hours ago');
+	});
+
+	it('returns days ago for timestamps under a month ago', () => {
+		expect(formatRelativeTime(1700000000 - 86400, nowMs)).toBe('1 day ago');
+		expect(formatRelativeTime(1700000000 - 3 * 86400, nowMs)).toBe('3 days ago');
+	});
+
+	it('returns months ago for timestamps under a year ago', () => {
+		expect(formatRelativeTime(1700000000 - 35 * 86400, nowMs)).toBe('1 month ago');
+		expect(formatRelativeTime(1700000000 - 90 * 86400, nowMs)).toBe('3 months ago');
+	});
+
+	it('returns years ago for timestamps over a year ago', () => {
+		expect(formatRelativeTime(1700000000 - 400 * 86400, nowMs)).toBe('1 year ago');
+		expect(formatRelativeTime(1700000000 - 800 * 86400, nowMs)).toBe('2 years ago');
+	});
+
+	it('handles future or zero timestamps gracefully', () => {
+		expect(formatRelativeTime(1700000000 + 100, nowMs)).toBe('just now');
+		expect(formatRelativeTime(0, nowMs)).toBe('');
+	});
+});
+
+describe('parseRefTags (Ticket #346)', () => {
+	it('returns empty array when refDecoration is undefined or empty', () => {
+		expect(parseRefTags(undefined)).toEqual([]);
+		expect(parseRefTags('')).toEqual([]);
+		expect(parseRefTags('   ')).toEqual([]);
+	});
+
+	it('returns empty array when decoration contains only branches, HEAD, or remotes', () => {
+		expect(parseRefTags('HEAD -> feat/history-tag-chips, origin/feat/git-history-tab, master')).toEqual([]);
+		expect(parseRefTags('main, origin/main, origin/HEAD')).toEqual([]);
+	});
+
+	it('extracts a single tag from ref decoration', () => {
+		expect(parseRefTags('HEAD -> main, tag: v1.0.0')).toEqual(['v1.0.0']);
+		expect(parseRefTags('tag: release-2024')).toEqual(['release-2024']);
+	});
+
+	it('extracts multiple tags in order and ignores non-tag decorations', () => {
+		expect(
+			parseRefTags('HEAD -> main, tag: v1.0.0, origin/main, tag: v1.0.1, feat/branch')
+		).toEqual(['v1.0.0', 'v1.0.1']);
+	});
+
+	it('handles decoration with surrounding parentheses', () => {
+		expect(parseRefTags('(HEAD -> main, tag: v2.0-rc1, origin/main)')).toEqual(['v2.0-rc1']);
+	});
+
+	it('handles whitespace around tags and entries cleanly', () => {
+		expect(parseRefTags(' tag: v3.0 ,  tag: v3.1  ')).toEqual(['v3.0', 'v3.1']);
+	});
+
+	it('ignores empty tag names', () => {
+		expect(parseRefTags('tag: , tag:  ')).toEqual([]);
+	});
+});
+

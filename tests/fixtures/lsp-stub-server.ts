@@ -45,6 +45,22 @@ import { basename, dirname } from 'node:path';
  *                   a workspace and reports on files it was not asked about —
  *                   which is how a report reaches a client whose `lsp` is off for
  *                   that file's language
+ *   --diagnostic-pull  advertise `diagnosticProvider` and answer
+ *                   `textDocument/diagnostic`, so the server is one that serves
+ *                   a file by pull rather than by push. Off by default, and
+ *                   deliberately: a server that offers the pull is asked for it
+ *                   on every edit, so a stub that offered it by default would
+ *                   put a pull on the wire in tests that are about something
+ *                   else
+ *   --workspace-diagnostics  advertise
+ *                   `diagnosticProvider.workspaceDiagnostics` and answer
+ *                   `workspace/diagnostic` with a report for a file the
+ *                   editor never opened, so the workspace pull is reachable on
+ *                   a real wire
+ *   --workspace-refresh  ask the client for a diagnostic refresh, the way a
+ *                   server does when something changed underneath it. Sent
+ *                   after the first workspace pull, so the client's loop is
+ *                   already running
  *   --log-file <path>  append every message the stub received, so a test can
  *                   assert what actually arrived on the wire. The protocol trace
  *                   deliberately does not retain document bodies, so this is the
@@ -60,6 +76,9 @@ import { basename, dirname } from 'node:path';
  *                   failure path is reachable while completions still answer
  *   --mode stall-resolve  never answer `completionItem/resolve` at all, so the
  *                   wedged-resolve path is reachable
+ *   --mode fail-diagnostic-pull  advertise `diagnosticProvider` and then
+ *                   refuse every `textDocument/diagnostic`, so the pull failure
+ *                   path is reachable on a server that *is* running
  *
  * `--delay-ms <n>` holds every reply back, which is how a slow server is staged
  * without making the suite slow: a `textDocument/completion` that arrives later
@@ -77,6 +96,7 @@ const MODES = [
 	'fail-hover',
 	'fail-resolve',
 	'stall-resolve',
+	'fail-diagnostic-pull',
 	'gated'
 ] as const;
 type StubMode = (typeof MODES)[number];
@@ -88,6 +108,12 @@ interface StubOptions {
 	echoText: boolean;
 	diagnostics: boolean;
 	diagnosticUri: string | null;
+	/** Whether the server answers `textDocument/diagnostic` at all. */
+	diagnosticPull: boolean;
+	/** Whether the server answers `workspace/diagnostic` about the workspace. */
+	workspaceDiagnostics: boolean;
+	/** Whether the server asks the client for a diagnostic refresh. */
+	workspaceRefresh: boolean;
 	logFile: string | null;
 	gateFile: string | null;
 }
@@ -100,13 +126,19 @@ function readOption(argv: string[], name: string): string | undefined {
 function parseOptions(argv: string[]): StubOptions {
 	const mode = readOption(argv, 'mode');
 	const delay = readOption(argv, 'delay-ms');
+	const resolvedMode = MODES.find((known) => known === mode) ?? 'answer';
 	return {
-		mode: MODES.find((known) => known === mode) ?? 'answer',
+		mode: resolvedMode,
 		delayMs: delay ? Number(delay) : 0,
 		stderr: readOption(argv, 'stderr') ?? null,
 		echoText: argv.includes('--echo-text'),
 		diagnostics: argv.includes('--diagnostics'),
 		diagnosticUri: readOption(argv, 'diagnostic-uri') ?? null,
+		// The mode that refuses pulls still has to offer them, or the client
+		// would never ask and the failure would not be reachable.
+		diagnosticPull: argv.includes('--diagnostic-pull') || resolvedMode === 'fail-diagnostic-pull',
+		workspaceDiagnostics: argv.includes('--workspace-diagnostics'),
+		workspaceRefresh: argv.includes('--workspace-refresh'),
 		logFile: readOption(argv, 'log-file') ?? null,
 		gateFile: readOption(argv, 'gate-file') ?? null
 	};
@@ -268,6 +300,12 @@ function waitForGate(path: string): Promise<void> {
 
 const reader = new FrameReader();
 
+/** The root the client named, so the workspace report can name a file in it. */
+let workspaceRoot = '';
+
+/** Whether the refresh has already been asked for; the stub asks once. */
+let refreshSent = false;
+
 process.stdin.on('data', (chunk: Buffer) => {
 	for (const raw of reader.push(new Uint8Array(chunk))) {
 		let message: JsonRpcMessage;
@@ -287,12 +325,18 @@ process.stdin.on('end', () => {
 });
 
 function handle(message: JsonRpcMessage): void {
+	// A response to one of the stub's own requests: nothing to answer, and
+	// answering it would start a reply loop.
+	if (message.method === undefined && (message.result !== undefined || message.error !== undefined)) {
+		return;
+	}
 	if (message.method === 'initialize') {
 		// `silent` withholds the handshake too: a server that answers
 		// `initialize` and then nothing is not a silent server, it is a working
 		// one, and the timeout this mode stages would never be reached.
 		if (options.mode === 'silent') return;
 		const rootUri = (message.params as { rootUri?: string } | undefined)?.rootUri;
+		workspaceRoot = rootUri ?? '';
 		const reply = (): void => {
 			send(
 				{
@@ -304,7 +348,22 @@ function handle(message: JsonRpcMessage): void {
 							// one that answers completions and would need a resolve
 							// round trip for documentation.
 							completionProvider: { resolveProvider: true, triggerCharacters: ['.', '"', '/', "'"] },
-							hoverProvider: true
+							hoverProvider: true,
+							// Only when the test asks for it. A server that advertises
+							// the pull is asked for it on every edit, so the default
+							// stub stays a push-only server.
+							...(options.diagnosticPull || options.workspaceDiagnostics
+								? {
+										diagnosticProvider: {
+											interFileDependencies: false,
+											// The workspace half is its own flag: a server
+											// that offers the document pull says nothing
+											// about the workspace, and only the flag says
+											// the client may ask about the whole thing.
+											workspaceDiagnostics: options.workspaceDiagnostics
+										}
+									}
+								: {})
 						},
 						serverInfo: { name: 'stub-ls', version: '0.0.0' },
 						// Echoed so a test can read the resolved root straight out of the
@@ -348,6 +407,63 @@ function handle(message: JsonRpcMessage): void {
 		if (message.method === 'textDocument/didOpen') {
 			process.stderr.write(`stub server: opened a document of ${document?.text?.length ?? 0} chars\n`);
 		}
+		return;
+	}
+	if (message.method === 'textDocument/diagnostic') {
+		if (options.mode === 'fail-diagnostic-pull') {
+			// A running server that offers the pull and then refuses it: the
+			// JSON-RPC error path, which is a different failure from a server
+			// that never started.
+			delayed(() =>
+				send({
+					id: message.id,
+					error: { code: -32603, message: 'stub server: diagnostics are unavailable' }
+				})
+			);
+			return;
+		}
+		// A full report, the shape the client files: one finding and a result
+		// id, so the next pull can be answered with "unchanged" instead of
+		// another full report. The message says "pulled" so a test can tell
+		// this finding apart from one the server pushed.
+		delayed(() =>
+			send({
+				id: message.id,
+				result: {
+					kind: 'full',
+					resultId: 'stub-pull-1',
+					items: [
+						{
+							range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+							severity: 1,
+							message: 'pulled diagnostic'
+						}
+					]
+				}
+			})
+		);
+		return;
+	}
+	if (message.method === 'workspace/diagnostic') {
+		// The workspace report: one path per report, under a result id the
+		// next pull can name. The second pull carries that id, so the stub
+		// answers "unchanged" and the client keeps what it filed.
+		const params = (message.params as
+			| { previousResultIds?: unknown; partialResultToken?: unknown }
+			| undefined) ?? {};
+		const previous = params.previousResultIds;
+		const known = Array.isArray(previous) && previous.length > 0;
+		// The report is streamed while the server works: the partial result
+		// goes out under the token the client asked for.
+		const token = params.partialResultToken;
+		if (typeof token === 'string') {
+			send({ method: '$/progress', params: { token, value: partialWorkspaceReport() } });
+		}
+		delayed(() => send({ id: message.id, result: workspaceReport(known) }));
+		// The refresh is asked for after the first pull, so the client's loop
+		// is already running: a refresh that arrived before the loop started
+		// would have nothing to re-arm.
+		if (options.workspaceRefresh) requestDiagnosticRefresh();
 		return;
 	}
 	if (message.method === 'textDocument/completion') {
@@ -558,6 +674,85 @@ function publishDiagnostics(uri: string | undefined): void {
 			]
 		}
 	}, true);
+}
+
+/**
+ * The workspace report: one path, under a result id the next pull can name.
+ *
+ * The path is a file the editor never opened, which is the whole of what the
+ * workspace pull is for: a file nobody has open gets findings only if the
+ * server is asked about the workspace rather than about a document.
+ *
+ * `unchanged` is the answer to a pull that carries a result id, and it says
+ * "nothing new for this path" rather than "this path is clean".
+ */
+function workspaceReport(unchanged: boolean): unknown {
+	const uri = `${workspaceRoot}/unopened.ts`;
+	return {
+		items: [
+			unchanged
+				? { uri, version: null, kind: 'unchanged', resultId: 'stub-workspace-1' }
+				: {
+						uri,
+						version: null,
+						kind: 'full',
+						resultId: 'stub-workspace-1',
+						items: [
+							{
+								range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+								severity: 1,
+								code: 2304,
+								source: 'stub',
+								message: 'stub server: workspace diagnostic'
+							}
+						]
+					}
+		]
+	};
+}
+
+/**
+ * The partial result the server streams while it works.
+ *
+ * A different path from the one the final answer carries, so a test can tell
+ * the two apart: a finding on this path can only have come through the
+ * progress notification.
+ */
+function partialWorkspaceReport(): unknown {
+	const uri = `${workspaceRoot}/partial.ts`;
+	return {
+		items: [
+			{
+				uri,
+				version: null,
+				kind: 'full',
+				resultId: 'stub-workspace-partial',
+				items: [
+					{
+						range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+						severity: 1,
+						code: 2304,
+						source: 'stub',
+						message: 'stub server: partial workspace diagnostic'
+					}
+				]
+			}
+		]
+	};
+}
+
+/**
+ * Asks the client for a diagnostic refresh, the way a server does when
+ * something changed underneath it.
+ *
+ * A request, not a notification: it carries an id and the client owes an
+ * answer. The id is far above the client's own request ids so it can never be
+ * mistaken for one of them.
+ */
+function requestDiagnosticRefresh(): void {
+	if (refreshSent) return;
+	refreshSent = true;
+	send({ id: 9000, method: 'workspace/diagnostic/refresh' });
 }
 
 process.stdout.on('error', () => {
