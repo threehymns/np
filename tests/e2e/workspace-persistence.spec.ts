@@ -148,7 +148,10 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			let flushed = false;
 			while (Date.now() - startTime < 5000) {
 				const persisted = await appState.workspace.project.persistence.loadOpenFiles('');
-				if (persisted.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
+				// Saved session state is either the current versioned workspace or
+				// the legacy bare document list.
+				const docs = Array.isArray(persisted) ? persisted : persisted?.docs ?? [];
+				if (docs.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
 					flushed = true;
 					break;
 				}
