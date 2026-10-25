@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkManifestFile, platformImportViolations } from './boundary-check';
+import {
+	checkManifestFile,
+	isRuntimePluginModule,
+	platformImportViolations
+} from './boundary-check';
 
 /**
  * Platform separation static boundary (spec companion to the manifest
@@ -125,15 +129,20 @@ describe('Platform separation static boundary', () => {
 		expect(editorSource).not.toMatch(/pluginExtensions\?: any\[\]|initialLanguageExtensions: any\[\]/);
 	});
 
+	it('keeps declaration files out of the runtime boundary scan', () => {
+		expect(isRuntimePluginModule('types.d.ts')).toBe(false);
+		expect(isRuntimePluginModule('git/types.d.ts')).toBe(false);
+		expect(isRuntimePluginModule('host.svelte.ts')).toBe(true);
+		expect(isRuntimePluginModule('git/index.ts')).toBe(true);
+	});
+
 	it('keeps the generic host path free of platform-only runtime imports', () => {
 		const pluginsDir = import.meta.dir;
 		const entries = readdirSync(pluginsDir, { recursive: true }) as string[];
 		const pluginFiles = entries.filter((entry) => {
 			const normalized = entry.replace(/\\/g, '/');
 			return (
-				normalized.endsWith('.ts') &&
-				!normalized.endsWith('.test.ts') &&
-				!normalized.endsWith('.spec.ts') &&
+				isRuntimePluginModule(normalized) &&
 				normalized !== 'boundary-check.ts' &&
 				!normalized.endsWith('/boundary-check.ts') &&
 				!statSync(join(pluginsDir, entry)).isDirectory()

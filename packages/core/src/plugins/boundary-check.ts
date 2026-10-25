@@ -256,6 +256,23 @@ export function platformImportViolations(source: string): string[] {
 }
 
 /**
+ * Whether a path under the plugins tree belongs in the runtime boundary scan.
+ *
+ * Declaration files (`*.d.ts`) are erased at build time, so they cannot emit
+ * a platform-only runtime import and are skipped. Test and spec files are not
+ * runtime modules either.
+ */
+export function isRuntimePluginModule(relativePath: string): boolean {
+	const normalized = relativePath.replace(/\\/g, '/');
+	if (normalized.endsWith('.d.ts')) return false;
+	return (
+		normalized.endsWith('.ts') &&
+		!normalized.endsWith('.test.ts') &&
+		!normalized.endsWith('.spec.ts')
+	);
+}
+
+/**
  * Asserts that a manifest file or source complies with the import boundary.
  * Throws an actionable error if any violations exist.
  */
