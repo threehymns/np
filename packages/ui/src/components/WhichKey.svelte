@@ -4,6 +4,35 @@
 	const appState = useAppState();
 	const keymaps = appState.keymaps;
 
+	type Binding = ReturnType<typeof keymaps.getActiveBindings>[number];
+
+	/**
+	 * A group can contain a command from another category: `space f` is the
+	 * File group, but one of its bindings opens Find in Project. Label the
+	 * group with the category most of its bindings share so one stray command
+	 * does not erase the name; a tie has no honest label, so the caller falls
+	 * back to the keystroke.
+	 */
+	function dominantCategory(bindings: Binding[]): string | null {
+		const counts = new Map<string, number>();
+		for (const binding of bindings) {
+			const category = appState.commands.get(binding.commandId)?.category;
+			if (category) counts.set(category, (counts.get(category) ?? 0) + 1);
+		}
+
+		let best: { category: string; count: number } | null = null;
+		let tied = false;
+		for (const [category, count] of counts) {
+			if (!best || count > best.count) {
+				best = { category, count };
+				tied = false;
+			} else if (count === best.count) {
+				tied = true;
+			}
+		}
+		return best && !tied ? best.category.toLowerCase() : null;
+	}
+
 	// Helper to format keystroke path for header (e.g. "Leader ➔ file")
 	const pathTitle = $derived.by(() => {
 		const parts = ["Leader"];
@@ -26,12 +55,7 @@
 			});
 
 			if (matching.length > 0) {
-				const categories = new Set(matching.map(b => appState.commands.get(b.commandId)?.category).filter(Boolean));
-				if (categories.size === 1) {
-					parts.push(Array.from(categories)[0]!.toLowerCase());
-				} else {
-					parts.push(k.key === ' ' ? 'space' : k.key);
-				}
+				parts.push(dominantCategory(matching) ?? (k.key === ' ' ? 'space' : k.key));
 			} else {
 				parts.push(k.key === ' ' ? 'space' : k.key);
 			}
@@ -79,13 +103,8 @@
 			let label = '';
 			
 			if (isGroup) {
-				// Derive group label from common category
-				const categories = new Set(bindings.map(b => appState.commands.get(b.commandId)?.category).filter(Boolean));
-				if (categories.size === 1) {
-					label = Array.from(categories)[0]!.toLowerCase();
-				} else {
-					label = key;
-				}
+				// Derive group label from the category most bindings share.
+				label = dominantCategory(bindings) ?? key;
 			} else {
 				label = appState.commands.get(firstBinding.commandId)?.label || firstBinding.commandId;
 				if (label.startsWith('Preferences: ')) {
