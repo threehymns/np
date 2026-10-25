@@ -85,6 +85,29 @@ describe('LSP descriptor interface (#264)', () => {
 		await host.deactivate(svelteLanguageRegistration.manifest.id);
 	});
 
+	it('carries no client capabilities, because the capability table is the client\'s', () => {
+		// ADR 0020 and ADR 0028 fix the boundary: `textDocumentSync`,
+		// `completionProvider` and everything else the client claims in
+		// `initialize` describe the client, not the server, and are one table
+		// in `LspClient` that a second server adds nothing to. A descriptor
+		// that could declare a capability could claim one the client does not
+		// implement.
+		//
+		// The contribution is forged through a cast, because the field does not
+		// exist, and the registry drops it: the descriptor's own record carries
+		// no capability table for anything to read.
+		const host = desktopHost();
+		host.registerLspDescriptors('plug-a', [
+			{
+				...typescriptDescriptor(),
+				capabilities: { textDocumentSync: 2 }
+			} as unknown as LspDescriptorContribution
+		]);
+
+		const [descriptor] = host.getLspDescriptors();
+		expect(descriptor).not.toHaveProperty('capabilities');
+	});
+
 	it('rebuilds through the standard transform replay', () => {
 		// A descriptor is not stored where it was registered: it is materialized
 		// by replaying transforms from empty, which is what makes a refresh and a

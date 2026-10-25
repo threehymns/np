@@ -1,5 +1,7 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, mock, beforeAll } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { FileOrigin } from "../storage";
 import { toURI } from "../storage";
 
@@ -407,5 +409,15 @@ describe("File explorer renders from subscription, not from feeding entries in",
 		project.rootOrigin = null;
 		expect(stopped2).toBe(true);
 		expect(project.worktree).toBeNull();
+	});
+
+	it("subscribes to the worktree untracked, so a reader of the tree's worktree is not tied to every scan", () => {
+		// The subscribe calls its listener straight away, and the listener
+		// reads the snapshot's entries. A tracked read would make whoever
+		// read ProjectTree.worktree inside an effect re-run on every scan
+		// that follows. The test harness stubs $effect, so the invariant is
+		// pinned in the source.
+		const source = readFileSync(resolve(__dirname, "./tree.svelte.ts"), "utf-8");
+		expect(source).toMatch(/untrack\(\(\) =>\s*wt\.subscribe\(/);
 	});
 });

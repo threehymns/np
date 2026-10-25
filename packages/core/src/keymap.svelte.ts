@@ -65,6 +65,29 @@ export const defaultKeymap: KeymapBinding[] = [
 		}
 	},
 	{
+		// The completion trigger and the acceptance key are focus-scoped, not
+		// merely tab-scoped, for the same reason the clipboard bindings are:
+		// the `editor` context stays true for the whole active tab, including
+		// while the user selects text in a hover tooltip, which never takes
+		// focus. The completion popup is an overlay exactly like that tooltip,
+		// and an overlay must not open another overlay on top of itself. So the
+		// trigger waits for real focus, and the acceptance key with it: a
+		// completion accepted while the user is reading a tooltip they cannot
+		// see is a completion they did not choose.
+		context: "editor && editorFocused && vim_mode == insert",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"ctrl+y": "edit.acceptCompletion"
+		}
+	},
+	{
+		context: "editor && editorFocused && !vim_mode",
+		bindings: {
+			"ctrl+space": "edit.complete",
+			"enter": "edit.acceptCompletion"
+		}
+	},
+	{
 		context: "editor",
 		bindings: {
 			"cmd+z": "edit.undo",
@@ -262,7 +285,9 @@ export class KeymapRegistry {
 		
 		// Load user keymap asynchronously on startup
 		this.readUserKeymap().then(content => {
-			this.reloadUserKeymap(content);
+			if (this.userKeymap.length === 0) {
+				this.reloadUserKeymap(content);
+			}
 		}).catch(err => {
 			console.error('Failed to load user keymap on startup:', err);
 		});
@@ -407,7 +432,41 @@ export class KeymapRegistry {
 		};
 	}
 	
+	/**
+	 * Whether `commandId` names a command this registry can run right now.
+	 *
+	 * A binding can outlive the command it names: a plugin can be disabled or
+	 * unloaded while its keymap transform is still parsed, and a user keymap can
+	 * survive a command rename. Such a binding must not consume a keystroke --
+	 * neither as a full match nor as the prefix of a longer chord -- or the key
+	 * silently disappears instead of reaching the editor or the page.
+	 *
+	 * An app state without `commands.get` (the minimal doubles some tests use)
+	 * cannot answer the question, so its bindings are treated as runnable and
+	 * the execute call decides.
+	 */
+	private commandIsRunnable(commandId: string): boolean {
+		if (!commandId || commandId === 'none' || commandId === 'noop' || commandId === 'unbound') {
+			return false;
+		}
+		if (typeof this.appState?.commands?.get !== 'function') return true;
+		const command = this.appState.commands.get(commandId);
+		return !!command && (!command.isEnabled || command.isEnabled());
+	}
+
 	handleKeydown(e: KeyboardEvent): boolean {
+		// Never intercept IME composition events. Some Chromium/WebKit builds
+		// report the Enter that confirms an IME composition as key "Enter"
+		// with isComposing true (or keyCode 229 on other platforms). This
+		// handler runs on the window capture phase, before CodeMirror's own
+		// keymap (which ignores composition events), so without this guard
+		// that Enter would be matched to edit.acceptCompletion and the
+		// preventDefault below would drop the IME candidate instead of
+		// confirming it.
+		if (e.isComposing || e.keyCode === 229) {
+			return false;
+		}
+
 		// Ignore if target is a standard input field or textarea, 
 		// but only for plain character keys (to allow Cmd+S etc.)
 		const target = e.target as HTMLElement;
@@ -455,25 +514,28 @@ export class KeymapRegistry {
 		let fullMatch: ParsedBinding | null = null;
 
 		for (const binding of activeBindings) {
-			if (keystrokeStartsWith(binding.sequence, candidate)) {
-				if (binding.sequence.length === candidate.length) {
-					fullMatch = binding;
-				} else {
-					hasPartial = true;
-				}
+			if (!keystrokeStartsWith(binding.sequence, candidate)) continue;
+			if (binding.sequence.length === candidate.length) {
+				fullMatch = binding;
+			} else if (this.commandIsRunnable(binding.commandId)) {
+				// Only wait for a longer chord when a command can still complete
+				// it. A stale binding must leave the prefix available to the page.
+				hasPartial = true;
 			}
 		}
 
 		if (fullMatch && !hasPartial) {
-			const command = this.appState.commands.get(fullMatch.commandId);
-			if (!command) {
+			if (!this.commandIsRunnable(fullMatch.commandId)) {
 				this.keyBuffer = [];
+				return false;
+			}
+			this.keyBuffer = [];
+			const result = this.appState.commands.execute(fullMatch.commandId);
+			if (result === false) {
 				return false;
 			}
 			e.preventDefault();
 			e.stopPropagation();
-			this.keyBuffer = [];
-			this.appState.commands.execute(fullMatch.commandId);
 			return true;
 		}
 

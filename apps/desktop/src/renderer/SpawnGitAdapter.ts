@@ -184,17 +184,41 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return refs.code === 0 && refs.stdout.trim() === '';
 	}
 
+	/**
+	 * The stage-0 index entry for exactly `filepath`, or null.
+	 *
+	 * `ls-files` is recursive: a pathspec naming a directory (or a path that
+	 * used to name a file and now names a directory) lists the entries beneath
+	 * it, so the first entry is not necessarily the requested path. Only an
+	 * exact path match may supply the blob.
+	 *
+	 * Stage 0 is the resolved index entry. An unmerged path has stages 1-3 and
+	 * no stage 0, and a conflict blob is not the file's staged content, so such
+	 * a path has no index content to return.
+	 *
+	 * `-z` is what makes the comparison literal: without it git C-quotes
+	 * unusual paths, and the quoted form never equals the raw filename.
+	 */
+	private static stageZeroIndexEntry(stdout: string, filepath: string): string | null {
+		for (const entry of stdout.split('\0')) {
+			const tab = entry.indexOf('\t');
+			if (tab < 0) continue;
+			if (entry.slice(tab + 1) !== filepath) continue;
+			const [mode, oid, stage] = entry.slice(0, tab).split(' ');
+			if (!mode || !oid || stage !== '0') continue;
+			return /^[0-9a-fA-F]+$/.test(oid) ? oid : null;
+		}
+		return null;
+	}
+
 	private async readIndexContent(filepath: string): Promise<string | null> {
-		const res = await this.runGit(['ls-files', '--stage', '--', literalPathspec(filepath)]);
+		const res = await this.runGit(['ls-files', '--stage', '-z', '--', literalPathspec(filepath)]);
 		if (res.code !== 0) {
 			if (this.isPathNotFoundError(res.stderr)) return null;
 			throw new Error(res.stderr || `Failed to read index for ${filepath}`);
 		}
-		const line = res.stdout.trim().split('\n')[0];
-		if (!line) return null;
-		const parts = line.split(/\s+/);
-		const oid = parts[1];
-		if (!oid || !/^[0-9a-fA-F]+$/.test(oid)) return null;
+		const oid = SpawnGitAdapter.stageZeroIndexEntry(res.stdout, filepath);
+		if (!oid) return null;
 		const catRes = await this.runGit(['cat-file', '-p', oid]);
 		if (catRes.code !== 0) {
 			throw new Error(catRes.stderr || `Failed to read git object ${oid}`);

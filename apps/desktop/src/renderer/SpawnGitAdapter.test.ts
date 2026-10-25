@@ -373,7 +373,7 @@ describe('SpawnGitAdapter', () => {
 	it('getFileDiff skips HEAD git show query for staged added files (status: "A", staged: true)', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
 			if (args[0] === 'ls-files') {
-				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tadded.txt\n', stderr: '' };
+				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tadded.txt\0', stderr: '' };
 			}
 			if (args[0] === 'cat-file' && args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
 				return { code: 0, stdout: 'staged index content', stderr: '' };
@@ -393,6 +393,57 @@ describe('SpawnGitAdapter', () => {
 			(call[1][0] === 'ls-tree' && call[1][1] === 'HEAD')
 		);
 		expect(headCalls.length).toBe(0);
+	});
+
+	it('getFileDiff ignores an index entry that only matches the requested path as a prefix', async () => {
+		// A staged change replaces file `foo` with directory `foo/bar`. `ls-files`
+		// is recursive, so it lists `foo/bar` for the pathspec `foo`; that child's
+		// blob must not be presented as the content of `foo`.
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tfoo/bar\0', stderr: '' };
+			}
+			if (args[0] === 'cat-file') {
+				return { code: 0, stdout: 'child content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('foo', { status: 'A', staged: true });
+
+		expect(diff.modifiedContent).toBe('');
+		const catCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'cat-file');
+		expect(catCalls.length).toBe(0);
+	});
+
+	it('getFileDiff treats conflict stages without a stage 0 entry as unstaged', async () => {
+		// An unmerged path has stages 1-3 and no stage 0. None of those blobs is
+		// the file's staged content, so reading one would show a conflict side as
+		// if the user had staged it.
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return {
+					code: 0,
+					stdout:
+						'100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\tconflicted.txt\0' +
+						'100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\tconflicted.txt\0' +
+						'100644 cccccccccccccccccccccccccccccccccccccccc 3\tconflicted.txt\0',
+					stderr: ''
+				};
+			}
+			if (args[0] === 'cat-file') {
+				return { code: 0, stdout: 'conflict blob', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('conflicted.txt', { status: 'M', staged: true });
+
+		expect(diff.modifiedContent).toBe('');
+		const catCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'cat-file');
+		expect(catCalls.length).toBe(0);
 	});
 
 	it('getFileDiff reports the working-tree content of a deleted-in-index file that is still on disk', async () => {
@@ -419,7 +470,7 @@ describe('SpawnGitAdapter', () => {
 				return { code: 0, stdout: '100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tdeleted.txt\n', stderr: '' };
 			}
 			if (args[0] === 'ls-files') {
-				return { code: 0, stdout: '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\tdeleted.txt\n', stderr: '' };
+				return { code: 0, stdout: '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\tdeleted.txt\0', stderr: '' };
 			}
 			if (args[0] === 'cat-file') {
 				if (args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {

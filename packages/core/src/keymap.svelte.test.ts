@@ -1,6 +1,7 @@
 import "../../../tests/contract/rune-setup";
 import { describe, it, expect, afterEach } from "bun:test";
 import { parseKeySequence, formatShortcutLabel, keystrokesEqual, KeymapRegistry, defaultKeymap } from "./keymap.svelte";
+import { CommandRegistry, registerCoreCommands } from "./commands.svelte";
 
 /**
  * The formatter and the parser must agree about the same vocabulary.
@@ -384,6 +385,351 @@ describe("clipboard bindings respect editor focus", () => {
 	}
 });
 
+describe("completion trigger and acceptance keybindings (Issue #287)", () => {
+	/**
+	 * A registry with the completion commands registered.
+	 *
+	 * `focused` mirrors the `editorFocused` context the editor sets: the
+	 * `editor` context alone is tab-scoped, so it stays true while the user
+	 * is interacting with something that never takes focus, such as a hover
+	 * tooltip. The completion bindings are focus-scoped, so the default here
+	 * is a focused editor and the focus test asks for an unfocused one.
+	 */
+	function newCompletionRegistry(
+		initialCommands?: Record<string, { action?: () => any; isEnabled?: () => boolean }>,
+		focused = true,
+	) {
+		const executed: string[] = [];
+		const defaultCommands: Record<string, any> = {
+			"edit.complete": { action: () => true },
+			"edit.acceptCompletion": { action: () => true },
+			"edit.find": { action: () => true },
+			...initialCommands,
+		};
+		const commandMap = new Map<string, any>(Object.entries(defaultCommands));
+		const appState: any = {
+			commands: {
+				get: (id: string) => commandMap.get(id),
+				execute: (id: string) => {
+					executed.push(id);
+					const cmd = commandMap.get(id);
+					if (cmd && typeof cmd.action === 'function') {
+						return cmd.action();
+					}
+					return true;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings(defaultKeymap as any);
+		reg.setContext("editor", true);
+		if (focused) reg.setContext("editorFocused", true);
+		return { reg, executed, commandMap, appState };
+	}
+
+	function completionKeyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		let stopped = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {
+				stopped++;
+			},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented, stopped: () => stopped };
+	}
+
+	it("binds ctrl+space to edit.complete and enter to edit.acceptCompletion when vim is off", () => {
+		const { reg, executed } = newCompletionRegistry();
+
+		// Trigger completion via ctrl+space
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+		expect(triggerKey.prevented()).toBe(1);
+
+		// Accept completion via Enter
+		const acceptKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(acceptKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+		expect(acceptKey.prevented()).toBe(1);
+	});
+
+	it("binds ctrl+space to edit.complete and ctrl+y to edit.acceptCompletion in vim insert mode", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("vim_mode", "insert");
+
+		// Trigger via ctrl+space
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+
+		// Enter is NOT bound to accept in vim insert mode (belongs to mode as newline)
+		const enterKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		// Ctrl-y accepts completion in vim insert mode
+		const acceptKey = completionKeyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(acceptKey.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+	});
+
+	it("does not bind completion trigger or accept keys in vim normal mode", () => {
+		const { reg, executed } = newCompletionRegistry();
+		reg.setContext("vim_mode", "normal");
+
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const enterKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		const ctrlYKey = completionKeyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(ctrlYKey.e)).toBe(false);
+		expect(ctrlYKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
+	});
+
+	it("allows user keymap to rebind trigger and acceptance keys", () => {
+		const { reg, executed } = newCompletionRegistry();
+
+		// User overrides: rebind trigger to alt+/ and accept to tab
+		reg.reloadUserKeymap(JSON.stringify([
+			{
+				context: "editor && editorFocused && !vim_mode",
+				bindings: {
+					"alt+/": "edit.complete",
+					"tab": "edit.acceptCompletion",
+					"ctrl+space": "",
+					"enter": ""
+				}
+			}
+		]));
+
+		// Old keys no longer execute completion commands
+		const oldTrigger = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(oldTrigger.e)).toBe(false);
+		expect(oldTrigger.prevented()).toBe(0);
+
+		const oldAccept = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(oldAccept.e)).toBe(false);
+		expect(oldAccept.prevented()).toBe(0);
+
+		// Rebound keys execute completion commands
+		const newTrigger = completionKeyEvent("/", { alt: true });
+		expect(reg.handleKeydown(newTrigger.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete"]);
+		expect(newTrigger.prevented()).toBe(1);
+
+		const newAccept = completionKeyEvent("Tab");
+		expect(reg.handleKeydown(newAccept.e)).toBe(true);
+		expect(executed).toEqual(["edit.complete", "edit.acceptCompletion"]);
+		expect(newAccept.prevented()).toBe(1);
+	});
+
+	it("does not swallow keystrokes for unbindings or stale disabled-plugin bindings", () => {
+		const { reg } = newCompletionRegistry();
+
+		// User unbinds enter and binds ctrl+e to a disabled plugin command
+		reg.reloadUserKeymap(JSON.stringify([
+			{
+				context: "editor && editorFocused && !vim_mode",
+				bindings: {
+					"enter": "",
+					"ctrl+e": "disabledPlugin.action",
+					"ctrl+w": "none"
+				}
+			}
+		]));
+
+		// Empty unbinding does not swallow Enter
+		const enterKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+
+		// 'none' unbinding does not swallow Ctrl-W
+		const ctrlWKey = completionKeyEvent("w", { ctrl: true });
+		expect(reg.handleKeydown(ctrlWKey.e)).toBe(false);
+		expect(ctrlWKey.prevented()).toBe(0);
+
+		// Stale command belonging to a disabled plugin does not swallow Ctrl-E
+		const ctrlEKey = completionKeyEvent("e", { ctrl: true });
+		expect(reg.handleKeydown(ctrlEKey.e)).toBe(false);
+		expect(ctrlEKey.prevented()).toBe(0);
+	});
+
+	it("does not swallow accept key when no completion is active (action returns false)", () => {
+		const { reg, executed } = newCompletionRegistry({
+			// When no completion popup is open, acceptCompletion returns false
+			"edit.acceptCompletion": { action: () => false }
+		});
+
+		const enterKey = completionKeyEvent("Enter");
+		// Returns false and does not prevent default, so Enter creates a newline
+		expect(reg.handleKeydown(enterKey.e)).toBe(false);
+		expect(enterKey.prevented()).toBe(0);
+		expect(executed).toEqual(["edit.acceptCompletion"]);
+	});
+
+	it("does not intercept IME composition keystrokes (isComposing / keyCode 229)", () => {
+		const { reg, executed } = newCompletionRegistry();
+
+		// macOS Chromium/WebKit report the Enter that confirms an IME
+		// composition as key "Enter" with isComposing true. The keymap must
+		// not steal it for edit.acceptCompletion and drop the candidate.
+		const composing = completionKeyEvent("Enter");
+		(composing.e as any).isComposing = true;
+		expect(reg.handleKeydown(composing.e)).toBe(false);
+		expect(composing.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+
+		// Other platforms fire composition keydowns with keyCode 229.
+		const legacy = completionKeyEvent("Enter");
+		(legacy.e as any).keyCode = 229;
+		expect(reg.handleKeydown(legacy.e)).toBe(false);
+		expect(legacy.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+	});
+
+	/**
+	 * The trigger and the acceptance key are focus-scoped, and the reason is
+	 * the shape of the two overlays: the completion popup is an overlay exactly
+	 * like the hover tooltip, and the `editor` context stays true for the
+	 * whole active tab, including while the user selects text in a tooltip
+	 * (which never takes focus). An overlay must not open another overlay on
+	 * top of itself, so the trigger waits for real focus.
+	 */
+	it("does not trigger or accept a completion while the editor is not focused", () => {
+		const { reg, executed } = newCompletionRegistry(undefined, false);
+
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const acceptKey = completionKeyEvent("Enter");
+		expect(reg.handleKeydown(acceptKey.e)).toBe(false);
+		expect(acceptKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
+	});
+
+	it("does not trigger or accept a completion while the editor is not focused in vim insert mode", () => {
+		const { reg, executed } = newCompletionRegistry(undefined, false);
+		reg.setContext("vim_mode", "insert");
+
+		const triggerKey = completionKeyEvent(" ", { ctrl: true });
+		expect(reg.handleKeydown(triggerKey.e)).toBe(false);
+		expect(triggerKey.prevented()).toBe(0);
+
+		const acceptKey = completionKeyEvent("y", { ctrl: true });
+		expect(reg.handleKeydown(acceptKey.e)).toBe(false);
+		expect(acceptKey.prevented()).toBe(0);
+
+		expect(executed).toEqual([]);
+	});
+});
+
+describe("completion commands require editor focus even for context-less bindings", () => {
+	/**
+	 * A registry with the REAL completion commands registered.
+	 *
+	 * The default bindings already carry `editorFocused` in their context,
+	 * so they cannot show the gap: a context-less user binding (exactly
+	 * what setCustomKeybinding stores) has no context filter, and the
+	 * command's own isEnabled guard is the only thing standing between
+	 * a modal button's Enter and an unfocused editor's completion.
+	 */
+	function newRealCompletionRegistry(focused: boolean, acceptResult: boolean = true) {
+		const commands = new CommandRegistry();
+		const appState: any = {
+			commands,
+			activeEditorView: {},
+			workspace: {},
+		};
+		registerCoreCommands(appState);
+		const reg = new KeymapRegistry(appState);
+		// The real AppState always wires its keymaps registry; the guard
+		// for the completion commands reads focus from it.
+		appState.keymaps = reg;
+		reg.setContext("editor", true);
+		if (focused) reg.setContext("editorFocused", true);
+		// Context-less user binding, as setCustomKeybinding stores it.
+		reg.loadBindings([{ bindings: { enter: "edit.acceptCompletion" } } as any]);
+		// Stub the action: the gate under test is isEnabled, not CodeMirror.
+		const cmd: any = commands.get("edit.acceptCompletion");
+		let actionRan = false;
+		cmd.action = () => { actionRan = true; return acceptResult; };
+		return { reg, commands, actionRan: () => actionRan };
+	}
+
+	function modalButtonEnterKey() {
+		let prevented = 0;
+		const e = {
+			key: "Enter",
+			// A modal button, not an input: the standard-input early return
+			// must not be what lets this Enter through.
+			target: { tagName: "BUTTON" },
+			ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+			isComposing: false, keyCode: 13,
+			preventDefault: () => { prevented++; },
+			stopPropagation: () => {},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented };
+	}
+
+	const COMPLETION_COMMANDS = ["edit.complete", "edit.startCompletion", "edit.acceptCompletion"];
+
+	it("reports all three completion commands disabled while the editor is not focused", () => {
+		const { commands } = newRealCompletionRegistry(false);
+		for (const id of COMPLETION_COMMANDS) {
+			expect(commands.get(id)?.isEnabled?.()).toBe(false);
+		}
+	});
+
+	it("reports all three completion commands enabled while the editor is focused", () => {
+		const { commands } = newRealCompletionRegistry(true);
+		for (const id of COMPLETION_COMMANDS) {
+			expect(commands.get(id)?.isEnabled?.()).toBe(true);
+		}
+	});
+
+	it("does not consume a modal button's Enter through a context-less binding while unfocused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(false);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(false);
+		expect(key.prevented()).toBe(0);
+		expect(actionRan()).toBe(false);
+	});
+
+	it("executes a context-less binding while the editor is focused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(true);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(true);
+		expect(key.prevented()).toBe(1);
+		expect(actionRan()).toBe(true);
+	});
+
+	it("lets Enter fall through when acceptance declines while focused", () => {
+		const { reg, actionRan } = newRealCompletionRegistry(true, false);
+		const key = modalButtonEnterKey();
+		expect(reg.handleKeydown(key.e)).toBe(false);
+		expect(key.prevented()).toBe(0);
+		expect(actionRan()).toBe(true);
+	});
+});
+
 describe("Project search keybinding and remapping (Issue #337)", () => {
 	function newRegistry() {
 		const executed: string[] = [];
@@ -495,6 +841,10 @@ describe("Stale keybinding fallthrough (Issue #225)", () => {
 			{
 				bindings: {
 					"ctrl+s": "test.save",
+					// A stale longer chord sharing the same prefix: it must not
+					// hold `ctrl+s` hostage while waiting for a command that
+					// does not exist.
+					"ctrl+s x": "test.saveAll",
 					"ctrl+k s": "test.saveAll",
 				},
 			},
@@ -543,15 +893,18 @@ describe("Stale keybinding fallthrough (Issue #225)", () => {
 		expect(reg.keyBuffer).toEqual([]);
 	});
 
-	it("clears chord buffer and falls through when chord points to missing command", () => {
+	it("does not consume a chord prefix that only a missing command could complete", () => {
 		const { reg, executed } = newRegistry([]);
+		// `ctrl+k s` is a stale binding: its command is not registered. Waiting
+		// for the `s` would swallow the user's `ctrl+k` for a chord that can
+		// never run, so the prefix must fall through immediately.
 		const k1 = keyEvent("k", { ctrl: true });
-		expect(reg.handleKeydown(k1.e)).toBe(true);
-		expect(reg.keyBuffer).toHaveLength(1);
+		expect(reg.handleKeydown(k1.e)).toBe(false);
+		expect(k1.prevented()).toBe(0);
+		expect(reg.keyBuffer).toEqual([]);
 
 		const k2 = keyEvent("s");
-		const handled = reg.handleKeydown(k2.e);
-		expect(handled).toBe(false);
+		expect(reg.handleKeydown(k2.e)).toBe(false);
 		expect(k2.prevented()).toBe(0);
 		expect(executed).toEqual([]);
 		expect(reg.keyBuffer).toEqual([]);
