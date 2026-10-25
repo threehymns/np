@@ -40,4 +40,21 @@ describe('LazyIsomorphicGitAdapter', () => {
 		await Promise.all([adapter.detect('x'), adapter.getCurrentBranch(), adapter.getStatus()]);
 		expect(loader).toHaveBeenCalledTimes(1);
 	});
+
+	it('retries the load after a failed attempt', async () => {
+		const { inner } = fakeAdapter();
+		let attempts = 0;
+		const loader = mock(async () => {
+			attempts += 1;
+			if (attempts === 1) throw new Error('load failed');
+			return inner as any;
+		});
+		const adapter = new LazyIsomorphicGitAdapter(origin, loader);
+
+		await expect(adapter.detect('x')).rejects.toThrow('load failed');
+		expect(await adapter.detect('x')).toBe(true);
+
+		expect(loader).toHaveBeenCalledTimes(2);
+		expect(inner.detect).toHaveBeenCalledTimes(1);
+	});
 });

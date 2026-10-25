@@ -34,10 +34,17 @@ export class LazyIsomorphicGitAdapter implements VCSAdapter {
 
 	private async get(): Promise<IsomorphicGitAdapter> {
 		if (this.inner) return this.inner;
-		this.loading ??= this.load().then((adapter) => {
-			this.inner = adapter;
-			return adapter;
-		});
+		if (!this.loading) {
+			this.loading = this.load()
+				.then((adapter) => {
+					this.inner = adapter;
+					return adapter;
+				})
+				.catch((error) => {
+					this.loading = null;
+					throw error;
+				});
+		}
 		return this.loading;
 	}
 
