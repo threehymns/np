@@ -337,6 +337,35 @@ describe("SearchBackend seam & v1 TypeScript search engine (Issue #334)", () => 
 		expect(storage.readFile.mock.calls.length).toBe(callsAfterFirst);
 	});
 
+	it("drops cached content when a content-only scan finds the same file set", async () => {
+		const files: Record<string, string> = {
+			"/test-project/code.ts": "the old text"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+		await wt.scan();
+
+		const engine = new TypeScriptSearchEngineClass(wt);
+
+		// First search caches the file's text.
+		const before = await engine.search({ pattern: "old" }).all();
+		expect(before).toHaveLength(1);
+		const readsAfterFirst = storage.readFile.mock.calls.length;
+
+		// The watcher reports an edit, but the file set is unchanged.
+		files["/test-project/code.ts"] = "the new text";
+		await wt.scan();
+		expect(wt.version).toBe(1);
+
+		const after = await engine.search({ pattern: "new" }).all();
+		expect(after).toHaveLength(1);
+		expect(after[0].matches[0].lineText).toBe("the new text");
+		expect(storage.readFile.mock.calls.length).toBeGreaterThan(readsAfterFirst);
+
+		// The stale text is gone from the cache too.
+		expect(await engine.search({ pattern: "old" }).all()).toHaveLength(0);
+	});
+
 	it("stops when the project switches roots mid-search, instead of mixing two roots", async () => {
 		const storageA = createMockStorage({
 			"/root-a/one.txt": "needle",

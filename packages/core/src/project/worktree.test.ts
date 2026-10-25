@@ -79,7 +79,8 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(wt.snapshot).toEqual({
 			root: rootOrigin,
 			entries: [],
-			version: 0
+			version: 0,
+			contentVersion: 0
 		});
 		expect(wt.strategy.name).toBe("polled");
 	});
@@ -112,6 +113,26 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 
 		await wt.scan();
 		expect(wt.version).toBe(1);
+	});
+
+	it("a content-only scan advances contentVersion but not the file-set version", async () => {
+		const files: Record<string, string> = {
+			"/test-project/README.md": "# Readme"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		const version = wt.version;
+		const contentVersion = wt.contentVersion;
+
+		// The file set is unchanged; only the file's text changed.
+		files["/test-project/README.md"] = "# Updated";
+		await wt.scan();
+
+		expect(wt.version).toBe(version);
+		expect(wt.contentVersion).toBeGreaterThan(contentVersion);
+		expect(wt.snapshot.contentVersion).toBe(wt.contentVersion);
 	});
 
 	it("scanning after adding or removing a file advances wt.version", async () => {

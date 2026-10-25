@@ -6,7 +6,15 @@ import type { TreeNode } from './tree.svelte';
 export interface FileSnapshot {
 	readonly root: FileOrigin;
 	readonly entries: TreeNode[];
+	/** The file-set version: advances only when the published entries change. */
 	readonly version: number;
+	/**
+	 * The content-invalidation generation: advances whenever a scan publishes
+	 * a snapshot, whether or not the file set changed. A scan cannot prove
+	 * file content stayed the same without reading every file, so consumers
+	 * that cache content key on this instead of `version`.
+	 */
+	readonly contentVersion: number;
 }
 
 export type SnapshotListener = (snapshot: FileSnapshot) => void;
@@ -130,6 +138,7 @@ export class Worktree {
 
 	private _entries = $state<TreeNode[]>([]);
 	private _version = $state(0);
+	private _contentVersion = $state(0);
 	private listeners = new SvelteSet<SnapshotListener>();
 	private scanGeneration = 0;
 	private isScanning = $state(false);
@@ -180,11 +189,16 @@ export class Worktree {
 		return this._version;
 	}
 
+	get contentVersion(): number {
+		return this._contentVersion;
+	}
+
 	get snapshot(): FileSnapshot {
 		return {
 			root: this.root,
 			entries: this._entries,
-			version: this._version
+			version: this._version,
+			contentVersion: this._contentVersion
 		};
 	}
 
@@ -204,12 +218,17 @@ export class Worktree {
 		if (this._version === 0 || !entriesEqual(this._entries, entries)) {
 			this._version++;
 		}
+		// The scan cannot tell changed file content from unchanged content
+		// without reading every file. Publishing a new snapshot therefore
+		// invalidates content caches even when the file set is the same.
+		this._contentVersion++;
 		this._entries = entries;
 		this.notify();
 	}
 
 	notifyEntriesChanged(): void {
 		this._version++;
+		this._contentVersion++;
 		this.notify();
 	}
 
