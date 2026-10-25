@@ -62,8 +62,10 @@ export class SearchTabRunner<V extends SearchExcerptView = SearchExcerptView> {
 	private abortController: AbortController | null = null;
 	private worktree: Worktree | null = null;
 	private worktreeUnsubscribe: (() => void) | null = null;
-	/** The version of the snapshot the tab last saw. */
+	/** The file-set version of the snapshot the tab last saw. */
 	private lastSnapshotVersion = -1;
+	/** The content-invalidation generation the tab last saw. */
+	private lastContentVersion = -1;
 	private rerunTimer: ReturnType<typeof setTimeout> | null = null;
 	private idleWaiters: Array<() => void> = [];
 
@@ -88,9 +90,10 @@ export class SearchTabRunner<V extends SearchExcerptView = SearchExcerptView> {
 		this.worktreeUnsubscribe = null;
 		this.worktree = worktree;
 		this.lastSnapshotVersion = -1;
+		this.lastContentVersion = -1;
 		if (!worktree) return;
 		this.worktreeUnsubscribe = worktree.subscribe((snapshot) => {
-			this.onSnapshot(snapshot.version);
+			this.onSnapshot(snapshot.version, snapshot.contentVersion);
 		});
 	}
 
@@ -207,16 +210,20 @@ export class SearchTabRunner<V extends SearchExcerptView = SearchExcerptView> {
 		}
 	}
 
-	private onSnapshot(version: number): void {
+	private onSnapshot(version: number, contentVersion: number): void {
 		const previousVersion = this.lastSnapshotVersion;
+		const previousContentVersion = this.lastContentVersion;
 		this.lastSnapshotVersion = version;
+		this.lastContentVersion = contentVersion;
 		// The first snapshot the tab hears is the state it starts from, not a
 		// change of it: there is nothing to re-run for.
-		if (previousVersion === -1) return;
+		if (previousVersion === -1 && previousContentVersion === -1) return;
 		if (
 			!shouldRerunSearchOnSnapshotChange({
 				lastSnapshotVersion: previousVersion,
 				snapshotVersion: version,
+				lastContentVersion: previousContentVersion,
+				contentVersion,
 				query: this.getSession().query
 			})
 		) {

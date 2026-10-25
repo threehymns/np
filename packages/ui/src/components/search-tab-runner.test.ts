@@ -211,7 +211,7 @@ describe("Search tab runner (Issue #355)", () => {
 		session.caseSensitive = true;
 		session.includePattern = "*.txt";
 		// One engine for both runs: the file cache it holds is keyed on the
-		// snapshot version, so the re-run only reads what changed.
+		// content generation, so the re-run only reads what changed.
 		const engine = new TypeScriptSearchEngine(worktree);
 		const runner = new SearchTabRunner({
 			getBackend: () => engine,
@@ -224,10 +224,11 @@ describe("Search tab runner (Issue #355)", () => {
 		expect(runner.results.length).toBe(1);
 		expect(runner.results[0].matches[0].lineText).toBe("needle old");
 
-		// The file is edited in a terminal, so the watcher publishes a new
-		// snapshot. The user does not touch the query.
+		// The file is edited in a terminal. The watcher rescans the worktree,
+		// which finds the same file set but new content. The user does not
+		// touch the query.
 		files["/test-project/notes.txt"] = "needle new";
-		worktree.notifyEntriesChanged();
+		await worktree.scan();
 
 		await runner.idle();
 		expect(runner.results.length).toBe(1);

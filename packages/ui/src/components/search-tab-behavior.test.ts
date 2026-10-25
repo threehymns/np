@@ -212,6 +212,30 @@ describe("Search tab snapshot re-run decision (Issue #355)", () => {
 		).toBe(false);
 	});
 
+	it("re-runs when a scan finds new content but the same file set", () => {
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 5,
+				snapshotVersion: 5,
+				lastContentVersion: 8,
+				contentVersion: 9,
+				query: "needle"
+			})
+		).toBe(true);
+	});
+
+	it("does not re-run when neither the file set nor the content changed", () => {
+		expect(
+			shouldRerunSearchOnSnapshotChange({
+				lastSnapshotVersion: 5,
+				snapshotVersion: 5,
+				lastContentVersion: 9,
+				contentVersion: 9,
+				query: "needle"
+			})
+		).toBe(false);
+	});
+
 	it("does not re-run a search that has no query", () => {
 		expect(
 			shouldRerunSearchOnSnapshotChange({
