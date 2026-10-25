@@ -7,6 +7,7 @@ import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, formatMemoryBytes, lspServerKey, parseServerVersion, parseTriggerCharacters } from './lifecycle';
+import type { LspDescriptorContribution } from '../lsp-descriptors';
 import { LspDiagnosticsStore } from './diagnostics';
 import {
 	LSP_PLATFORM_SERVICE_KEY,
@@ -188,6 +189,8 @@ async function startRuntime(
 		settings?: Record<string, Record<string, unknown>>;
 		/** Replaces the platform, for a test that has to count what it asks. */
 		platform?: RealProcessPlatform;
+		/** Replaces the registered descriptor, for a test that varies what it declares. */
+		descriptor?: LspDescriptorContribution;
 		languages?: readonly string[];
 	}
 ): Promise<{
@@ -201,13 +204,16 @@ async function startRuntime(
 	host.register({
 		manifest: { id: 'ts', name: 'TS', version: 0 },
 		setup: (h: PluginHostInterface) => {
-			h.registerLspDescriptor('ts', {
-				id: 'ts',
-				command: 'vtsls',
-				args: ['--stdio'],
-				rootMarkers: ['tsconfig.json'],
-				languages: options.languages ? [...options.languages] : ['typescript']
-			});
+			h.registerLspDescriptor(
+				'ts',
+				options.descriptor ?? {
+					id: 'ts',
+					command: 'vtsls',
+					args: ['--stdio'],
+					rootMarkers: ['tsconfig.json'],
+					languages: options.languages ? [...options.languages] : ['typescript']
+				}
+			);
 		}
 	});
 	await host.activate('ts');
@@ -518,6 +524,54 @@ describe('Server lifecycle against a real stdio server (#264)', () => {
 			expect(formatMemoryBytes(0)).toBe('1 KiB');
 			expect(formatMemoryBytes(100)).toBe('1 KiB');
 		});
+	});
+
+	it('does not carry a descriptor-declared capability into the initialize handshake', async () => {
+		// The boundary ADR 0020 and ADR 0028 fix: what the client claims in
+		// `initialize` is one table in `LspClient`, and a descriptor adds
+		// nothing to it. A descriptor that could declare a capability could
+		// claim one the client does not implement, so the channel is closed.
+		//
+		// The descriptor is forged through a cast, because the field does not
+		// exist. This is the whole path end to end: the registry, the runtime's
+		// handoff to the client and the client's own table. The test fails the
+		// day any of the three grows the channel back.
+		const wireLog = join(makeProject({}), 'wire.log');
+		const { runtime } = await startRuntime({
+			script: ['--log-file', wireLog],
+			descriptor: {
+				id: 'ts',
+				command: 'vtsls',
+				args: ['--stdio'],
+				rootMarkers: ['tsconfig.json'],
+				languages: ['typescript'],
+				capabilities: {
+					textDocumentSync: 2,
+					textDocument: { hover: { dynamicRegistration: true } }
+				}
+			} as unknown as LspDescriptorContribution
+		});
+
+		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
+		await runtime.fetch({
+			document: {
+				path: join(root, 'src/a.ts'),
+				fileName: 'a.ts',
+				content: 'export const a = 1;\n',
+				language: 'typescript'
+			},
+			line: 0,
+			character: 0
+		});
+
+		await waitFor(() => received({ wireLog }).some((line) => line.includes('"initialize"')), {
+			label: 'the initialize request the stub received'
+		});
+		const initialize = JSON.parse(received({ wireLog }).find((line) => line.includes('"initialize"'))!);
+		// The server-capability name a descriptor would have claimed, and the
+		// leaf it would have flipped. Both are the client's, not the server's.
+		expect(initialize.params.capabilities).not.toHaveProperty('textDocumentSync');
+		expect(initialize.params.capabilities.textDocument.hover?.dynamicRegistration).toBe(false);
 	});
 
 	it('syncs each served language with the protocol id its server answers to', async () => {
