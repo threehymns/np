@@ -168,9 +168,12 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
 
 		// ]c repeatedly: must traverse into the other file (and wrap around,
-		// since presses outnumber hunks). Same for [c backwards.
+		// since presses outnumber hunks). Same for [c backwards. A press can
+		// land while the previous jump's focus is still settling, so press
+		// until both files have been seen; the budget only bounds a genuinely
+		// broken traversal.
 		const seenNext = new Set<string>();
-		for (let i = 0; i < 4; i++) {
+		for (let i = 0; i < 12 && seenNext.size < 2; i++) {
 			await page.keyboard.press(']');
 			await page.keyboard.press('c');
 			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
@@ -179,7 +182,7 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 		expect([...seenNext].sort()).toEqual(['README.md', 'hello.ts']);
 
 		const seenPrev = new Set<string>();
-		for (let i = 0; i < 4; i++) {
+		for (let i = 0; i < 12 && seenPrev.size < 2; i++) {
 			await page.keyboard.press('[');
 			await page.keyboard.press('c');
 			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
