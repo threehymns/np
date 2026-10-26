@@ -1,8 +1,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const SEMVER =
-	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+// Prerelease and build identifiers per semver: purely numeric prerelease
+// identifiers must not carry leading zeroes (01 is invalid, 0 is not), while
+// identifiers containing a letter or hyphen are unrestricted. Build metadata
+// has no leading-zero restriction.
+const prereleaseIdentifier = '(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)';
+const SEMVER = new RegExp(
+	`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-${prereleaseIdentifier}(?:\\.${prereleaseIdentifier})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`
+);
 
 /**
  * Writes the release tag's version into the desktop manifest before packaging.

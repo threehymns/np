@@ -32,7 +32,10 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+          # Prerelease identifiers follow semver: purely numeric ones must not
+          # carry leading zeroes (v1.2.3-01 is invalid); identifiers containing
+          # a letter or hyphen are unrestricted.
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "::error::Tag '$RELEASE_TAG' is not a semantic version tag such as v1.2.3."
             exit 1
           fi
@@ -157,11 +160,23 @@ jobs:
           path: release
           merge-multiple: true
 
+      - name: Classify the release as stable or prerelease
+        run: |
+          # Semver marks a prerelease with a hyphen in the version core, before
+          # any '+' build metadata: 'v1.2.3-rc.1' is a prerelease, but
+          # 'v1.2.3+build-5' is stable.
+          version_core="${GITHUB_REF_NAME%%+*}"
+          if [[ "$version_core" == *-* ]]; then
+            echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release/*

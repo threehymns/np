@@ -27,7 +27,10 @@ The `release-desktop` workflow then:
 4. Creates a **draft** GitHub Release with auto-generated notes. Publish it
    manually once the artifacts have been checked.
 
-Tags containing a `-` are marked as prereleases.
+Tags with a prerelease suffix — a hyphen in the version part, as in
+`v1.2.3-rc.1` — are marked as prereleases. Build metadata such as
+`v1.2.3+build-5` does not make a prerelease, and purely numeric prerelease
+identifiers must not carry leading zeroes (`v1.2.3-01` is rejected).
 
 ## Build output layout
 

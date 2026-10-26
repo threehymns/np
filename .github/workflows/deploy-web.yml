@@ -43,8 +43,13 @@ jobs:
 
       - name: Resolve GitHub Pages base path
         run: |
+          # Only the owner's own <owner>.github.io repository is served at the
+          # domain root; any other repository (even one named *.github.io) is a
+          # project site served under /<repo>. Names are compared
+          # case-insensitively, as GitHub treats them.
           repo_name="${GITHUB_REPOSITORY#*/}"
-          if [[ "$repo_name" == *.github.io ]]; then
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          if [[ "${repo_name,,}" == "$owner.github.io" ]]; then
             base_path="/"
           else
             base_path="/$repo_name"
