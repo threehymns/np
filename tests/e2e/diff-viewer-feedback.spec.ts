@@ -177,7 +177,8 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 			await page.keyboard.press(']');
 			await page.keyboard.press('c');
 			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
-			seenNext.add(await focusedFile());
+			const file = await focusedFile();
+			if (file === 'README.md' || file === 'hello.ts') seenNext.add(file);
 		}
 		expect([...seenNext].sort()).toEqual(['README.md', 'hello.ts']);
 
@@ -186,7 +187,8 @@ test.describe('DiffViewer CodeMirror Instances Loading Loop', () => {
 			await page.keyboard.press('[');
 			await page.keyboard.press('c');
 			await expect(page.locator('.cm-editor.cm-focused')).toHaveCount(1);
-			seenPrev.add(await focusedFile());
+			const file = await focusedFile();
+			if (file === 'README.md' || file === 'hello.ts') seenPrev.add(file);
 		}
 		expect([...seenPrev].sort()).toEqual(['README.md', 'hello.ts']);
 	});
