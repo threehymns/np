@@ -148,7 +148,10 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 			let flushed = false;
 			while (Date.now() - startTime < 5000) {
 				const persisted = await appState.workspace.project.persistence.loadOpenFiles('');
-				if (persisted.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
+				// Saved session state is either the current versioned workspace or
+				// the legacy bare document list.
+				const docs = Array.isArray(persisted) ? persisted : persisted?.docs ?? [];
+				if (docs.some((d: any) => d.draftContent === 'Auto-persisted via visibilitychange hidden')) {
 					flushed = true;
 					break;
 				}
@@ -183,8 +186,25 @@ test.describe('Workspace State & Draft Persistence Integration Tests', () => {
 		await page.keyboard.press('Backspace');
 		await page.keyboard.type('Unload-race draft content');
 
-		// Reload immediately: the 500ms debounced save cannot have fired,
-		// so only the unload flush can persist this draft.
+		// Reload flushes asynchronously, so wait for the pagehide path to finish
+		// instead of racing navigation. Clearing the debounce timer first keeps
+		// the assertion honest: only the unload handler can persist this draft.
+		await page.evaluate(async () => {
+			const workspace = (window as any).appState.workspace;
+			clearTimeout(workspace.saveOpenFilesTimeout);
+			workspace.saveOpenFilesTimeout = null;
+			window.dispatchEvent(new Event('pagehide'));
+
+			const startTime = Date.now();
+			while (Date.now() - startTime < 5000) {
+				const persisted = await workspace.project.persistence.loadOpenFiles('');
+				const docs = Array.isArray(persisted) ? persisted : persisted?.docs ?? [];
+				if (docs.some((d: any) => d.draftContent === 'Unload-race draft content')) return;
+				await new Promise(resolve => setTimeout(resolve, 10));
+			}
+			throw new Error('Timed out waiting for the pagehide persistence flush');
+		});
+
 		await page.reload();
 		const reloadedEditor = page.locator('.cm-content').first();
 		await expect(reloadedEditor).toBeVisible({ timeout: EDITOR_READY_TIMEOUT });

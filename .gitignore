@@ -9,6 +9,7 @@ node_modules
 build/
 dist/
 dist-main/
+dist-electron/
 
 # OS
 .DS_Store
