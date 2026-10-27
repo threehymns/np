@@ -490,24 +490,59 @@ export class ProjectTree {
 
 	async createFile(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
 		await this.project.storage.createFile(parentOrigin, name);
-		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
-			parentNode.isExpanded = true;
-			this.worktree?.notifyEntriesChanged();
-		} else {
-			await this.scan(this.project.rootOrigin!);
-		}
+		await this.publishCreatedEntry(parentOrigin, parentNode);
 	}
 
 	async createDirectory(parentOrigin: FileOrigin, name: string, parentNode?: TreeNode) {
 		await this.project.storage.createDirectory(parentOrigin, name);
-		if (parentNode) {
-			parentNode.children = await this.buildLevel(parentOrigin, await this.getNodePath(parentNode));
-			parentNode.isExpanded = true;
-			this.worktree?.notifyEntriesChanged();
-		} else {
+		await this.publishCreatedEntry(parentOrigin, parentNode);
+	}
+
+	/**
+	 * Publishes a newly created entry to the Worktree snapshot.
+	 *
+	 * The row the user acted on can be a search result rather than a node in
+	 * the snapshot: while the explorer filter is active, the tree renders
+	 * search results. Refreshing that row's children alone and notifying
+	 * would advance the snapshot version while publishing the old file set,
+	 * so the snapshot's own node for the parent is updated before the
+	 * notification. When the snapshot does not carry that directory, a scan
+	 * is the only way to publish the new file set.
+	 */
+	private async publishCreatedEntry(parentOrigin: FileOrigin, parentNode?: TreeNode) {
+		if (!parentNode) {
 			await this.scan(this.project.rootOrigin!);
+			return;
 		}
+
+		const parentPath = await this.getNodePath(parentNode);
+		const children = await this.buildLevel(parentOrigin, parentPath);
+		parentNode.children = children;
+		parentNode.isExpanded = true;
+		if (parentPath) {
+			this.expandedPaths.add(parentPath);
+		}
+
+		const snapshotParent = this.findNodeByOrigin(this.nodes, parentOrigin);
+		if (!snapshotParent) {
+			await this.scan(this.project.rootOrigin!);
+			return;
+		}
+
+		snapshotParent.children = children;
+		snapshotParent.isExpanded = true;
+		this.worktree?.notifyEntriesChanged();
+	}
+
+	/** The snapshot node with this origin, if the snapshot carries it. */
+	private findNodeByOrigin(nodes: TreeNode[], origin: FileOrigin): TreeNode | null {
+		const uri = toURI(origin);
+		for (const node of nodes) {
+			if (toURI(node.origin) === uri) return node;
+			const found = this.findNodeByOrigin(node.children ?? [], origin);
+			if (found) return found;
+		}
+		return null;
 	}
 
 	async deleteEntry(node: TreeNode) {
