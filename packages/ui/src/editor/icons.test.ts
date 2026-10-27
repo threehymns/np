@@ -145,4 +145,36 @@ describe("IconRegistry", () => {
 		registry.removePluginIcons("plugin-b");
 		expect(registry.activeFileThemeId).toBe("theme-a");
 	});
+
+	it("refresh preserves an active builtin theme that has not loaded yet", () => {
+		const registry = new IconRegistry();
+		registry.activeFileThemeId = "material";
+		registry.activeProductThemeId = "custom-product";
+
+		registry.registerFileIconTransform("plugin-a", addFileTheme("theme-a"));
+		registry.registerProductIconTransform("plugin-a", addProductTheme("product-a"));
+		registry.refresh();
+
+		expect(registry.activeFileThemeId).toBe("material");
+		expect(registry.activeProductThemeId).toBe("custom-product");
+	});
+
+	it("removing an owner with no icon transforms preserves an unloaded active theme", () => {
+		const registry = new IconRegistry();
+		registry.activeFileThemeId = "material";
+
+		registry.removePluginIcons("plugin-not-registered");
+
+		expect(registry.activeFileThemeId).toBe("material");
+	});
+
+	it("removing a plugin owner preserves an unloaded builtin active theme", () => {
+		const registry = new IconRegistry();
+		registry.registerFileIconTransform("plugin-a", addFileTheme("theme-a"));
+		registry.activeFileThemeId = "material";
+
+		registry.removePluginIcons("plugin-a");
+
+		expect(registry.activeFileThemeId).toBe("material");
+	});
 });

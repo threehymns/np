@@ -278,19 +278,27 @@ export class IconRegistry implements IconRegistryInterface {
 	removePluginIcons(pluginId: string): void {
 		const keptFileTransforms = this.fileIconTransforms.filter((entry) => entry.pluginId !== pluginId);
 		const keptProductTransforms = this.productIconTransforms.filter((entry) => entry.pluginId !== pluginId);
-		if (
-			keptFileTransforms.length !== this.fileIconTransforms.length ||
-			keptProductTransforms.length !== this.productIconTransforms.length
-		) {
+		const removedFileTransforms = keptFileTransforms.length !== this.fileIconTransforms.length;
+		const removedProductTransforms = keptProductTransforms.length !== this.productIconTransforms.length;
+		if (removedFileTransforms || removedProductTransforms) {
+			// Builtin themes load lazily, so an active theme missing from the map
+			// may simply not have loaded yet. Only reset a theme that was loaded
+			// before its owner's transforms were removed.
+			const activeFileThemeWasLoaded = Boolean(this.fileThemes[this.activeFileThemeId]);
+			const activeProductThemeWasLoaded = Boolean(this.productThemes[this.activeProductThemeId]);
 			this.fileIconTransforms = keptFileTransforms;
 			this.productIconTransforms = keptProductTransforms;
 			this.rebuild();
-		}
-		if (!this.fileThemes[this.activeFileThemeId]) {
-			this.activeFileThemeId = 'phosphor';
-		}
-		if (!this.productThemes[this.activeProductThemeId]) {
-			this.activeProductThemeId = 'phosphor';
+			if (removedFileTransforms && activeFileThemeWasLoaded && !this.fileThemes[this.activeFileThemeId]) {
+				this.activeFileThemeId = 'phosphor';
+			}
+			if (
+				removedProductTransforms &&
+				activeProductThemeWasLoaded &&
+				!this.productThemes[this.activeProductThemeId]
+			) {
+				this.activeProductThemeId = 'phosphor';
+			}
 		}
 	}
 
@@ -313,12 +321,6 @@ export class IconRegistry implements IconRegistryInterface {
 	rebuild(): void {
 		this.fileThemes = this.replayFileTransforms();
 		this.productThemes = this.replayProductTransforms();
-		if (!this.fileThemes[this.activeFileThemeId]) {
-			this.activeFileThemeId = 'phosphor';
-		}
-		if (!this.productThemes[this.activeProductThemeId]) {
-			this.activeProductThemeId = 'phosphor';
-		}
 		this.applyAppearance();
 	}
 
