@@ -154,6 +154,7 @@ export class IconRegistry implements IconRegistryInterface {
 
 	private fileThemes = $state<Record<string, FileIconProvider>>({});
 	private productThemes = $state<Record<string, ProductIconProvider>>({});
+	private builtinLoads = new Map<string, Promise<void>>();
 	private fileIconTransforms: FileIconTransformRegistration[] = [];
 	private productIconTransforms: ProductIconTransformRegistration[] = [];
 	private ownerOrdering?: (ownerIds: readonly string[]) => string[];
@@ -164,21 +165,6 @@ export class IconRegistry implements IconRegistryInterface {
 	}
 
 	async initialize(): Promise<void> {
-		await Promise.all(
-			builtinFileThemes.map(async (config) => {
-				try {
-					const themeUrl = `https://cdn.jsdelivr.net/gh/${config.repoUrl.replace('https://github.com/', '')}/${config.themePath}`;
-					const theme = await fetchZedTheme(themeUrl);
-					if (theme) {
-						const provider = new ManifestIconProvider(config.id, config.name, theme, config.iconBaseUrl);
-						this.registerFileTheme(config.id, provider);
-					}
-				} catch (e) {
-					console.warn(`Failed to load builtin theme ${config.id}:`, e);
-				}
-			})
-		);
-
 		const installed = this.loadInstalledThemes();
 		for (const installedTheme of installed) {
 			try {
@@ -196,6 +182,40 @@ export class IconRegistry implements IconRegistryInterface {
 				console.warn(`Failed to load installed theme: ${installedTheme.id}`);
 			}
 		}
+
+		// The default phosphor theme never needs the network. A persisted
+		// builtin theme is fetched once, in the background; offline, the
+		// fetch returns null and icon resolution falls back to phosphor.
+		if (this.activeFileThemeId !== 'phosphor') {
+			await this.ensureFileTheme(this.activeFileThemeId).catch(() => {});
+		}
+	}
+
+	/**
+	 * Loads a builtin CDN theme on demand. Idempotent and single-flight: the
+	 * same id never issues two overlapping fetches. An unreachable CDN leaves
+	 * the registry unchanged, so the caller keeps resolving Phosphor icons.
+	 */
+	async ensureFileTheme(id: string): Promise<void> {
+		if (this.fileThemes[id]) return;
+		const config = builtinFileThemes.find((theme) => theme.id === id);
+		if (!config) return;
+
+		const pending = this.builtinLoads.get(id);
+		if (pending) return pending;
+
+		const load = (async () => {
+			const themeUrl = `https://cdn.jsdelivr.net/gh/${config.repoUrl.replace('https://github.com/', '')}/${config.themePath}`;
+			const theme = await fetchZedTheme(themeUrl);
+			if (!theme) return;
+			this.registerFileTheme(
+				config.id,
+				new ManifestIconProvider(config.id, config.name, theme, config.iconBaseUrl)
+			);
+		})().finally(() => this.builtinLoads.delete(id));
+
+		this.builtinLoads.set(id, load);
+		return load;
 	}
 
 	private loadInstalledThemes(): Array<{ id: string; name: string; baseUrl: string }> {
@@ -381,6 +401,16 @@ export class IconRegistry implements IconRegistryInterface {
 			name: this.fileThemes[id].name || id,
 			source: BUILTIN_FILE_THEME_IDS.has(id) ? 'builtin' : 'installed'
 		}));
+	}
+
+	/** Every selectable file theme, including builtins whose manifest is not loaded yet. */
+	getAvailableFileThemes(): ThemeInfo[] {
+		const loaded = this.getFileThemes();
+		const loadedIds = new Set(loaded.map((theme) => theme.id));
+		const unloaded = builtinFileThemes
+			.filter((config) => !loadedIds.has(config.id))
+			.map((config) => ({ id: config.id, name: config.name, source: 'builtin' as const }));
+		return [...loaded, ...unloaded];
 	}
 
 	getProductThemes(): ThemeInfo[] {

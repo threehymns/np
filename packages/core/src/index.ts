@@ -1,4 +1,3 @@
-export * from './polyfills';
 export * from './utils';
 export * from './storage';
 export * from './diff-binding';
