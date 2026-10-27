@@ -250,6 +250,19 @@ export function diagnosticHoverSource(
 	};
 }
 
+function hasDomSupport(): boolean {
+	if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+		return false;
+	}
+	try {
+		const el = document.createElement('div');
+		el.innerHTML = '<span class="test"></span>';
+		return typeof el.querySelector === 'function' && el.querySelector('.test') !== null;
+	} catch {
+		return false;
+	}
+}
+
 function createDiagnosticTooltipElement(
 	diagnostics: readonly LspDiagnostic[],
 	source: LspDiagnosticSource | null,
@@ -258,7 +271,7 @@ function createDiagnosticTooltipElement(
 	const entries = diagnostics.map(formatDiagnosticEntry);
 	const combinedHtml = entries.map((e) => e.html).join('<hr class="cm-lsp-diagnostic-divider">');
 
-	if (typeof document === 'undefined') {
+	if (!hasDomSupport()) {
 		const copyBtn = {
 			nodeType: 1,
 			className: 'cm-lsp-diagnostic-copy',
@@ -277,17 +290,40 @@ function createDiagnosticTooltipElement(
 			textContent: rawFallback,
 			innerHTML: (messageHtmlMatch ? messageHtmlMatch[1] : combinedHtml).replaceAll("&#39;", String.fromCharCode(39))
 		};
-		return {
+		const mockDom = {
 			nodeType: 1,
 			textContent: rawFallback,
 			className: 'cm-lsp-hover cm-lsp-diagnostic-tooltip',
 			childNodes: [messageEl, copyBtn],
+			querySelectorAll: () => [],
 			querySelector: (selector: string) => {
 				if (selector === '.cm-lsp-diagnostic-copy') return copyBtn;
 				if (selector === '.cm-lsp-diagnostic-message') return messageEl;
+				if (selector.startsWith('a[title=')) {
+					const titleMatch = /title="([^"]+)"/.exec(selector);
+					if (titleMatch) {
+						const linkMatch = new RegExp(`<a\\b[^>]*title="${titleMatch[1]}"[^>]*>`, 's').exec(combinedHtml);
+						if (linkMatch) {
+							const hrefMatch = /href="([^"]+)"/.exec(linkMatch[0]);
+							const href = hrefMatch ? hrefMatch[1] : null;
+							return {
+								nodeType: 1,
+								href,
+								getAttribute: (attr: string) => (attr === 'href' ? href : null)
+							};
+						}
+					}
+				}
 				return null;
 			}
 		} as any;
+		if (source?.highlightCodeBlocks) {
+			const p = source.highlightCodeBlocks(mockDom);
+			if (p) {
+				(mockDom as any).highlightPromise = p;
+			}
+		}
+		return mockDom;
 	}
 
 	const dom = document.createElement('div');
