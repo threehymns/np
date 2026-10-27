@@ -46,6 +46,19 @@ beforeAll(async () => {
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
 
+/**
+ * The mock has no clock or inode metadata, so it stamps the content itself:
+ * any text change moves `modifiedAt`, and `size` tracks the length.
+ */
+function contentStamp(content: string): number {
+	let hash = 2166136261;
+	for (let i = 0; i < content.length; i++) {
+		hash ^= content.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return hash >>> 0;
+}
+
 function createMockStorage(files: Record<string, string> = {}) {
 	return {
 		readFile: mock(async (origin: FileOrigin) => {
@@ -74,10 +87,12 @@ function createMockStorage(files: Record<string, string> = {}) {
 					if (!seen.has(name)) {
 						seen.add(name);
 						const isDir = parts.length > 1;
+						const content = files[p] ?? "";
 						dirEntries.push({
 							name,
 							kind: isDir ? ("directory" as const) : ("file" as const),
-							origin: { scheme: "file", path: `${prefix}/${name}`, name }
+							origin: { scheme: "file", path: `${prefix}/${name}`, name },
+							...(isDir ? {} : { modifiedAt: contentStamp(content), size: content.length })
 						});
 					}
 				}

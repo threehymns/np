@@ -25,6 +25,19 @@ beforeAll(async () => {
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
 
+/**
+ * The mock has no clock or inode metadata, so it stamps the content itself:
+ * any text change moves `modifiedAt`, and `size` tracks the length.
+ */
+function contentStamp(content: string): number {
+	let hash = 2166136261;
+	for (let i = 0; i < content.length; i++) {
+		hash ^= content.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return hash >>> 0;
+}
+
 function createMockStorage(files: Record<string, string> = {}) {
 	return {
 		readFile: mock(async (origin: FileOrigin) => {
@@ -51,10 +64,12 @@ function createMockStorage(files: Record<string, string> = {}) {
 					if (!seen.has(name)) {
 						seen.add(name);
 						const isDir = parts.length > 1;
+						const content = files[p] ?? "";
 						dirEntries.push({
 							name,
 							kind: isDir ? ("directory" as const) : ("file" as const),
-							origin: { scheme: "file", path: `${prefix}/${name}`, name }
+							origin: { scheme: "file", path: `${prefix}/${name}`, name },
+							...(isDir ? {} : { modifiedAt: contentStamp(content), size: content.length })
 						});
 					}
 				}
@@ -113,6 +128,28 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 
 		await wt.scan();
 		expect(wt.version).toBe(1);
+	});
+
+	it("re-scanning unchanged files leaves contentVersion unchanged too", async () => {
+		const storage = createMockStorage({
+			"/test-project/README.md": "# Readme",
+			"/test-project/src/index.ts": "console.log('hi');"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		const received: any[] = [];
+		wt.subscribe((snapshot) => received.push(snapshot));
+
+		await wt.scan();
+		const first = wt.snapshot;
+		await wt.scan();
+
+		// A no-op scan publishes nothing that asks a consumer to re-run:
+		// both the file-set version and the content generation stay put.
+		expect(wt.version).toBe(first.version);
+		expect(wt.contentVersion).toBe(first.contentVersion);
+		expect(received.at(-1)?.version).toBe(first.version);
+		expect(received.at(-1)?.contentVersion).toBe(first.contentVersion);
 	});
 
 	it("a content-only scan advances contentVersion but not the file-set version", async () => {

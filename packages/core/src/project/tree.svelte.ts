@@ -13,6 +13,14 @@ export interface TreeNode {
 	parentOrigin?: FileOrigin;
 	children?: TreeNode[];
 	isExpanded: boolean;
+	/**
+	 * The backend's modification time for this file, when it reported one.
+	 * Display never reads it; the scan compares it between snapshots to tell
+	 * a content edit from an unchanged rescan.
+	 */
+	modifiedAt?: number;
+	/** The backend's file size in bytes, when it reported one. */
+	size?: number;
 }
 
 export interface VisualNode {

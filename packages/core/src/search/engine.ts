@@ -315,10 +315,9 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 		if (worktree) {
 			this.worktreeUnsubscribe = worktree.subscribe((snapshot) => {
-				// Drop cached file content when a scan publishes a snapshot:
-				// the scan may have found content edits without a file-set
-				// change, so the file-set version alone cannot keep the cache
-				// honest.
+				// Drop cached file content when the content generation moves:
+				// the scan found a new file set or new file metadata, so the
+				// cached text may no longer describe the project.
 				this.pruneCache(snapshot.contentVersion);
 			});
 		}

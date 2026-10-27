@@ -67,6 +67,19 @@ function fileResult(filepath: string, matches: number): FileSearchResult {
 }
 
 /**
+ * The mock has no clock or inode metadata, so it stamps the content itself:
+ * any text change moves `modifiedAt`, and `size` tracks the length.
+ */
+function contentStamp(content: string): number {
+	let hash = 2166136261;
+	for (let i = 0; i < content.length; i++) {
+		hash ^= content.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return hash >>> 0;
+}
+
+/**
  * A storage whose files can change under the tab's feet, the way a file
  * edited in a terminal changes.
  */
@@ -82,6 +95,8 @@ function createStorage(files: Record<string, string>) {
 				name: string;
 				kind: "file" | "directory";
 				origin: { scheme: string; path: string; name: string };
+				modifiedAt?: number;
+				size?: number;
 			}[] = [];
 			const seen = new Set<string>();
 			for (const path of Object.keys(files)) {
@@ -90,10 +105,13 @@ function createStorage(files: Record<string, string>) {
 				const name = rest.split("/")[0];
 				if (seen.has(name)) continue;
 				seen.add(name);
+				const isDirectory = rest.includes("/");
+				const content = files[path] ?? "";
 				entries.push({
 					name,
-					kind: rest.includes("/") ? "directory" : "file",
-					origin: { scheme: "file", path: `${origin.path}/${name}`, name }
+					kind: isDirectory ? "directory" : "file",
+					origin: { scheme: "file", path: `${origin.path}/${name}`, name },
+					...(isDirectory ? {} : { modifiedAt: contentStamp(content), size: content.length })
 				});
 			}
 			return entries;
@@ -319,6 +337,59 @@ describe("Search tab runner (Issue #355)", () => {
 		worktree.notifyEntriesChanged();
 
 		await runner.idle();
+		expect(backend.queries.length).toBe(2);
+	});
+
+	it("a rescan that finds no change does not re-run the search", async () => {
+		const files: Record<string, string> = { "/test-project/a.txt": "needle" };
+		const storage = createStorage(files);
+		const worktree = new Worktree(rootOrigin, { storage: storage as any });
+		await worktree.scan();
+
+		const backend = new FakeBackend(() => ({ results: [fileResult("a.txt", 1)] }));
+		const session = new SearchTabSession({ query: "needle" });
+		const runner = new SearchTabRunner({
+			getBackend: () => backend,
+			getSession: () => session,
+			debounceMs: 5
+		});
+		runner.attachToWorktree(worktree);
+
+		await runner.run();
+		expect(backend.queries.length).toBe(1);
+
+		// Polled strategies rescan directories that did not change. The
+		// snapshot moves neither version, so the results still describe
+		// the project and there is nothing to re-run.
+		await worktree.scan();
+		await new Promise((resolve) => setTimeout(resolve, 30));
+
+		expect(backend.queries.length).toBe(1);
+	});
+
+	it("a rescan that finds edited file content re-runs the search", async () => {
+		const files: Record<string, string> = { "/test-project/a.txt": "needle" };
+		const storage = createStorage(files);
+		const worktree = new Worktree(rootOrigin, { storage: storage as any });
+		await worktree.scan();
+
+		const backend = new FakeBackend(() => ({ results: [fileResult("a.txt", 1)] }));
+		const session = new SearchTabSession({ query: "needle" });
+		const runner = new SearchTabRunner({
+			getBackend: () => backend,
+			getSession: () => session,
+			debounceMs: 5
+		});
+		runner.attachToWorktree(worktree);
+
+		await runner.run();
+		expect(backend.queries.length).toBe(1);
+
+		// The file set is the same; the file's text changed.
+		files["/test-project/a.txt"] = "needle updated";
+		await worktree.scan();
+		await runner.idle();
+
 		expect(backend.queries.length).toBe(2);
 	});
 

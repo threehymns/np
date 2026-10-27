@@ -177,3 +177,37 @@ describe('ElectronStorage.readFile and readDirectory error normalization', () =>
 		await expect(storage.readFile(origin)).rejects.toBe(original);
 	});
 });
+
+describe('ElectronStorage.readDirectory metadata', () => {
+	it('carries the main process modification time and size into entries', async () => {
+		(globalThis as any).window = {
+			electronAPI: {
+				readDirectory: mock(async () => [
+					{ name: 'notes', kind: 'directory', path: '/tmp/notes/notes' },
+					{ name: 'a.md', kind: 'file', path: '/tmp/notes/a.md', modifiedAt: 1_700_000_000_000, size: 42 }
+				])
+			}
+		};
+
+		try {
+			const storage = new ElectronStorage();
+			const entries = await storage.readDirectory({
+				scheme: 'file',
+				path: '/tmp/notes',
+				name: 'notes'
+			});
+
+			expect(entries[0]).toEqual({
+				name: 'notes',
+				kind: 'directory',
+				origin: { scheme: 'file', path: '/tmp/notes/notes', name: 'notes' },
+				modifiedAt: undefined,
+				size: undefined
+			});
+			expect(entries[1].modifiedAt).toBe(1_700_000_000_000);
+			expect(entries[1].size).toBe(42);
+		} finally {
+			delete (globalThis as any).window;
+		}
+	});
+});

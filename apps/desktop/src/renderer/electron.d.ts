@@ -21,7 +21,7 @@ export interface ElectronAPI {
 
 	writeFile(filePath: string, content: string): Promise<void>;
 	isSymlink(filePath: string): Promise<boolean>;
-	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string }> | IpcNotFoundError>;
+	readDirectory(dirPath: string): Promise<Array<{ name: string; kind: 'file' | 'directory'; path: string; modifiedAt?: number; size?: number }> | IpcNotFoundError>;
 	createDirectory(dirPath: string): Promise<void>;
 	deleteEntry(entryPath: string): Promise<void>;
 	renameEntry(oldPath: string, newName: string): Promise<string>;

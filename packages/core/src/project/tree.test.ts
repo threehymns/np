@@ -308,3 +308,100 @@ describe("ProjectTree.createFile advances worktree version", () => {
 		expect(receivedSnapshots[1].version).toBe(initialVersion + 1);
 	});
 });
+
+describe("ProjectTree delete and rename advance worktree version", () => {
+	function createMutableProject() {
+		const folder: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
+		let entries: Array<{
+			name: string;
+			kind: "file" | "directory";
+			origin: FileOrigin;
+		}> = [
+			{
+				name: "old.txt",
+				kind: "file",
+				origin: { scheme: "file", path: "/test-project/old.txt", name: "old.txt" }
+			}
+		];
+
+		const storage = {
+			readFile: mock(async () => "content"),
+			readDirectory: mock(async (origin: FileOrigin) => {
+				if (toURI(origin) === toURI(folder)) return entries;
+				return [];
+			}),
+			createFile: mock(async () => {}),
+			createDirectory: mock(async () => {}),
+			deleteEntry: mock(async (origin: FileOrigin) => {
+				entries = entries.filter((entry) => entry.origin.path !== origin.path);
+			}),
+			renameEntry: mock(async (origin: FileOrigin, newName: string) => {
+				const newOrigin: FileOrigin = {
+					scheme: "file",
+					path: `/test-project/${newName}`,
+					name: newName
+				};
+				entries = entries.map((entry) =>
+					entry.origin.path === origin.path
+						? { ...entry, name: newName, origin: newOrigin }
+						: entry
+				);
+				return newOrigin;
+			})
+		};
+
+		const project: any = {
+			hasRootPermission: true,
+			rootOrigin: folder,
+			storage,
+			persistence: {
+				loadExpandedPaths: mock(async () => []),
+				saveExpandedPaths: mock(async () => {})
+			}
+		};
+
+		return { project, folder };
+	}
+
+	it("deleteEntry advances version and notifies snapshot listeners", async () => {
+		const { project, folder } = createMutableProject();
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree!;
+		const initialVersion = wt.version;
+		const receivedSnapshots: any[] = [];
+		wt.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+
+		const node = tree.nodes.find((n: any) => n.name === "old.txt")!;
+		expect(node).toBeDefined();
+		await tree.deleteEntry(node);
+
+		expect(wt.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.at(-1)?.version).toBe(initialVersion + 1);
+		expect(tree.nodes.some((n: any) => n.name === "old.txt")).toBe(false);
+	});
+
+	it("renameEntry advances version and notifies snapshot listeners", async () => {
+		const { project, folder } = createMutableProject();
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree!;
+		const initialVersion = wt.version;
+		const receivedSnapshots: any[] = [];
+		wt.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+
+		const node = tree.nodes.find((n: any) => n.name === "old.txt")!;
+		expect(node).toBeDefined();
+		await tree.renameEntry(node, "new.txt");
+
+		expect(wt.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.at(-1)?.version).toBe(initialVersion + 1);
+		expect(tree.nodes.map((n: any) => n.name)).toEqual(["new.txt"]);
+	});
+});
