@@ -632,6 +632,37 @@ describe('SpawnGitAdapter — porcelain rename and copy read paths', () => {
 	});
 });
 
+describe('SpawnGitAdapter — HEAD resolution reads', () => {
+	it('treats an unborn HEAD as an empty baseline instead of failing the diff', async () => {
+		const r = await createTrackedRepo();
+		await r.write('first.txt', 'first content\n');
+		await stageAll(r);
+		const adapter = spawnEngine.adapter(r);
+
+		// Precondition: the branch is unborn. `git ls-tree HEAD` fails with
+		// "Not a valid object name HEAD", which no committed-HEAD error path covers.
+		expect((await runGit(r.path, r.env, ['rev-parse', '--verify', 'HEAD'])).code).not.toBe(0);
+		expect((await runGit(r.path, r.env, ['for-each-ref', '--format=%(refname)'])).stdout.trim()).toBe('');
+
+		const detail = await adapter.getFileDiff('first.txt');
+		expect(detail.originalContent).toBe('');
+		expect(detail.stagedContent).toBe('first content\n');
+		expect(detail.modifiedContent).toBe('first content\n');
+	});
+
+	it('propagates the HEAD resolution failure when the repository is not unborn', async () => {
+		const r = await createTrackedRepo();
+		await baseRepo(r);
+		// A dangling HEAD over a repository that still has commits: symbolic-ref
+		// resolves, rev-parse --verify fails, and for-each-ref is non-empty. That is
+		// a broken repository, not an unborn one, so the empty baseline is wrong.
+		await r.write('.git/HEAD', 'ref: refs/heads/ghost\n');
+		const adapter = spawnEngine.adapter(r);
+
+		await expect(adapter.getFileDiff('README.md')).rejects.toThrow(/Not a valid object name HEAD/);
+	});
+});
+
 describe('IsomorphicGitAdapter — engine-specific read contracts', () => {
 	it('reports zero numstat for tracked changes until their diff loads on demand', async () => {
 		const r = await createTrackedRepo();

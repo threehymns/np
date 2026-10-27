@@ -147,11 +147,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'did not match any files'
 	];
 
-	/** Markers for the unborn-HEAD failure: `git reset`/`git restore` resolving `HEAD` on a repository with no commits yet. */
+	/** Markers for the unborn-HEAD failure: `git reset`/`git restore`/`git ls-tree` resolving `HEAD` on a repository with no commits yet. */
 	private static readonly UNBORN_HEAD_MARKERS = [
 		"ambiguous argument 'HEAD'",
 		'could not resolve',
-		'as a valid ref'
+		'as a valid ref',
+		'Not a valid object name HEAD'
 	];
 
 	private isPathNotFoundError(stderr: string): boolean {
@@ -229,7 +230,13 @@ export class SpawnGitAdapter implements VCSAdapter {
 	private async readHeadContent(filepath: string): Promise<string | null> {
 		const res = await this.runGit(['ls-tree', 'HEAD', '--', literalPathspec(filepath)]);
 		if (res.code !== 0) {
-			if (this.isPathNotFoundError(res.stderr) || this.isUnbornHeadError(res.stderr)) {
+			// A missing path in HEAD is an ordinary empty baseline independently of
+			// HEAD's state. A HEAD resolution failure is only empty on a genuinely
+			// unborn branch: the same message comes from a broken HEAD over a
+			// repository with commits, where hiding it would report a corrupt
+			// repository as an empty diff.
+			if (this.isPathNotFoundError(res.stderr)) return null;
+			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
 				return null;
 			}
 			throw new Error(res.stderr || `Failed to read HEAD tree for ${filepath}`);
