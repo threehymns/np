@@ -46,13 +46,13 @@
 		typedLength = null;
 	});
 
-	function clamp(next: number): number {
-		if (!Number.isFinite(next)) return min;
+	function clamp(next: number, fallback?: number): number {
+		if (!Number.isFinite(next)) return fallback ?? min;
 		return Math.min(max, Math.max(min, next));
 	}
 
-	function commit(next: number): void {
-		const bounded = clamp(next);
+	function commit(next: number, fallback?: number): void {
+		const bounded = clamp(next, fallback);
 		if (bounded === value) {
 			typedLength = null;
 			return;
@@ -73,7 +73,12 @@
 	}
 
 	function handleChange(event: Event): void {
-		commit((event.currentTarget as HTMLInputElement).valueAsNumber);
+		const input = event.currentTarget as HTMLInputElement;
+		if (input.value === '') {
+			typedLength = null;
+			return;
+		}
+		commit(input.valueAsNumber, value);
 	}
 </script>
 
