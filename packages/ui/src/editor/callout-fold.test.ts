@@ -37,6 +37,7 @@ beforeAll(async () => {
 			addEventListener() {}
 			removeEventListener() {}
 			contains() { return false; }
+			querySelectorAll() { return []; }
 			getBoundingClientRect() { return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 }; }
 		}
 

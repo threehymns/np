@@ -283,7 +283,7 @@ export function findMatchesInContent(
  * Hand-rolled Zed-style TypeScript search engine behind the SearchBackend seam (ADR 0026).
  *
  * Characteristics:
- * - Persistent in-process: caches file contents across queries, invalidates when snapshot version updates.
+ * - Persistent in-process: caches file contents across queries, invalidates when a scan publishes new content.
  * - Reads ONLY the Worktree snapshot: extracts files from snapshot entries in-memory, never walks the disk.
  * - Zed-style two-phase scan: cheap 8 KB sniff per file (binary check + substring check), full match only on hits.
  * - Respects .gitignore and skips node_modules/build output by default.
@@ -315,15 +315,17 @@ export class TypeScriptSearchEngine implements SearchBackend {
 
 		if (worktree) {
 			this.worktreeUnsubscribe = worktree.subscribe((snapshot) => {
-				// Clear or prune cached files on external snapshot update
-				this.pruneCache(snapshot.version);
+				// Drop cached file content when the content generation moves:
+				// the scan found a new file set or new file metadata, so the
+				// cached text may no longer describe the project.
+				this.pruneCache(snapshot.contentVersion);
 			});
 		}
 	}
 
-	private pruneCache(currentVersion: number): void {
+	private pruneCache(contentVersion: number): void {
 		for (const [key, value] of this.fileCache.entries()) {
-			if (value.version < currentVersion) {
+			if (value.version < contentVersion) {
 				this.cacheBytes -= value.content.length;
 				this.fileCache.delete(key);
 			}
@@ -488,10 +490,10 @@ export class TypeScriptSearchEngine implements SearchBackend {
 					if (live !== undefined) {
 						// A Document holds the file's text, so it is the truth
 						// while the file is dirty. It is not cached: the cache
-						// is keyed by the snapshot version, which does not move
-						// when a Document changes.
+						// is keyed by the content generation, which does not
+						// move when a Document changes.
 						content = live;
-					} else if (cached && cached.version === snapshot.version) {
+					} else if (cached && cached.version === snapshot.contentVersion) {
 						content = cached.content;
 					} else if (worktree.storage) {
 						try {
@@ -501,7 +503,7 @@ export class TypeScriptSearchEngine implements SearchBackend {
 							// switched root must not serve the old root's
 							// content from the cache.
 							if (this.worktree === worktree) {
-								this.cacheFileContent(file.relativePath, content, snapshot.version);
+								this.cacheFileContent(file.relativePath, content, snapshot.contentVersion);
 							}
 						} catch {
 							// If file read fails (missing / permission), skip it

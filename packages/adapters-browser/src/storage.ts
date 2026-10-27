@@ -228,11 +228,25 @@ export class BrowserStorage implements StorageProvider {
 				name: entry.name
 			};
 			await browserHandleRegistry.register(toURI(entryOrigin), entry);
-			entries.push({
+			const storageEntry: StorageEntry = {
 				name: entry.name,
 				kind: entry.kind,
 				origin: entryOrigin
-			});
+			};
+			if (entry.kind === 'file') {
+				// Modification time and size are the scan's only signal that a
+				// file's text changed without the file set changing. Reading
+				// the File's metadata is cheap; its text stays lazy.
+				try {
+					const file = await (entry as FileSystemFileHandle).getFile();
+					storageEntry.modifiedAt = file.lastModified;
+					storageEntry.size = file.size;
+				} catch {
+					// A file the browser will not stat still lists. The next
+					// search reads its text directly.
+				}
+			}
+			entries.push(storageEntry);
 		}
 		return entries;
 	}

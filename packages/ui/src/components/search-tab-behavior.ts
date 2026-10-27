@@ -135,10 +135,20 @@ export function truncationCapText(reason: TruncationReason): string {
  * The state the search tab is in when the file snapshot changes.
  */
 export interface SnapshotRerunState {
-	/** The version of the snapshot the tab last saw. */
+	/** The file-set version of the snapshot the tab last saw. */
 	lastSnapshotVersion: number;
-	/** The version of the snapshot that just arrived. */
+	/** The file-set version of the snapshot that just arrived. */
 	snapshotVersion: number;
+	/**
+	 * The content-invalidation generation the tab last saw. Omitted by
+	 * callers that only track the file-set version.
+	 */
+	lastContentVersion?: number;
+	/**
+	 * The content-invalidation generation that just arrived. Omitted by
+	 * callers that only track the file-set version.
+	 */
+	contentVersion?: number;
 	/** The pattern the tab would search for. */
 	query: string;
 }
@@ -148,15 +158,22 @@ export interface SnapshotRerunState {
  *
  * The results describe the files as they were when the search ran, so a
  * snapshot that moved on leaves them describing content the project no
- * longer has: a file edited in a terminal, a branch checked out. A snapshot
- * that did not move changes nothing about the results, and a search without
- * a pattern has nothing to re-run.
+ * longer has: a file edited in a terminal, a branch checked out. A scan that
+ * finds the same file set can still have found new file content, which is
+ * why the content generation is a re-run signal of its own. A snapshot that
+ * moves neither changes nothing about the results, and a search without a
+ * pattern has nothing to re-run.
  *
  * The re-run itself uses the session's query and the options that go with
  * it, so the tab never searches for a pattern of its own.
  */
 export function shouldRerunSearchOnSnapshotChange(state: SnapshotRerunState): boolean {
-	if (state.snapshotVersion === state.lastSnapshotVersion) return false;
+	const fileSetChanged = state.snapshotVersion !== state.lastSnapshotVersion;
+	const contentChanged =
+		state.contentVersion !== undefined &&
+		state.lastContentVersion !== undefined &&
+		state.contentVersion !== state.lastContentVersion;
+	if (!fileSetChanged && !contentChanged) return false;
 	if (state.query.trim().length === 0) return false;
 	return true;
 }

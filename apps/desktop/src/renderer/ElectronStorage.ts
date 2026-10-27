@@ -80,14 +80,16 @@ export class ElectronStorage implements StorageProvider {
 		if (isNotFoundError(result)) {
 			throw this.toNotFoundError(result, origin.path);
 		}
-		return (result as Array<{ name: string; kind: 'file' | 'directory'; path: string }>).map(e => ({
+		return (result as Array<{ name: string; kind: 'file' | 'directory'; path: string; modifiedAt?: number; size?: number }>).map(e => ({
 			name: e.name,
 			kind: e.kind,
 			origin: {
 				scheme: this.scheme,
 				path: e.path,
 				name: e.name
-			}
+			},
+			modifiedAt: e.modifiedAt,
+			size: e.size
 		}));
 	}
 

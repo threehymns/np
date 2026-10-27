@@ -241,3 +241,242 @@ describe("ProjectTree Project ownership pin (#252)", () => {
 		expect(tree.nodes[0].name).toBe("fileA.txt");
 	});
 });
+
+describe("ProjectTree.createFile advances worktree version", () => {
+	it("createFile on tree advances worktree.version and notifies snapshot listeners", async () => {
+		const folder: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
+		const subOrigin: FileOrigin = { scheme: "file", path: "/test-project/sub", name: "sub" };
+		const files: Record<string, any[]> = {
+			"/test-project/sub": []
+		};
+		const storage = {
+			readFile: mock(async () => "content"),
+			readDirectory: mock(async (origin: FileOrigin) => {
+				if (toURI(origin) === toURI(folder)) {
+					return [
+						{ name: "sub", kind: "directory" as const, origin: subOrigin }
+					];
+				}
+				if (toURI(origin) === toURI(subOrigin)) {
+					return files["/test-project/sub"];
+				}
+				return [];
+			}),
+			createFile: mock(async (parentOrigin: FileOrigin, name: string) => {
+				files[parentOrigin.path].push({
+					name,
+					kind: "file" as const,
+					origin: { scheme: "file", path: `${parentOrigin.path}/${name}`, name }
+				});
+			}),
+			createDirectory: mock(async () => {}),
+			deleteEntry: mock(async () => {}),
+			renameEntry: mock(async (o: FileOrigin) => o)
+		};
+
+		const project: any = {
+			hasRootPermission: true,
+			rootOrigin: folder,
+			storage,
+			persistence: {
+				loadExpandedPaths: mock(async () => []),
+				saveExpandedPaths: mock(async () => {})
+			}
+		};
+
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree;
+		expect(wt).toBeDefined();
+		const initialVersion = wt!.version;
+
+		const receivedSnapshots: any[] = [];
+		wt!.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+		expect(receivedSnapshots.length).toBe(1);
+		expect(receivedSnapshots[0].version).toBe(initialVersion);
+
+		const parentNode = tree.nodes.find((n) => n.name === "sub")!;
+		expect(parentNode).toBeDefined();
+
+		await tree.createFile(subOrigin, "new-file.ts", parentNode);
+
+		expect(wt!.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.length).toBe(2);
+		expect(receivedSnapshots[1].version).toBe(initialVersion + 1);
+	});
+});
+
+describe("ProjectTree delete and rename advance worktree version", () => {
+	function createMutableProject() {
+		const folder: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
+		let entries: Array<{
+			name: string;
+			kind: "file" | "directory";
+			origin: FileOrigin;
+		}> = [
+			{
+				name: "old.txt",
+				kind: "file",
+				origin: { scheme: "file", path: "/test-project/old.txt", name: "old.txt" }
+			}
+		];
+
+		const storage = {
+			readFile: mock(async () => "content"),
+			readDirectory: mock(async (origin: FileOrigin) => {
+				if (toURI(origin) === toURI(folder)) return entries;
+				return [];
+			}),
+			createFile: mock(async () => {}),
+			createDirectory: mock(async () => {}),
+			deleteEntry: mock(async (origin: FileOrigin) => {
+				entries = entries.filter((entry) => entry.origin.path !== origin.path);
+			}),
+			renameEntry: mock(async (origin: FileOrigin, newName: string) => {
+				const newOrigin: FileOrigin = {
+					scheme: "file",
+					path: `/test-project/${newName}`,
+					name: newName
+				};
+				entries = entries.map((entry) =>
+					entry.origin.path === origin.path
+						? { ...entry, name: newName, origin: newOrigin }
+						: entry
+				);
+				return newOrigin;
+			})
+		};
+
+		const project: any = {
+			hasRootPermission: true,
+			rootOrigin: folder,
+			storage,
+			persistence: {
+				loadExpandedPaths: mock(async () => []),
+				saveExpandedPaths: mock(async () => {})
+			}
+		};
+
+		return { project, folder };
+	}
+
+	it("deleteEntry advances version and notifies snapshot listeners", async () => {
+		const { project, folder } = createMutableProject();
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree!;
+		const initialVersion = wt.version;
+		const receivedSnapshots: any[] = [];
+		wt.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+
+		const node = tree.nodes.find((n: any) => n.name === "old.txt")!;
+		expect(node).toBeDefined();
+		await tree.deleteEntry(node);
+
+		expect(wt.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.at(-1)?.version).toBe(initialVersion + 1);
+		expect(tree.nodes.some((n: any) => n.name === "old.txt")).toBe(false);
+	});
+
+	it("renameEntry advances version and notifies snapshot listeners", async () => {
+		const { project, folder } = createMutableProject();
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree!;
+		const initialVersion = wt.version;
+		const receivedSnapshots: any[] = [];
+		wt.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+
+		const node = tree.nodes.find((n: any) => n.name === "old.txt")!;
+		expect(node).toBeDefined();
+		await tree.renameEntry(node, "new.txt");
+
+		expect(wt.version).toBe(initialVersion + 1);
+		expect(receivedSnapshots.at(-1)?.version).toBe(initialVersion + 1);
+		expect(tree.nodes.map((n: any) => n.name)).toEqual(["new.txt"]);
+	});
+});
+
+describe("ProjectTree creation under a filtered parent", () => {
+	it("publishes the new file in the worktree snapshot when the parent is a search result", async () => {
+		const folder: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
+		const subOrigin: FileOrigin = { scheme: "file", path: "/test-project/sub", name: "sub" };
+		const files: Record<string, any[]> = { "/test-project/sub": [] };
+		const storage = {
+			readFile: mock(async () => "content"),
+			readDirectory: mock(async (origin: FileOrigin) => {
+				if (toURI(origin) === toURI(folder)) {
+					return [{ name: "sub", kind: "directory" as const, origin: subOrigin }];
+				}
+				if (toURI(origin) === toURI(subOrigin)) {
+					return files["/test-project/sub"];
+				}
+				return [];
+			}),
+			createFile: mock(async (parentOrigin: FileOrigin, name: string) => {
+				files[parentOrigin.path].push({
+					name,
+					kind: "file" as const,
+					origin: { scheme: "file", path: `${parentOrigin.path}/${name}`, name }
+				});
+			}),
+			createDirectory: mock(async () => {}),
+			deleteEntry: mock(async () => {}),
+			renameEntry: mock(async (o: FileOrigin) => o)
+		};
+
+		const project: any = {
+			hasRootPermission: true,
+			rootOrigin: folder,
+			storage,
+			persistence: {
+				loadExpandedPaths: mock(async () => []),
+				saveExpandedPaths: mock(async () => {})
+			}
+		};
+
+		const tree = new ProjectTreeClass(project);
+		await tree.scan(folder);
+
+		const wt = tree.worktree!;
+		const initialVersion = wt.version;
+
+		// While the explorer filter is active the tree renders search
+		// results, so the row the context menu acts on is not a node in the
+		// Worktree snapshot.
+		const searchParent: any = {
+			name: "sub",
+			kind: "directory",
+			origin: subOrigin,
+			parentOrigin: folder,
+			children: [],
+			isExpanded: true
+		};
+		(tree as any).searchQuery = "sub";
+		(tree as any).searchResults = [searchParent];
+
+		const receivedSnapshots: any[] = [];
+		wt.subscribe((snap) => {
+			receivedSnapshots.push(snap);
+		});
+
+		await tree.createFile(subOrigin, "new-file.ts", searchParent);
+
+		expect(wt.version).toBe(initialVersion + 1);
+		const names = (nodes: any[]): string[] =>
+			nodes.flatMap((node) => [node.name, ...(node.children ? names(node.children) : [])]);
+		expect(names(wt.snapshot.entries)).toContain("new-file.ts");
+		expect(names(receivedSnapshots.at(-1)!.entries)).toContain("new-file.ts");
+		// The filtered row shows the new file too.
+		expect(searchParent.children.map((node: any) => node.name)).toContain("new-file.ts");
+	});
+});

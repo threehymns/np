@@ -6,7 +6,16 @@ import type { TreeNode } from './tree.svelte';
 export interface FileSnapshot {
 	readonly root: FileOrigin;
 	readonly entries: TreeNode[];
+	/** The file-set version: advances only when the published entries change. */
 	readonly version: number;
+	/**
+	 * The content-invalidation generation: advances when the file set
+	 * changes or when the backend's per-file metadata (modification time or
+	 * size) differs from the previous snapshot. A scan that finds the same
+	 * files with the same metadata leaves it alone, so polled rescans do not
+	 * re-run search or clear its content cache.
+	 */
+	readonly contentVersion: number;
 }
 
 export type SnapshotListener = (snapshot: FileSnapshot) => void;
@@ -106,6 +115,47 @@ export class GitIgnoreMatcher {
  * Expansion state is display only, so the tree filters the snapshot for
  * display instead of narrowing what the snapshot contains.
  */
+export function entriesEqual(a: readonly TreeNode[], b: readonly TreeNode[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const nodeA = a[i];
+		const nodeB = b[i];
+		if (nodeA.name !== nodeB.name || nodeA.kind !== nodeB.kind) return false;
+		if (nodeA.kind === "directory" || nodeB.kind === "directory") {
+			const childrenA = nodeA.children ?? [];
+			const childrenB = nodeB.children ?? [];
+			if (!entriesEqual(childrenA, childrenB)) return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Whether two snapshots describe the same file content, as far as a scan can
+ * tell. The file set is part of it: a file that appeared, disappeared, or
+ * moved is new content. For files present on both sides, the backend's
+ * metadata (modification time or size) is the signal. Without metadata the
+ * scan has no evidence of an edit, so it reports no change; that is what
+ * keeps a polled rescan from invalidating caches it cannot prove stale.
+ */
+export function entriesContentEqual(a: readonly TreeNode[], b: readonly TreeNode[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const nodeA = a[i];
+		const nodeB = b[i];
+		if (nodeA.name !== nodeB.name || nodeA.kind !== nodeB.kind) return false;
+		if (nodeA.modifiedAt !== nodeB.modifiedAt || nodeA.size !== nodeB.size) return false;
+		if (nodeA.kind === "directory" || nodeB.kind === "directory") {
+			const childrenA = nodeA.children ?? [];
+			const childrenB = nodeB.children ?? [];
+			if (!entriesContentEqual(childrenA, childrenB)) return false;
+		}
+	}
+	return true;
+}
+
 export class Worktree {
 	root: FileOrigin;
 	storage: Storage | null = null;
@@ -114,6 +164,7 @@ export class Worktree {
 
 	private _entries = $state<TreeNode[]>([]);
 	private _version = $state(0);
+	private _contentVersion = $state(0);
 	private listeners = new SvelteSet<SnapshotListener>();
 	private scanGeneration = 0;
 	private isScanning = $state(false);
@@ -164,11 +215,16 @@ export class Worktree {
 		return this._version;
 	}
 
+	get contentVersion(): number {
+		return this._contentVersion;
+	}
+
 	get snapshot(): FileSnapshot {
 		return {
 			root: this.root,
 			entries: this._entries,
-			version: this._version
+			version: this._version,
+			contentVersion: this._contentVersion
 		};
 	}
 
@@ -185,8 +241,23 @@ export class Worktree {
 	}
 
 	updateSnapshot(entries: TreeNode[]): void {
+		const fileSetChanged = this._version === 0 || !entriesEqual(this._entries, entries);
+		// A new, removed, or renamed file is new content too. Otherwise the
+		// backend's metadata decides whether the content may have changed.
+		const contentChanged = fileSetChanged || !entriesContentEqual(this._entries, entries);
+		if (fileSetChanged) {
+			this._version++;
+		}
+		if (contentChanged) {
+			this._contentVersion++;
+		}
 		this._entries = entries;
+		this.notify();
+	}
+
+	notifyEntriesChanged(): void {
 		this._version++;
+		this._contentVersion++;
 		this.notify();
 	}
 
@@ -291,7 +362,9 @@ export class Worktree {
 					origin: entry.origin,
 					parentOrigin: origin,
 					isExpanded: isExpanded ? isExpanded(entryPath) : false,
-					children: entry.kind === 'directory' ? [] : undefined
+					children: entry.kind === 'directory' ? [] : undefined,
+					modifiedAt: entry.modifiedAt,
+					size: entry.size
 				};
 
 				if (node.kind === 'directory') {

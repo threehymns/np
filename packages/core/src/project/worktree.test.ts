@@ -25,6 +25,19 @@ beforeAll(async () => {
 
 const rootOrigin: FileOrigin = { scheme: "file", path: "/test-project", name: "test-project" };
 
+/**
+ * The mock has no clock or inode metadata, so it stamps the content itself:
+ * any text change moves `modifiedAt`, and `size` tracks the length.
+ */
+function contentStamp(content: string): number {
+	let hash = 2166136261;
+	for (let i = 0; i < content.length; i++) {
+		hash ^= content.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return hash >>> 0;
+}
+
 function createMockStorage(files: Record<string, string> = {}) {
 	return {
 		readFile: mock(async (origin: FileOrigin) => {
@@ -51,10 +64,12 @@ function createMockStorage(files: Record<string, string> = {}) {
 					if (!seen.has(name)) {
 						seen.add(name);
 						const isDir = parts.length > 1;
+						const content = files[p] ?? "";
 						dirEntries.push({
 							name,
 							kind: isDir ? ("directory" as const) : ("file" as const),
-							origin: { scheme: "file", path: `${prefix}/${name}`, name }
+							origin: { scheme: "file", path: `${prefix}/${name}`, name },
+							...(isDir ? {} : { modifiedAt: contentStamp(content), size: content.length })
 						});
 					}
 				}
@@ -79,7 +94,8 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(wt.snapshot).toEqual({
 			root: rootOrigin,
 			entries: [],
-			version: 0
+			version: 0,
+			contentVersion: 0
 		});
 		expect(wt.strategy.name).toBe("polled");
 	});
@@ -98,6 +114,83 @@ describe("Worktree owns the live file snapshot (ADR 0025)", () => {
 		expect(wt.version).toBe(1);
 		expect(wt.snapshot.version).toBe(1);
 		expect(wt.snapshot.entries).toBe(wt.entries);
+	});
+
+	it("re-scanning unchanged files does not advance wt.version", async () => {
+		const storage = createMockStorage({
+			"/test-project/README.md": "# Readme",
+			"/test-project/src/index.ts": "console.log('hi');"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+	});
+
+	it("re-scanning unchanged files leaves contentVersion unchanged too", async () => {
+		const storage = createMockStorage({
+			"/test-project/README.md": "# Readme",
+			"/test-project/src/index.ts": "console.log('hi');"
+		});
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		const received: any[] = [];
+		wt.subscribe((snapshot) => received.push(snapshot));
+
+		await wt.scan();
+		const first = wt.snapshot;
+		await wt.scan();
+
+		// A no-op scan publishes nothing that asks a consumer to re-run:
+		// both the file-set version and the content generation stay put.
+		expect(wt.version).toBe(first.version);
+		expect(wt.contentVersion).toBe(first.contentVersion);
+		expect(received.at(-1)?.version).toBe(first.version);
+		expect(received.at(-1)?.contentVersion).toBe(first.contentVersion);
+	});
+
+	it("a content-only scan advances contentVersion but not the file-set version", async () => {
+		const files: Record<string, string> = {
+			"/test-project/README.md": "# Readme"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		const version = wt.version;
+		const contentVersion = wt.contentVersion;
+
+		// The file set is unchanged; only the file's text changed.
+		files["/test-project/README.md"] = "# Updated";
+		await wt.scan();
+
+		expect(wt.version).toBe(version);
+		expect(wt.contentVersion).toBeGreaterThan(contentVersion);
+		expect(wt.snapshot.contentVersion).toBe(wt.contentVersion);
+	});
+
+	it("scanning after adding or removing a file advances wt.version", async () => {
+		const files: Record<string, string> = {
+			"/test-project/README.md": "# Readme"
+		};
+		const storage = createMockStorage(files);
+		const wt = new WorktreeClass(rootOrigin, { storage });
+
+		await wt.scan();
+		expect(wt.version).toBe(1);
+
+		// Add a file
+		files["/test-project/src/index.ts"] = "console.log('hi');";
+		await wt.scan();
+		expect(wt.version).toBe(2);
+
+		// Remove a file
+		delete files["/test-project/README.md"];
+		await wt.scan();
+		expect(wt.version).toBe(3);
 	});
 
 	it("respects .gitignore during scan", async () => {

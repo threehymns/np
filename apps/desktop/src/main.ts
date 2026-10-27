@@ -373,13 +373,40 @@ function registerIpcHandlers() {
 	ipcMain.handle('fs:readDirectory', async (_, dirPath: string) => {
 		try {
 			const entries = await fs.readdir(dirPath, { withFileTypes: true });
-			return entries
-				.filter(entry => entry.isFile() || entry.isDirectory())
-				.map(entry => ({
-					name: entry.name,
-					kind: entry.isDirectory() ? ('directory' as const) : ('file' as const),
-					path: path.join(dirPath, entry.name)
-				}));
+			return await Promise.all(
+				entries
+					.filter(entry => entry.isFile() || entry.isDirectory())
+					.map(async entry => {
+						const entryPath = path.join(dirPath, entry.name);
+						if (entry.isDirectory()) {
+							return {
+								name: entry.name,
+								kind: 'directory' as const,
+								path: entryPath
+							};
+						}
+						// Modification time and size are the scan's signal that a
+						// file's text changed without the file set changing. A file
+						// that disappears between readdir and stat still lists; the
+						// next scan sees it gone.
+						try {
+							const stat = await fs.stat(entryPath);
+							return {
+								name: entry.name,
+								kind: 'file' as const,
+								path: entryPath,
+								modifiedAt: stat.mtimeMs,
+								size: stat.size
+							};
+						} catch {
+							return {
+								name: entry.name,
+								kind: 'file' as const,
+								path: entryPath
+							};
+						}
+					})
+			);
 		} catch (err) {
 			if (isNotFoundError(err)) return toNotFoundMarker(err, dirPath);
 			throw err;

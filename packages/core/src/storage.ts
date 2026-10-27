@@ -30,6 +30,14 @@ export interface StorageEntry {
 	name: string;
 	kind: 'file' | 'directory';
 	origin: FileOrigin;
+	/**
+	 * Last modification time reported by the backend, in epoch milliseconds.
+	 * The scan uses it to tell an unchanged rescan from a content edit;
+	 * backends that cannot report it leave it undefined.
+	 */
+	modifiedAt?: number;
+	/** File size in bytes, when the backend reports it. */
+	size?: number;
 }
 
 export interface SaveFileOptions {
