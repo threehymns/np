@@ -81,6 +81,14 @@ describe('Platform separation static boundary', () => {
 		expect(platformImportViolations(`export type * from 'node:fs';`)).toEqual([]);
 	});
 
+	it('does not match a type-only import after a side-effect import', () => {
+		const source = `
+			import './side-effect';
+			import type { Foo } from'electron';
+		`;
+		expect(platformImportViolations(source)).toEqual([]);
+	});
+
 	it('keeps the bundled manifests platform-neutral on disk', () => {
 		for (const file of [
 			'git/manifest.ts',

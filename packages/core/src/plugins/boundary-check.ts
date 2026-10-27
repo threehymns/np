@@ -215,18 +215,44 @@ export function checkManifestFile(filePath: string): ManifestBoundaryResult {
  * no runtime import under `verbatimModuleSyntax`.
  */
 export function runtimeImportSpecifiers(source: string): string[] {
-	const found: string[] = [];
-	const staticRe = /^\s*import\s+(?!type\b)[\s\S]*?from\s*['"]([^'"]+)['"]/gm;
-	const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
-	const reExportRe = /^\s*export\s+(?!type\b)[\s\S]*?from\s*['"]([^'"]+)['"]/gm;
-	const dynamicRe = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-	const requireRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-	for (const re of [staticRe, sideEffectRe, reExportRe, dynamicRe, requireRe]) {
+	// Static imports and re-exports are parsed rather than matched with a
+	// multi-line regex: a regex body can run into the next declaration and
+	// report a later `import type` as this declaration's runtime specifier.
+	const sourceFile = ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest, true);
+	const staticImports: string[] = [];
+	const reExports: string[] = [];
+
+	function collect(node: ts.Node) {
+		if (
+			ts.isImportDeclaration(node) &&
+			node.importClause &&
+			!node.importClause.isTypeOnly &&
+			ts.isStringLiteral(node.moduleSpecifier)
+		) {
+			staticImports.push(node.moduleSpecifier.text);
+		} else if (
+			ts.isExportDeclaration(node) &&
+			node.moduleSpecifier &&
+			!node.isTypeOnly &&
+			ts.isStringLiteral(node.moduleSpecifier)
+		) {
+			reExports.push(node.moduleSpecifier.text);
+		}
+		ts.forEachChild(node, collect);
+	}
+	collect(sourceFile);
+
+	const found: string[] = [...staticImports];
+	function appendMatches(re: RegExp) {
 		let m: RegExpExecArray | null;
 		while ((m = re.exec(source)) !== null) {
 			found.push(m[1]);
 		}
 	}
+	appendMatches(/^\s*import\s*['"]([^'"]+)['"]/gm);
+	found.push(...reExports);
+	appendMatches(/import\s*\(\s*['"]([^'"]+)['"]\s*\)/g);
+	appendMatches(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/g);
 	return found;
 }
 
