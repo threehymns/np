@@ -12,6 +12,7 @@
 	import {
 		AUTOSAVE_TRIGGERS,
 		DEFAULT_AUTOSAVE_DELAY_MS,
+		MAX_AUTOSAVE_DELAY_MS,
 		autosaveDelayMs as autosaveDelayOf,
 		autosaveModeOf,
 		cn
@@ -251,8 +252,10 @@
 		if (mode === 'after_delay') {
 			// If the stored value is already the delay form, keep its
 			// milliseconds; otherwise start the new mode from the default.
-			const milliseconds =
-				autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS;
+			const milliseconds = Math.min(
+				MAX_AUTOSAVE_DELAY_MS,
+				autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS
+			);
 			appState.prefs.autosave = { after_delay: { milliseconds } };
 			return;
 		}
@@ -262,10 +265,16 @@
 	function setAutosaveDelay(raw: string) {
 		const parsed = Number(raw);
 		if (!Number.isFinite(parsed)) return;
-		// Whole milliseconds: the stored shape is an integer count, and an
-		// emptied number field must not hand SettingsManager a rejected value.
+		// Whole milliseconds within the timer limit: the stored shape is an
+		// integer count, and an emptied or oversized number field must not hand
+		// SettingsManager a rejected value.
 		appState.prefs.autosave = {
-			after_delay: { milliseconds: Math.max(0, Math.trunc(parsed)) }
+			after_delay: {
+				milliseconds: Math.min(
+					MAX_AUTOSAVE_DELAY_MS,
+					Math.max(0, Math.trunc(parsed))
+				)
+			}
 		};
 	}
 
@@ -680,6 +689,7 @@
 														id="autosave-delay"
 														type="number"
 														min="0"
+														max={MAX_AUTOSAVE_DELAY_MS}
 														step="50"
 														aria-label="Auto-save delay in milliseconds"
 														value={autosaveDelayMs}

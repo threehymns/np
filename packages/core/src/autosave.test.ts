@@ -3,6 +3,7 @@ import {
 	AUTOSAVE_TRIGGERS,
 	DEFAULT_AUTOSAVE_DELAY_MS,
 	DEFAULT_AUTOSAVE_SETTING,
+	MAX_AUTOSAVE_DELAY_MS,
 	autosaveDelayMs,
 	autosaveModeOf,
 	isAutosaveEnabled,
@@ -48,7 +49,8 @@ describe('autosave setting validation', () => {
 			'on_focus_change',
 			'on_window_change',
 			{ after_delay: { milliseconds: 0 } },
-			{ after_delay: { milliseconds: 1000 } }
+			{ after_delay: { milliseconds: 1000 } },
+			{ after_delay: { milliseconds: MAX_AUTOSAVE_DELAY_MS } }
 		]) {
 			expect(validateAutosaveSetting(value)).toBe(true);
 			expect(isAutosaveSetting(value)).toBe(true);
@@ -68,13 +70,21 @@ describe('autosave setting validation', () => {
 			{ after_delay: { milliseconds: '1000' } },
 			{ after_delay: { milliseconds: -1 } },
 			{ after_delay: { milliseconds: 1.5 } },
-			{ after_delay: { milliseconds: Number.POSITIVE_INFINITY } }
+			{ after_delay: { milliseconds: Number.POSITIVE_INFINITY } },
+			{ after_delay: { milliseconds: MAX_AUTOSAVE_DELAY_MS + 1 } }
 		]) {
 			expect(isAutosaveSetting(value)).toBe(false);
 			const result = validateAutosaveSetting(value);
 			expect(typeof result).toBe('string');
 			expect(result).toContain('Auto-save');
 		}
+	});
+
+	it('names the timer range when a delay is too large', () => {
+		const result = validateAutosaveSetting({
+			after_delay: { milliseconds: MAX_AUTOSAVE_DELAY_MS + 1 }
+		});
+		expect(result).toContain(String(MAX_AUTOSAVE_DELAY_MS));
 	});
 
 	it('is wired into the editor schema as a union with a schema-level validator', () => {

@@ -42,6 +42,12 @@ the document set, and by disposing the workspace. If the setting changes while a
 timer is pending, the timer re-reads it: turning auto-save off cancels the write,
 and a different delay restarts from the new delay.
 
+The delay is capped at 2,147,483,647 ms, the largest value `setTimeout` honours.
+Browsers and Node coerce larger values to roughly one millisecond, which would
+turn a long delay into a save after every edit. The validator rejects values
+above the cap with a message naming the range, and the settings input clamps to
+the same bound.
+
 All writes go through `Workspace.saveDocument`, not `DocumentSession.save`, so
 before/after save hooks and repository refresh run exactly as they do for a
 manual save. Writes are serialized by the existing save exclusion. A trigger

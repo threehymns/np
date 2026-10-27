@@ -38,9 +38,21 @@ export function isAutosaveTrigger(value: unknown): value is AutosaveTrigger {
 	return typeof value === 'string' && (AUTOSAVE_TRIGGERS as readonly string[]).includes(value);
 }
 
-/** A non-negative integer, matching the delay's unit: whole milliseconds. */
+/**
+ * Largest delay `setTimeout` honours. Browsers and Node coerce larger values
+ * to roughly 1 ms, which would turn a long delay into a save after every edit.
+ */
+export const MAX_AUTOSAVE_DELAY_MS = 2_147_483_647;
+
+/** A non-negative integer no larger than the timer limit: whole milliseconds. */
 function isMilliseconds(value: unknown): value is number {
-	return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+	return (
+		typeof value === 'number' &&
+		Number.isFinite(value) &&
+		Number.isInteger(value) &&
+		value >= 0 &&
+		value <= MAX_AUTOSAVE_DELAY_MS
+	);
 }
 
 /**
@@ -68,7 +80,7 @@ export function validateAutosaveSetting(value: unknown): true | string {
 
 	const milliseconds = (afterDelay as { milliseconds?: unknown }).milliseconds;
 	if (!isMilliseconds(milliseconds)) {
-		return 'Auto-save "after_delay.milliseconds" must be a non-negative integer';
+		return `Auto-save "after_delay.milliseconds" must be a whole number from 0 to ${MAX_AUTOSAVE_DELAY_MS}`;
 	}
 
 	return true;
