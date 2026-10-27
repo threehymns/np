@@ -206,6 +206,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 			if (tab < 0) continue;
 			if (entry.slice(tab + 1) !== filepath) continue;
 			const [mode, oid, stage] = entry.slice(0, tab).split(' ');
+			// A gitlink's oid names a commit in the submodule, not a blob in this
+			// repository. `cat-file -p` on it prints commit metadata, so there is no
+			// index file content to return.
+			if (mode === '160000') return null;
 			if (!mode || !oid || stage !== '0') continue;
 			return /^[0-9a-fA-F]+$/.test(oid) ? oid : null;
 		}
