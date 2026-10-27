@@ -4,6 +4,10 @@
 	"version": "0.0.1",
 	"license": "MIT",
 	"type": "module",
+	"packageManager": "bun@1.4.2",
+	"engines": {
+		"node": ">=22.12.0"
+	},
 	"workspaces": [
 		"apps/*",
 		"packages/*"
@@ -14,8 +18,9 @@
 		"build": "bun --filter web build && bun --filter desktop build",
 		"build:web": "bun --filter web build",
 		"preview:web": "bun --filter web preview",
-		"check": "bun run check:web && bun run check:desktop",
+		"check": "bun run check:web && bun run check:desktop && bun run check:unpack",
 		"check:web": "bun --filter web check",
+		"check:unpack": "bun --filter desktop check:unpack",
 		"dev:desktop": "bun --filter desktop dev",
 		"build:desktop": "bun --filter desktop build",
 		"start:desktop": "bun --filter desktop start",

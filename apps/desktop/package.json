@@ -2,14 +2,32 @@
 	"name": "desktop",
 	"version": "0.0.1",
 	"private": true,
+	"description": "np desktop application",
 	"license": "MIT",
+	"author": {
+		"name": "threehymns",
+		"email": "70611435+threehymns@users.noreply.github.com"
+	},
+	"homepage": "https://github.com/threehymns/np",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/threehymns/np.git",
+		"directory": "apps/desktop"
+	},
 	"type": "module",
 	"main": "./dist-main/main.js",
+	"desktopName": "np.desktop",
 	"scripts": {
 		"dev": "bun run scripts/dev.ts",
 		"derive-unpack": "bun run scripts/derive-unpack-patterns.ts",
-		"build": "bun run scripts/derive-unpack-patterns.ts && vite build && tsc -p tsconfig.main.json",
-		"dist": "bun run scripts/derive-unpack-patterns.ts && electron-builder --publish never",
+		"check:unpack": "bun run scripts/derive-unpack-patterns.ts --check",
+		"clean": "bun run scripts/clean.ts",
+		"set-version": "bun run scripts/set-version.ts",
+		"build": "bun run clean && bun run check:unpack && vite build && tsc -p tsconfig.main.json",
+		"dist": "bun run check:unpack && electron-builder --publish never",
+		"dist:x64": "bun run check:unpack && electron-builder --x64 --publish never",
+		"dist:arm64": "bun run check:unpack && electron-builder --arm64 --publish never",
+		"dist:dir": "bun run check:unpack && electron-builder --dir --publish never",
 		"start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
 		"check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.test.json"
 	},
@@ -54,7 +72,14 @@
 			"target": [
 				"AppImage",
 				"deb"
-			]
+			],
+			"executableName": "np",
+			"syncDesktopName": true,
+			"category": "Development"
+		},
+		"deb": {
+			"packageName": "np",
+			"artifactName": "np_${version}_${arch}.${ext}"
 		},
 		"win": {
 			"target": [
@@ -63,26 +88,26 @@
 		}
 	},
 	"devDependencies": {
-		"electron": "^45.0.0",
-		"electron-builder": "^26.0.0",
-		"svelte": "^5.55.2",
-		"svelte-check": "^4.4.6",
-		"typescript": "^6.0.2",
-		"vite": "^8.0.7",
-		"@sveltejs/vite-plugin-svelte": "^7.0.0",
-		"@tailwindcss/vite": "^4.2.2",
-		"tailwindcss": "^4.2.2",
-		"@types/bun": "^1.2.0",
-		"@types/node": "^25.9.1",
-		"@types/wicg-file-system-access": "^2023.10.7"
-	},
-	"dependencies": {
 		"@codemirror/view": "^6.43.8",
 		"@np/core": "workspace:*",
 		"@np/ui": "workspace:*",
+		"@sveltejs/vite-plugin-svelte": "^7.0.0",
+		"@tailwindcss/vite": "^4.2.2",
+		"@types/bun": "^1.2.0",
+		"@types/node": "^25.9.1",
+		"@types/wicg-file-system-access": "^2023.10.7",
+		"electron": "^45.0.0",
+		"electron-builder": "^26.0.0",
+		"phosphor-svelte": "^3.1.0",
+		"svelte": "^5.55.2",
+		"svelte-check": "^4.4.6",
+		"tailwindcss": "^4.2.2",
+		"typescript": "^6.0.2",
+		"vite": "^8.0.7"
+	},
+	"dependencies": {
 		"@parcel/watcher": "^2.6.0",
 		"@vtsls/language-server": "0.3.0",
-		"jsonc-parser": "^3.3.1",
-		"phosphor-svelte": "^3.1.0"
+		"jsonc-parser": "^3.3.1"
 	}
 }
