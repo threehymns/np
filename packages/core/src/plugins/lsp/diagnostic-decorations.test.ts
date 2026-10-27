@@ -711,6 +711,40 @@ describe('The display controls (#310)', () => {
 		expect(afterDom.textContent).toContain('outer line error');
 		expect(afterDom.textContent).not.toContain('inner token warning');
 	});
+
+	it('provides queryable message element even when globalThis.document is a stub without native querySelector', () => {
+		const originalDocument = (globalThis as any).document;
+		try {
+			(globalThis as any).document = {
+				createElement: () => ({
+					tagName: 'DIV',
+					style: {},
+					childNodes: [],
+					setAttribute() {},
+					getAttribute() { return null; },
+					appendChild(c: any) { return c; }
+				})
+			};
+			const store = new LspDiagnosticsStore();
+			publish(store, toFileUri('/repo/a.ts'), [
+				{ range: range(0, 0, 5), severity: 1, message: 'Type error message' }
+			]);
+			const editor = editorFor(store, '/repo/a.ts', DOC);
+			const tooltip = diagnosticHoverSource(editor, 2);
+			expect(tooltip).not.toBeNull();
+			const dom = (tooltip!.create as any)(editor).dom;
+			expect(dom).toBeDefined();
+			const messageEl = dom.querySelector?.('.cm-lsp-diagnostic-message');
+			expect(messageEl).toBeDefined();
+			expect(messageEl.innerHTML).toBeDefined();
+		} finally {
+			if (originalDocument === undefined) {
+				delete (globalThis as any).document;
+			} else {
+				(globalThis as any).document = originalDocument;
+			}
+		}
+	});
 });
 
 /**
