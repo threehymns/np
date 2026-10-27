@@ -196,6 +196,7 @@ describe("abandoning a chord does not swallow the next keystroke", () => {
 		const executed: string[] = [];
 		const appState: any = {
 			commands: {
+				get: (id: string) => ({ id, action: () => executed.push(id) }),
 				execute: (id: string) => {
 					executed.push(id);
 					return true;
@@ -323,6 +324,7 @@ describe("clipboard bindings respect editor focus", () => {
 		const executed: string[] = [];
 		const appState: any = {
 			commands: {
+				get: (id: string) => ({ id, action: () => executed.push(id) }),
 				execute: (id: string) => {
 					executed.push(id);
 					return true;
@@ -733,6 +735,7 @@ describe("Project search keybinding and remapping (Issue #337)", () => {
 		const executed: string[] = [];
 		const appState: any = {
 			commands: {
+				get: (id: string) => ({ id, action: () => executed.push(id) }),
 				execute: (id: string) => {
 					executed.push(id);
 					return true;
@@ -814,5 +817,96 @@ describe("Project search keybinding and remapping (Issue #337)", () => {
 
 		// Shortcut lookup reflects remapped keybinding
 		expect(reg.getShortcutForCommand("edit.findInFiles")).toBe("⌃⌥S");
+	});
+});
+
+describe("Stale keybinding fallthrough (Issue #225)", () => {
+	function newRegistry(registeredCommands: string[] = []) {
+		const executed: string[] = [];
+		const appState: any = {
+			commands: {
+				get: (id: string) => registeredCommands.includes(id) ? { id, action: () => executed.push(id) } : undefined,
+				execute: (id: string) => {
+					if (registeredCommands.includes(id)) {
+						executed.push(id);
+						return true;
+					}
+					return undefined;
+				},
+			},
+			workspace: {},
+		};
+		const reg = new KeymapRegistry(appState);
+		reg.loadBindings([
+			{
+				bindings: {
+					"ctrl+s": "test.save",
+					// A stale longer chord sharing the same prefix: it must not
+					// hold `ctrl+s` hostage while waiting for a command that
+					// does not exist.
+					"ctrl+s x": "test.saveAll",
+					"ctrl+k s": "test.saveAll",
+				},
+			},
+		] as any);
+		return { reg, executed };
+	}
+
+	function keyEvent(key: string, mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) {
+		let prevented = 0;
+		let stopped = 0;
+		const e = {
+			key,
+			metaKey: mods.meta ?? false,
+			ctrlKey: mods.ctrl ?? false,
+			altKey: mods.alt ?? false,
+			shiftKey: mods.shift ?? false,
+			preventDefault: () => {
+				prevented++;
+			},
+			stopPropagation: () => {
+				stopped++;
+			},
+		} as unknown as KeyboardEvent;
+		return { e, prevented: () => prevented, stopped: () => stopped };
+	}
+
+	it("when a binding points to a command not in appState.commands, handleKeydown returns false and does not call preventDefault", () => {
+		const { reg, executed } = newRegistry([]);
+		const k = keyEvent("s", { ctrl: true });
+
+		const handled = reg.handleKeydown(k.e);
+		expect(handled).toBe(false);
+		expect(k.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+		expect(reg.keyBuffer).toEqual([]);
+	});
+
+	it("when a binding points to an active registered command, handleKeydown returns true, calls preventDefault, and executes the command", () => {
+		const { reg, executed } = newRegistry(["test.save"]);
+		const k = keyEvent("s", { ctrl: true });
+
+		const handled = reg.handleKeydown(k.e);
+		expect(handled).toBe(true);
+		expect(k.prevented()).toBe(1);
+		expect(executed).toEqual(["test.save"]);
+		expect(reg.keyBuffer).toEqual([]);
+	});
+
+	it("does not consume a chord prefix that only a missing command could complete", () => {
+		const { reg, executed } = newRegistry([]);
+		// `ctrl+k s` is a stale binding: its command is not registered. Waiting
+		// for the `s` would swallow the user's `ctrl+k` for a chord that can
+		// never run, so the prefix must fall through immediately.
+		const k1 = keyEvent("k", { ctrl: true });
+		expect(reg.handleKeydown(k1.e)).toBe(false);
+		expect(k1.prevented()).toBe(0);
+		expect(reg.keyBuffer).toEqual([]);
+
+		const k2 = keyEvent("s");
+		expect(reg.handleKeydown(k2.e)).toBe(false);
+		expect(k2.prevented()).toBe(0);
+		expect(executed).toEqual([]);
+		expect(reg.keyBuffer).toEqual([]);
 	});
 });

@@ -209,6 +209,28 @@ describe('SpawnGitAdapter — a pathspec-magic filename is one literal path', ()
 		// The magic-named sibling is untouched by operating on the plain one.
 		expect(await xy(repo, MAGIC_NAME)).toBe('M ');
 	});
+
+	it('updateIndexContent and diff reading on MAGIC_NAME read literal file content and never commit metadata', async () => {
+		const repo = await repoWithTrackedMagicFile();
+		const adapter = adapterFor(repo);
+
+		// Clean diff reading on tracked magic file returns literal content, not commit metadata
+		const cleanDiff = await adapter.getFileDiff(MAGIC_NAME);
+		expect(cleanDiff.originalContent).toBe('magic\n');
+		expect(cleanDiff.originalContent).not.toContain('commit ');
+		expect(cleanDiff.originalContent).not.toContain('Author:');
+
+		// updateIndexContent modifies index content safely without pathspec magic corruption
+		await adapter.updateIndexContent(MAGIC_NAME, 'magic staged update\n');
+
+		// Diff reading on staged magic file returns literal staged content, not commit metadata
+		const stagedDiff = await adapter.getFileDiff(MAGIC_NAME, { staged: true });
+		expect(stagedDiff.originalContent).toBe('magic\n');
+		expect(stagedDiff.modifiedContent).toBe('magic staged update\n');
+		expect(stagedDiff.originalContent).not.toContain('commit ');
+		expect(stagedDiff.modifiedContent).not.toContain('commit ');
+		expect(await xy(repo, MAGIC_NAME)).toBe('MM');
+	});
 });
 
 /**

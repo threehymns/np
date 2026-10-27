@@ -80,12 +80,11 @@ afterEach(async () => {
 
 beforeAll(async () => {
 	mock.module("svelte/reactivity", () => ({ SvelteMap: Map, SvelteSet: Set }));
-	// Only when nothing has installed one: several suites in this package share
-	// this stub, and clobbering `window` out from under a suite that already
-	// installed a DOM leaves the next mounted view with no `document` at all.
-	if (typeof (globalThis as Record<string, unknown>).document === "undefined") {
-		installMinimalDom();
-	}
+	// Installed unconditionally (the `lsp-hover-resolve.test.ts` precedent): a
+	// bare stub left behind by another suite has no `querySelectorAll` or
+	// `innerHTML`, which is exactly what the Markdown pipeline needs, and a
+	// guard here would keep it.
+	installMinimalDom();
 	const mod = await import("./index");
 	getLanguageExtensions = mod.getLanguageExtensions;
 	resolveActiveLanguage = mod.resolveActiveLanguage;

@@ -147,11 +147,12 @@ export class SpawnGitAdapter implements VCSAdapter {
 		'did not match any files'
 	];
 
-	/** Markers for the unborn-HEAD failure: `git reset`/`git restore` resolving `HEAD` on a repository with no commits yet. */
+	/** Markers for the unborn-HEAD failure: `git reset`/`git restore`/`git ls-tree` resolving `HEAD` on a repository with no commits yet. */
 	private static readonly UNBORN_HEAD_MARKERS = [
 		"ambiguous argument 'HEAD'",
 		'could not resolve',
-		'as a valid ref'
+		'as a valid ref',
+		'Not a valid object name HEAD'
 	];
 
 	private isPathNotFoundError(stderr: string): boolean {
@@ -184,11 +185,92 @@ export class SpawnGitAdapter implements VCSAdapter {
 		return refs.code === 0 && refs.stdout.trim() === '';
 	}
 
-	private async readGitObject(objectSpec: string): Promise<string | null> {
-		const res = await this.runGit(['show', objectSpec]);
-		if (res.code === 0) return res.stdout;
-		if (this.isPathNotFoundError(res.stderr)) return null;
-		throw new Error(res.stderr || `Failed to read git object ${objectSpec}`);
+	/**
+	 * The stage-0 index entry for exactly `filepath`, or null.
+	 *
+	 * `ls-files` is recursive: a pathspec naming a directory (or a path that
+	 * used to name a file and now names a directory) lists the entries beneath
+	 * it, so the first entry is not necessarily the requested path. Only an
+	 * exact path match may supply the blob.
+	 *
+	 * Stage 0 is the resolved index entry. An unmerged path has stages 1-3 and
+	 * no stage 0, and a conflict blob is not the file's staged content, so such
+	 * a path has no index content to return. It is reported separately as
+	 * `unmerged` because writing a stage-0 patch over it would collapse those
+	 * stages, discarding the conflict.
+	 *
+	 * `-z` is what makes the comparison literal: without it git C-quotes
+	 * unusual paths, and the quoted form never equals the raw filename.
+	 */
+	private static parseIndexEntry(stdout: string, filepath: string): { oid: string | null; unmerged: boolean } {
+		let unmerged = false;
+		for (const entry of stdout.split('\0')) {
+			const tab = entry.indexOf('\t');
+			if (tab < 0) continue;
+			if (entry.slice(tab + 1) !== filepath) continue;
+			const [mode, oid, stage] = entry.slice(0, tab).split(' ');
+			if (stage !== '0') {
+				unmerged = true;
+				continue;
+			}
+			// A gitlink's oid names a commit in the submodule, not a blob in this
+			// repository. `cat-file -p` on it prints commit metadata, so there is no
+			// index file content to return.
+			if (mode === '160000') return { oid: null, unmerged: false };
+			return { oid: mode && oid && /^[0-9a-fA-F]+$/.test(oid) ? oid : null, unmerged: false };
+		}
+		return { oid: null, unmerged };
+	}
+
+	/**
+	 * Staged content of `filepath`, or null when it has none.
+	 *
+	 * `rejectUnmerged` is for the write path: null normally means "stage this as
+	 * a new file", but an unmerged path must not be treated that way.
+	 */
+	private async readIndexContent(filepath: string, options: { rejectUnmerged?: boolean } = {}): Promise<string | null> {
+		const res = await this.runGit(['ls-files', '--stage', '-z', '--', literalPathspec(filepath)]);
+		if (res.code !== 0) {
+			if (this.isPathNotFoundError(res.stderr)) return null;
+			throw new Error(res.stderr || `Failed to read index for ${filepath}`);
+		}
+		const { oid, unmerged } = SpawnGitAdapter.parseIndexEntry(res.stdout, filepath);
+		if (unmerged && options.rejectUnmerged) {
+			throw new Error(`Cannot update index content for ${filepath}: the path is unmerged`);
+		}
+		if (!oid) return null;
+		const catRes = await this.runGit(['cat-file', '-p', oid]);
+		if (catRes.code !== 0) {
+			throw new Error(catRes.stderr || `Failed to read git object ${oid}`);
+		}
+		return catRes.stdout;
+	}
+
+	private async readHeadContent(filepath: string): Promise<string | null> {
+		const res = await this.runGit(['ls-tree', 'HEAD', '--', literalPathspec(filepath)]);
+		if (res.code !== 0) {
+			// A missing path in HEAD is an ordinary empty baseline independently of
+			// HEAD's state. A HEAD resolution failure is only empty on a genuinely
+			// unborn branch: the same message comes from a broken HEAD over a
+			// repository with commits, where hiding it would report a corrupt
+			// repository as an empty diff.
+			if (this.isPathNotFoundError(res.stderr)) return null;
+			if (this.isUnbornHeadError(res.stderr) && (await this.isUnbornRepository())) {
+				return null;
+			}
+			throw new Error(res.stderr || `Failed to read HEAD tree for ${filepath}`);
+		}
+		const line = res.stdout.trim().split('\n')[0];
+		if (!line) return null;
+		const parts = line.split(/[\s\t]+/);
+		if (parts.length < 3 || parts[1] !== 'blob') return null;
+		const oid = parts[2];
+		if (!oid || !/^[0-9a-fA-F]+$/.test(oid)) return null;
+		const catRes = await this.runGit(['cat-file', '-p', oid]);
+		if (catRes.code !== 0) {
+			throw new Error(catRes.stderr || `Failed to read git object ${oid}`);
+		}
+		return catRes.stdout;
 	}
 
 	async getCurrentBranch(): Promise<string | null> {
@@ -437,7 +519,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		const deletedSources = entries.filter(e => e.y === 'D' && e.filepath !== filepath);
 		const matches: string[] = [];
 		for (const source of deletedSources) {
-			const indexContent = await this.readGitObject(`:${source.filepath}`);
+			const indexContent = await this.readIndexContent(source.filepath);
 			if (indexContent !== null && indexContent === destinationContent) {
 				matches.push(source.filepath);
 			}
@@ -990,15 +1072,15 @@ export class SpawnGitAdapter implements VCSAdapter {
 
 	private async readHeadAndIndex(filepath: string, origPath: string): Promise<{ headContent: string; indexContent: string }> {
 		const [headObj, indexObj] = await Promise.all([
-			this.readGitObject(`HEAD:${origPath}`),
-			this.readGitObject(`:${filepath}`)
+			this.readHeadContent(origPath),
+			this.readIndexContent(filepath)
 		]);
 
 		const headContent = headObj ?? '';
 		let indexContent = indexObj;
 
 		if (indexContent === null && origPath !== filepath) {
-			const origIndexObj = await this.readGitObject(`:${origPath}`);
+			const origIndexObj = await this.readIndexContent(origPath);
 			indexContent = origIndexObj ?? headContent;
 		}
 
@@ -1057,7 +1139,7 @@ export class SpawnGitAdapter implements VCSAdapter {
 		// Optimization: If a file is added ('A'), HEAD is guaranteed empty.
 		if (options?.status === 'A') {
 			const workingTreeContent = options?.staged !== true ? await this.readWorkingTreeContent(filepath) : '';
-			const indexObj = await this.readGitObject(`:${filepath}`);
+			const indexObj = await this.readIndexContent(filepath);
 			return resolveDiffDetail('', indexObj ?? '', workingTreeContent, options);
 		}
 
@@ -1222,7 +1304,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
-		const oldContent = await this.readGitObject(`:${filepath}`);
+		// Refuse an unmerged path: it has stages 1-3 and no stage 0, so it would
+		// otherwise look like a new file and the write would collapse the conflict
+		// into a resolved stage 0.
+		const oldContent = await this.readIndexContent(filepath, { rejectUnmerged: true });
 		// Quoted, so a tab or newline inside a filename cannot truncate the header's
 		// tab-delimited pathspec and redirect the write to a different file.
 		const quoted = SpawnGitAdapter.patchSidePath('a', filepath);

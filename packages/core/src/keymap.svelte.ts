@@ -432,6 +432,28 @@ export class KeymapRegistry {
 		};
 	}
 	
+	/**
+	 * Whether `commandId` names a command this registry can run right now.
+	 *
+	 * A binding can outlive the command it names: a plugin can be disabled or
+	 * unloaded while its keymap transform is still parsed, and a user keymap can
+	 * survive a command rename. Such a binding must not consume a keystroke --
+	 * neither as a full match nor as the prefix of a longer chord -- or the key
+	 * silently disappears instead of reaching the editor or the page.
+	 *
+	 * An app state without `commands.get` (the minimal doubles some tests use)
+	 * cannot answer the question, so its bindings are treated as runnable and
+	 * the execute call decides.
+	 */
+	private commandIsRunnable(commandId: string): boolean {
+		if (!commandId || commandId === 'none' || commandId === 'noop' || commandId === 'unbound') {
+			return false;
+		}
+		if (typeof this.appState?.commands?.get !== 'function') return true;
+		const command = this.appState.commands.get(commandId);
+		return !!command && (!command.isEnabled || command.isEnabled());
+	}
+
 	handleKeydown(e: KeyboardEvent): boolean {
 		// Never intercept IME composition events. Some Chromium/WebKit builds
 		// report the Enter that confirms an IME composition as key "Enter"
@@ -492,26 +514,20 @@ export class KeymapRegistry {
 		let fullMatch: ParsedBinding | null = null;
 
 		for (const binding of activeBindings) {
-			if (keystrokeStartsWith(binding.sequence, candidate)) {
-				if (binding.sequence.length === candidate.length) {
-					fullMatch = binding;
-				} else {
-					hasPartial = true;
-				}
+			if (!keystrokeStartsWith(binding.sequence, candidate)) continue;
+			if (binding.sequence.length === candidate.length) {
+				fullMatch = binding;
+			} else if (this.commandIsRunnable(binding.commandId)) {
+				// Only wait for a longer chord when a command can still complete
+				// it. A stale binding must leave the prefix available to the page.
+				hasPartial = true;
 			}
 		}
 
 		if (fullMatch && !hasPartial) {
-			if (!fullMatch.commandId || fullMatch.commandId === 'none' || fullMatch.commandId === 'noop' || fullMatch.commandId === 'unbound') {
+			if (!this.commandIsRunnable(fullMatch.commandId)) {
 				this.keyBuffer = [];
 				return false;
-			}
-			if (typeof this.appState?.commands?.get === 'function') {
-				const command = this.appState.commands.get(fullMatch.commandId);
-				if (!command || (command.isEnabled && !command.isEnabled())) {
-					this.keyBuffer = [];
-					return false;
-				}
 			}
 			this.keyBuffer = [];
 			const result = this.appState.commands.execute(fullMatch.commandId);

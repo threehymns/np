@@ -1029,3 +1029,33 @@ describe('SpawnGitAdapter — broken-HEAD unstage guard', () => {
 		expect(await workingTreeContents(r, 'hello.ts')).toBe(HELLO_V1);
 	});
 });
+
+describe('SpawnGitAdapter — unmerged index guard', () => {
+	it('refuses to overwrite conflict stages when updating index content', async () => {
+		const r = await createTrackedRepo();
+		await baseRepo(r);
+		await checkedGit(r, ['checkout', '-q', '-b', 'side']);
+		await r.write('src.txt', 'side\n');
+		await commitAll(r, 'side');
+		await checkedGit(r, ['checkout', '-q', 'main']);
+		await r.write('src.txt', 'main\n');
+		await commitAll(r, 'main');
+		const merge = await r.git(['merge', 'side']);
+		expect(merge.code).not.toBe(0);
+
+		// Precondition: the path really is unmerged, with stages 1-3 and no stage 0.
+		const unmerged = await runGit(r.path, r.env, ['ls-files', '--stage', '--', 'src.txt']);
+		const stages = unmerged.stdout.trim().split('\n');
+		expect(stages).toHaveLength(3);
+		expect(stages.map(line => line.split(' ')[2]?.split('\t')[0])).toEqual(['1', '2', '3']);
+
+		const adapter = spawnEngine.adapter(r);
+		await expect(adapter.updateIndexContent('src.txt', 'resolved\n')).rejects.toThrow(/unmerged/i);
+
+		// The conflict stages survive: a no-stage-0 path is not a new file, and
+		// applying a new-file patch would collapse the three stages into a resolved
+		// stage 0, irreversibly discarding the conflict.
+		const after = await runGit(r.path, r.env, ['ls-files', '--stage', '--', 'src.txt']);
+		expect(after.stdout.trim().split('\n')).toEqual(stages);
+	});
+});

@@ -88,7 +88,7 @@ describe('SpawnGitAdapter', () => {
 		expect(statusCall![1]).toContain('-uall');
 
 		// Should not have called git show at all during getChanges
-		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show');
+		const showCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' || call[1][0] === 'ls-files' || call[1][0] === 'ls-tree');
 		expect(showCalls.length).toBe(0);
 
 		// The untracked file is the only thing read (to count lines); tracked files are not read
@@ -331,7 +331,7 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff throws (not an empty diff) when the repo is corrupt', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
-			if (args[0] === 'show') {
+			if (args[0] === 'show' || args[0] === 'ls-files' || args[0] === 'ls-tree') {
 				return { code: 128, stdout: '', stderr: 'fatal: bad index file sha1 signature' };
 			}
 			return { code: 0, stdout: '', stderr: '' };
@@ -372,6 +372,12 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff skips HEAD git show query for staged added files (status: "A", staged: true)', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tadded.txt\0', stderr: '' };
+			}
+			if (args[0] === 'cat-file' && args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+				return { code: 0, stdout: 'staged index content', stderr: '' };
+			}
 			if (args[0] === 'show' && args[1] === ':added.txt') {
 				return { code: 0, stdout: 'staged index content', stderr: '' };
 			}
@@ -382,8 +388,62 @@ describe('SpawnGitAdapter', () => {
 
 		expect(diff.originalContent).toBe('');
 		expect(diff.modifiedContent).toBe('staged index content');
-		const headCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'show' && call[1][1].startsWith('HEAD:'));
+		const headCalls = mockGitRun.mock.calls.filter((call: any) =>
+			(call[1][0] === 'show' && call[1][1].startsWith('HEAD:')) ||
+			(call[1][0] === 'ls-tree' && call[1][1] === 'HEAD')
+		);
 		expect(headCalls.length).toBe(0);
+	});
+
+	it('getFileDiff ignores an index entry that only matches the requested path as a prefix', async () => {
+		// A staged change replaces file `foo` with directory `foo/bar`. `ls-files`
+		// is recursive, so it lists `foo/bar` for the pathspec `foo`; that child's
+		// blob must not be presented as the content of `foo`.
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tfoo/bar\0', stderr: '' };
+			}
+			if (args[0] === 'cat-file') {
+				return { code: 0, stdout: 'child content', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('foo', { status: 'A', staged: true });
+
+		expect(diff.modifiedContent).toBe('');
+		const catCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'cat-file');
+		expect(catCalls.length).toBe(0);
+	});
+
+	it('getFileDiff treats conflict stages without a stage 0 entry as unstaged', async () => {
+		// An unmerged path has stages 1-3 and no stage 0. None of those blobs is
+		// the file's staged content, so reading one would show a conflict side as
+		// if the user had staged it.
+		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-files') {
+				return {
+					code: 0,
+					stdout:
+						'100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\tconflicted.txt\0' +
+						'100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\tconflicted.txt\0' +
+						'100644 cccccccccccccccccccccccccccccccccccccccc 3\tconflicted.txt\0',
+					stderr: ''
+				};
+			}
+			if (args[0] === 'cat-file') {
+				return { code: 0, stdout: 'conflict blob', stderr: '' };
+			}
+			return { code: 0, stdout: '', stderr: '' };
+		});
+
+		const adapter = new SpawnGitAdapter(rootOrigin);
+		const diff = await adapter.getFileDiff('conflicted.txt', { status: 'M', staged: true });
+
+		expect(diff.modifiedContent).toBe('');
+		const catCalls = mockGitRun.mock.calls.filter((call: any) => call[1][0] === 'cat-file');
+		expect(catCalls.length).toBe(0);
 	});
 
 	it('getFileDiff reports the working-tree content of a deleted-in-index file that is still on disk', async () => {
@@ -406,6 +466,20 @@ describe('SpawnGitAdapter', () => {
 
 	it('getFileDiff reads a deleted-in-index file once, not once to probe and again to read', async () => {
 		mockGitRun.mockImplementation(async (_workingDir: string, args: string[]) => {
+			if (args[0] === 'ls-tree') {
+				return { code: 0, stdout: '100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tdeleted.txt\n', stderr: '' };
+			}
+			if (args[0] === 'ls-files') {
+				return { code: 0, stdout: '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\tdeleted.txt\0', stderr: '' };
+			}
+			if (args[0] === 'cat-file') {
+				if (args[2] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+					return { code: 0, stdout: 'head content', stderr: '' };
+				}
+				if (args[2] === 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') {
+					return { code: 0, stdout: 'index content', stderr: '' };
+				}
+			}
 			if (args[0] === 'show' && args[1] === 'HEAD:deleted.txt') {
 				return { code: 0, stdout: 'head content', stderr: '' };
 			}
@@ -1041,14 +1115,14 @@ describe('SpawnGitAdapter', () => {
 				if (args[0] === 'log') {
 					return {
 						code: 0,
-						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x001111111111111111111111111111111111111111\x00tag: v1.0\x00',
+						stdout: 'Commit 1\x00Alice\x001700000000\x001111111\x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00tag: v1.0\x00',
 						stderr: ''
 					};
 				}
 				if (args[0] === 'rev-list') {
 					return {
 						code: 0,
-						stdout: '1111111111111111111111111111111111111111\n',
+						stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n',
 						stderr: ''
 					};
 				}
