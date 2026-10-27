@@ -1,6 +1,7 @@
 <script lang="ts">
 	import * as Dialog from './ui/dialog/index.js';
 	import * as RadioGroup from './ui/radio-group/index.js';
+	import * as Select from './ui/select/index.js';
 	import { Label } from './ui/label/index.js';
 	import { Separator } from './ui/separator/index.js';
 	import { Switch } from './ui/switch/index.js';
@@ -247,6 +248,13 @@
 	const autosaveDelayMs = $derived(
 		autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS
 	);
+
+	const AUTOSAVE_MODE_LABELS: Record<AutosaveMode, string> = {
+		off: 'Off',
+		on_focus_change: 'On focus change',
+		on_window_change: 'On window change',
+		after_delay: 'After a delay'
+	};
 
 	function setAutosaveMode(mode: AutosaveMode) {
 		if (mode === 'after_delay') {
@@ -665,24 +673,30 @@
 
 									<div class="p-4 rounded-xl border bg-card/50 shadow-sm space-y-3">
 										<div class="space-y-0.5">
-											<Label class="text-sm font-medium" for="autosave-mode">Auto-save</Label>
+											<Label class="text-sm font-medium">Auto-save</Label>
 											<p class="text-[10px] text-muted-foreground">Save files automatically. Off disables autosave; on focus change saves the file when it loses focus; on window change saves all files when the window loses focus; after a delay saves the file once typing pauses for the given milliseconds</p>
 										</div>
 										<div class="flex flex-wrap items-center gap-2">
-											<select
-												id="autosave-mode"
-												class="text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+											<Select.Root
+												type="single"
 												value={autosaveMode}
-												onchange={(e) =>
-													setAutosaveMode(
-														(e.currentTarget as HTMLSelectElement).value as AutosaveMode
-													)}
+												onValueChange={(value) =>
+													setAutosaveMode(value as AutosaveMode)}
 											>
-												{#each AUTOSAVE_TRIGGERS as trigger}
-													<option value={trigger}>{trigger}</option>
-												{/each}
-												<option value="after_delay">after_delay</option>
-											</select>
+												<Select.Trigger id="autosave-mode" class="w-40" aria-label="Auto-save">
+													{AUTOSAVE_MODE_LABELS[autosaveMode]}
+												</Select.Trigger>
+												<Select.Content>
+													{#each AUTOSAVE_TRIGGERS as trigger}
+														<Select.Item value={trigger}>
+															{AUTOSAVE_MODE_LABELS[trigger]}
+														</Select.Item>
+													{/each}
+													<Select.Item value="after_delay">
+														{AUTOSAVE_MODE_LABELS.after_delay}
+													</Select.Item>
+												</Select.Content>
+											</Select.Root>
 											{#if autosaveMode === 'after_delay'}
 												<div class="flex items-center gap-1.5">
 													<input

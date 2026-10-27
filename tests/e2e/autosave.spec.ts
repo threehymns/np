@@ -83,7 +83,9 @@ test.describe('Auto-save setting', () => {
 
 		const mode = page.locator('#autosave-mode');
 		await expect(mode).toBeVisible();
-		await mode.selectOption('after_delay');
+		await mode.click();
+		await page.getByRole('option', { name: 'After a delay', exact: true }).click();
+		await expect(mode).toHaveText('After a delay');
 		const delay = page.locator('#autosave-delay');
 		await expect(delay).toBeVisible();
 		await delay.fill('150');
