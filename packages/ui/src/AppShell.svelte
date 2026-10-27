@@ -20,7 +20,7 @@
 	import { Button } from "./components/ui/button";
 	import * as Tooltip from "./components/ui/tooltip/index";
 	import { ModeWatcher } from "mode-watcher";
-	import { onMount, type Snippet } from "svelte";
+	import { onMount, untrack, type Snippet } from "svelte";
 	import { registerBundledPlugins, registerPluginUiLoader } from "./plugins/index";
 
 	import type { UIContributionIcon } from "@np/core";
@@ -57,8 +57,16 @@
 			// deleted-on-disk tab state as in-app deletes, edits preserved.
 			appState.workspace.reconcileExternalDeletions().catch(e => console.error('[AppShell] External-delete reconciliation failed', e));
 		};
+		// The window-change auto-save trigger: the document window losing
+		// focus is the event the mode names. `visibilitychange` below also
+		// reports a hidden window, because a tab switch does not always blur
+		// the window first.
+		const handleWindowChange = () => {
+			void appState.workspace.autosaveOnWindowChange();
+		};
 		window.addEventListener('keydown', handleCaptureKeydown, true);
 		window.addEventListener('focus', handleFocus);
+		window.addEventListener('blur', handleWindowChange);
 
 		// Persistence backends are async (IndexedDB, Electron IPC), so a flush
 		// started in `beforeunload` may not finish before teardown. `pagehide`
@@ -73,6 +81,7 @@
 		const handleVisibilityChange = () => {
 			if (typeof document === 'undefined') return;
 			if (document.visibilityState === 'hidden') {
+				handleWindowChange();
 				flushSession();
 			} else if (document.visibilityState === 'visible') {
 				handleFocus();
@@ -85,6 +94,7 @@
 		return () => {
 			window.removeEventListener('keydown', handleCaptureKeydown, true);
 			window.removeEventListener('focus', handleFocus);
+			window.removeEventListener('blur', handleWindowChange);
 			window.removeEventListener('pagehide', flushSession);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			window.removeEventListener('beforeunload', flushSession);
@@ -112,6 +122,14 @@
 		}).catch(err => {
 			console.error("[AppShell] Failed to load secondary UI components:", err);
 		});
+	});
+
+	$effect(() => {
+		// Read the setting to subscribe to its changes; the workspace owns the
+		// timer details, so keep its document reads out of this effect's
+		// dependency set.
+		void appState.prefs.autosave;
+		untrack(() => appState.workspace.refreshAutosavePolicy());
 	});
 
 	$effect(() => {

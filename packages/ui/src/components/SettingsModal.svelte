@@ -9,8 +9,20 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { languageOverridesText, writeLanguageOverrides } from './settings/language-overrides';
-	import { cn } from '@np/core';
-	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode, SettingScope } from '@np/core';
+	import {
+		AUTOSAVE_TRIGGERS,
+		DEFAULT_AUTOSAVE_DELAY_MS,
+		autosaveDelayMs as autosaveDelayOf,
+		autosaveModeOf,
+		cn
+	} from '@np/core';
+	import type {
+		AppearanceMode,
+		AutosaveMode,
+		CompletionLspInsertMode,
+		CompletionWordsMode,
+		SettingScope
+	} from '@np/core';
 
 	const appState = useAppState();
 
@@ -228,6 +240,33 @@
 		// field from handing SettingsManager a value it rejects outright. Same as
 		// the word-length control above.
 		appState.prefs.serverFetchTimeoutMs = Math.max(0, Math.trunc(parsed));
+	}
+
+	const autosaveMode = $derived(autosaveModeOf(appState.prefs.autosave));
+	const autosaveDelayMs = $derived(
+		autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS
+	);
+
+	function setAutosaveMode(mode: AutosaveMode) {
+		if (mode === 'after_delay') {
+			// If the stored value is already the delay form, keep its
+			// milliseconds; otherwise start the new mode from the default.
+			const milliseconds =
+				autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS;
+			appState.prefs.autosave = { after_delay: { milliseconds } };
+			return;
+		}
+		appState.prefs.autosave = mode;
+	}
+
+	function setAutosaveDelay(raw: string) {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) return;
+		// Whole milliseconds: the stored shape is an integer count, and an
+		// emptied number field must not hand SettingsManager a rejected value.
+		appState.prefs.autosave = {
+			after_delay: { milliseconds: Math.max(0, Math.trunc(parsed)) }
+		};
 	}
 
 	const allCommands = $derived(appState.commands.getAll());
@@ -615,12 +654,45 @@
 										</div>
 									{/if}
 
-									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+									<div class="p-4 rounded-xl border bg-card/50 shadow-sm space-y-3">
 										<div class="space-y-0.5">
-											<Label class="text-sm font-medium">Auto-save</Label>
-											<p class="text-[10px] text-muted-foreground">Coming soon</p>
+											<Label class="text-sm font-medium" for="autosave-mode">Auto-save</Label>
+											<p class="text-[10px] text-muted-foreground">Save files automatically. Off disables autosave; on focus change saves the file when it loses focus; on window change saves all files when the window loses focus; after a delay saves the file once typing pauses for the given milliseconds</p>
 										</div>
-										<Switch checked={false} disabled />
+										<div class="flex flex-wrap items-center gap-2">
+											<select
+												id="autosave-mode"
+												class="text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={autosaveMode}
+												onchange={(e) =>
+													setAutosaveMode(
+														(e.currentTarget as HTMLSelectElement).value as AutosaveMode
+													)}
+											>
+												{#each AUTOSAVE_TRIGGERS as trigger}
+													<option value={trigger}>{trigger}</option>
+												{/each}
+												<option value="after_delay">after_delay</option>
+											</select>
+											{#if autosaveMode === 'after_delay'}
+												<div class="flex items-center gap-1.5">
+													<input
+														id="autosave-delay"
+														type="number"
+														min="0"
+														step="50"
+														aria-label="Auto-save delay in milliseconds"
+														value={autosaveDelayMs}
+														onchange={(e) =>
+															setAutosaveDelay(
+																(e.currentTarget as HTMLInputElement).value
+															)}
+														class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+													/>
+													<span class="text-[10px] text-muted-foreground">ms</span>
+												</div>
+											{/if}
+										</div>
 									</div>
 
 									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">

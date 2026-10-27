@@ -222,6 +222,10 @@ export class AppState {
 			this.plugins,
 			options.snapshotStrategyFactory
 		);
+		// The auto-save policy reads the effective setting through this
+		// callback, the same seam the settings-reader service gives plugins:
+		// Workspace owns when to save, Preferences owns what the user chose.
+		this.workspace.autosaveSettingProvider = () => this.prefs.autosave;
 		// Generic collaborator services for feature plugins (#202, ADR 0008):
 		// dialog capability and the mounted diff view's hunk navigator. The
 		// workspace publishes itself. Keys are generic; values are consumed

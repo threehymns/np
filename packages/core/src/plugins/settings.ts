@@ -19,6 +19,7 @@
 
 import { parse, modify, applyEdits, type ParseError, printParseErrorCode } from 'jsonc-parser';
 import { isNotFoundError } from '../utils';
+import { DEFAULT_AUTOSAVE_SETTING, validateAutosaveSetting } from '../autosave';
 
 /** Owner ID for settings registered synchronously by the core application. */
 export const CORE_SETTINGS_OWNER = 'core';
@@ -26,7 +27,7 @@ export const CORE_SETTINGS_OWNER = 'core';
 export type SettingScope = 'user' | 'workspace';
 export type SettingProvenance = 'default' | 'user' | 'workspace';
 
-export type SettingPropertyType = 'boolean' | 'number' | 'string' | 'object' | 'array';
+export type SettingPropertyType = 'boolean' | 'number' | 'string' | 'object' | 'array' | 'json';
 
 export type SettingControlHint =
 	| 'toggle'
@@ -277,6 +278,7 @@ export const LSP_FETCH_TIMEOUT_SETTING = 'lsp_fetch_timeout_ms';
 export const LSP_INSERT_MODE_SETTING = 'lsp_insert_mode';
 export const SHOW_COMPLETION_DOCUMENTATION_SETTING = 'show_completion_documentation';
 export const LANGUAGE_OVERRIDES_SETTING = 'languages';
+export const AUTOSAVE_SETTING = 'autosave';
 
 /**
  * Standard Zed-aligned Editor settings schema.
@@ -327,6 +329,21 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			description: 'Synchronizes the Vim yank/paste register with the system clipboard',
 			control: 'toggle',
 			alias: 'vimSyncClipboard'
+		},
+		/**
+		 * A union of three named triggers and one object form, so the schema's
+		 * built-in type checks cannot describe it. `json` means "any JSON value";
+		 * the custom validator is what pins the value to the documented shapes.
+		 * There is no `enum`: an enum is the schema's list of allowed scalar
+		 * values, and listing only the three string forms here would advertise
+		 * a set the validator accepts more of.
+		 */
+		[AUTOSAVE_SETTING]: {
+			type: 'json',
+			default: DEFAULT_AUTOSAVE_SETTING,
+			title: 'Auto-save',
+			description: 'Save files automatically. Off disables autosave; on focus change saves the file when it loses focus; on window change saves all files when the window loses focus; after a delay saves the file once typing pauses for the given milliseconds',
+			validate: validateAutosaveSetting
 		},
 		/**
 		 * The completion keys below are the `editor` category's hand-written
@@ -610,6 +627,11 @@ export function validateSettingValue(
 					}
 				};
 			}
+			break;
+		case 'json':
+			// Any JSON value is accepted here; a schema that needs a shape of its
+			// own supplies a validator, because no single runtime type can spell
+			// a union such as a string-or-object setting.
 			break;
 	}
 

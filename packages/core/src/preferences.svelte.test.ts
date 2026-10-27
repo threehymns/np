@@ -287,6 +287,32 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(storage.setItemCalls.length).toBe(0);
 	});
 
+	it("defaults autosave to off and round-trips every documented form", () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+
+		expect(prefs.autosave).toBe("off");
+
+		prefs.autosave = "on_focus_change";
+		expect(prefs.autosave).toBe("on_focus_change");
+		let savedData = JSON.parse(storage.setItemCalls.at(-1)![1]);
+		expect(savedData.editor.autosave).toBe("on_focus_change");
+
+		const delayed = { after_delay: { milliseconds: 750 } };
+		prefs.autosave = delayed;
+		expect(prefs.autosave).toEqual(delayed);
+		savedData = JSON.parse(storage.setItemCalls.at(-1)![1]);
+		expect(savedData.editor.autosave).toEqual(delayed);
+
+		prefs.reload(JSON.stringify({ editor: { autosave: { after_delay: { milliseconds: 250 } } } }));
+		expect(prefs.autosave).toEqual({ after_delay: { milliseconds: 250 } });
+
+		// A hand-edited value outside the documented shapes falls back to off
+		// instead of reaching the Workspace as an invented trigger.
+		prefs.reload(JSON.stringify({ editor: { autosave: { after_delay: { milliseconds: -1 } } } }));
+		expect(prefs.autosave).toBe("off");
+	});
+
 	it("bumps settingsVersion when the underlying settings manager mutates", () => {
 		const storage = createMockStorage();
 		const prefs = new Preferences(storage);

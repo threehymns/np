@@ -522,6 +522,14 @@
 	data-testid="editor-input"
 	onfocusin={handleFocusOrKey}
 	onkeydown={handleFocusOrKey}
+	onfocusout={(event) => {
+		// Focus moving within the editor (content to the permission button,
+		// say) is not a focus change for auto-save purposes. relatedTarget is
+		// null when focus leaves the window; that is a change too.
+		const related = event.relatedTarget;
+		if (related instanceof Node && event.currentTarget.contains(related)) return;
+		void appState.workspace.autosaveOnFocusChange(doc);
+	}}
 >
 	{#if doc.permissionState !== 'granted'}
 		<div class="permission-overlay">
