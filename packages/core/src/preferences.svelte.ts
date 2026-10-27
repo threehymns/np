@@ -8,6 +8,10 @@ import {
 	type SettingDiagnostic,
 	type SettingScope
 } from './plugins/settings';
+import {
+	DEFAULT_AUTOSAVE_SETTING,
+	type AutosaveSetting
+} from './autosave';
 
 export type Theme = 
 	| 'default' 
@@ -38,6 +42,7 @@ const DEFAULTS = {
 	statusBar: true,
 	vimMode: false,
 	vimSyncClipboard: true,
+	autosave: DEFAULT_AUTOSAVE_SETTING,
 	tabSize: 2,
 	lineNumbers: true,
 	completionWords: EDITOR_COMPLETION_DEFAULTS.words,
@@ -145,6 +150,13 @@ export class Preferences {
 		if (this._data.vimSyncClipboard === val) return;
 		this._data.vimSyncClipboard = val;
 		this.syncToSettingsAndSave('editor', 'vim_sync_clipboard', val);
+	}
+
+	get autosave(): AutosaveSetting { return this._data.autosave; }
+	set autosave(val: AutosaveSetting) {
+		if (this._data.autosave === val) return;
+		this._data.autosave = val;
+		this.syncToSettingsAndSave('editor', 'autosave', val);
 	}
 
 	get tabSize(): number { return this._data.tabSize; }
@@ -395,6 +407,7 @@ export class Preferences {
 			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
 			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
+			this._data.autosave = this.settings.resolve('editor', 'autosave').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
@@ -467,6 +480,7 @@ export class Preferences {
 			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
 			this._data.vimMode = this.settings.resolve('editor', 'vim_mode').value;
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
+			this._data.autosave = this.settings.resolve('editor', 'autosave').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;

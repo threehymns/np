@@ -56,7 +56,12 @@
 	let jsonError = $state<string | null>(null);
 
 	$effect(() => {
-		if (schema.type === 'object' || schema.type === 'array' || schema.control === 'json') {
+		if (
+			schema.type === 'object' ||
+			schema.type === 'array' ||
+			schema.type === 'json' ||
+			schema.control === 'json'
+		) {
 			try {
 				jsonDraft = JSON.stringify(effectiveValue, null, 2);
 				jsonError = null;
@@ -242,7 +247,7 @@
 				/>
 			</div>
 
-		{:else if schema.type === 'object' || schema.type === 'array' || schema.control === 'json'}
+		{:else if schema.type === 'object' || schema.type === 'array' || schema.type === 'json' || schema.control === 'json'}
 			<div class="space-y-1.5">
 				<textarea
 					bind:value={jsonDraft}

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import * as Dialog from './ui/dialog/index.js';
 	import * as RadioGroup from './ui/radio-group/index.js';
+	import * as Select from './ui/select/index.js';
+	import { NumberInput } from './ui/number-input/index.js';
 	import { Label } from './ui/label/index.js';
 	import { Separator } from './ui/separator/index.js';
 	import { Switch } from './ui/switch/index.js';
@@ -9,8 +11,21 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { languageOverridesText, writeLanguageOverrides } from './settings/language-overrides';
-	import { cn } from '@np/core';
-	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode, SettingScope } from '@np/core';
+	import {
+		AUTOSAVE_TRIGGERS,
+		DEFAULT_AUTOSAVE_DELAY_MS,
+		MAX_AUTOSAVE_DELAY_MS,
+		autosaveDelayMs as autosaveDelayOf,
+		autosaveModeOf,
+		cn
+	} from '@np/core';
+	import type {
+		AppearanceMode,
+		AutosaveMode,
+		CompletionLspInsertMode,
+		CompletionWordsMode,
+		SettingScope
+	} from '@np/core';
 
 	const appState = useAppState();
 
@@ -228,6 +243,47 @@
 		// field from handing SettingsManager a value it rejects outright. Same as
 		// the word-length control above.
 		appState.prefs.serverFetchTimeoutMs = Math.max(0, Math.trunc(parsed));
+	}
+
+	const autosaveMode = $derived(autosaveModeOf(appState.prefs.autosave));
+	const autosaveDelayMs = $derived(
+		autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS
+	);
+
+	const AUTOSAVE_MODE_LABELS: Record<AutosaveMode, string> = {
+		off: 'Off',
+		on_focus_change: 'On focus change',
+		on_window_change: 'On window change',
+		after_delay: 'After a delay'
+	};
+
+	function setAutosaveMode(mode: AutosaveMode) {
+		if (mode === 'after_delay') {
+			// If the stored value is already the delay form, keep its
+			// milliseconds; otherwise start the new mode from the default.
+			const milliseconds = Math.min(
+				MAX_AUTOSAVE_DELAY_MS,
+				autosaveDelayOf(appState.prefs.autosave) ?? DEFAULT_AUTOSAVE_DELAY_MS
+			);
+			appState.prefs.autosave = { after_delay: { milliseconds } };
+			return;
+		}
+		appState.prefs.autosave = mode;
+	}
+
+	function setAutosaveDelay(milliseconds: number) {
+		if (!Number.isFinite(milliseconds)) return;
+		// Whole milliseconds within the timer limit: the stored shape is an
+		// integer count, and the stepper must not hand SettingsManager a
+		// rejected value.
+		appState.prefs.autosave = {
+			after_delay: {
+				milliseconds: Math.min(
+					MAX_AUTOSAVE_DELAY_MS,
+					Math.max(0, Math.trunc(milliseconds))
+				)
+			}
+		};
 	}
 
 	const allCommands = $derived(appState.commands.getAll());
@@ -615,12 +671,49 @@
 										</div>
 									{/if}
 
-									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">
+									<div class="p-4 rounded-xl border bg-card/50 shadow-sm space-y-3">
 										<div class="space-y-0.5">
 											<Label class="text-sm font-medium">Auto-save</Label>
-											<p class="text-[10px] text-muted-foreground">Coming soon</p>
+											<p class="text-[10px] text-muted-foreground">Save files automatically. Off disables autosave; on focus change saves the file when it loses focus; on window change saves all files when the window loses focus; after a delay saves the file once typing pauses for the given milliseconds</p>
 										</div>
-										<Switch checked={false} disabled />
+										<div class="flex flex-wrap items-center gap-2">
+											<Select.Root
+												type="single"
+												value={autosaveMode}
+												onValueChange={(value) =>
+													setAutosaveMode(value as AutosaveMode)}
+											>
+												<Select.Trigger id="autosave-mode" class="w-40" aria-label="Auto-save">
+													{AUTOSAVE_MODE_LABELS[autosaveMode]}
+												</Select.Trigger>
+												<Select.Content>
+													{#each AUTOSAVE_TRIGGERS as trigger}
+														<Select.Item value={trigger}>
+															{AUTOSAVE_MODE_LABELS[trigger]}
+														</Select.Item>
+													{/each}
+													<Select.Item value="after_delay">
+														{AUTOSAVE_MODE_LABELS.after_delay}
+													</Select.Item>
+												</Select.Content>
+											</Select.Root>
+											{#if autosaveMode === 'after_delay'}
+												<div class="flex items-center gap-1.5">
+												<NumberInput
+													id="autosave-delay"
+													min={0}
+													max={MAX_AUTOSAVE_DELAY_MS}
+													step={50}
+													aria-label="Auto-save delay in milliseconds"
+													value={autosaveDelayMs}
+													onValueChange={setAutosaveDelay}
+													decreaseLabel="Decrease auto-save delay"
+													increaseLabel="Increase auto-save delay"
+												/>
+													<span class="text-[10px] text-muted-foreground">ms</span>
+												</div>
+											{/if}
+										</div>
 									</div>
 
 									<div class="flex items-center justify-between p-4 rounded-xl border bg-card/50 shadow-sm">

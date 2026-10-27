@@ -3,6 +3,13 @@ import type { PluginHostInterface } from './plugins/types';
 import { WORKSPACE_SERVICE_KEY } from './plugins/services';
 import { untrack } from 'svelte';
 import { DocumentSession } from './document.svelte';
+import {
+	DEFAULT_AUTOSAVE_SETTING,
+	autosaveDelayMs,
+	isAutosaveEnabled,
+	isAutosaveSetting,
+	type AutosaveSetting
+} from './autosave';
 import { type Storage, type FileOrigin, toURI, toSuggestedSaveName } from './storage';
 import { isNotFoundError } from './utils';
 import { Project } from './project/project.svelte';
@@ -171,6 +178,20 @@ export class Workspace {
 	private saveOpenFilesTimeout: any = null;
 
 	/**
+	 * Reads the effective auto-save setting. AppState points this at the
+	 * preferences store; the Workspace never reaches into it directly, so the
+	 * policy can be exercised with a provider in tests and no feature name
+	 * leaks into this class.
+	 */
+	autosaveSettingProvider: () => AutosaveSetting = () => DEFAULT_AUTOSAVE_SETTING;
+
+	/** Per-document inactivity timers for the `after_delay` form. */
+	private autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** Documents with an auto-save write in flight, so overlapping triggers coalesce. */
+	private autosavingDocuments = new Set<string>();
+
+	/**
 	 * The keystroke path: set in-memory content and schedule a session flush.
 	 * This is the only typing path — `Editor`, commands, and tests simulating
 	 * keystrokes go through here. Direct `doc.content =` is passive (no flush)
@@ -184,7 +205,156 @@ export class Workspace {
 		// language server, for one — needs the new text, and the keystroke path is
 		// the only place it exists. Observers, so the emit cannot veto the edit.
 		this.pluginHost?.emit('document:changed', { document: doc, origin: doc.origin, content });
+		this.scheduleAutosave(doc);
 		this.debouncedSaveOpenFiles();
+	}
+
+	/**
+	 * The auto-save setting, with an unknown provider answer treated as off.
+	 * The schema keeps stored values in range; this guard covers a provider
+	 * wired to something else (a test, a future source) without letting an
+	 * unrecognised value reach the trigger comparisons below.
+	 */
+	private currentAutosaveSetting(): AutosaveSetting {
+		const setting = this.autosaveSettingProvider();
+		return isAutosaveSetting(setting) ? setting : DEFAULT_AUTOSAVE_SETTING;
+	}
+
+	/**
+	 * Whether this document may be written without asking the user.
+	 *
+	 * Only a dirty document with a real origin qualifies. Untitled documents
+	 * have no destination, deleted-on-disk documents have no file to write,
+	 * and a clean document has nothing to save. This is the same height as the
+	 * save/discard prompt: auto-save is a way to avoid the prompt, never a
+	 * reason to write somewhere the user did not choose.
+	 */
+	private canAutosave(doc: DocumentSession): boolean {
+		return this.documents.includes(doc) && !!doc.origin && doc.isModified && !doc.deletedOnDisk;
+	}
+
+	private clearAutosaveTimer(docId: string): void {
+		const timer = this.autosaveTimers.get(docId);
+		if (timer === undefined) return;
+		clearTimeout(timer);
+		this.autosaveTimers.delete(docId);
+	}
+
+	private clearAllAutosaveTimers(): void {
+		for (const timer of this.autosaveTimers.values()) clearTimeout(timer);
+		this.autosaveTimers.clear();
+	}
+
+	/**
+	 * Debounce this document's inactivity timer. Every keystroke resets it, so
+	 * a burst of typing produces one save once the delay has elapsed since the
+	 * last edit. Named-trigger modes have no timer at all.
+	 */
+	private scheduleAutosave(doc: DocumentSession): void {
+		this.clearAutosaveTimer(doc.id);
+		const delay = autosaveDelayMs(this.currentAutosaveSetting());
+		if (delay === null || !this.canAutosave(doc)) return;
+		const timer = setTimeout(() => {
+			this.autosaveTimers.delete(doc.id);
+			// A wholesale document replacement (folder open, session restore)
+			// can clear timers, but this guard covers a timer that was already
+			// in the event queue.
+			if (!this.documents.includes(doc)) return;
+			// The setting may have changed while the timer was pending: turning
+			// auto-save off or picking a named trigger cancels the write, and a
+			// different delay restarts from the new value rather than firing at
+			// the old one.
+			const currentDelay = autosaveDelayMs(this.currentAutosaveSetting());
+			if (currentDelay === null) return;
+			if (currentDelay !== delay) {
+				this.scheduleAutosave(doc);
+				return;
+			}
+			void this.autosaveDocument(doc);
+		}, delay);
+		this.autosaveTimers.set(doc.id, timer);
+	}
+
+	/**
+	 * The setting changed. AppShell calls this from an effect that reads the
+	 * preferences store, so a change is applied to pending timers immediately
+	 * rather than at whatever moment the old delay would have fired. Turning
+	 * auto-save off or selecting a named trigger cancels the timers; a delay
+	 * change restarts the pending timers from the new delay.
+	 */
+	refreshAutosavePolicy(): void {
+		if (autosaveDelayMs(this.currentAutosaveSetting()) === null) {
+			this.clearAllAutosaveTimers();
+			return;
+		}
+		for (const doc of this.documents) {
+			if (!this.autosaveTimers.has(doc.id)) continue;
+			if (!this.canAutosave(doc)) {
+				this.clearAutosaveTimer(doc.id);
+				continue;
+			}
+			this.scheduleAutosave(doc);
+		}
+	}
+
+	/**
+	 * Save one document through the ordinary save path, which runs the
+	 * before/after save hooks and refreshes repository state. Triggers that
+	 * arrive while a write is in flight coalesce onto it; a successful write
+	 * that finds newer edits schedules another delay rather than losing them.
+	 */
+	private async autosaveDocument(doc: DocumentSession): Promise<void> {
+		if (!this.canAutosave(doc)) return;
+		if (this.autosavingDocuments.has(doc.id)) return;
+
+		this.autosavingDocuments.add(doc.id);
+		let ok = false;
+		try {
+			ok = await this.saveDocument(doc);
+		} catch (error) {
+			console.error('[Workspace] Autosave failed', error);
+		} finally {
+			this.autosavingDocuments.delete(doc.id);
+		}
+
+		// Edits can land while saveFile is awaiting disk; only a write that
+		// succeeded may schedule the follow-up delay, so a persistent failure
+		// is not retried forever behind the user's back.
+		if (ok && autosaveDelayMs(this.currentAutosaveSetting()) !== null && this.canAutosave(doc)) {
+			this.scheduleAutosave(doc);
+		}
+	}
+
+	/**
+	 * A file lost focus: save it when that is the selected trigger. The caller
+	 * reports the event; the policy lives here beside the other triggers.
+	 */
+	async autosaveOnFocusChange(doc: DocumentSession): Promise<void> {
+		if (this.currentAutosaveSetting() !== 'on_focus_change') return;
+		this.clearAutosaveTimer(doc.id);
+		await this.autosaveDocument(doc);
+	}
+
+	/**
+	 * The window lost focus: save every eligible dirty document when that is
+	 * the selected trigger. Saves run through the serialized save path, so an
+	 * open file picker or a slow write cannot interleave two writes to one
+	 * document.
+	 */
+	async autosaveOnWindowChange(): Promise<void> {
+		if (this.currentAutosaveSetting() !== 'on_window_change') return;
+		const docs = [...this.documents].filter((doc) => this.canAutosave(doc));
+		await Promise.all(
+			docs.map((doc) => {
+				this.clearAutosaveTimer(doc.id);
+				return this.autosaveDocument(doc);
+			})
+		);
+	}
+
+	/** Closing a dirty file saves it when auto-save is on, regardless of the mode. */
+	private shouldSaveOnClose(doc: DocumentSession): boolean {
+		return isAutosaveEnabled(this.currentAutosaveSetting()) && this.canAutosave(doc);
 	}
 
 	/** Root fast-path first, storage verify second. Used by the permission overlay. */
@@ -255,6 +425,7 @@ export class Workspace {
 		}
 
 		if (ok) {
+			this.clearAutosaveTimer(doc.id);
 			this.pluginHost?.emit('document:saved', { document: doc, origin: doc.origin });
 			this.debouncedSaveOpenFiles();
 		}
@@ -1023,6 +1194,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 			// The outgoing project's documents and panes do not belong to the
 			// incoming project; they are replaced by the destination's
 			// session below.
+			this.clearAllAutosaveTimers();
 			this.documents = [];
 			const freshPane = new Pane();
 			this.layout = freshPane;
@@ -1148,9 +1320,21 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 		// The save/discard prompt fires only when the last tab referencing a session closes.
 		// Closing a cloned tab while the session lives on elsewhere closes silently.
-	if (totalDocTabs <= 1 && tab.type === 'document') {
+		if (totalDocTabs <= 1 && tab.type === 'document') {
 			const doc = this.documents.find(d => d.id === docId);
 			if (doc && doc.isModified) {
+				// Auto-save means closing is not a reason to ask. The save still
+				// goes through the ordinary path, so hooks and repository refresh
+				// run; a failed or cancelled save falls back to the prompt.
+				if (this.shouldSaveOnClose(doc)) {
+					this.clearAutosaveTimer(doc.id);
+					try {
+						const closed = await this.finalizeClose(id, true, targetPane.id);
+						if (closed) return;
+					} catch (err) {
+						console.error('[Workspace] Save before close failed', err);
+					}
+				}
 				this.pendingCloseQueue = [];
 				this.pendingCloseId = id;
 				return;
@@ -1314,7 +1498,12 @@ private searchSessions = new Map<string, SearchTabSession>();
 				remainingDocIds.add(t.docId ?? t.id);
 			}
 		}
-		this.documents = this.documents.filter(d => remainingDocIds.has(d.id));
+		const remainingDocuments = this.documents.filter(d => remainingDocIds.has(d.id));
+		const remainingDocumentIds = new Set<string>(remainingDocuments.map((doc) => doc.id));
+		for (const docId of [...this.autosaveTimers.keys()]) {
+			if (!remainingDocumentIds.has(docId)) this.clearAutosaveTimer(docId);
+		}
+		this.documents = remainingDocuments;
 
 		for (const targetPane of deadPanes) {
 			const allPanes = this.getAllPanes();
@@ -1392,7 +1581,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 			await this.performCloseBatch(cleanTabs.map(t => ({ tabId: t.id, paneId: pane.id })));
 		}
 
-		const uniqueDirtyTabs: WorkspaceTab[] = [];
+		let uniqueDirtyTabs: WorkspaceTab[] = [];
 		const duplicateTabs: { tabId: string; paneId: string }[] = [];
 		const seenDocIds = new Set<string>();
 
@@ -1408,6 +1597,24 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 		if (duplicateTabs.length > 0) {
 			await this.performCloseBatch(duplicateTabs);
+		}
+
+		// Auto-save turns a batch close into a save-and-close for every
+		// saveable dirty file; only the tabs that cannot be written (untitled,
+		// deleted-on-disk, failed/cancelled save) go on to ask.
+		if (isAutosaveEnabled(this.currentAutosaveSetting())) {
+			const unresolved: WorkspaceTab[] = [];
+			for (const tab of uniqueDirtyTabs) {
+				const docId = tab.docId ?? tab.id;
+				const doc = this.documents.find((d) => d.id === docId);
+				if (doc && this.shouldSaveOnClose(doc)) {
+					this.clearAutosaveTimer(doc.id);
+					const closed = await this.finalizeClose(tab.id, true, pane.id);
+					if (closed) continue;
+				}
+				unresolved.push(tab);
+			}
+			uniqueDirtyTabs = unresolved;
 		}
 
 		if (uniqueDirtyTabs.length === 0) {
@@ -1678,6 +1885,9 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 	async loadFolderState(folderUri: string, strict = false) {
 		this.pendingDiffRestore.clear();
+		// Every path below replaces the open documents; a pending inactivity
+		// timer for one of them must not outlive its workspace entry.
+		this.clearAllAutosaveTimers();
 		try {
 			const origins = await this.project.loadOpenFiles(folderUri);
 			const activeId = await this.project.loadActiveDocumentId(folderUri);
@@ -1897,6 +2107,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 
 			} catch (e) {
 				console.error('[Workspace] Failed to restore session', e);
+				this.clearAllAutosaveTimers();
 				this.documents = [];
 				const freshPane = new Pane();
 				this.layout = freshPane;
@@ -1914,6 +2125,7 @@ private searchSessions = new Map<string, SearchTabSession>();
 	}
 
 	dispose(): void {
+		this.clearAllAutosaveTimers();
 		this.project.dispose();
 	}
 }

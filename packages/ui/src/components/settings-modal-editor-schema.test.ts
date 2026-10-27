@@ -34,6 +34,7 @@ const SETTINGS_MODAL = resolve(
  * setting, so the schema's description is not what the box shows.
  */
 const HAND_BUILT_EDITOR_KEYS = [
+	"autosave",
 	"words",
 	"min_word_length",
 	"automatic_completions",
@@ -88,6 +89,8 @@ describe("editor settings: schema and markup agree", () => {
 	});
 
 	it("offers every enum value the schema declares", () => {
+		// `autosave` is absent: its union has an object form, so the custom
+		// validator rather than a partial enum is the authoritative list.
 		for (const key of ["words", "lsp_insert_mode"] as const) {
 			for (const value of properties[key].enum ?? []) {
 				expect(

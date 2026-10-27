@@ -2,6 +2,7 @@ export * from './utils';
 export * from './storage';
 export * from './diff-binding';
 export * from './persistence';
+export * from './autosave';
 export * from './preferences.svelte';
 export * from './document.svelte';
 export * from './tab-ids';
