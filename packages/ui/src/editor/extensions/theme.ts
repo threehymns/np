@@ -40,6 +40,67 @@ export const editorTheme = EditorView.theme({
 		userSelect: "none",
 		cursor: "default",
 	},
+	// Fold gutter and marker styling
+	".cm-gutter.cm-foldGutter": {
+		minWidth: "16px",
+		cursor: "default",
+		userSelect: "none",
+	},
+	".cm-foldGutter .cm-gutterElement": {
+		display: "flex",
+		alignItems: "center",
+		justifyContent: "center",
+		padding: "0 2px",
+		cursor: "pointer",
+		color: "var(--muted-foreground)",
+		transition: "color 150ms ease",
+	},
+	".cm-foldGutter .cm-gutterElement:hover": {
+		color: "var(--foreground)",
+	},
+	".cm-foldMarker": {
+		display: "inline-flex",
+		alignItems: "center",
+		justifyContent: "center",
+		lineHeight: "1",
+	},
+	".cm-foldMarker-open": {
+		opacity: "0",
+		transition: "opacity 120ms ease",
+	},
+	".cm-gutters:hover .cm-foldMarker-open": {
+		opacity: "0.6",
+	},
+	".cm-foldGutter .cm-gutterElement:hover .cm-foldMarker-open": {
+		opacity: "1",
+	},
+	".cm-foldMarker-closed": {
+		opacity: "1",
+		color: "var(--primary)",
+	},
+	// Fold placeholder pill styling
+	".cm-foldPlaceholder": {
+		backgroundColor: "color-mix(in srgb, var(--muted) 60%, transparent)",
+		border: "1px solid var(--border)",
+		color: "var(--muted-foreground)",
+		borderRadius: "calc(var(--radius) - 2px)",
+		padding: "0.05rem 0.35rem",
+		margin: "0 0.25rem",
+		fontFamily: "var(--font-mono, monospace)",
+		fontSize: "0.8em",
+		lineHeight: "1",
+		cursor: "pointer",
+		userSelect: "none",
+		transition: "all 150ms ease",
+		display: "inline-flex",
+		alignItems: "center",
+		verticalAlign: "middle",
+	},
+	".cm-foldPlaceholder:hover": {
+		backgroundColor: "var(--accent)",
+		color: "var(--accent-foreground)",
+		borderColor: "var(--ring)",
+	},
 	"&.cm-focused": {
 		outline: "none",
 	},

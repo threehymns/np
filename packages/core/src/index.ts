@@ -31,3 +31,4 @@ export * from './editor/icons/headless-registry.svelte';
 export * from './links';
 export * from './plugins';
 export * from './search';
+export * from './editor/folding';

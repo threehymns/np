@@ -276,6 +276,8 @@ export const LSP_SETTING = 'lsp';
 export const LSP_FETCH_TIMEOUT_SETTING = 'lsp_fetch_timeout_ms';
 export const LSP_INSERT_MODE_SETTING = 'lsp_insert_mode';
 export const SHOW_COMPLETION_DOCUMENTATION_SETTING = 'show_completion_documentation';
+export const DOCUMENT_FOLDING_RANGES_SETTING = 'document_folding_ranges';
+export const GUTTER_SETTING = 'gutter';
 export const LANGUAGE_OVERRIDES_SETTING = 'languages';
 
 /**
@@ -390,6 +392,35 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			description: 'Show the signature and docs a server attached to its suggestion'
 		},
 		/**
+		 * Controls whether folding ranges from language servers are used
+		 * instead of tree-sitter and indent-based folding (spec #288).
+		 */
+		document_folding_ranges: {
+			type: 'string',
+			default: 'off',
+			title: 'Document Folding Ranges',
+			description:
+				'Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding',
+			enum: ['off', 'on'],
+			control: 'select',
+			alias: ['documentFoldingRanges'],
+			validate: (val: unknown) => {
+				if (val === 'off' || val === 'on' || val === true || val === false) return { valid: true };
+				return { valid: false, error: 'Expected \"off\", \"on\", or a boolean' };
+			}
+		},
+		/**
+		 * Gutter settings including code folding display.
+		 */
+		gutter: {
+			type: 'object',
+			default: { folds: true },
+			mergeRule: 'deep',
+			title: 'Gutter Settings',
+			description: 'Controls gutter components such as code folding',
+			alias: ['gutter']
+		},
+		/**
 		 * Per-language overrides for the keys above, keyed by language name and
 		 * matched case-insensitively. Read by `scopeForLanguage`, which
 		 * deliberately ignores `automatic_completions`: that one is the global
@@ -502,6 +533,49 @@ export function validateSettingValue(
 ): { valid: true } | { valid: false; diagnostic: SettingDiagnostic } {
 	if (value === undefined || value === null) {
 		return { valid: true };
+	}
+
+	if (schema.validate) {
+		const customRes = schema.validate(value);
+		if (typeof customRes === 'object' && customRes !== null && customRes.valid) {
+			return { valid: true };
+		}
+		if (customRes === false) {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: `Validation failed for \"${namespace}.${key}\"`,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
+		if (typeof customRes === 'string') {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: customRes,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
+		if (typeof customRes === 'object' && customRes !== null && !customRes.valid) {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: customRes.error ?? `Validation failed for \"${namespace}.${key}\"`,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
 	}
 
 	switch (schema.type) {

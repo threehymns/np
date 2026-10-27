@@ -1,8 +1,11 @@
+
+
 import {
 	COMPLETION_RESOLVE_SERVICE_KEY,
 	HOVER_COORDINATOR_SERVICE_KEY,
 	SETTINGS_READER_SERVICE_KEY,
 	WORKSPACE_SERVICE_KEY,
+	FOLDING_RANGE_COORDINATOR_SERVICE_KEY,
 	type CompletionAnswer,
 	type CompletionCoordinator,
 	type CompletionQuery,
@@ -11,12 +14,20 @@ import {
 	type HoverAnswer as GenericHoverAnswer,
 	type HoverCoordinator,
 	type HoverQuery as GenericHoverQuery,
+	type DocumentFoldingCoordinator,
+	type DocumentFoldingQuery,
+	type DocumentFoldingAnswer,
+	type DocumentFoldingRange,
 	type LspPlatform,
 	type SettingsReader,
 	type SettingsRead,
 	type SettingsSubscribe,
 	type WorkspaceLike
 } from '../services';
+
+export type LspFoldingRange = DocumentFoldingRange;
+export type FoldingRangeAnswer = DocumentFoldingAnswer;
+
 import type { PluginHostInterface } from '../types';
 import type { RegisteredLspDescriptor } from '../lsp-descriptors';
 import { LspClient } from './client';
@@ -262,7 +273,7 @@ const WORKSPACE_PULL_TIMEOUT_MS = 30000;
  * and stopping a process is exposed by reading status.
  */
 export class LspRuntime
-	implements LspServerStatusApi, CompletionCoordinator, HoverCoordinator, CompletionResolveCoordinator
+	implements LspServerStatusApi, CompletionCoordinator, HoverCoordinator, CompletionResolveCoordinator, DocumentFoldingCoordinator
 {
 	private readonly servers = new Map<string, RunningServer>();
 	private readonly openDocuments = new Map<string, OpenDocument>();
@@ -304,7 +315,7 @@ export class LspRuntime
 	 */
 	private readonly serverCapabilities = new Map<
 		string,
-		{ resolveProvider: boolean; hoverProvider: boolean; executeCommands: readonly string[] }
+		{ resolveProvider: boolean; hoverProvider: boolean; foldingRangeProvider: boolean; executeCommands: readonly string[] }
 	>();
 	/**
 	 * Once-only resolve guard per item (spec #280, #292).
@@ -785,8 +796,66 @@ export class LspRuntime
 	}
 
 	/** Whether one server announced a hover provider. */
+	
+	/**
+	 * Fetches folding ranges from language server for a document (spec #288).
+	 */
+	async fetchFoldingRanges(
+		document: DocumentFoldingQuery | LspDocumentInput,
+		timeoutMs?: number
+	): Promise<DocumentFoldingAnswer> {
+		if (this.disposed) {
+			return { state: 'inactive', reason: 'The language-server runtime is shutting down.' };
+		}
+		const path = document.path;
+		if (!path) {
+			return { state: 'inactive', reason: 'An untitled document has no file for a server to serve.' };
+		}
+		let server = 'lsp';
+		try {
+			const gate = this.gateFor(document);
+			if (!gate.enabled) {
+				return { state: 'inactive', reason: gate.reason };
+			}
+			const target = await this.targets.resolve(document);
+			if (!target) {
+				return { state: 'inactive', reason: 'No language server claims this document.' };
+			}
+			server = lspServerKey(target.descriptor.id, target.root);
+			const entry = await this.ensureRunning(server, target.descriptor, target.root, target.marker);
+			if (entry.state !== 'running' || !entry.client) {
+				return {
+					state: 'unavailable',
+					provider: server,
+					reason: `Server \"${server}\" is ${entry.state}, so it cannot answer.`
+				};
+			}
+			if (!this.canFold(server)) {
+				return { state: 'inactive', reason: `Server \"${server}\" offers no folding ranges.` };
+			}
+			this.syncDocument(entry, { ...document, path });
+			this.flushPending(entry);
+			const result = await entry.client.request(
+				'textDocument/foldingRange',
+				{
+					textDocument: { uri: toFileUri(path) }
+				},
+				timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
+			);
+			return { state: 'serving', ranges: parseFoldingRanges(result) };
+		} catch (error) {
+			const reason = describeError(error);
+			return { state: 'unavailable', provider: server, reason };
+		}
+	}
+
 	canHover(server: string): boolean {
 		return this.serverCapabilities.get(server)?.hoverProvider === true;
+	}
+
+	/** Whether one server announced a folding range provider. */
+	canFold(server: string): boolean {
+		return this.serverCapabilities.get(server)?.foldingRangeProvider === true;
 	}
 
 	/**
@@ -1564,15 +1633,17 @@ console.error(
 function readServerCapabilities(result: unknown): {
 	resolveProvider: boolean;
 	hoverProvider: boolean;
+	foldingRangeProvider: boolean;
 	executeCommands: readonly string[];
 } {
 	const caps = (result as { capabilities?: unknown } | null | undefined)?.capabilities;
 	if (typeof caps !== 'object' || caps === null) {
-		return { resolveProvider: false, hoverProvider: false, executeCommands: [] };
+		return { resolveProvider: false, hoverProvider: false, foldingRangeProvider: false, executeCommands: [] };
 	}
 	const record = caps as Record<string, unknown>;
 	const completion = record.completionProvider as Record<string, unknown> | undefined;
 	const hover = record.hoverProvider;
+	const folding = record.foldingRangeProvider;
 	const execute = record.executeCommandProvider as Record<string, unknown> | undefined;
 	const commands = Array.isArray(execute?.commands)
 		? (execute as { commands: unknown[] }).commands.filter((c): c is string => typeof c === 'string')
@@ -1580,8 +1651,28 @@ function readServerCapabilities(result: unknown): {
 	return {
 		resolveProvider: (completion?.resolveProvider as boolean | undefined) === true,
 		hoverProvider: hover === true || (typeof hover === 'object' && hover !== null),
+		foldingRangeProvider: folding === true || (typeof folding === 'object' && folding !== null),
 		executeCommands: commands
 	};
+}
+
+export function parseFoldingRanges(result: unknown): readonly LspFoldingRange[] {
+	if (!Array.isArray(result)) return [];
+	const out: LspFoldingRange[] = [];
+	for (const item of result) {
+		if (typeof item !== 'object' || item === null) continue;
+		const r = item as Record<string, unknown>;
+		if (typeof r.startLine !== 'number' || typeof r.endLine !== 'number') continue;
+		out.push({
+			startLine: r.startLine,
+			startCharacter: typeof r.startCharacter === 'number' ? r.startCharacter : undefined,
+			endLine: r.endLine,
+			endCharacter: typeof r.endCharacter === 'number' ? r.endCharacter : undefined,
+			kind: typeof r.kind === 'string' ? r.kind : undefined,
+			collapsedText: typeof r.collapsedText === 'string' ? r.collapsedText : undefined
+		});
+	}
+	return out;
 }
 
 /**

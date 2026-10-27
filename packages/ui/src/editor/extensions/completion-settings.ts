@@ -1,6 +1,8 @@
 import {
 	editorLspEnabled,
+	editorDocumentFoldingRangesEnabled,
 	editorSettingsForLanguage,
+	DOCUMENT_FOLDING_RANGES_SETTING,
 	EDITOR_SETTINGS_NAMESPACE,
 	LSP_SETTING,
 	LSP_FETCH_TIMEOUT_SETTING,
@@ -160,4 +162,19 @@ function readInsertMode(value: unknown): ServerCompletionSettings["insertMode"] 
 	return value === "replace_suffix" || value === "replace_range"
 		? value
 		: DEFAULT_SERVER_COMPLETION_SETTINGS.insertMode;
+}
+
+/**
+ * Reads document_folding_ranges setting for a given language.
+ */
+export function readDocumentFoldingRangesSettings(
+	read: SettingReader,
+	languageName: string | null
+): boolean {
+	const scoped = editorSettingsForLanguage(read, languageName, [
+		DOCUMENT_FOLDING_RANGES_SETTING,
+	]);
+	return editorDocumentFoldingRangesEnabled(
+		scoped.value[DOCUMENT_FOLDING_RANGES_SETTING]
+	);
 }

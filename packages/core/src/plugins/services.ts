@@ -450,6 +450,41 @@ export interface CompletionResolveCoordinator {
 	runCommand(command: string, args: readonly unknown[] | undefined, document: CompletionQueryDocument): void;
 }
 
+/**
+ * Whoever can answer folding ranges for a document (spec #288, Zed alignment).
+ *
+ * Generic like its completion and hover siblings: the editor shell asks for
+ * folding ranges and receives protocol-neutral line ranges, without naming
+ * what is answering. A language server is the first such provider.
+ */
+export const FOLDING_RANGE_COORDINATOR_SERVICE_KEY = "foldingRange:coordinator";
+
+export interface DocumentFoldingRange {
+	readonly startLine: number;
+	readonly endLine: number;
+	readonly startCharacter?: number;
+	readonly endCharacter?: number;
+	readonly kind?: string;
+	readonly collapsedText?: string;
+}
+
+export interface DocumentFoldingQuery {
+	readonly path: string;
+	readonly fileName: string;
+	readonly content: string;
+	readonly language?: string | null;
+}
+
+export type DocumentFoldingAnswer =
+	| { readonly state: "inactive"; readonly reason: string }
+	| { readonly state: "serving"; readonly ranges: readonly DocumentFoldingRange[] }
+	| { readonly state: "unavailable"; readonly provider: string; readonly reason: string };
+
+/** Folding range coordination, published by whoever can provide folding ranges for documents. */
+export interface DocumentFoldingCoordinator {
+	fetchFoldingRanges(query: DocumentFoldingQuery, timeoutMs?: number): Promise<DocumentFoldingAnswer>;
+}
+
 export interface PluginUILoader {
 	load(pluginId: string): Promise<void>;
 }

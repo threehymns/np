@@ -1,3 +1,15 @@
+import {
+	fold,
+	unfold,
+	toggleFold,
+	foldAll,
+	unfoldAll,
+	foldSelectedRanges,
+	foldAtLevel,
+	foldRecursive,
+	unfoldRecursive,
+	foldFunctionBodies
+} from "./editor/folding";
 import { undo, redo, selectAll } from "@codemirror/commands";
 import { startCompletion, acceptCompletion } from "@codemirror/autocomplete";
 import { openSearchPanel } from "@codemirror/search";
