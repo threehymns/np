@@ -195,34 +195,49 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 *
 	 * Stage 0 is the resolved index entry. An unmerged path has stages 1-3 and
 	 * no stage 0, and a conflict blob is not the file's staged content, so such
-	 * a path has no index content to return.
+	 * a path has no index content to return. It is reported separately as
+	 * `unmerged` because writing a stage-0 patch over it would collapse those
+	 * stages, discarding the conflict.
 	 *
 	 * `-z` is what makes the comparison literal: without it git C-quotes
 	 * unusual paths, and the quoted form never equals the raw filename.
 	 */
-	private static stageZeroIndexEntry(stdout: string, filepath: string): string | null {
+	private static parseIndexEntry(stdout: string, filepath: string): { oid: string | null; unmerged: boolean } {
+		let unmerged = false;
 		for (const entry of stdout.split('\0')) {
 			const tab = entry.indexOf('\t');
 			if (tab < 0) continue;
 			if (entry.slice(tab + 1) !== filepath) continue;
 			const [mode, oid, stage] = entry.slice(0, tab).split(' ');
+			if (stage !== '0') {
+				unmerged = true;
+				continue;
+			}
 			// A gitlink's oid names a commit in the submodule, not a blob in this
 			// repository. `cat-file -p` on it prints commit metadata, so there is no
 			// index file content to return.
-			if (mode === '160000') return null;
-			if (!mode || !oid || stage !== '0') continue;
-			return /^[0-9a-fA-F]+$/.test(oid) ? oid : null;
+			if (mode === '160000') return { oid: null, unmerged: false };
+			return { oid: mode && oid && /^[0-9a-fA-F]+$/.test(oid) ? oid : null, unmerged: false };
 		}
-		return null;
+		return { oid: null, unmerged };
 	}
 
-	private async readIndexContent(filepath: string): Promise<string | null> {
+	/**
+	 * Staged content of `filepath`, or null when it has none.
+	 *
+	 * `rejectUnmerged` is for the write path: null normally means "stage this as
+	 * a new file", but an unmerged path must not be treated that way.
+	 */
+	private async readIndexContent(filepath: string, options: { rejectUnmerged?: boolean } = {}): Promise<string | null> {
 		const res = await this.runGit(['ls-files', '--stage', '-z', '--', literalPathspec(filepath)]);
 		if (res.code !== 0) {
 			if (this.isPathNotFoundError(res.stderr)) return null;
 			throw new Error(res.stderr || `Failed to read index for ${filepath}`);
 		}
-		const oid = SpawnGitAdapter.stageZeroIndexEntry(res.stdout, filepath);
+		const { oid, unmerged } = SpawnGitAdapter.parseIndexEntry(res.stdout, filepath);
+		if (unmerged && options.rejectUnmerged) {
+			throw new Error(`Cannot update index content for ${filepath}: the path is unmerged`);
+		}
 		if (!oid) return null;
 		const catRes = await this.runGit(['cat-file', '-p', oid]);
 		if (catRes.code !== 0) {
@@ -1289,7 +1304,10 @@ export class SpawnGitAdapter implements VCSAdapter {
 	 * or deletes unrelated index paths.
 	 */
 	private async renderIndexPatch(filepath: string, content: string): Promise<string> {
-		const oldContent = await this.readIndexContent(filepath);
+		// Refuse an unmerged path: it has stages 1-3 and no stage 0, so it would
+		// otherwise look like a new file and the write would collapse the conflict
+		// into a resolved stage 0.
+		const oldContent = await this.readIndexContent(filepath, { rejectUnmerged: true });
 		// Quoted, so a tab or newline inside a filename cannot truncate the header's
 		// tab-delimited pathspec and redirect the write to a different file.
 		const quoted = SpawnGitAdapter.patchSidePath('a', filepath);
