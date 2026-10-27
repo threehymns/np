@@ -102,42 +102,102 @@ export class PullParseError extends Error {
 	}
 }
 
+interface PendingPull {
+	readonly fiber: Fiber.Fiber<void, never>;
+	/** The detach epoch the arming call saw; a later detach makes it stale. */
+	readonly epoch: number;
+}
+
 export class DiagnosticPullCoordinator {
-	private readonly pending = new Map<string, Map<string, Fiber.Fiber<void, never>>>();
+	private readonly pending = new Map<string, Map<string, PendingPull>>();
 	private readonly resultIds = new Map<string, Map<string, string>>();
+	/**
+	 * One counter per URI, bumped when that document is detached.
+	 *
+	 * `armPull` reads the counter when it is called, not when its effect runs,
+	 * so a detach that lands while it waits out an interrupt makes it stale and
+	 * it returns without registering anything. The bump happens synchronously in
+	 * `forgetUri`, before its effect is forked, so a pull armed in the same turn
+	 * cannot slip past it.
+	 */
+	private readonly detachEpochs = new Map<string, number>();
 
 	constructor(private readonly deps: DiagnosticPullDependencies) {}
 
 	/**
 	 * Arms a debounced pull for one (uri, server), on the caller's Scope.
-	 * A newer edit interrupts the still-pending pull for the same key, so rapid
-	 * edits collapse to one request. Closing the scope interrupts everything,
-	 * including a pull sleeping mid-backoff: no further requests are issued.
-	 * Requires an ambient Scope (same contract as scopedPullLoop).
+	 *
+	 * What triggered it is the runtime's business: an open and a change both
+	 * mean the client may be missing what the server knows about the file, so
+	 * both arm the same pull.
+	 *
+	 * A newer trigger interrupts the still-pending pull for the same key, so
+	 * rapid edits collapse to one request and a pull already in flight is
+	 * replaced by the newer one rather than racing it. Closing the scope
+	 * interrupts everything, including a pull sleeping mid-backoff: no further
+	 * requests are issued. A detach that lands after this call makes the arm
+	 * stale: it does not register its pull, so nothing writes for the closed
+	 * document. Requires an ambient Scope (same contract as scopedPullLoop).
 	 */
-	notifyEdit(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
+	armPull(uri: string, server: string): Effect.Effect<void, never, Scope.Scope> {
 		const self = this;
+		// Read at the call site, so a detach between the caller arming and the
+		// effect running is observed below rather than overwritten.
+		const epoch = self.detachEpochs.get(uri) ?? 0;
 		return Effect.uninterruptibleMask((restore) =>
 			Effect.gen(function* () {
+				if ((self.detachEpochs.get(uri) ?? 0) !== epoch) return;
 				let serverPulls = self.pending.get(server);
 				if (!serverPulls) {
 					serverPulls = new Map();
 					self.pending.set(server, serverPulls);
 				}
-				const prior = serverPulls.get(uri);
-				if (prior) {
-					yield* restore(Fiber.interrupt(prior));
+				// Every interrupt below is a yield point, so the maps are re-read
+				// afterwards: the interrupted pull's own cleanup may have dropped
+				// the entry or the whole map, and a concurrent trigger may have
+				// registered a newer fiber. Installing the replacement into the
+				// state that is current at that point keeps it registered instead
+				// of orphaning it in a map nobody consults.
+				let prior = serverPulls.get(uri);
+				while (prior) {
+					yield* restore(Fiber.interrupt(prior.fiber));
+					// A detach owns the state now. Leave before registering, or the
+					// closed document would be pulled again.
+					if ((self.detachEpochs.get(uri) ?? 0) !== epoch) return;
+					serverPulls = self.pending.get(server);
+					if (!serverPulls) {
+						serverPulls = new Map();
+						self.pending.set(server, serverPulls);
+					}
+					const current = serverPulls.get(uri);
+					if (current === prior) {
+						// The pull's observer has not removed it yet, so take it
+						// out here and let the replacement below occupy the slot.
+						serverPulls.delete(uri);
+						prior = undefined;
+					} else {
+						prior = current;
+					}
 				}
 				const pullFiber = yield* restore(Effect.forkScoped(self.debouncedPull(uri, server)));
-				serverPulls.set(uri, pullFiber);
+				// Forking is a yield point too: a detach during it owns the
+				// fiber just created, so interrupt it rather than register it.
+				if ((self.detachEpochs.get(uri) ?? 0) !== epoch) {
+					yield* restore(Fiber.interrupt(pullFiber));
+					return;
+				}
+				serverPulls.set(uri, { fiber: pullFiber, epoch });
 				yield* restore(
 					Effect.forkScoped(
 						Fiber.await(pullFiber).pipe(
 							Effect.flatMap(() =>
 								Effect.sync(() => {
-									if (serverPulls.get(uri) === pullFiber) {
+									if (serverPulls.get(uri)?.fiber === pullFiber) {
 										serverPulls.delete(uri);
-										if (serverPulls.size === 0) {
+										if (
+											serverPulls.size === 0 &&
+											self.pending.get(server) === serverPulls
+										) {
 											self.pending.delete(server);
 										}
 									}
@@ -222,12 +282,73 @@ export class DiagnosticPullCoordinator {
 		return Effect.gen(function* () {
 			const serverPulls = self.pending.get(server);
 			if (serverPulls) {
-				for (const fiber of serverPulls.values()) {
-					yield* Fiber.interrupt(fiber);
+				for (const pending of serverPulls.values()) {
+					yield* Fiber.interrupt(pending.fiber);
 				}
 				self.pending.delete(server);
 			}
 			self.resultIds.delete(server);
+		});
+	}
+
+	/**
+	 * Drops all pull state for one detached document: the result-id cache and
+	 * any pull armed for it before the detach. A document opened again must not
+	 * send a `previousResultId` from its closed session — the store side was
+	 * dropped with it, so an "unchanged" answer would leave the reopened
+	 * document with no diagnostics — and a pull armed before the detach must not
+	 * write after it. Called from `LspRuntime.detachDocument` alongside the
+	 * store's `dropUri`, which clears the store side. Scoped to the URI:
+	 * other documents on the same server keep their pulls and their cached
+	 * ids, and a URI is bound to one server at a time, so no other server
+	 * holds live state for it.
+	 *
+	 * The epoch is bumped synchronously, before the returned effect runs. An
+	 * `armPull` call that already read the old epoch is thereby stale even if
+	 * its effect has not started yet, and one that already interrupted a pull
+	 * checks the epoch again before registering its replacement. A pull armed
+	 * after this call reads the new epoch and belongs to the reopened document,
+	 * so it is left alone.
+	 */
+	forgetUri(uri: string): Effect.Effect<void> {
+		const self = this;
+		const epoch = (self.detachEpochs.get(uri) ?? 0) + 1;
+		self.detachEpochs.set(uri, epoch);
+		return Effect.gen(function* () {
+			// Snapshot the maps: an interrupt below is a yield point, and a
+			// replacement registered meanwhile belongs to the document's new
+			// session, not to the state this call set out to forget.
+			for (const [server, serverPulls] of [...self.pending]) {
+				const pending = serverPulls.get(uri);
+				if (!pending) {
+					if (serverPulls.size === 0 && self.pending.get(server) === serverPulls) {
+						self.pending.delete(server);
+					}
+					continue;
+				}
+				// A newer session's pull is not this detach's to cancel.
+				if (pending.epoch >= epoch) continue;
+				yield* Fiber.interrupt(pending.fiber);
+				// The interrupt is a yield point: the interrupted pull's observer
+				// may have removed this entry or the whole map, and armPull may
+				// have registered a replacement. Only remove the state this call
+				// actually interrupted, or a reopened document's pull is lost.
+				if (
+					self.pending.get(server) === serverPulls &&
+					serverPulls.get(uri) === pending
+				) {
+					serverPulls.delete(uri);
+					if (serverPulls.size === 0) {
+						self.pending.delete(server);
+					}
+				}
+			}
+			for (const [server, serverIds] of self.resultIds) {
+				serverIds.delete(uri);
+				if (serverIds.size === 0) {
+					self.resultIds.delete(server);
+				}
+			}
 		});
 	}
 }

@@ -1817,10 +1817,10 @@ describe('the diagnostic pull on edit (#307)', () => {
 	});
 
 	it('never asks a server that offers no pull', async () => {
-		// The control for the test above. The same edit against a server that
-		// advertises no `diagnosticProvider` has to produce no pull at all,
-		// and the diagnostics the server pushed have to be the ones the file
-		// shows.
+		// The control for the test above. The same open and the same edit
+		// against a server that advertises no `diagnosticProvider` have to
+		// produce no pull at all, and the diagnostics the server pushed have to be
+		// the ones the file shows.
 		const root = makeProject({ 'tsconfig.json': '{}', 'src/a.ts': 'export const a = 1;\n' });
 		const uri = `file://${join(root, 'src/a.ts')}`;
 		const wireLog = join(root, 'wire.log');
@@ -1938,7 +1938,7 @@ describe('the workspace pull loop (#308)', () => {
 
 		// The file the editor never opened. The only way it can hold diagnostics
 		// is the workspace pull: the stub pushes nothing, and the document
-		// pull is only ever asked about a file that was edited.
+		// pull is only ever asked about a file the editor opened.
 		await waitFor(() => diagnostics.read(unopened).length > 0, {
 			label: 'the workspace diagnostic'
 		});
@@ -2040,8 +2040,9 @@ describe('the workspace pull loop (#308)', () => {
 		const answer = received({ wireLog }).find((line) => line.includes('"id":9000'))!;
 		expect(JSON.parse(answer).result).toBeNull();
 
-		// The document pull is armed by the refresh: the document was opened
-		// and never edited, so nothing else could have asked for it.
+		// The document pull is armed by the refresh. The open arms it too
+		// (#352), so this only pins that the file is still asked about; the
+		// workspace pull below is what pins the refresh's own re-arm.
 		await waitFor(
 			() =>
 				received({ wireLog }).some((line) => line.includes('"method":"textDocument/diagnostic"')),
