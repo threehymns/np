@@ -7,6 +7,7 @@ import { PluginHost } from '../host.svelte';
 import { lspRegistration } from './registration';
 import { LSP_LOG_STORE_SERVICE_KEY, LspLogStore } from './logs';
 import { LspRuntime, LSP_RUNTIME_SERVICE_KEY, formatMemoryBytes, lspServerKey, parseServerVersion, parseTriggerCharacters } from './lifecycle';
+import { toFileUri } from './root';
 import type { LspDescriptorContribution } from '../lsp-descriptors';
 import { LspDiagnosticsStore } from './diagnostics';
 import {
@@ -2069,7 +2070,7 @@ describe('the workspace pull loop (#308)', () => {
 describe("the diagnostic pull on open (#352)", () => {
 	it("Document open requests textDocument/diagnostic from a server advertising diagnosticProvider", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const wireLog = join(root, "wire.log");
 		const { runtime, diagnostics } = await startRuntime({
 			script: ["--diagnostic-pull", "--log-file", wireLog]
@@ -2098,7 +2099,7 @@ describe("the diagnostic pull on open (#352)", () => {
 
 	it("Servers without diagnosticProvider are never pulled", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const wireLog = join(root, "wire.log");
 		const { runtime, diagnostics } = await startRuntime({
 			script: ["--diagnostics", "--log-file", wireLog]
@@ -2133,7 +2134,7 @@ describe("the diagnostic pull on open (#352)", () => {
 
 	it("Reopening documents after server restart requests diagnostics for open documents", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const { runtime, diagnostics } = await startRuntime({ script: ["--diagnostic-pull"] });
 
 		await runtime.openDocument({

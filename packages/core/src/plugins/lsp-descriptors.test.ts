@@ -3,6 +3,7 @@ import { describe, it, expect } from 'bun:test';
 import { PluginHost } from './host.svelte';
 import { svelteLanguageRegistration } from './svelte-language/registration';
 import { lspRegistration } from './lsp/registration';
+import { toFileUri } from './lsp/root';
 import { LSP_DESCRIPTORS } from './lsp/descriptors';
 import { DuplicateLspDescriptorIdError, PluginActivationError } from './errors';
 import type { PluginHostInterface } from './types';
@@ -482,7 +483,7 @@ async function waitForRunningServers(runtime: LspRuntime, count: number): Promis
 describe("LSP diagnostic pull on open and restart (#352)", () => {
 	it("Document open requests textDocument/diagnostic from a server advertising diagnosticProvider", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const wireLog = join(root, "wire.log");
 		const { runtime, diagnostics } = await startPullRuntime({
 			script: ["--diagnostic-pull", "--log-file", wireLog]
@@ -507,7 +508,7 @@ describe("LSP diagnostic pull on open and restart (#352)", () => {
 
 	it("Servers without diagnosticProvider are never pulled", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const wireLog = join(root, "wire.log");
 		const { runtime, diagnostics } = await startPullRuntime({
 			script: ["--diagnostics", "--log-file", wireLog]
@@ -536,7 +537,7 @@ describe("LSP diagnostic pull on open and restart (#352)", () => {
 
 	it("Reopening documents after server restart requests diagnostics for open documents", async () => {
 		const root = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
-		const uri = `file://${join(root, "src/a.ts")}`;
+		const uri = toFileUri(join(root, "src/a.ts"));
 		const { runtime, diagnostics } = await startPullRuntime({ script: ["--diagnostic-pull"] });
 
 		await runtime.openDocument({
