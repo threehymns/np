@@ -2,6 +2,7 @@
 	import * as Dialog from './ui/dialog/index.js';
 	import * as RadioGroup from './ui/radio-group/index.js';
 	import * as Select from './ui/select/index.js';
+	import { NumberInput } from './ui/number-input/index.js';
 	import { Label } from './ui/label/index.js';
 	import { Separator } from './ui/separator/index.js';
 	import { Switch } from './ui/switch/index.js';
@@ -270,17 +271,16 @@
 		appState.prefs.autosave = mode;
 	}
 
-	function setAutosaveDelay(raw: string) {
-		const parsed = Number(raw);
-		if (!Number.isFinite(parsed)) return;
+	function setAutosaveDelay(milliseconds: number) {
+		if (!Number.isFinite(milliseconds)) return;
 		// Whole milliseconds within the timer limit: the stored shape is an
-		// integer count, and an emptied or oversized number field must not hand
-		// SettingsManager a rejected value.
+		// integer count, and the stepper must not hand SettingsManager a
+		// rejected value.
 		appState.prefs.autosave = {
 			after_delay: {
 				milliseconds: Math.min(
 					MAX_AUTOSAVE_DELAY_MS,
-					Math.max(0, Math.trunc(parsed))
+					Math.max(0, Math.trunc(milliseconds))
 				)
 			}
 		};
@@ -699,20 +699,17 @@
 											</Select.Root>
 											{#if autosaveMode === 'after_delay'}
 												<div class="flex items-center gap-1.5">
-													<input
-														id="autosave-delay"
-														type="number"
-														min="0"
-														max={MAX_AUTOSAVE_DELAY_MS}
-														step="50"
-														aria-label="Auto-save delay in milliseconds"
-														value={autosaveDelayMs}
-														onchange={(e) =>
-															setAutosaveDelay(
-																(e.currentTarget as HTMLInputElement).value
-															)}
-														class="w-24 text-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-													/>
+												<NumberInput
+													id="autosave-delay"
+													min={0}
+													max={MAX_AUTOSAVE_DELAY_MS}
+													step={50}
+													aria-label="Auto-save delay in milliseconds"
+													value={autosaveDelayMs}
+													onValueChange={setAutosaveDelay}
+													decreaseLabel="Decrease auto-save delay"
+													increaseLabel="Increase auto-save delay"
+												/>
 													<span class="text-[10px] text-muted-foreground">ms</span>
 												</div>
 											{/if}

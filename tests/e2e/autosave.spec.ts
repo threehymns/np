@@ -95,6 +95,15 @@ test.describe('Auto-save setting', () => {
 			.poll(() => page.evaluate(() => (window as any).appState.prefs.autosave))
 			.toEqual({ after_delay: { milliseconds: 150 } });
 
+		await page.getByRole('button', { name: 'Increase auto-save delay' }).click();
+		await expect
+			.poll(() => page.evaluate(() => (window as any).appState.prefs.autosave))
+			.toEqual({ after_delay: { milliseconds: 200 } });
+		await page.getByRole('button', { name: 'Decrease auto-save delay' }).click();
+		await expect
+			.poll(() => page.evaluate(() => (window as any).appState.prefs.autosave))
+			.toEqual({ after_delay: { milliseconds: 150 } });
+
 		await page.keyboard.press('Escape');
 		await expect(dialog).toBeHidden();
 
