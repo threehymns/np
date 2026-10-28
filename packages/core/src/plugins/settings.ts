@@ -331,13 +331,14 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			alias: 'vimSyncClipboard'
 		},
 		/**
-		 * The completion keys below are the `editor` category's hand-written
-		 * half: `SettingsModal.svelte` filters the `editor` namespace out of the
+		 * The keys below are the `editor` category's hand-written half:
+		 * `SettingsModal.svelte` filters the `editor` namespace out of the
 		 * generated sections and builds these controls by hand, so a `control`
 		 * hint here would never be dispatched. They carry no hint for that
 		 * reason — declaring one would document a UI that does not exist. Title
 		 * and description are the contract, and the markup spells them out word
-		 * for word; `settings-markup-parity.test.ts` is what holds them to it.
+		 * for word; `settings-modal-editor-schema.test.ts` is what holds them to
+		 * it.
 		 */
 		words: {
 			type: 'string',
@@ -392,17 +393,17 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			description: 'Show the signature and docs a server attached to its suggestion'
 		},
 		/**
-		 * Controls whether folding ranges from language servers are used
-		 * instead of tree-sitter and indent-based folding (spec #288).
+		 * Whether folding ranges from language servers replace the editor's
+		 * own syntax and indentation folds (spec #288). Hand-built in
+		 * `SettingsModal.svelte`, so it carries no `control` hint (ADR 0014).
 		 */
 		document_folding_ranges: {
 			type: 'string',
 			default: 'off',
 			title: 'Document Folding Ranges',
 			description:
-				'Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding',
+				"Use folding ranges from the language server instead of the editor's syntax and indentation folds",
 			enum: ['off', 'on'],
-			control: 'select',
 			alias: ['documentFoldingRanges'],
 			validate: (val: unknown) => {
 				if (val === 'off' || val === 'on' || val === true || val === false) return { valid: true };
@@ -410,14 +411,16 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			}
 		},
 		/**
-		 * Gutter settings including code folding display.
+		 * Gutter components. Only `folds` exists today, and it too is
+		 * hand-built in `SettingsModal.svelte` (ADR 0014).
 		 */
 		gutter: {
 			type: 'object',
 			default: { folds: true },
 			mergeRule: 'deep',
-			title: 'Gutter Settings',
-			description: 'Controls gutter components such as code folding',
+			title: 'Fold Gutter',
+			description:
+				'Show fold controls in the gutter. A folded range collapses into a clickable placeholder',
 			alias: ['gutter']
 		},
 		/**

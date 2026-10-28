@@ -65,11 +65,11 @@ export const editorTheme = EditorView.theme({
 		lineHeight: "1",
 	},
 	".cm-foldMarker-open": {
-		opacity: "0",
+		opacity: "0.45",
 		transition: "opacity 120ms ease",
 	},
 	".cm-gutters:hover .cm-foldMarker-open": {
-		opacity: "0.6",
+		opacity: "0.8",
 	},
 	".cm-foldGutter .cm-gutterElement:hover .cm-foldMarker-open": {
 		opacity: "1",

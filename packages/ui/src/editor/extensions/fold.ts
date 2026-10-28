@@ -1,6 +1,6 @@
-import { EditorView, keymap } from "@codemirror/view";
+import { Decoration, EditorView, keymap } from "@codemirror/view";
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { foldGutter, foldService } from "@codemirror/language";
+import { foldGutter, foldService, foldState } from "@codemirror/language";
 import {
 	fold,
 	unfold,
@@ -33,11 +33,20 @@ export function createFoldMarkerDOM(open: boolean): HTMLElement {
 
 /**
  * Creates a themed CodeMirror fold gutter with custom carets and hover reveal.
+ *
+ * Folded ranges are atomic for cursor motion. Without that, CodeMirror's fold
+ * state clears a fold as soon as the selection head touches it, so walking the
+ * cursor over a folded block would silently open it instead of stepping past.
  */
 export function themedFoldGutter(): Extension {
-	return foldGutter({
-		markerDOM: createFoldMarkerDOM,
-	});
+	return [
+		foldGutter({
+			markerDOM: createFoldMarkerDOM,
+		}),
+		EditorView.atomicRanges.of(
+			(view) => view.state.field(foldState, false) ?? Decoration.none
+		),
+	];
 }
 
 /**

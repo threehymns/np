@@ -748,6 +748,34 @@
 								</div>
 
 								<div class="space-y-4">
+									<h4 class="text-sm font-semibold">Folding</h4>
+									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Fold Gutter</Label>
+											<p class="text-[10px] text-muted-foreground">Show fold controls in the gutter. A folded range collapses into a clickable placeholder</p>
+											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+												<Switch bind:checked={appState.prefs.gutterFolds} />
+											</div>
+										</div>
+
+										<div class="space-y-2">
+											<Label class="text-sm font-medium">Document Folding Ranges</Label>
+											<p class="text-[10px] text-muted-foreground">Use folding ranges from the language server instead of the editor's syntax and indentation folds</p>
+											<select
+												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+												value={appState.prefs.documentFoldingRanges}
+												onchange={(e) =>
+													(appState.prefs.documentFoldingRanges = (e.currentTarget as HTMLSelectElement)
+														.value as 'off' | 'on')}
+											>
+												<option value="off">off</option>
+												<option value="on">on</option>
+											</select>
+										</div>
+									</div>
+								</div>
+
+								<div class="space-y-4">
 									<h4 class="text-sm font-semibold">Typography</h4>
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-3">

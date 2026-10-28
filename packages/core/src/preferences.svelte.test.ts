@@ -189,6 +189,29 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(storage.setItemCalls.length).toBe(0);
 	});
 
+	it("restores the fold gutter and document folding ranges from stored settings", () => {
+		const storage = createMockStorage({
+			"np-prefs-v2": JSON.stringify({
+				editor: { gutter: { folds: false }, document_folding_ranges: "on" }
+			})
+		});
+		const prefs = new Preferences(storage);
+
+		expect(prefs.gutterFolds).toBe(false);
+		expect(prefs.documentFoldingRanges).toBe("on");
+	});
+
+	it("writes the fold gutter and document folding ranges under the editor namespace", () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+
+		prefs.gutterFolds = false;
+		prefs.documentFoldingRanges = "on";
+
+		expect(prefs.get("editor", "gutter")).toEqual({ folds: false });
+		expect(prefs.get("editor", "document_folding_ranges")).toBe("on");
+	});
+
 	it("fileIconThemeId and productIconThemeId getters, setters, and onIconThemeChange callback", () => {
 		const storage = createMockStorage();
 		const prefs = new Preferences(storage);
