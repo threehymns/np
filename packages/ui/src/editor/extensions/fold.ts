@@ -1,6 +1,6 @@
 import { Decoration, EditorView, keymap } from "@codemirror/view";
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { foldGutter, foldService, foldState } from "@codemirror/language";
+import { codeFolding, foldGutter, foldService, foldState } from "@codemirror/language";
 import {
 	fold,
 	unfold,
@@ -32,21 +32,31 @@ export function createFoldMarkerDOM(open: boolean): HTMLElement {
 }
 
 /**
- * Creates a themed CodeMirror fold gutter with custom carets and hover reveal.
+ * Folding state that stays installed whether or not the gutter is visible.
  *
  * Folded ranges are atomic for cursor motion. Without that, CodeMirror's fold
  * state clears a fold as soon as the selection head touches it, so walking the
  * cursor over a folded block would silently open it instead of stepping past.
+ * Keeping this outside the gutter compartment means hiding the gutter never
+ * throws away the folds the document already has.
+ */
+export const foldingStateExtension: Extension = [
+	codeFolding(),
+	EditorView.atomicRanges.of(
+		(view) => view.state.field(foldState, false) ?? Decoration.none
+	),
+];
+
+/**
+ * Creates a themed CodeMirror fold gutter with custom carets and hover reveal.
+ *
+ * Only the gutter belongs here, so a gutter-visibility toggle can reconfigure
+ * it without touching {@link foldingStateExtension}.
  */
 export function themedFoldGutter(): Extension {
-	return [
-		foldGutter({
-			markerDOM: createFoldMarkerDOM,
-		}),
-		EditorView.atomicRanges.of(
-			(view) => view.state.field(foldState, false) ?? Decoration.none
-		),
-	];
+	return foldGutter({
+		markerDOM: createFoldMarkerDOM,
+	});
 }
 
 /**

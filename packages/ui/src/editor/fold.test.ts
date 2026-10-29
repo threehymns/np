@@ -1,12 +1,13 @@
 import "../../../../tests/contract/rune-setup";
 import { describe, it, expect, beforeAll } from "bun:test";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { codeFolding, foldedRanges, foldCode, unfoldCode } from "@codemirror/language";
+import { codeFolding, foldEffect, foldedRanges, foldCode, unfoldCode } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
 	createFoldMarkerDOM,
 	themedFoldGutter,
+	foldingStateExtension,
 	setLspFoldingEffect,
 	lspFoldingField,
 	lspFoldService,
@@ -101,6 +102,28 @@ describe("Themed fold gutter & marker DOM", () => {
 			});
 			view.destroy();
 		}).not.toThrow();
+	});
+
+	it("keeps folding state when the gutter is hidden", () => {
+		const gutterCompartment = new Compartment();
+		const doc = "function hello() {\n  return 'world';\n}\n";
+		let state = EditorState.create({
+			doc,
+			extensions: [
+				foldingStateExtension,
+				lspFoldingExtension,
+				lspFoldingField.init(() => [
+					{ startLine: 0, endLine: 2, kind: "region" as const },
+				]),
+				gutterCompartment.of(themedFoldGutter()),
+			],
+		});
+
+		state = state.update({ effects: foldEffect.of({ from: 0, to: 18 }) }).state;
+		expect(foldedRanges(state).size).toBe(1);
+
+		state = state.update({ effects: gutterCompartment.reconfigure([]) }).state;
+		expect(foldedRanges(state).size).toBe(1);
 	});
 });
 

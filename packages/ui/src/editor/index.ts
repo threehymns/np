@@ -17,6 +17,7 @@ import { lineNumbers } from "./extensions/line-numbers";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import {
 	themedFoldGutter,
+	foldingStateExtension,
 	defaultFoldKeymap,
 	documentFoldingRangesExtension,
 	documentFoldingRangesField,
@@ -328,6 +329,7 @@ export function createEditorExtensions(options: {
 		roundedSelectionLayer,
 		tooltipSelectionOverlay,
 		lspFoldingExtension,
+		foldingStateExtension,
 		defaultFoldKeymap,
 		dropCursor(),
 		EditorState.allowMultipleSelections.of(true),

@@ -26,7 +26,7 @@
 		trackCursorFocus,
 		type MultibufferViewEntry
 	} from './multibuffer.js';
-	import { getLanguageExtensions, editorTheme, diffTheme, codeHighlight, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange, themedFoldGutter, defaultFoldKeymap } from '../editor/index';
+	import { getLanguageExtensions, editorTheme, diffTheme, codeHighlight, markdownHighlight, LanguageSupport, workspaceFacet, currentDocFacet, setupVimClipboardSync, syncVimRegistersFromClipboard, smartIndent, minimalTextChange, themedFoldGutter, foldingStateExtension, defaultFoldKeymap } from '../editor/index';
 	import Button from './ui/button/button.svelte';
 	import MultiBuffer from './MultiBuffer.svelte';
 	import {
@@ -613,6 +613,7 @@
 						])
 					] : []),
 					syntaxHighlighting(codeHighlight),
+					foldingStateExtension,
 					themedFoldGutter(),
 					defaultFoldKeymap,
 					editorTheme,
