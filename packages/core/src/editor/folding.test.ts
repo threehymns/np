@@ -228,6 +228,33 @@ line 5
 		view.destroy();
 	});
 
+	it("derives the indentation step from the document when tabSize is omitted", async () => {
+		const lang = await getJsSupport();
+		const doc = `function outer() {
+    const x = 1;
+    function inner() {
+        const y = 2;
+    }
+}
+`;
+		const state = EditorState.create({
+			doc,
+			extensions: [lang, codeFolding()],
+		});
+		const view = new EditorView({
+			state,
+			parent: (globalThis as any).document.createElement("div"),
+		});
+
+		// The file indents in four spaces, so level 2 targets four spaces.
+		// A fixed default of two would read that line as depth 2 and fold
+		// nothing.
+		foldAtLevel(view, 2);
+		expect(foldedRanges(view.state).size).toBe(1);
+
+		view.destroy();
+	});
+
 	it("folds and unfolds recursively", async () => {
 		const lang = await getJsSupport();
 		const doc = `function outer() {

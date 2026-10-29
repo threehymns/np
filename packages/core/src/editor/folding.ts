@@ -11,7 +11,7 @@ import {
 	foldedRanges,
 	syntaxTree,
 } from "@codemirror/language";
-import type { EditorState } from "@codemirror/state";
+import type { EditorState, Text } from "@codemirror/state";
 
 /**
  * Calculates line indentation depth in steps of `tabSize`.
@@ -83,18 +83,42 @@ export function foldSelectedRanges(view: EditorView): boolean {
 }
 
 /**
+ * Infers the indentation step a document actually uses, counting each leading
+ * whitespace character as one column. The smallest non-empty indentation wins,
+ * so a two-space file yields 2 and a tab-indented file yields 1 (one tab is
+ * one step). Falls back to 2 when the document has no indented lines.
+ */
+function detectIndentStep(doc: Text): number {
+	let step = 0;
+	for (let i = 1; i <= doc.lines; i++) {
+		const text = doc.line(i).text;
+		if (text.trim().length === 0) continue;
+		let width = 0;
+		while (width < text.length && (text[width] === " " || text[width] === "\t")) {
+			width++;
+		}
+		if (width > 0 && (step === 0 || width < step)) step = width;
+	}
+	return step || 2;
+}
+
+/**
  * Folds all code blocks at a specified indentation level (1-indexed) (`editor: fold at level [1-9]`).
  * Level 1 corresponds to indent level 0 (outermost blocks); level 2 corresponds to 1 indent step, etc.
+ *
+ * When `tabSize` is omitted, the indentation step is inferred from the document
+ * rather than assumed to be two spaces. An explicit `tabSize` always wins.
  */
-export function foldAtLevel(view: EditorView, level: number, tabSize = 2): boolean {
+export function foldAtLevel(view: EditorView, level: number, tabSize?: number): boolean {
 	const targetIndent = Math.max(0, level - 1);
 	const effects: any[] = [];
 	const doc = view.state.doc;
+	const step = tabSize ?? detectIndentStep(doc);
 
 	for (let i = 1; i <= doc.lines; i++) {
 		const line = doc.line(i);
 		if (line.length === 0) continue;
-		const indent = getLineIndent(line.text, tabSize);
+		const indent = getLineIndent(line.text, step);
 		if (indent === targetIndent) {
 			const range = foldable(view.state, line.from, line.to);
 			if (range) {
