@@ -64,8 +64,10 @@ export const editorTheme = EditorView.theme({
 		justifyContent: "center",
 		lineHeight: "1",
 	},
+	// Open markers stay hidden until the gutter is hovered, so the editor
+	// isn't cluttered with carets. Collapsed markers are always shown.
 	".cm-foldMarker-open": {
-		opacity: "0.45",
+		opacity: "0",
 		transition: "opacity 120ms ease",
 	},
 	".cm-gutters:hover .cm-foldMarker-open": {
