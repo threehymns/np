@@ -930,6 +930,9 @@
 						EditorView.editable.of(false),
 						...langExtensions,
 						syntaxHighlighting(codeHighlight),
+						foldingStateExtension,
+						themedFoldGutter(),
+						defaultFoldKeymap,
 						editorTheme,
 						diffTheme,
 						fileNavKeymap(options.filepath),
@@ -976,6 +979,9 @@
 							{ key: "Shift-Tab", run: smartIndent("less") }
 						]),
 						syntaxHighlighting(codeHighlight),
+						foldingStateExtension,
+						themedFoldGutter(),
+						defaultFoldKeymap,
 						editorTheme,
 						EditorView.updateListener.of((update) => {
 							if (

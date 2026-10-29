@@ -91,6 +91,15 @@ describe("DiffViewer Working-copy pane parity (#271)", () => {
 		expect(src).toContain("wrap: appState.prefs.wordWrap,");
 	});
 
+	it("gives both split panes folding controls and shortcuts", () => {
+		const { aBlock, bBlock } = mergeViewBlocks();
+		for (const block of [aBlock, bBlock]) {
+			expect(block).toContain("foldingStateExtension");
+			expect(block).toContain("themedFoldGutter()");
+			expect(block).toContain("defaultFoldKeymap");
+		}
+	});
+
 	it("syncs Document -> pane as a minimal hunk out of undo history", () => {
 		expect(src).toContain("minimalTextChange(rightDoc, insert)");
 		expect(src).toContain("Transaction.addToHistory.of(false)");
