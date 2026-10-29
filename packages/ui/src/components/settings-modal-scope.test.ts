@@ -38,4 +38,25 @@ describe("SettingsModal settings scope ownership", () => {
 			/writeLanguageOverrides\(\s*appState\.prefs,\s*languageOverridesScope,\s*languageOverridesDraft\s*\)/
 		);
 	});
+
+	it("edits the folding controls in the scope they show", () => {
+		expect(content).toContain("checked={foldingGutterEnabled}");
+		expect(content).toContain("value={foldingRangesMode}");
+		expect(content).toMatch(
+			/writeScopeGutterFolds\(\s*appState\.prefs,\s*foldingSettingsScope,\s*checked\s*\)/
+		);
+		expect(content).toMatch(
+			/writeScopeDocumentFoldingRanges\(\s*appState\.prefs,\s*foldingSettingsScope,/
+		);
+		// Never read or write the resolved folding values from these controls.
+		expect(content).not.toContain("bind:checked={appState.prefs.gutterFolds}");
+		expect(content).not.toContain("appState.prefs.documentFoldingRanges");
+	});
+
+	it("associates each folding label with its control", () => {
+		for (const id of ["setting-fold-gutter", "setting-document-folding-ranges"]) {
+			expect(content).toContain(`id="${id}"`);
+			expect(content).toContain(`for="${id}"`);
+		}
+	});
 });

@@ -9,6 +9,12 @@
 	import { Palette, TextT, Gear, Keyboard, PuzzlePiece, FolderOpen } from "phosphor-svelte";
 	import GeneratedSettingsSection from './settings/GeneratedSettingsSection.svelte';
 	import { languageOverridesText, writeLanguageOverrides } from './settings/language-overrides';
+	import {
+		scopeDocumentFoldingRanges,
+		scopeGutterFolds,
+		writeScopeDocumentFoldingRanges,
+		writeScopeGutterFolds
+	} from './settings/folding-settings';
 	import { cn } from '@np/core';
 	import type { AppearanceMode, CompletionLspInsertMode, CompletionWordsMode, SettingScope } from '@np/core';
 
@@ -229,6 +235,20 @@
 		// the word-length control above.
 		appState.prefs.serverFetchTimeoutMs = Math.max(0, Math.trunc(parsed));
 	}
+
+	// The folding controls hand-build the `editor.gutter` and
+	// `editor.document_folding_ranges` settings, so they must edit the scope
+	// the switcher shows: reading the resolved value would display the other
+	// scope too, and writing it back would copy it into this one.
+	const foldingSettingsScope = $derived(appState.prefs.activeScope);
+	const foldingGutterEnabled = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		return scopeGutterFolds(appState.prefs, foldingSettingsScope);
+	});
+	const foldingRangesMode = $derived.by(() => {
+		appState.prefs.settingsVersion;
+		return scopeDocumentFoldingRanges(appState.prefs, foldingSettingsScope);
+	});
 
 	const allCommands = $derived(appState.commands.getAll());
 	const filteredCommands = $derived(
@@ -751,22 +771,31 @@
 									<h4 class="text-sm font-semibold">Folding</h4>
 									<div class="p-6 rounded-xl border bg-card/50 space-y-6">
 										<div class="space-y-2">
-											<Label class="text-sm font-medium">Fold Gutter</Label>
+											<Label class="text-sm font-medium" for="setting-fold-gutter">Fold Gutter</Label>
 											<p class="text-[10px] text-muted-foreground">Show fold controls in the gutter. A folded range collapses into a clickable placeholder</p>
 											<div class="flex items-center justify-between p-3 rounded-lg border bg-background/50">
-												<Switch bind:checked={appState.prefs.gutterFolds} />
+												<Switch
+													id="setting-fold-gutter"
+													checked={foldingGutterEnabled}
+													onCheckedChange={(checked: boolean) =>
+														writeScopeGutterFolds(appState.prefs, foldingSettingsScope, checked)}
+												/>
 											</div>
 										</div>
 
 										<div class="space-y-2">
-											<Label class="text-sm font-medium">Document Folding Ranges</Label>
+											<Label class="text-sm font-medium" for="setting-document-folding-ranges">Document Folding Ranges</Label>
 											<p class="text-[10px] text-muted-foreground">Use folding ranges from the language server instead of the editor's syntax and indentation folds</p>
 											<select
+												id="setting-document-folding-ranges"
 												class="w-full max-w-xs text-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
-												value={appState.prefs.documentFoldingRanges}
+												value={foldingRangesMode}
 												onchange={(e) =>
-													(appState.prefs.documentFoldingRanges = (e.currentTarget as HTMLSelectElement)
-														.value as 'off' | 'on')}
+													writeScopeDocumentFoldingRanges(
+														appState.prefs,
+														foldingSettingsScope,
+														(e.currentTarget as HTMLSelectElement).value as 'off' | 'on'
+													)}
 											>
 												<option value="off">off</option>
 												<option value="on">on</option>
