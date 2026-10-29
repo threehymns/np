@@ -690,46 +690,6 @@ export function validateSettingValue(
 			break;
 	}
 
-	if (schema.validate) {
-		const customRes = schema.validate(value);
-		if (customRes === false) {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: `Validation failed for "${namespace}.${key}"`,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
-		if (typeof customRes === 'string') {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: customRes,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
-		if (typeof customRes === 'object' && customRes !== null && !customRes.valid) {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: customRes.error ?? `Validation failed for "${namespace}.${key}"`,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
-	}
-
 	return { valid: true };
 }
 
