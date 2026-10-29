@@ -49,6 +49,7 @@
 	let altPressed = $state(false);
 	let pendingScrollGen = 0;
 	let completionChainGen = 0;
+	let foldingRangesGeneration = 0;
 	const wrapCompartment = new Compartment();
 	const foldGutterCompartment = new Compartment();
 	const languageCompartment = new Compartment();
@@ -244,6 +245,7 @@
 	});
 
 	$effect(() => {
+		const generation = ++foldingRangesGeneration;
 		const langName = doc.language?.name ?? null;
 		const enabled = readDocumentFoldingRangesSettings(
 			(ns, key) => appState.prefs.get(ns, key),
@@ -268,14 +270,16 @@
 				language: langName,
 			})
 			.then((ans) => {
-				if (ans.state === "serving" && targetView === view) {
-					targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of(ans.ranges) });
-				}
+				if (generation !== foldingRangesGeneration || targetView !== view) return;
+				targetView.dispatch({
+					effects: setDocumentFoldingRangesEffect.of(
+						ans.state === "serving" ? ans.ranges : []
+					)
+				});
 			})
 			.catch(() => {
-				if (targetView === view) {
-					targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of([]) });
-				}
+				if (generation !== foldingRangesGeneration || targetView !== view) return;
+				targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of([]) });
 			});
 	});
 
