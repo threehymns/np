@@ -471,6 +471,24 @@ describe('Invalid Stored Values & Diagnostics (#198)', () => {
 		expect(resMode.provenance).toBe('default');
 		expect(resMode.diagnostics?.[0].message).toContain('is not one of allowed values');
 	});
+	it('runs a custom validator once for an accepted true or void result', () => {
+		for (const accepted of [true, undefined] as const) {
+			let calls = 0;
+			const schema = {
+				type: 'string' as const,
+				default: 'off',
+				validate: () => {
+					calls++;
+					return accepted;
+				}
+			};
+
+			expect(validateSettingValue('editor', 'document_folding_ranges', 'on', schema)).toEqual({
+				valid: true
+			});
+			expect(calls).toBe(1);
+		}
+	});
 });
 
 describe('Disabled Plugins & Storage Preservation (#198)', () => {

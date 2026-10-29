@@ -40,6 +40,8 @@ const DEFAULTS = {
 	vimSyncClipboard: true,
 	tabSize: 2,
 	lineNumbers: true,
+	gutter: { folds: true } as { folds: boolean },
+	documentFoldingRanges: 'off' as 'off' | 'on',
 	completionWords: EDITOR_COMPLETION_DEFAULTS.words,
 	minWordLength: EDITOR_COMPLETION_DEFAULTS.minWordLength,
 	automaticCompletions: EDITOR_COMPLETION_DEFAULTS.automaticCompletions,
@@ -159,6 +161,31 @@ export class Preferences {
 		if (this._data.lineNumbers === val) return;
 		this._data.lineNumbers = val;
 		this.syncToSettingsAndSave('editor', 'line_numbers', val);
+	}
+
+	get gutterFolds(): boolean {
+		const g = this._data.gutter;
+		if (typeof g === 'object' && g !== null && 'folds' in g) {
+			return Boolean((g as any).folds);
+		}
+		if (typeof g === 'boolean') return g;
+		return true;
+	}
+	set gutterFolds(val: boolean) {
+		const g = typeof this._data.gutter === 'object' && this._data.gutter !== null
+			? { ...this._data.gutter, folds: val }
+			: { folds: val };
+		this._data.gutter = g;
+		this.syncToSettingsAndSave('editor', 'gutter', g);
+	}
+
+	get documentFoldingRanges(): 'off' | 'on' {
+		return this._data.documentFoldingRanges === 'on' ? 'on' : 'off';
+	}
+	set documentFoldingRanges(val: 'off' | 'on') {
+		if (this._data.documentFoldingRanges === val) return;
+		this._data.documentFoldingRanges = val;
+		this.syncToSettingsAndSave('editor', 'document_folding_ranges', val);
 	}
 
 	get completionWords(): CompletionWordsMode { return this._data.completionWords; }
@@ -390,6 +417,13 @@ export class Preferences {
 		return this.settings.hasOverride(namespace, key, 'workspace');
 	}
 
+	private resolveFoldingPreferences(): void {
+		this._data.gutter = this.settings.resolve('editor', 'gutter').value;
+		const foldRangesVal = this.settings.resolve('editor', 'document_folding_ranges').value;
+		this._data.documentFoldingRanges =
+			foldRangesVal === 'on' || foldRangesVal === true ? 'on' : 'off';
+	}
+
 	private refreshEffectiveData(): void {
 		try {
 			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
@@ -397,6 +431,7 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this.resolveFoldingPreferences();
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
@@ -469,6 +504,7 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
+			this.resolveFoldingPreferences();
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;

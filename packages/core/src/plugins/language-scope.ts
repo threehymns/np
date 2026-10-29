@@ -146,3 +146,21 @@ export function editorSettingsForLanguage(
 export function editorLspEnabled(value: unknown): boolean {
 	return (value ?? EDITOR_COMPLETION_DEFAULTS.lsp) !== false;
 }
+
+/**
+ * Normalizes document folding ranges setting ('off' | 'on') from a scoped value.
+ * Defaults to false ('off'). An explicit 'on' or boolean true enables LSP folding ranges.
+ */
+export function editorDocumentFoldingRangesEnabled(value: unknown): boolean {
+	return value === 'on' || value === true;
+}
+
+/**
+ * Normalizes gutter folds setting (boolean) from a scoped value.
+ * Defaults to true. Only an explicit false or { folds: false } disables fold gutter.
+ */
+export function editorGutterFoldsEnabled(value: unknown): boolean {
+	if (value === false) return false;
+	if (typeof value === 'object' && value !== null && (value as Record<string, unknown>).folds === false) return false;
+	return true;
+}

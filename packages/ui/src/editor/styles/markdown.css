@@ -207,7 +207,7 @@
  border-right-width: 0 !important;
 }
 
-.cm-gutter.cm-foldGutter {
+.is-markdown .cm-gutter.cm-foldGutter {
   display: none !important;
 }
 

@@ -6,7 +6,7 @@ import {
 	Direction,
 } from "@codemirror/view";
 import { type EditorState, type SelectionRange } from "@codemirror/state";
-import { syntaxTree } from "@codemirror/language";
+import { foldedRanges, syntaxTree } from "@codemirror/language";
 
 export interface SelectionRect {
 	left: number;
@@ -367,6 +367,86 @@ function isCellEditorView(view: EditorView): boolean {
 }
 
 /**
+ * Rects for fold placeholders whose hidden range is part of `range`.
+ *
+ * A fold replaces its text with an inline placeholder. Position coordinates
+ * stop at the placeholder's edges, and every folded line collapses onto the
+ * placeholder's right edge, so the measured line rects can leave the pill
+ * itself as a gap. When the selection covers a fold, the pill's whole slot is
+ * part of the highlight. Margins are included in that slot because excluding
+ * them would notch the path between the surrounding text and the pill.
+ */
+function selectedFoldPlaceholderSlots(
+	view: EditorView,
+	range: SelectionRange,
+	base: { left: number; top: number }
+): SelectionRect[] {
+	const contentDOM = (view as unknown as { contentDOM?: HTMLElement }).contentDOM;
+	if (!contentDOM || typeof contentDOM.querySelectorAll !== "function") return [];
+	if (typeof (view.state as unknown as { field?: unknown }).field !== "function") {
+		return [];
+	}
+
+	let folds: ReturnType<typeof foldedRanges>;
+	try {
+		folds = foldedRanges(view.state);
+	} catch {
+		return [];
+	}
+	if (folds.size === 0) return [];
+
+	const selected = new Set<number>();
+	folds.between(range.from, range.to, (from, to) => {
+		if (range.from < to && range.to > from) selected.add(from);
+	});
+	if (selected.size === 0) return [];
+
+	const slots: SelectionRect[] = [];
+	for (const el of contentDOM.querySelectorAll<HTMLElement>(".cm-foldPlaceholder")) {
+		try {
+			if (!selected.has(view.posAtDOM(el, 0))) continue;
+		} catch {
+			continue;
+		}
+		const rect = el.getBoundingClientRect();
+		if (rect.right <= rect.left || rect.bottom <= rect.top) continue;
+		const style = el.ownerDocument?.defaultView?.getComputedStyle?.(el);
+		const marginLeft = Math.max(0, parseFloat(style?.marginLeft ?? "") || 0);
+		const marginRight = Math.max(0, parseFloat(style?.marginRight ?? "") || 0);
+		slots.push({
+			left: rect.left - base.left - marginLeft,
+			right: rect.right - base.left + marginRight,
+			top: rect.top - base.top,
+			bottom: rect.bottom - base.top,
+		});
+	}
+	return slots;
+}
+
+/**
+ * Widens the selection rects on each visual line to cover a selected fold
+ * placeholder's slot. Rect groups stay per line, so this only closes the
+ * horizontal gap around the pill; vertical coverage remains the line block.
+ */
+function includeFoldPlaceholderSlots(rects: SelectionRect[], slots: SelectionRect[]): void {
+	for (const slot of slots) {
+		const overlapping = rects.filter(
+			(rect) => rect.bottom > slot.top && rect.top < slot.bottom
+		);
+		if (overlapping.length === 0) {
+			// Selection lies entirely inside the folded range: the placeholder
+			// is the only visible thing there, so it is the whole highlight.
+			rects.push({ ...slot });
+			continue;
+		}
+		for (const rect of overlapping) {
+			rect.left = Math.min(rect.left, slot.left);
+			rect.right = Math.max(rect.right, slot.right);
+		}
+	}
+}
+
+/**
  * Measures tight selection rectangles for a given selection range,
  * extending trailing newlines by only ~0.75 character width instead of the full buffer width.
  * Uses lineBlockAt to ensure selections accurately reflect rendered line heights (including
@@ -548,6 +628,11 @@ export function tightRectanglesForRange(
 
 			rects.push(...lineSlices);
 		}
+	}
+
+	const foldSlots = selectedFoldPlaceholderSlots(view, range, base);
+	if (foldSlots.length > 0) {
+		includeFoldPlaceholderSlots(rects, foldSlots);
 	}
 
 	return rects;

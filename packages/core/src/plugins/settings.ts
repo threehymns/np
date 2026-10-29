@@ -276,6 +276,8 @@ export const LSP_SETTING = 'lsp';
 export const LSP_FETCH_TIMEOUT_SETTING = 'lsp_fetch_timeout_ms';
 export const LSP_INSERT_MODE_SETTING = 'lsp_insert_mode';
 export const SHOW_COMPLETION_DOCUMENTATION_SETTING = 'show_completion_documentation';
+export const DOCUMENT_FOLDING_RANGES_SETTING = 'document_folding_ranges';
+export const GUTTER_SETTING = 'gutter';
 export const LANGUAGE_OVERRIDES_SETTING = 'languages';
 
 /**
@@ -329,13 +331,14 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			alias: 'vimSyncClipboard'
 		},
 		/**
-		 * The completion keys below are the `editor` category's hand-written
-		 * half: `SettingsModal.svelte` filters the `editor` namespace out of the
+		 * The keys below are the `editor` category's hand-written half:
+		 * `SettingsModal.svelte` filters the `editor` namespace out of the
 		 * generated sections and builds these controls by hand, so a `control`
 		 * hint here would never be dispatched. They carry no hint for that
 		 * reason — declaring one would document a UI that does not exist. Title
 		 * and description are the contract, and the markup spells them out word
-		 * for word; `settings-markup-parity.test.ts` is what holds them to it.
+		 * for word; `settings-modal-editor-schema.test.ts` is what holds them to
+		 * it.
 		 */
 		words: {
 			type: 'string',
@@ -388,6 +391,37 @@ export const EDITOR_SCHEMA: SettingNamespaceSchema = {
 			default: EDITOR_COMPLETION_DEFAULTS.showCompletionDocumentation,
 			title: 'Show Completion Documentation',
 			description: 'Show the signature and docs a server attached to its suggestion'
+		},
+		/**
+		 * Whether folding ranges from language servers replace the editor's
+		 * own syntax and indentation folds (spec #288). Hand-built in
+		 * `SettingsModal.svelte`, so it carries no `control` hint (ADR 0014).
+		 */
+		document_folding_ranges: {
+			type: 'string',
+			default: 'off',
+			title: 'Document Folding Ranges',
+			description:
+				"Use folding ranges from the language server instead of the editor's syntax and indentation folds",
+			enum: ['off', 'on'],
+			alias: ['documentFoldingRanges'],
+			validate: (val: unknown) => {
+				if (val === 'off' || val === 'on' || val === true || val === false) return { valid: true };
+				return { valid: false, error: 'Expected \"off\", \"on\", or a boolean' };
+			}
+		},
+		/**
+		 * Gutter components. Only `folds` exists today, and it too is
+		 * hand-built in `SettingsModal.svelte` (ADR 0014).
+		 */
+		gutter: {
+			type: 'object',
+			default: { folds: true },
+			mergeRule: 'deep',
+			title: 'Fold Gutter',
+			description:
+				'Show fold controls in the gutter. A folded range collapses into a clickable placeholder',
+			alias: ['gutter']
 		},
 		/**
 		 * Per-language overrides for the keys above, keyed by language name and
@@ -504,6 +538,49 @@ export function validateSettingValue(
 		return { valid: true };
 	}
 
+	if (schema.validate) {
+		const customRes = schema.validate(value);
+		if (typeof customRes === 'object' && customRes !== null && customRes.valid) {
+			return { valid: true };
+		}
+		if (customRes === false) {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: `Validation failed for \"${namespace}.${key}\"`,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
+		if (typeof customRes === 'string') {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: customRes,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
+		if (typeof customRes === 'object' && customRes !== null && !customRes.valid) {
+			return {
+				valid: false,
+				diagnostic: {
+					namespace,
+					key,
+					message: customRes.error ?? `Validation failed for \"${namespace}.${key}\"`,
+					severity: 'error',
+					receivedValue: value
+				}
+			};
+		}
+	}
+
 	switch (schema.type) {
 		case 'boolean':
 			if (typeof value !== 'boolean') {
@@ -611,46 +688,6 @@ export function validateSettingValue(
 				};
 			}
 			break;
-	}
-
-	if (schema.validate) {
-		const customRes = schema.validate(value);
-		if (customRes === false) {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: `Validation failed for "${namespace}.${key}"`,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
-		if (typeof customRes === 'string') {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: customRes,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
-		if (typeof customRes === 'object' && customRes !== null && !customRes.valid) {
-			return {
-				valid: false,
-				diagnostic: {
-					namespace,
-					key,
-					message: customRes.error ?? `Validation failed for "${namespace}.${key}"`,
-					severity: 'error',
-					receivedValue: value
-				}
-			};
-		}
 	}
 
 	return { valid: true };

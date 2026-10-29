@@ -16,9 +16,20 @@ import {
 import { lineNumbers } from "./extensions/line-numbers";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import {
+	themedFoldGutter,
+	foldingStateExtension,
+	defaultFoldKeymap,
+	documentFoldingRangesExtension,
+	documentFoldingRangesField,
+	documentFoldingRangeService,
+	setDocumentFoldingRangesEffect,
+	lspFoldingExtension,
+	setLspFoldingEffect,
+	lspFoldingField,
+} from "./extensions/fold";
+import {
 	indentOnInput,
 	bracketMatching,
-	foldGutter,
 	syntaxHighlighting,
 	LanguageDescription,
 	LanguageSupport,
@@ -261,6 +272,8 @@ export function createEditorExtensions(options: {
 	languageCompartment: Compartment;
 	completionCompartment: Compartment;
 	vimCompartment: Compartment;
+	foldGutterCompartment?: Compartment;
+	gutterFolds?: boolean;
 	gutterCompartment?: Compartment;
 	decorationsCompartment?: Compartment;
 	keybindingsCompartment?: Compartment;
@@ -276,6 +289,8 @@ export function createEditorExtensions(options: {
 		languageCompartment,
 		completionCompartment,
 		vimCompartment,
+		foldGutterCompartment,
+		gutterFolds,
 		gutterCompartment,
 		decorationsCompartment,
 		keybindingsCompartment,
@@ -306,13 +321,16 @@ export function createEditorExtensions(options: {
 		// has over the language-provided sources.
 		completionCompartment.of(initialCompletionExtensions(vimEnabled)),
 		vimCompartment.of(vimEnabled ? vim() : []),
+		(foldGutterCompartment ?? new Compartment()).of((gutterFolds ?? true) ? themedFoldGutter() : []),
 		...resolvedPluginExtensions,
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),
 		roundedSelectionLayer,
 		tooltipSelectionOverlay,
-		foldGutter(),
+		lspFoldingExtension,
+		foldingStateExtension,
+		defaultFoldKeymap,
 		dropCursor(),
 		EditorState.allowMultipleSelections.of(true),
 		indentOnInput(),
@@ -448,3 +466,4 @@ export async function syncVimRegistersFromClipboard() {
 		// Fail silently
 	}
 }
+export * from "./extensions/fold";

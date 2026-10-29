@@ -1,3 +1,4 @@
+import "../../../../tests/contract/rune-setup";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -40,7 +41,9 @@ const HAND_BUILT_EDITOR_KEYS = [
 	"lsp",
 	"lsp_fetch_timeout_ms",
 	"lsp_insert_mode",
-	"show_completion_documentation"
+	"show_completion_documentation",
+	"document_folding_ranges",
+	"gutter"
 ] as const;
 
 function escapeForRegExp(text: string): string {
@@ -88,7 +91,7 @@ describe("editor settings: schema and markup agree", () => {
 	});
 
 	it("offers every enum value the schema declares", () => {
-		for (const key of ["words", "lsp_insert_mode"] as const) {
+		for (const key of ["words", "lsp_insert_mode", "document_folding_ranges"] as const) {
 			for (const value of properties[key].enum ?? []) {
 				expect(
 					markupContains(markup, `value="${value}"`),

@@ -20,7 +20,9 @@ export {
 	LSP_RUNTIME_SERVICE_KEY,
 	lspServerKey,
 	type LspDocumentInput,
-	type LspRuntime
+	type LspRuntime,
+	type LspFoldingRange,
+	type FoldingRangeAnswer
 } from './lsp/lifecycle';
 // Types only. The UI layer's LSP components read the plugin's own services and
 // render its decoded items, and nothing outside the plugin needs its client, its

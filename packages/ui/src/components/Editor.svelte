@@ -3,14 +3,14 @@
 	import { EditorView } from "@codemirror/view";
 	import { EditorState, Compartment, Annotation, EditorSelection, Transaction, type SelectionRange } from "@codemirror/state";
 	import { historyField } from "@codemirror/commands";
-	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, minimalTextChange, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings } from '../editor/index.js';
+	import { createEditorExtensions, getLanguageExtensions, resolveActiveLanguage, selectionState, setupVimClipboardSync, syncVimRegistersFromClipboard, workspaceFacet, currentDocFacet, minimalTextChange, completionCompartmentExtensions, readAutomaticCompletions, readBufferWordSettings, readServerCompletionSettings, readServerHoverSettings, themedFoldGutter, setDocumentFoldingRangesEffect, readDocumentFoldingRangesSettings } from '../editor/index.js';
 	import { vim } from "@replit/codemirror-vim";
 	import '../editor/styles/editor.css';
 	import '../editor/styles/markdown.css';
 	import '../editor/styles/tables.css';
 
 	import { DocumentSession, useAppState, reconfigureEditorContributions } from '@np/core';
-	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator } from '@np/core';
+	import { COMPLETION_COORDINATOR_SERVICE_KEY, COMPLETION_RESOLVE_SERVICE_KEY, HOVER_COORDINATOR_SERVICE_KEY, FOLDING_RANGE_COORDINATOR_SERVICE_KEY, type CompletionCoordinator, type CompletionQuery, type CompletionResolveCoordinator, type HoverCoordinator, type DocumentFoldingCoordinator } from '@np/core';
 	import { Vim, CodeMirror, getCM } from "@replit/codemirror-vim";
 	import { applyEditorWrap, claimEditorFocusedContext, claimEditorKeymapContexts } from "./editor-focus";
 
@@ -49,7 +49,9 @@
 	let altPressed = $state(false);
 	let pendingScrollGen = 0;
 	let completionChainGen = 0;
+	let foldingRangesGeneration = 0;
 	const wrapCompartment = new Compartment();
+	const foldGutterCompartment = new Compartment();
 	const languageCompartment = new Compartment();
 	// Sits after the language compartment so word completions append to the note
 	// sources it registers, and so it can also carry `autocompletion()`: the
@@ -99,6 +101,8 @@
 				currentDocFacet.of(doc),
 				...createEditorExtensions({
 					wrapCompartment,
+					foldGutterCompartment,
+					gutterFolds: untrack(() => appState.prefs.gutterFolds),
 					languageCompartment,
 					completionCompartment,
 					vimCompartment,
@@ -228,6 +232,55 @@
 	// Sync wrap setting
 	$effect(() => {
 		applyEditorWrap(view, { focused, wrap, compartment: wrapCompartment });
+	});
+
+	$effect(() => {
+		const foldsEnabled = appState.prefs.gutterFolds;
+		if (!view) return;
+		view.dispatch({
+			effects: foldGutterCompartment.reconfigure(
+				foldsEnabled ? themedFoldGutter() : []
+			)
+		});
+	});
+
+	$effect(() => {
+		const generation = ++foldingRangesGeneration;
+		const langName = doc.language?.name ?? null;
+		const enabled = readDocumentFoldingRangesSettings(
+			(ns, key) => appState.prefs.get(ns, key),
+			langName
+		);
+		const targetView = view;
+		if (!targetView) return;
+		if (!enabled) {
+			targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of([]) });
+			return;
+		}
+		const coordinator = appState.plugins?.getService<DocumentFoldingCoordinator>(FOLDING_RANGE_COORDINATOR_SERVICE_KEY);
+		if (!coordinator || !doc.origin?.path) {
+			targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of([]) });
+			return;
+		}
+		coordinator
+			.fetchFoldingRanges({
+				path: doc.origin.path,
+				fileName: doc.title,
+				content: doc.content,
+				language: langName,
+			})
+			.then((ans) => {
+				if (generation !== foldingRangesGeneration || targetView !== view) return;
+				targetView.dispatch({
+					effects: setDocumentFoldingRangesEffect.of(
+						ans.state === "serving" ? ans.ranges : []
+					)
+				});
+			})
+			.catch(() => {
+				if (generation !== foldingRangesGeneration || targetView !== view) return;
+				targetView.dispatch({ effects: setDocumentFoldingRangesEffect.of([]) });
+			});
 	});
 
 	// Sync vim setting. Only the focused editor runs vim mode: the vim

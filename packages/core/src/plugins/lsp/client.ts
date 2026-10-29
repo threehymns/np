@@ -294,6 +294,11 @@ export class LspClient {
 							dynamicRegistration: false,
 							contentFormat: ['markdown']
 						},
+						foldingRange: {
+							// The client asks for folding ranges per document (spec #288).
+							dynamicRegistration: false,
+							lineFoldingOnly: true
+						},
 						diagnostic: {
 							// The client asks a server for a document's findings
 							// by pull (`textDocument/diagnostic`, see
