@@ -417,6 +417,13 @@ export class Preferences {
 		return this.settings.hasOverride(namespace, key, 'workspace');
 	}
 
+	private resolveFoldingPreferences(): void {
+		this._data.gutter = this.settings.resolve('editor', 'gutter').value;
+		const foldRangesVal = this.settings.resolve('editor', 'document_folding_ranges').value;
+		this._data.documentFoldingRanges =
+			foldRangesVal === 'on' || foldRangesVal === true ? 'on' : 'off';
+	}
+
 	private refreshEffectiveData(): void {
 		try {
 			this._data.wordWrap = this.settings.resolve('editor', 'word_wrap').value;
@@ -424,9 +431,7 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
-			this._data.gutter = this.settings.resolve('editor', 'gutter').value;
-			const foldRangesVal = this.settings.resolve('editor', 'document_folding_ranges').value;
-			this._data.documentFoldingRanges = foldRangesVal === 'on' || foldRangesVal === true ? 'on' : 'off';
+			this.resolveFoldingPreferences();
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;
@@ -499,9 +504,7 @@ export class Preferences {
 			this._data.vimSyncClipboard = this.settings.resolve('editor', 'vim_sync_clipboard').value;
 			this._data.tabSize = this.settings.resolve('editor', 'tab_size').value;
 			this._data.lineNumbers = this.settings.resolve('editor', 'line_numbers').value;
-			this._data.gutter = this.settings.resolve('editor', 'gutter').value;
-			const foldRangesVal = this.settings.resolve('editor', 'document_folding_ranges').value;
-			this._data.documentFoldingRanges = foldRangesVal === 'on' || foldRangesVal === true ? 'on' : 'off';
+			this.resolveFoldingPreferences();
 			this._data.completionWords = this.settings.resolve('editor', 'words').value;
 			this._data.minWordLength = this.settings.resolve('editor', 'min_word_length').value;
 			this._data.automaticCompletions = this.settings.resolve('editor', 'automatic_completions').value;

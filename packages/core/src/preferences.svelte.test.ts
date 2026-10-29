@@ -201,6 +201,33 @@ describe("Preferences lifecycle and hardening", () => {
 		expect(prefs.documentFoldingRanges).toBe("on");
 	});
 
+	it("resolves folding settings from the workspace scope on attach and reload", async () => {
+		const storage = createMockStorage();
+		const prefs = new Preferences(storage);
+		const workspaceStorage = {
+			readFile: mock(async () =>
+				JSON.stringify({
+					editor: { gutter: { folds: false }, document_folding_ranges: "on" }
+				})
+			),
+			saveFile: mock(async () => {})
+		};
+		await prefs.attachWorkspace(workspaceStorage, {
+			scheme: "file",
+			path: "/workspace",
+			name: "workspace"
+		});
+
+		expect(prefs.gutterFolds).toBe(false);
+		expect(prefs.documentFoldingRanges).toBe("on");
+
+		// A user reload resolves the effective values through the same path, so
+		// the workspace's folding settings stay visible.
+		prefs.reload(JSON.stringify({ editor: { tab_size: 8 } }));
+		expect(prefs.gutterFolds).toBe(false);
+		expect(prefs.documentFoldingRanges).toBe("on");
+	});
+
 	it("writes the fold gutter and document folding ranges under the editor namespace", () => {
 		const storage = createMockStorage();
 		const prefs = new Preferences(storage);
